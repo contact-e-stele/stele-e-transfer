@@ -5,32 +5,38 @@ import { existsSync } from "fs";
 import { execSync } from "child_process";
 
 function getChromiumPath(): string {
-  // Try puppeteer-core's downloaded chrome first (via npx puppeteer browsers install chrome)
-  try {
-    const p = executablePath('chrome');
-    if (p && existsSync(p)) {
-      console.log("Found puppeteer chrome at:", p);
-      return p;
-    }
-  } catch {}
-
-  // System candidates
+  // Common Render / Linux paths
   const candidates = [
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
+    '/usr/lib/chromium/chromium',
   ];
   for (const p of candidates) {
-    if (existsSync(p)) return p;
+    if (existsSync(p)) {
+      console.log("Found Chrome at:", p);
+      return p;
+    }
   }
 
-  // Try which
-  try {
-    return execSync('which chromium || which google-chrome || which chromium-browser', { encoding: 'utf8' }).trim();
-  } catch {}
+  // Puppeteer downloaded chrome (via PUPPETEER_CACHE_DIR or default ~/.cache)
+  const home = process.env.HOME || '/root';
+  const puppeteerCandidates = [
+    `${home}/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome`,
+    `/opt/render/project/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome`,
+  ];
+  for (const pattern of puppeteerCandidates) {
+    try {
+      const result = execSync(`ls ${pattern} 2>/dev/null | head -1`, { encoding: 'utf8' }).trim();
+      if (result && existsSync(result)) {
+        console.log("Found puppeteer Chrome at:", result);
+        return result;
+      }
+    } catch {}
+  }
 
-  throw new Error("No Chrome/Chromium found. Run: npx puppeteer browsers install chrome");
+  throw new Error("No Chrome found. Checked: " + candidates.join(', '));
 }
 
 async function scrapePrice(url: string): Promise<number | null> {
