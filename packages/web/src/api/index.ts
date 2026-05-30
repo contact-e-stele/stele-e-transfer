@@ -1,6 +1,32 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import { execSync } from "child_process";
+
+function getChromiumPath(): string {
+  // Render / Linux
+  const candidates = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/lib/chromium/chromium',
+    '/usr/lib/chromium-browser/chromium-browser',
+  ];
+  for (const p of candidates) {
+    try {
+      execSync(`test -f ${p}`);
+      return p;
+    } catch {}
+  }
+  // Fallback: puppeteer's own bundled chrome (dev environment)
+  try {
+    // @ts-ignore
+    const { executablePath } = await import('puppeteer');
+    return executablePath();
+  } catch {}
+  return '/usr/bin/chromium';
+}
 
 async function scrapePrice(url: string): Promise<number | null> {
   try {
@@ -64,7 +90,11 @@ async function scrapeAmazonWithBrowser(url: string): Promise<{
 } | null> {
   let browser;
   try {
+    const executablePath = getChromiumPath();
+    console.log("Using Chromium at:", executablePath);
+
     browser = await puppeteer.launch({
+      executablePath,
       headless: true,
       args: [
         '--no-sandbox',
@@ -73,18 +103,17 @@ async function scrapeAmazonWithBrowser(url: string): Promise<{
         '--disable-gpu',
         '--disable-web-security',
         '--lang=de-DE',
+        '--single-process',
       ],
     });
 
     const page = await browser.newPage();
 
-    // German locale + UA
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9' });
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
 
-    // Set German cookies before navigation
     await page.setCookie(
       { name: 'lc-acbde', value: 'de_DE', domain: '.amazon.de', path: '/' },
       { name: 'i18n-prefs', value: 'EUR', domain: '.amazon.de', path: '/' },
@@ -93,13 +122,11 @@ async function scrapeAmazonWithBrowser(url: string): Promise<{
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Dismiss cookie banner if present
     await page.evaluate(() => {
       (document.querySelector('#sp-cc-accept') as HTMLElement | null)?.click();
       (document.querySelector('input[name="accept"]') as HTMLElement | null)?.click();
     }).catch(() => {});
 
-    // Wait for product title to appear
     await page.waitForSelector('#productTitle', { timeout: 8000 }).catch(() => {});
 
     const data = await page.evaluate(() => {
