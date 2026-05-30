@@ -1,31 +1,36 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import puppeteer from "puppeteer-core";
+import puppeteer, { executablePath } from "puppeteer-core";
+import { existsSync } from "fs";
 import { execSync } from "child_process";
 
 function getChromiumPath(): string {
-  // Render / Linux
+  // Try puppeteer-core's downloaded chrome first (via npx puppeteer browsers install chrome)
+  try {
+    const p = executablePath('chrome');
+    if (p && existsSync(p)) {
+      console.log("Found puppeteer chrome at:", p);
+      return p;
+    }
+  } catch {}
+
+  // System candidates
   const candidates = [
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
-    '/usr/lib/chromium/chromium',
-    '/usr/lib/chromium-browser/chromium-browser',
   ];
   for (const p of candidates) {
-    try {
-      execSync(`test -f ${p}`);
-      return p;
-    } catch {}
+    if (existsSync(p)) return p;
   }
-  // Fallback: puppeteer's own bundled chrome (dev environment)
+
+  // Try which
   try {
-    // @ts-ignore
-    const { executablePath } = await import('puppeteer');
-    return executablePath();
+    return execSync('which chromium || which google-chrome || which chromium-browser', { encoding: 'utf8' }).trim();
   } catch {}
-  return '/usr/bin/chromium';
+
+  throw new Error("No Chrome/Chromium found. Run: npx puppeteer browsers install chrome");
 }
 
 async function scrapePrice(url: string): Promise<number | null> {
