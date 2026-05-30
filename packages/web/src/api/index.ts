@@ -5,54 +5,44 @@ import { existsSync } from "fs";
 import { execSync } from "child_process";
 
 function getChromiumPath(): string {
-  // Use glob to find puppeteer-downloaded chrome
-  const searchDirs = [
+  // Find chrome anywhere — broad search
+  try {
+    const result = execSync(
+      `find /opt/render/project/src/node_modules -name "chrome" -type f 2>/dev/null | grep -v crash | head -1`,
+      { encoding: 'utf8', timeout: 10000 }
+    ).trim();
+    if (result) {
+      console.log("Found Chrome at:", result);
+      return result;
+    }
+  } catch {}
+
+  // Puppeteer cache dirs
+  const cacheDirs = [
     process.env.PUPPETEER_CACHE_DIR,
-    process.env.HOME ? `${process.env.HOME}/.cache/puppeteer` : null,
     '/opt/render/project/.cache/puppeteer',
-    '/root/.cache/puppeteer',
+    `${process.env.HOME || '/root'}/.cache/puppeteer`,
   ].filter(Boolean) as string[];
 
-  for (const dir of searchDirs) {
+  for (const dir of cacheDirs) {
     try {
       const result = execSync(
-        `find ${dir} -name "chrome" -type f 2>/dev/null | head -1`,
-        { encoding: 'utf8' }
+        `find ${dir} -name "chrome" -type f 2>/dev/null | grep -v crash | head -1`,
+        { encoding: 'utf8', timeout: 5000 }
       ).trim();
       if (result) {
-        console.log("Found Chrome at:", result);
+        console.log("Found Chrome in cache at:", result);
         return result;
       }
     } catch {}
   }
 
-  // System candidates
-  const candidates = [
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) {
-      console.log("Found system Chrome at:", p);
-      return p;
-    }
+  // System
+  for (const p of ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser']) {
+    if (existsSync(p)) return p;
   }
 
-  // Last resort: find anywhere on disk
-  try {
-    const result = execSync(
-      `find /opt/render /root /home -name "chrome" -type f 2>/dev/null | grep -v crash | head -1`,
-      { encoding: 'utf8', timeout: 5000 }
-    ).trim();
-    if (result) {
-      console.log("Found Chrome via find:", result);
-      return result;
-    }
-  } catch {}
-
-  throw new Error("No Chrome found anywhere on disk");
+  throw new Error("No Chrome found");
 }
 
 async function scrapePrice(url: string): Promise<number | null> {
