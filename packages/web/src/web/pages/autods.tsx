@@ -17,19 +17,31 @@ async function scrapeAmazonInBrowser(url: string): Promise<{
     normalized = u.toString();
   } catch {}
 
-  // Fetch via CORS proxy (browser can't fetch amazon.de directly due to CORS)
-  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(normalized)}`;
+  // Try multiple CORS proxies in order
+  const proxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(normalized)}`,
+    `https://corsproxy.io/?${encodeURIComponent(normalized)}`,
+    `https://thingproxy.freeboard.io/fetch/${normalized}`,
+  ];
 
-  const res = await fetch(proxyUrl, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept-Language": "de-DE,de;q=0.9",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Cookie": "lc-acbde=de_DE; i18n-prefs=EUR",
-    },
-  });
-
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  let res: Response | null = null;
+  let lastError = "";
+  for (const proxyUrl of proxies) {
+    try {
+      const r = await fetch(proxyUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept-Language": "de-DE,de;q=0.9",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
+      if (r.ok) { res = r; break; }
+      lastError = `HTTP ${r.status}`;
+    } catch (e) {
+      lastError = String(e);
+    }
+  }
+  if (!res) throw new Error(`Alle Proxies fehlgeschlagen: ${lastError}`);
   const html = await res.text();
 
   // Parse with DOMParser
