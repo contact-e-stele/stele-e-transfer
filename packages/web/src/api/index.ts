@@ -5,38 +5,54 @@ import { existsSync } from "fs";
 import { execSync } from "child_process";
 
 function getChromiumPath(): string {
-  // Common Render / Linux paths
-  const candidates = [
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/lib/chromium/chromium',
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) {
-      console.log("Found Chrome at:", p);
-      return p;
-    }
-  }
+  // Use glob to find puppeteer-downloaded chrome
+  const searchDirs = [
+    process.env.PUPPETEER_CACHE_DIR,
+    process.env.HOME ? `${process.env.HOME}/.cache/puppeteer` : null,
+    '/opt/render/project/.cache/puppeteer',
+    '/root/.cache/puppeteer',
+  ].filter(Boolean) as string[];
 
-  // Puppeteer downloaded chrome (via PUPPETEER_CACHE_DIR or default ~/.cache)
-  const home = process.env.HOME || '/root';
-  const puppeteerCandidates = [
-    `${home}/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome`,
-    `/opt/render/project/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome`,
-  ];
-  for (const pattern of puppeteerCandidates) {
+  for (const dir of searchDirs) {
     try {
-      const result = execSync(`ls ${pattern} 2>/dev/null | head -1`, { encoding: 'utf8' }).trim();
-      if (result && existsSync(result)) {
-        console.log("Found puppeteer Chrome at:", result);
+      const result = execSync(
+        `find ${dir} -name "chrome" -type f 2>/dev/null | head -1`,
+        { encoding: 'utf8' }
+      ).trim();
+      if (result) {
+        console.log("Found Chrome at:", result);
         return result;
       }
     } catch {}
   }
 
-  throw new Error("No Chrome found. Checked: " + candidates.join(', '));
+  // System candidates
+  const candidates = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      console.log("Found system Chrome at:", p);
+      return p;
+    }
+  }
+
+  // Last resort: find anywhere on disk
+  try {
+    const result = execSync(
+      `find /opt/render /root /home -name "chrome" -type f 2>/dev/null | grep -v crash | head -1`,
+      { encoding: 'utf8', timeout: 5000 }
+    ).trim();
+    if (result) {
+      console.log("Found Chrome via find:", result);
+      return result;
+    }
+  } catch {}
+
+  throw new Error("No Chrome found anywhere on disk");
 }
 
 async function scrapePrice(url: string): Promise<number | null> {
