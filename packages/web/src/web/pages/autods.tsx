@@ -1,81 +1,9 @@
 import { useState } from "react";
 import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw } from "lucide-react";
+import { hc } from "hono/client";
+import type { AppType } from "../../api/index";
 
-// ─── Browser-side Amazon scraper (no server needed) ──────────────────────────
-async function scrapeAmazonInBrowser(url: string): Promise<{
-  title: string;
-  bullets: string[];
-  variants: string[];
-  description: string;
-} | null> {
-  // Normalize URL
-  let normalized = url.trim();
-  try {
-    const u = new URL(normalized);
-    if (!u.searchParams.has("language")) u.searchParams.set("language", "de_DE");
-    if (!u.searchParams.has("th")) u.searchParams.set("th", "1");
-    normalized = u.toString();
-  } catch {}
-
-  // Try multiple CORS proxies in order
-  const proxies = [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(normalized)}`,
-    `https://corsproxy.io/?${encodeURIComponent(normalized)}`,
-    `https://thingproxy.freeboard.io/fetch/${normalized}`,
-  ];
-
-  let res: Response | null = null;
-  let lastError = "";
-  for (const proxyUrl of proxies) {
-    try {
-      const r = await fetch(proxyUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept-Language": "de-DE,de;q=0.9",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        },
-      });
-      if (r.ok) { res = r; break; }
-      lastError = `HTTP ${r.status}`;
-    } catch (e) {
-      lastError = String(e);
-    }
-  }
-  if (!res) throw new Error(`Alle Proxies fehlgeschlagen: ${lastError}`);
-  const html = await res.text();
-
-  // Parse with DOMParser
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-
-  const title = doc.querySelector("#productTitle")?.textContent?.trim() || "";
-  if (!title) return null;
-
-  const bullets = Array.from(doc.querySelectorAll("#feature-bullets .a-list-item"))
-    .map(e => e.textContent?.trim() || "")
-    .filter(t => t.length > 10 && !t.includes("Make sure") && !t.includes("Stellen Sie sicher"));
-
-  const variantSet = new Set<string>([
-    ...Array.from(doc.querySelectorAll(".swatch-title-text, .swatch-title-text-display"))
-      .map(e => e.textContent?.trim().replace(/\s+/g, " ") || "")
-      .filter(t => t.length > 1 && !t.includes("Option")),
-    ...Array.from(doc.querySelectorAll(".twisterTextDiv p, #variation_style_name .selection, #variation_size_name .selection, #variation_color_name .selection"))
-      .map(e => e.textContent?.trim() || ""),
-    ...Array.from(doc.querySelectorAll("[data-value]"))
-      .map(e => e.getAttribute("data-value") || "")
-      .filter(v => v && v.length < 60 && v !== "search-alias=aps" && !v.startsWith("search-")),
-  ]);
-  const variants = [...variantSet]
-    .filter(v => v && v.length > 1 && !v.includes("€") && !v.includes("Option von") && !/^[←→\d]+$/.test(v))
-    .slice(0, 20);
-
-  const description =
-    doc.querySelector("#productDescription p")?.textContent?.trim() ||
-    doc.querySelector("#aplus p")?.textContent?.trim() ||
-    "";
-
-  return { title, bullets, variants, description };
-}
+const client = hc<AppType>("/");
 
 // ─── Text helpers ─────────────────────────────────────────────────────────────
 function decodeEntities(str: string): string {
@@ -188,17 +116,19 @@ export default function AutoDS() {
     setResult(null);
 
     try {
-      const data = await scrapeAmazonInBrowser(url.trim());
-      if (!data) {
-        setError("Produkt nicht gefunden. Bitte direkte Produkt-URL verwenden (amazon.de/dp/ASIN).");
+      const res = await client.api["scrape-amazon"].$get({ query: { url: url.trim() } });
+      if (!res.ok) {
+        const err = await res.json() as { error?: string };
+        setError(err.error ?? "Fehler beim Laden");
         return;
       }
+      const data = await res.json() as { title: string; bullets: string[]; variants: string[]; description: string };
       setResult({
         title: buildTitle(data.title, data.variants),
         html: buildHTML(data.title, data.bullets, data.variants, data.description),
       });
-    } catch (e) {
-      setError("Fehler beim Laden. Bitte direkte Produkt-URL verwenden (amazon.de/dp/ASIN).");
+    } catch {
+      setError("Netzwerkfehler – bitte erneut versuchen.");
     } finally {
       setLoading(false);
     }
@@ -292,10 +222,7 @@ export default function AutoDS() {
               <p style={{ margin: 0, fontWeight: 600, color: "#DC2626", fontSize: 14 }}>Fehler</p>
               <p style={{ margin: "4px 0 0", color: "#7F1D1D", fontSize: 13 }}>{error}</p>
               <p style={{ margin: "6px 0 0", color: "#991B1B", fontSize: 12, fontWeight: 600 }}>
-                💡 Tipp: Direkte URL →{" "}
-                <span style={{ fontFamily: "monospace", background: "#FEE2E2", padding: "1px 5px", borderRadius: 4 }}>
-                  amazon.de/dp/ASIN
-                </span>
+                💡 Tipp: Direkte URL → <span style={{ fontFamily: "monospace", background: "#FEE2E2", padding: "1px 5px", borderRadius: 4 }}>amazon.de/dp/ASIN</span>
               </p>
             </div>
           </div>
