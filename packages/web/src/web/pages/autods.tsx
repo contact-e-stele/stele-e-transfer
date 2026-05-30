@@ -1,11 +1,71 @@
 import { useState } from "react";
 import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw } from "lucide-react";
-import { hc } from "hono/client";
-import type { AppType } from "../../api/index";
 
-const client = hc<AppType>("/");
+// ─── Browser-side Amazon scraper (no server needed) ──────────────────────────
+async function scrapeAmazonInBrowser(url: string): Promise<{
+  title: string;
+  bullets: string[];
+  variants: string[];
+  description: string;
+} | null> {
+  // Normalize URL
+  let normalized = url.trim();
+  try {
+    const u = new URL(normalized);
+    if (!u.searchParams.has("language")) u.searchParams.set("language", "de_DE");
+    if (!u.searchParams.has("th")) u.searchParams.set("th", "1");
+    normalized = u.toString();
+  } catch {}
 
-// Strip HTML entities to real UTF-8 chars
+  // Fetch via CORS proxy (browser can't fetch amazon.de directly due to CORS)
+  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(normalized)}`;
+
+  const res = await fetch(proxyUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept-Language": "de-DE,de;q=0.9",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Cookie": "lc-acbde=de_DE; i18n-prefs=EUR",
+    },
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const html = await res.text();
+
+  // Parse with DOMParser
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+
+  const title = doc.querySelector("#productTitle")?.textContent?.trim() || "";
+  if (!title) return null;
+
+  const bullets = Array.from(doc.querySelectorAll("#feature-bullets .a-list-item"))
+    .map(e => e.textContent?.trim() || "")
+    .filter(t => t.length > 10 && !t.includes("Make sure") && !t.includes("Stellen Sie sicher"));
+
+  const variantSet = new Set<string>([
+    ...Array.from(doc.querySelectorAll(".swatch-title-text, .swatch-title-text-display"))
+      .map(e => e.textContent?.trim().replace(/\s+/g, " ") || "")
+      .filter(t => t.length > 1 && !t.includes("Option")),
+    ...Array.from(doc.querySelectorAll(".twisterTextDiv p, #variation_style_name .selection, #variation_size_name .selection, #variation_color_name .selection"))
+      .map(e => e.textContent?.trim() || ""),
+    ...Array.from(doc.querySelectorAll("[data-value]"))
+      .map(e => e.getAttribute("data-value") || "")
+      .filter(v => v && v.length < 60 && v !== "search-alias=aps" && !v.startsWith("search-")),
+  ]);
+  const variants = [...variantSet]
+    .filter(v => v && v.length > 1 && !v.includes("€") && !v.includes("Option von") && !/^[←→\d]+$/.test(v))
+    .slice(0, 20);
+
+  const description =
+    doc.querySelector("#productDescription p")?.textContent?.trim() ||
+    doc.querySelector("#aplus p")?.textContent?.trim() ||
+    "";
+
+  return { title, bullets, variants, description };
+}
+
+// ─── Text helpers ─────────────────────────────────────────────────────────────
 function decodeEntities(str: string): string {
   return str
     .replace(/&uuml;/g, "ü").replace(/&Uuml;/g, "Ü")
@@ -19,7 +79,6 @@ function decodeEntities(str: string): string {
     .replace(/&[a-zA-Z]+;/g, "");
 }
 
-// Remove unwanted content: ratings, stars, ASIN, prices, categories
 function cleanText(text: string): string {
   return text
     .replace(/\d+[\s,.]?\d*\s*Sterne[n]?/gi, "")
@@ -31,94 +90,47 @@ function cleanText(text: string): string {
     .trim();
 }
 
-// Build 【keyword】 prefix from bullet text
 function extractKeyword(text: string): string {
   const words = text.split(/[\s,–\-:]/);
   const meaningful = words.filter(w => w.length > 3).slice(0, 2);
   return meaningful.join(" ") || words[0] || "Merkmal";
 }
 
-// Main title builder – max 80 chars, German, SEO
-function buildTitle(rawTitle: string, variants: string[]): string {
-  let title = decodeEntities(rawTitle);
-
-  // Entferne Amazon-Noise (eckige Klammern, überlange Klammern)
-  title = title
-    .replace(/\[.*?\]/g, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-
-  // Wenn Varianten vorhanden: Variantenrange anhängen
-  if (variants.length > 0) {
-    // Zuerst wie viel Platz für Summary bleibt: mind. 15 Zeichen für Summary
-    const baseTitle = title.length > 55 ? title.slice(0, 54).replace(/[,\s]+$/, "") : title;
-    const remaining = 80 - baseTitle.length - 3; // 3 = " – "
-    const variantSummary = summarizeVariants(variants, Math.max(15, remaining));
-    const suffix = ` – ${variantSummary}`;
-    const candidate = baseTitle + suffix;
-    title = candidate.length <= 80 ? candidate : (baseTitle + suffix).slice(0, 77) + "...";
-  }
-
-  // Hard limit
-  if (title.length > 80) {
-    title = title.slice(0, 77) + "...";
-  }
-
-  return title;
-}
-
-// Varianten-Range zusammenfassen: "10 Große, 20 Große, 30 Große" → "10–30 Stück"
 function summarizeVariants(variants: string[], maxLen = 999): string {
   if (variants.length === 0) return "";
   if (variants.length === 1) return variants[0].slice(0, maxLen);
-
-  // Versuche Zahlen-Range zu erkennen (z.B. "10 Stück", "20 Stück", "30 Stück")
   const numPattern = /^(\d+)\s+(.+)$/;
   const numbered = variants.map(v => {
     const m = v.match(numPattern);
     return m ? { num: parseInt(m[1]), label: m[2].trim() } : null;
   });
-
   if (numbered.every(Boolean)) {
     const labels = [...new Set(numbered.map(n => n!.label))];
-
     if (labels.length === 1) {
-      const nums = numbered.map(n => n!.num).sort((a,b) => a-b);
-      const s = nums.length <= 4
-        ? `${nums.join("/")} ${labels[0]}`
-        : `${nums[0]}–${nums[nums.length-1]} ${labels[0]}`;
+      const nums = numbered.map(n => n!.num).sort((a, b) => a - b);
+      const s = nums.length <= 4 ? `${nums.join("/")} ${labels[0]}` : `${nums[0]}–${nums[nums.length - 1]} ${labels[0]}`;
       return s.slice(0, maxLen);
     }
-
-    if (labels.length <= 3) {
-      // Gruppieren: "Große" und "Medium" → "10–30 Große & Medium"
-      const allNums = numbered.map(n => n!.num).sort((a,b) => a-b);
-      const uniqueNums = [...new Set(allNums)];
-      // Kurzform: Zahlen-Range + alle Label-Typen
-      const labelShort = labels.map(l => l.split(" ")[0]).join("/");
-      const numPart = uniqueNums.length <= 3 ? uniqueNums.join("/") : `${uniqueNums[0]}–${uniqueNums[uniqueNums.length-1]}`;
-      return `${numPart} Stück (${labelShort})`.slice(0, maxLen);
-    }
   }
-
-  // Fallback: erste N Varianten
   if (variants.length <= 3) return variants.join(", ").slice(0, maxLen);
   return `${variants.slice(0, 2).join(", ")} +${variants.length - 2} Varianten`.slice(0, maxLen);
 }
 
-// Build full HTML output
-function buildHTML(
-  rawTitle: string,
-  bullets: string[],
-  variants: string[],
-  description: string
-): string {
-  const lines: string[] = [];
+function buildTitle(rawTitle: string, variants: string[]): string {
+  let title = decodeEntities(rawTitle).replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
+  if (variants.length > 0) {
+    const baseTitle = title.length > 55 ? title.slice(0, 54).replace(/[,\s]+$/, "") : title;
+    const remaining = 80 - baseTitle.length - 3;
+    const variantSummary = summarizeVariants(variants, Math.max(15, remaining));
+    const candidate = baseTitle + ` – ${variantSummary}`;
+    title = candidate.length <= 80 ? candidate : candidate.slice(0, 77) + "...";
+  }
+  if (title.length > 80) title = title.slice(0, 77) + "...";
+  return title;
+}
 
-  // Bullet list
-  lines.push("<ul>");
-
-  // Varianten als strukturierten Bullet einbauen
+function buildHTML(rawTitle: string, bullets: string[], variants: string[], description: string): string {
+  const lines: string[] = ["<ul>"];
   if (variants.length > 0) {
     if (variants.length === 1) {
       lines.push(`<li><strong>【Variante】</strong> Erhältlich als: ${decodeEntities(variants[0])}</li>`);
@@ -128,36 +140,27 @@ function buildHTML(
       lines.push(`<li><strong>【Verfügbare Varianten】</strong> ${summary} – wähle die passende Größe: ${listStr}</li>`);
     }
   }
-
-  // Feature bullets (skip last one if it's generic/legal text)
   const usableBullets = bullets
     .map(b => cleanText(decodeEntities(b)))
     .filter(b => b.length > 15 && !b.toLowerCase().includes("sicherstellen") && !b.toLowerCase().includes("melden sie"));
-
   for (const bullet of usableBullets.slice(0, 8)) {
-    const kw = extractKeyword(bullet);
-    lines.push(`<li><strong>【${kw}】</strong> ${bullet}</li>`);
+    lines.push(`<li><strong>【${extractKeyword(bullet)}】</strong> ${bullet}</li>`);
   }
-
   lines.push("</ul>");
-
-  // Description paragraphs
   if (description && description.length > 20) {
     const cleaned = cleanText(decodeEntities(description));
-    // Split on double newlines or periods followed by capital letter
     const paras = cleaned.split(/\n{2,}|(?<=\.)\s+(?=[A-ZÄÖÜ])/);
     for (const para of paras) {
       const p = para.trim();
       if (p.length > 20) lines.push(`<p>${p}</p>`);
     }
   } else if (usableBullets.length === 0) {
-    // Fallback: generate short paragraph from title
     lines.push(`<p>${decodeEntities(rawTitle).trim()}</p>`);
   }
-
   return lines.join("\n");
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function AutoDS() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -173,20 +176,17 @@ export default function AutoDS() {
     setResult(null);
 
     try {
-      const res = await client.api["scrape-amazon"].$get({ query: { url: url.trim() } });
-      if (!res.ok) {
-        const err = await res.json() as { error?: string };
-        setError(err.error ?? "Fehler beim Laden");
-        setLoading(false);
+      const data = await scrapeAmazonInBrowser(url.trim());
+      if (!data) {
+        setError("Produkt nicht gefunden. Bitte direkte Produkt-URL verwenden (amazon.de/dp/ASIN).");
         return;
       }
-      const data = await res.json() as { title: string; bullets: string[]; variants: string[]; description: string };
-
-      const title = buildTitle(data.title, data.variants);
-      const html = buildHTML(data.title, data.bullets, data.variants, data.description);
-      setResult({ title, html });
-    } catch {
-      setError("Netzwerkfehler – bitte erneut versuchen.");
+      setResult({
+        title: buildTitle(data.title, data.variants),
+        html: buildHTML(data.title, data.bullets, data.variants, data.description),
+      });
+    } catch (e) {
+      setError("Fehler beim Laden. Bitte direkte Produkt-URL verwenden (amazon.de/dp/ASIN).");
     } finally {
       setLoading(false);
     }
@@ -210,23 +210,16 @@ export default function AutoDS() {
   const charColor = charCount > 80 ? "#DC2626" : charCount > 70 ? "#F59E0B" : "#16a34a";
 
   const inputStyle = {
-    width: "100%",
-    padding: "13px 16px",
-    fontSize: 14,
-    fontWeight: 500,
-    border: "2px solid #E2E8F0",
-    borderRadius: 12,
-    outline: "none",
-    fontFamily: "inherit",
-    boxSizing: "border-box" as const,
-    color: "#0F172A",
-    background: "#F8FAFC",
-    transition: "border-color 0.2s",
+    width: "100%", padding: "13px 16px", fontSize: 14, fontWeight: 500,
+    border: "2px solid #E2E8F0", borderRadius: 12, outline: "none",
+    fontFamily: "inherit", boxSizing: "border-box" as const,
+    color: "#0F172A", background: "#F8FAFC", transition: "border-color 0.2s",
   };
 
   return (
     <div style={{ minHeight: "100vh", background: "#F8FAFC", fontFamily: "'Poppins', sans-serif", padding: "24px 16px" }}>
       <div style={{ maxWidth: 520, margin: "0 auto" }}>
+
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{
@@ -240,7 +233,7 @@ export default function AutoDS() {
           <p style={{ color: "#64748B", marginTop: 4, fontSize: 14 }}>stele-e-transfer</p>
         </div>
 
-        {/* Input card */}
+        {/* Input */}
         <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
           <label style={{ display: "block", fontWeight: 600, color: "#0F172A", marginBottom: 8, fontSize: 14 }}>
             Amazon Produkt-URL
@@ -287,13 +280,9 @@ export default function AutoDS() {
               <p style={{ margin: 0, fontWeight: 600, color: "#DC2626", fontSize: 14 }}>Fehler</p>
               <p style={{ margin: "4px 0 0", color: "#7F1D1D", fontSize: 13 }}>{error}</p>
               <p style={{ margin: "6px 0 0", color: "#991B1B", fontSize: 12, fontWeight: 600 }}>
-                💡 Tipp: Direkte Produkt-URL verwenden →{" "}
+                💡 Tipp: Direkte URL →{" "}
                 <span style={{ fontFamily: "monospace", background: "#FEE2E2", padding: "1px 5px", borderRadius: 4 }}>
                   amazon.de/dp/ASIN
-                </span>
-                {" "}z.B.{" "}
-                <span style={{ fontFamily: "monospace", background: "#FEE2E2", padding: "1px 5px", borderRadius: 4, wordBreak: "break-all" }}>
-                  amazon.de/dp/B09PFW8WRQ?language=de_DE&amp;th=1
                 </span>
               </p>
             </div>
@@ -303,13 +292,10 @@ export default function AutoDS() {
         {/* Results */}
         {result && (
           <>
-            {/* Title output */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Titel</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: charColor }}>
-                  {charCount}/80 Zeichen
-                </span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: charColor }}>{charCount}/80 Zeichen</span>
               </div>
               <div style={{
                 background: "#F8FAFC", borderRadius: 12, padding: "14px 16px",
@@ -319,28 +305,22 @@ export default function AutoDS() {
               }}>
                 {result.title}
               </div>
-              <button
-                onClick={copyTitle}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  padding: "11px 0", borderRadius: 10, border: "none",
-                  background: copiedTitle ? "#22C55E" : "#8B5CF6",
-                  color: "#fff", fontWeight: 700, fontSize: 14,
-                  cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s"
-                }}
-              >
+              <button onClick={copyTitle} style={{
+                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                padding: "11px 0", borderRadius: 10, border: "none",
+                background: copiedTitle ? "#22C55E" : "#8B5CF6",
+                color: "#fff", fontWeight: 700, fontSize: 14,
+                cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s"
+              }}>
                 {copiedTitle ? <Check size={16} /> : <Copy size={16} />}
                 {copiedTitle ? "Kopiert!" : "Titel kopieren"}
               </button>
             </div>
 
-            {/* HTML output */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>HTML Beschreibung</span>
-                <span style={{ fontSize: 11, color: "#94A3B8", background: "#F1F5F9", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>
-                  AutoDS-Format
-                </span>
+                <span style={{ fontSize: 11, color: "#94A3B8", background: "#F1F5F9", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>AutoDS-Format</span>
               </div>
               <div style={{
                 background: "#0F172A", borderRadius: 12, padding: "16px",
@@ -351,41 +331,32 @@ export default function AutoDS() {
               }}>
                 {result.html}
               </div>
-              <button
-                onClick={copyHtml}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  padding: "11px 0", borderRadius: 10, border: "none",
-                  background: copiedHtml ? "#22C55E" : "#0F172A",
-                  color: "#fff", fontWeight: 700, fontSize: 14,
-                  cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s"
-                }}
-              >
+              <button onClick={copyHtml} style={{
+                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                padding: "11px 0", borderRadius: 10, border: "none",
+                background: copiedHtml ? "#22C55E" : "#0F172A",
+                color: "#fff", fontWeight: 700, fontSize: 14,
+                cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s"
+              }}>
                 {copiedHtml ? <Check size={16} /> : <Copy size={16} />}
                 {copiedHtml ? "Kopiert!" : "HTML kopieren"}
               </button>
             </div>
 
-            {/* Preview */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Vorschau</span>
-                <button
-                  onClick={handleScrape}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    background: "#F1F5F9", border: "none", borderRadius: 8,
-                    padding: "6px 12px", fontSize: 12, fontWeight: 600,
-                    color: "#475569", cursor: "pointer", fontFamily: "inherit"
-                  }}
-                >
+                <button onClick={handleScrape} style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  background: "#F1F5F9", border: "none", borderRadius: 8,
+                  padding: "6px 12px", fontSize: 12, fontWeight: 600,
+                  color: "#475569", cursor: "pointer", fontFamily: "inherit"
+                }}>
                   <RefreshCw size={12} /> Neu laden
                 </button>
               </div>
-              <div
-                style={{ fontSize: 14, color: "#374151", lineHeight: 1.8 }}
-                dangerouslySetInnerHTML={{ __html: result.html }}
-              />
+              <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8 }}
+                dangerouslySetInnerHTML={{ __html: result.html }} />
             </div>
           </>
         )}
