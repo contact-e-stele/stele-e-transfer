@@ -1,9 +1,113 @@
 import { useState } from "react";
 import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw } from "lucide-react";
-import { hc } from "hono/client";
-import type { AppType } from "../../api/index";
 
-const client = hc<AppType>("/");
+// ─── Browser-seitiges Amazon-Scraping (kein Server, kein Captcha) ──────────────
+function stripTags(html: string): string {
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function fixText(text: string): string {
+  // Fehlende Leerzeichen vor Großbuchstaben
+  return text.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, "$1 $2").replace(/\s{2,}/g, " ").trim();
+}
+
+function parseAmazonHTML(html: string): { title: string; bullets: string[]; variants: string[]; description: string } {
+  // Titel
+  const titleMatch = html.match(/<span[^>]*id="productTitle"[^>]*>([\s\S]*?)<\/span>/);
+  const title = titleMatch ? stripTags(titleMatch[1]).trim() : "";
+
+  // Bullets
+  const bulletsSection = html.match(/<div[^>]*id="feature-bullets"[^>]*>([\s\S]*?)<\/div>/)?.[1] || "";
+  const bullets: string[] = [];
+  const bulletRe = /<li[^>]*>\s*<span[^>]*class="[^"]*a-list-item[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<\/li>/g;
+  let m;
+  while ((m = bulletRe.exec(bulletsSection)) !== null) {
+    const text = fixText(stripTags(m[1]).trim());
+    if (text.length > 10 && !text.toLowerCase().includes("make sure") && !text.toLowerCase().includes("stellen sie sicher")) {
+      bullets.push(text);
+    }
+  }
+
+  // Varianten — aus data-value auf li-Elementen im twister
+  const variants = new Set<string>();
+  const varRe = /data-value="([^"]{1,80})"/g;
+  while ((m = varRe.exec(html)) !== null) {
+    const v = m[1].trim();
+    if (
+      v.length > 1 &&
+      !v.includes("€") &&
+      !v.includes("Option von") &&
+      !v.startsWith("search-") &&
+      !v.includes("amazon") &&
+      !/^[\d\s←→]+$/.test(v) &&
+      !/^\d+\s*[xX×]\s*\d+\s*[xX×]?\s*\d*\s*cm$/i.test(v) && // keine 3D-Maße
+      !/^\d+([.,]\d+)?\s*(cm|mm|m|kg|g|l|ml)$/i.test(v) &&    // keine reinen Maße
+      /[a-zA-ZäöüÄÖÜß]/.test(v)
+    ) {
+      variants.add(v);
+    }
+  }
+  // Auch selection spans
+  const selRe = /class="[^"]*selection[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
+  while ((m = selRe.exec(html)) !== null) {
+    const v = stripTags(m[1]).trim();
+    if (v.length > 1 && v.length < 60 && /[a-zA-ZäöüÄÖÜß]/.test(v)) variants.add(v);
+  }
+
+  // Beschreibung
+  const descMatch = html.match(/<div[^>]*id="productDescription"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/);
+  const description = descMatch ? fixText(stripTags(descMatch[1]).trim()) : "";
+
+  return {
+    title,
+    bullets,
+    variants: [...variants]
+      .filter(v => !/^(Größe|Farbe|Menge|Stil|Modell)\s*:?\s*$/.test(v))
+      .slice(0, 20),
+    description,
+  };
+}
+
+async function fetchAmazon(url: string): Promise<{ title: string; bullets: string[]; variants: string[]; description: string }> {
+  // Normalisiere URL
+  let amazonUrl = url.trim();
+  try {
+    const u = new URL(amazonUrl);
+    if (!u.searchParams.has("th")) u.searchParams.set("th", "1");
+    if (!u.searchParams.has("language")) u.searchParams.set("language", "de_DE");
+    amazonUrl = u.toString();
+  } catch { /* ignore */ }
+
+  // CORS-Proxies versuchen
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(amazonUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(amazonUrl)}`,
+  ];
+
+  for (const proxyUrl of proxies) {
+    try {
+      const res = await fetch(proxyUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+      });
+      if (!res.ok) continue;
+
+      let html: string;
+      if (proxyUrl.includes("allorigins")) {
+        const json = await res.json() as { contents: string };
+        html = json.contents;
+      } else {
+        html = await res.text();
+      }
+
+      if (html.includes("api-services-support@amazon.com") || html.includes("validateCaptcha")) continue;
+
+      const data = parseAmazonHTML(html);
+      if (data.title) return data;
+    } catch { /* try next */ }
+  }
+
+  throw new Error("Amazon-Seite konnte nicht geladen werden. Bitte direkte Produkt-URL verwenden (amazon.de/dp/ASIN).");
+}
 
 // ─── Text helpers ─────────────────────────────────────────────────────────────
 function decodeEntities(str: string): string {
@@ -111,7 +215,12 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
     .map(b => cleanText(decodeEntities(b)))
     .filter(b => b.length > 15 && !b.toLowerCase().includes("sicherstellen") && !b.toLowerCase().includes("melden sie"));
   for (const bullet of usableBullets.slice(0, 8)) {
-    lines.push(`<li><strong>【${extractKeyword(bullet)}】</strong> ${bullet}</li>`);
+    // Wenn Bullet schon mit 【...】 beginnt, kein extra Keyword hinzufügen
+    if (/^【/.test(bullet)) {
+      lines.push(`<li><strong>${bullet.match(/^(【[^】]*】)/)?.[1] ?? ""}</strong> ${bullet.replace(/^【[^】]*】\s*/, "")}</li>`);
+    } else {
+      lines.push(`<li><strong>【${extractKeyword(bullet)}】</strong> ${bullet}</li>`);
+    }
   }
   lines.push("</ul>");
   if (description && description.length > 20) {
@@ -143,19 +252,17 @@ export default function AutoDS() {
     setResult(null);
 
     try {
-      const res = await client.api["scrape-amazon"].$get({ query: { url: url.trim() } });
-      if (!res.ok) {
-        const err = await res.json() as { error?: string };
-        setError(err.error ?? "Fehler beim Laden");
+      const data = await fetchAmazon(url.trim());
+      if (!data.title) {
+        setError("Produkt nicht gefunden. Bitte direkte amazon.de/dp/ASIN URL verwenden.");
         return;
       }
-      const data = await res.json() as { title: string; bullets: string[]; variants: string[]; description: string };
       setResult({
         title: buildTitle(data.title, data.variants),
         html: buildHTML(data.title, data.bullets, data.variants, data.description),
       });
-    } catch {
-      setError("Netzwerkfehler – bitte erneut versuchen.");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Netzwerkfehler – bitte erneut versuchen.");
     } finally {
       setLoading(false);
     }
