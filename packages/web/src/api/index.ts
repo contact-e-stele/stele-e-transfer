@@ -77,11 +77,14 @@ function extractText(html: string, pattern: RegExp): string {
 }
 
 function fixConcatenatedText(text: string): string {
-  // Fehlende Leerzeichen einfügen: "backfoliedauer" → "backfolie dauer"
-  // Erkennt: kleinbuchstabe direkt gefolgt von Großbuchstabe
+  // Fehlende Leerzeichen: kleinBuchstabe → klein Buchstabe
   let fixed = text.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, '$1 $2');
-  // Doppelte Phrasen entfernen (gleicher Text zweimal hintereinander)
-  fixed = fixed.replace(/^(.{5,60}?)\s+\1(\s|,|\.)/gi, '$1$2');
+  // Doppelte aufeinanderfolgende Phrasen entfernen
+  // z.B. "dauer backfoliedauer backfolie" → "dauer backfolie"
+  // Suche nach Mustern wo eine Zeichenkette sich direkt wiederholt
+  fixed = fixed.replace(/\b(\w{4,}(?:\s+\w+){0,4})\1\b/gi, '$1');
+  // Auch mit Leerzeichen getrennte Duplikate
+  fixed = fixed.replace(/\b(.{8,40})\s+\1\b/gi, '$1');
   fixed = fixed.replace(/\s{2,}/g, ' ').trim();
   return fixed;
 }
@@ -132,7 +135,13 @@ function extractVariants(html: string): string[] {
       !v.startsWith('search-') &&
       !v.includes('amazon') &&
       !/^[←→\d\s]+$/.test(v) &&
-      v !== 'search-alias=aps'
+      v !== 'search-alias=aps' &&
+      // Keine Dimensionen/Maße (z.B. "40 x 33 x 0 cm", "30x40cm")
+      !/\d+\s*[xX×]\s*\d+/.test(v) &&
+      // Kein "Größe:" oder andere Label-Prefixe ohne Wert
+      !/^(Größe|Farbe|Menge|Stück|Material|Stil|Modell)\s*:?\s*$/.test(v) &&
+      // Muss mindestens ein Buchstabe enthalten
+      /[a-zA-ZäöüÄÖÜß]/.test(v)
     )
     .slice(0, 20);
 }
