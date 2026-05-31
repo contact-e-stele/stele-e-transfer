@@ -7,8 +7,13 @@ function stripTags(html: string): string {
 }
 
 function fixText(text: string): string {
-  // Fehlende Leerzeichen vor Großbuchstaben
-  return text.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, "$1 $2").replace(/\s{2,}/g, " ").trim();
+  // Doppelte Phrasen entfernen: "dauer backfoliedauer backfolie" → "dauer backfolie"
+  // Erkennt wenn eine Phrase (4+ Zeichen) sich direkt selbst wiederholt
+  let fixed = text.replace(/(\b\w[\wäöüÄÖÜß]{3,}(?:\s+[\wäöüÄÖÜß]+){0,5})\1/gi, "$1");
+  // Fehlende Leerzeichen nur bei echtem CamelCase (kein ALLCAPS wie SPÜLMASCHINEN)
+  // Nur wenn: kleiner Buchstabe direkt gefolgt von Großbuchstabe der KEIN Teil eines Großworts ist
+  fixed = fixed.replace(/([a-zäöüß])([A-ZÄÖÜ])(?=[a-zäöüß])/g, "$1 $2");
+  return fixed.replace(/\s{2,}/g, " ").trim();
 }
 
 function parseAmazonHTML(html: string): { title: string; bullets: string[]; variants: string[]; description: string } {
@@ -28,30 +33,32 @@ function parseAmazonHTML(html: string): { title: string; bullets: string[]; vari
     }
   }
 
-  // Varianten — aus data-value auf li-Elementen im twister
+  // Varianten aus dimensionValuesDisplayData (zuverlässigste Quelle)
   const variants = new Set<string>();
-  const varRe = /data-value="([^"]{1,80})"/g;
-  while ((m = varRe.exec(html)) !== null) {
-    const v = m[1].trim();
-    if (
-      v.length > 1 &&
-      !v.includes("€") &&
-      !v.includes("Option von") &&
-      !v.startsWith("search-") &&
-      !v.includes("amazon") &&
-      !/^[\d\s←→]+$/.test(v) &&
-      !/^\d+\s*[xX×]\s*\d+\s*[xX×]?\s*\d*\s*cm$/i.test(v) && // keine 3D-Maße
-      !/^\d+([.,]\d+)?\s*(cm|mm|m|kg|g|l|ml)$/i.test(v) &&    // keine reinen Maße
-      /[a-zA-ZäöüÄÖÜß]/.test(v)
-    ) {
-      variants.add(v);
-    }
+  const dimMatch = html.match(/"dimensionValuesDisplayData"\s*:\s*(\{[^}]+\})/);
+  if (dimMatch) {
+    try {
+      const dimData = JSON.parse(dimMatch[1]) as Record<string, string[]>;
+      for (const vals of Object.values(dimData)) {
+        for (const v of vals) {
+          if (v && v.length > 1 && v.length < 80) variants.add(v.trim());
+        }
+      }
+    } catch { /* ignore parse errors */ }
   }
-  // Auch selection spans
-  const selRe = /class="[^"]*selection[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
-  while ((m = selRe.exec(html)) !== null) {
-    const v = stripTags(m[1]).trim();
-    if (v.length > 1 && v.length < 60 && /[a-zA-ZäöüÄÖÜß]/.test(v)) variants.add(v);
+
+  // Fallback: data-value auf li-Elementen
+  if (variants.size === 0) {
+    const varRe = /data-value="([^"]{1,80})"/g;
+    while ((m = varRe.exec(html)) !== null) {
+      const v = m[1].trim();
+      if (
+        v.length > 1 &&
+        !v.startsWith("search-") &&
+        !v.includes("amazon") &&
+        /[a-zA-ZäöüÄÖÜß]/.test(v)
+      ) variants.add(v);
+    }
   }
 
   // Beschreibung
