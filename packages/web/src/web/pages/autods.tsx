@@ -1,134 +1,9 @@
 import { useState } from "react";
+import { hc } from "hono/client";
+import type { AppType } from "../../api/index";
 import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw } from "lucide-react";
 
-// ─── Browser-seitiges Amazon-Scraping (kein Server, kein Captcha) ──────────────
-function stripTags(html: string): string {
-  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function fixText(text: string): string {
-  // "SpÜLmaschinen" → "Spülmaschinen": gemischte Groß/Klein-Schreibung normalisieren
-  // Erkennt: Großbuchstabe mitten in Kleinbuchstaben-Wort (z.B. SpÜL, backFOLIE)
-  let fixed = text.replace(/\b([A-ZÄÖÜa-zäöüß]+)\b/g, word => {
-    // Wenn Wort gemischte Groß/Klein-Schreibung hat die nicht CamelCase ist
-    // z.B. "SpÜLmaschinen" oder "backFOLIE" → alles lowercase außer erstem Buchstaben
-    if (/[a-zäöüß][A-ZÄÖÜ]/.test(word) && /[A-ZÄÖÜ][a-zäöüß].*[A-ZÄÖÜ]/.test(word)) {
-      return word[0].toUpperCase() + word.slice(1).toLowerCase();
-    }
-    return word;
-  });
-  // Doppelte direkt aneinanderhängende Phrasen: "dauer backfoliedauer backfolie"
-  // Suche nach: Wortfolge die sich unmittelbar wiederholt
-  fixed = fixed.replace(/(\b[\wäöüÄÖÜß][\wäöüÄÖÜß\s]{4,40}?)(\1)/gi, "$1");
-  return fixed.replace(/\s{2,}/g, " ").trim();
-}
-
-function parseAmazonHTML(html: string): { title: string; bullets: string[]; variants: string[]; description: string } {
-  // Titel
-  const titleMatch = html.match(/<span[^>]*id="productTitle"[^>]*>([\s\S]*?)<\/span>/);
-  const title = titleMatch ? stripTags(titleMatch[1]).trim() : "";
-
-  // Bullets
-  const bulletsSection = html.match(/<div[^>]*id="feature-bullets"[^>]*>([\s\S]*?)<\/div>/)?.[1] || "";
-  const bullets: string[] = [];
-  const bulletRe = /<li[^>]*>\s*<span[^>]*class="[^"]*a-list-item[^"]*"[^>]*>([\s\S]*?)<\/span>\s*<\/li>/g;
-  let m;
-  while ((m = bulletRe.exec(bulletsSection)) !== null) {
-    const text = fixText(stripTags(m[1]).trim());
-    if (text.length > 10 && !text.toLowerCase().includes("make sure") && !text.toLowerCase().includes("stellen sie sicher")) {
-      bullets.push(text);
-    }
-  }
-
-  // Varianten aus dimensionValuesDisplayData (zuverlässigste Quelle)
-  const variants = new Set<string>();
-  const dimMatch = html.match(/"dimensionValuesDisplayData"\s*:\s*(\{[^}]+\})/);
-  if (dimMatch) {
-    try {
-      const dimData = JSON.parse(dimMatch[1]) as Record<string, string[]>;
-      for (const vals of Object.values(dimData)) {
-        for (const v of vals) {
-          if (v && v.length > 1 && v.length < 80) variants.add(v.trim());
-        }
-      }
-    } catch { /* ignore parse errors */ }
-  }
-
-  // Fallback: data-value auf li-Elementen
-  if (variants.size === 0) {
-    const varRe = /data-value="([^"]{1,80})"/g;
-    while ((m = varRe.exec(html)) !== null) {
-      const v = m[1].trim();
-      if (
-        v.length > 1 &&
-        !v.startsWith("search-") &&
-        !v.includes("amazon") &&
-        /[a-zA-ZäöüÄÖÜß]/.test(v)
-      ) variants.add(v);
-    }
-  }
-
-  // Beschreibung
-  const descMatch = html.match(/<div[^>]*id="productDescription"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/);
-  const description = descMatch ? fixText(stripTags(descMatch[1]).trim()) : "";
-
-  return {
-    title,
-    bullets,
-    variants: [...variants]
-      .filter(v =>
-        !/^(Größe|Farbe|Menge|Stil|Modell)\s*:?\s*$/.test(v) &&
-        // Keine reinen Dimensionen wie "40 x 33 x 0 cm"
-        !/^\d+\s*[xX×]\s*\d+\s*([xX×]\s*\d+)?\s*(cm|mm|m)?$/.test(v.trim())
-      )
-      .slice(0, 20),
-    description,
-  };
-}
-
-async function fetchAmazon(url: string): Promise<{ title: string; bullets: string[]; variants: string[]; description: string }> {
-  // Normalisiere URL
-  let amazonUrl = url.trim();
-  try {
-    const u = new URL(amazonUrl);
-    if (!u.searchParams.has("th")) u.searchParams.set("th", "1");
-    if (!u.searchParams.has("language")) u.searchParams.set("language", "de_DE");
-    amazonUrl = u.toString();
-  } catch { /* ignore */ }
-
-  // CORS-Proxies versuchen
-  const proxies = [
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(amazonUrl)}`,
-    `https://corsproxy.io/?${encodeURIComponent(amazonUrl)}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(amazonUrl)}`,
-  ];
-
-  for (const proxyUrl of proxies) {
-    try {
-      const res = await fetch(proxyUrl);
-      if (!res.ok) continue;
-
-      let html: string;
-      if (proxyUrl.includes("allorigins")) {
-        const json = await res.json() as { contents: string };
-        html = json.contents;
-      } else {
-        html = await res.text();
-      }
-
-      if (
-        html.includes("api-services-support@amazon.com") ||
-        html.includes("validateCaptcha") ||
-        !html.includes("productTitle")
-      ) continue;
-
-      const data = parseAmazonHTML(html);
-      if (data.title) return data;
-    } catch { /* try next */ }
-  }
-
-  throw new Error("Amazon-Seite konnte nicht geladen werden. Bitte direkte Produkt-URL verwenden (amazon.de/dp/ASIN).");
-}
+const client = hc<AppType>("/");
 
 // ─── Text helpers ─────────────────────────────────────────────────────────────
 function decodeEntities(str: string): string {
@@ -152,9 +27,7 @@ function cleanText(text: string): string {
     .replace(/[€$]\s*[\d,.]+/g, "")
     .replace(/[\d,.]+\s*[€$]/g, "")
     .replace(/\d+[\s%]\s*Rabatt/gi, "")
-    // fehlende Leerzeichen zwischen Wörtern einfügen (z.B. "backfoliedauer" → "backfolie Dauer")
     .replace(/([a-zäöüß]{4,})([A-ZÄÖÜ])/g, "$1 $2")
-    // doppelte aufeinanderfolgende Phrasen entfernen (z.B. "dauer backfolie dauer backfolie")
     .replace(/\b(.{10,40}?)\s+\1\b/gi, "$1")
     .trim();
 }
@@ -188,28 +61,25 @@ function summarizeVariants(variants: string[], maxLen = 999): string {
 function buildTitle(rawTitle: string, variants: string[]): string {
   let title = decodeEntities(rawTitle).replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
 
-  // Marke entfernen: erstes Wort wenn es groß geschrieben und vor einem Trennzeichen steht
-  // z.B. "PEARL Aufbewahrungsbox..." → "Aufbewahrungsbox..."
-  // oder "Relaxdays 10er Set..." → "10er Set..."
+  // Marke am Anfang entfernen
   title = title
-    .replace(/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß&.\-]{1,30}\s+/, "") // Marke am Anfang
-    .replace(/^[A-ZÄÖÜ]{2,}\s+/, "")                        // Komplett-Großbuchstaben Marke
+    .replace(/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß&.\-]{1,30}\s+/, "")
+    .replace(/^[A-ZÄÖÜ]{2,}\s+/, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  // Größen/Maße/Mengen immer entfernen wenn mehrere Varianten
+  // Größen/Maße/Mengen entfernen wenn mehrere Varianten
   if (variants.length > 1) {
     title = title
-      .replace(/,?\s*\d+[xX×]\d+\s*cm\b/gi, "")   // z.B. "40x33cm", "40x60 cm"
-      .replace(/,?\s*\d+er\s+Set\b/gi, "")          // z.B. "5er Set"
-      .replace(/,?\s*\d+\s*Stück\b/gi, "")          // z.B. "10 Stück"
-      .replace(/,?\s*\d+\s*x\s*\d+\s*cm\b/gi, "")  // z.B. "40 x 33 cm"
+      .replace(/,?\s*\d+[xX×]\d+\s*cm\b/gi, "")
+      .replace(/,?\s*\d+er\s+Set\b/gi, "")
+      .replace(/,?\s*\d+\s*Stück\b/gi, "")
+      .replace(/,?\s*\d+\s*x\s*\d+\s*cm\b/gi, "")
       .replace(/\s{2,}/g, " ")
       .replace(/^[,\s]+|[,\s]+$/g, "")
       .trim();
   }
 
-  // Wenn mehrere Varianten → KEINE Größen/Mengen im Titel
   if (variants.length === 1) {
     const baseTitle = title.length > 55 ? title.slice(0, 54).replace(/[,\s]+$/, "") : title;
     const remaining = 80 - baseTitle.length - 3;
@@ -225,7 +95,7 @@ function buildTitle(rawTitle: string, variants: string[]): string {
 function buildHTML(rawTitle: string, bullets: string[], variants: string[], description: string): string {
   const lines: string[] = [];
 
-  // Varianten ganz oben als eigener Absatz
+  // Varianten ganz oben
   if (variants.length > 1) {
     const listStr = variants.map(v => decodeEntities(v)).join(" | ");
     lines.push(`<p><strong>Verfügbare Ausführungen:</strong> ${listStr}</p>`);
@@ -238,7 +108,7 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
   const usableBullets = bullets
     .map(b => {
       let text = cleanText(decodeEntities(b));
-      // Bei mehreren Varianten: Maßangaben in Klammern entfernen (z.B. "(40*33cm)", "(30x40 cm)")
+      // Bei mehreren Varianten: Maßangaben entfernen
       if (variants.length > 1) {
         text = text
           .replace(/\(\d+\s*[*xX×]\s*\d+\s*(cm|mm)?\)/gi, "")
@@ -248,8 +118,9 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
       return text;
     })
     .filter(b => b.length > 15 && !b.toLowerCase().includes("sicherstellen") && !b.toLowerCase().includes("melden sie"));
+
   for (const bullet of usableBullets.slice(0, 8)) {
-    // Wenn Bullet schon mit 【...】 beginnt, kein extra Keyword hinzufügen
+    // Wenn Bullet schon mit 【...】 beginnt, kein extra Keyword
     if (/^【/.test(bullet)) {
       lines.push(`<li><strong>${bullet.match(/^(【[^】]*】)/)?.[1] ?? ""}</strong> ${bullet.replace(/^【[^】]*】\s*/, "")}</li>`);
     } else {
@@ -257,6 +128,7 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
     }
   }
   lines.push("</ul>");
+
   if (description && description.length > 20) {
     const cleaned = cleanText(decodeEntities(description));
     const paras = cleaned.split(/\n{2,}|(?<=\.)\s+(?=[A-ZÄÖÜ])/);
@@ -267,6 +139,7 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
   } else if (usableBullets.length === 0) {
     lines.push(`<p>${decodeEntities(rawTitle).trim()}</p>`);
   }
+
   return lines.join("\n");
 }
 
@@ -286,7 +159,12 @@ export default function AutoDS() {
     setResult(null);
 
     try {
-      const data = await fetchAmazon(url.trim());
+      const res = await client.api["scrape-amazon"].$get({ query: { url: url.trim() } });
+      if (!res.ok) {
+        const err = await res.json() as { error?: string };
+        throw new Error(err.error ?? `Server-Fehler ${res.status}`);
+      }
+      const data = await res.json() as { title: string; bullets: string[]; variants: string[]; description: string };
       if (!data.title) {
         setError("Produkt nicht gefunden. Bitte direkte amazon.de/dp/ASIN URL verwenden.");
         return;
