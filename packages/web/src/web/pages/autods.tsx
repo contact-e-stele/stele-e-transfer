@@ -59,8 +59,16 @@ function summarizeVariants(variants: string[], maxLen = 999): string {
 function buildTitle(rawTitle: string, variants: string[]): string {
   let title = decodeEntities(rawTitle).replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
 
-  // Wenn mehrere Varianten → KEINE Größen/Mengen im Titel, nur Produktname
-  // Wenn genau eine Variante → anhängen
+  // Marke entfernen: erstes Wort wenn es groß geschrieben und vor einem Trennzeichen steht
+  // z.B. "PEARL Aufbewahrungsbox..." → "Aufbewahrungsbox..."
+  // oder "Relaxdays 10er Set..." → "10er Set..."
+  title = title
+    .replace(/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß&.\-]{1,30}\s+/, "") // Marke am Anfang
+    .replace(/^[A-ZÄÖÜ]{2,}\s+/, "")                        // Komplett-Großbuchstaben Marke
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  // Wenn mehrere Varianten → KEINE Größen/Mengen im Titel
   if (variants.length === 1) {
     const baseTitle = title.length > 55 ? title.slice(0, 54).replace(/[,\s]+$/, "") : title;
     const remaining = 80 - baseTitle.length - 3;
@@ -68,7 +76,6 @@ function buildTitle(rawTitle: string, variants: string[]): string {
     const candidate = baseTitle + ` – ${variantSummary}`;
     title = candidate.length <= 80 ? candidate : candidate.slice(0, 77) + "...";
   }
-  // Bei mehreren Varianten: Titel sauber lassen, keine Mengen/Größen anhängen
 
   if (title.length > 80) title = title.slice(0, 77) + "...";
   return title;
