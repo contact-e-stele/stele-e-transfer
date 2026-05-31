@@ -1,17 +1,17 @@
 import { Route, Switch, useLocation } from "wouter";
 import Index from "./pages/index";
 import AutoDS from "./pages/autods";
+import Dashboard from "./pages/dashboard";
 import { Provider } from "./components/provider";
 import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
 
 function TabNav() {
   const [location, setLocation] = useLocation();
-  const isAutods = location === "/autods";
 
   const tabBase: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-    padding: "9px 20px", borderRadius: 10, border: "none",
-    fontSize: 14, fontWeight: 600, cursor: "pointer",
+    padding: "9px 14px", borderRadius: 10, border: "none",
+    fontSize: 13, fontWeight: 600, cursor: "pointer",
     fontFamily: "'Poppins', sans-serif", transition: "all 0.2s",
     flex: 1,
   };
@@ -29,6 +29,12 @@ function TabNav() {
     color: "#64748B",
   };
 
+  const tabs = [
+    { path: "/", label: "💰 Preise" },
+    { path: "/autods", label: "📝 AutoDS" },
+    { path: "/dashboard", label: "📦 Produkte" },
+  ];
+
   return (
     <div style={{
       position: "sticky", top: 0, zIndex: 100,
@@ -37,23 +43,20 @@ function TabNav() {
       borderBottom: "1px solid #E2E8F0",
     }}>
       <div style={{
-        maxWidth: 520, margin: "0 auto",
+        maxWidth: 680, margin: "0 auto",
         display: "flex", gap: 4,
         background: "#E2E8F0",
         borderRadius: 14, padding: 4,
       }}>
-        <button
-          style={!isAutods ? activeTab : inactiveTab}
-          onClick={() => setLocation("/")}
-        >
-          💰 Preisrechner
-        </button>
-        <button
-          style={isAutods ? activeTab : inactiveTab}
-          onClick={() => setLocation("/autods")}
-        >
-          📝 AutoDS
-        </button>
+        {tabs.map(tab => (
+          <button
+            key={tab.path}
+            style={location === tab.path ? activeTab : inactiveTab}
+            onClick={() => setLocation(tab.path)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -68,10 +71,9 @@ function App() {
       <Switch>
         <Route path="/" component={Index} />
         <Route path="/autods" component={AutoDS} />
+        <Route path="/dashboard" component={Dashboard} />
       </Switch>
-      {/* Do not remove — off by default, activated by parent iframe via postMessage */}
       {import.meta.env.DEV && <AgentFeedback />}
-      {/* "Made with Runable" badge - if user asks to remove the runable badge, remove this code as well as comment */}
       {<RunableBadge />}
     </Provider>
   );

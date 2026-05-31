@@ -1,4 +1,4 @@
-// eBay Trading API / Inventory API Integration
+// eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
 const EBAY_CLIENT_ID = process.env.EBAY_CLIENT_ID ?? '';
@@ -34,7 +34,11 @@ export async function getAccessToken(): Promise<string> {
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: EBAY_REFRESH_TOKEN,
-      scope: 'https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+      scope: [
+        'https://api.ebay.com/oauth/api_scope/sell.inventory',
+        'https://api.ebay.com/oauth/api_scope/sell.account',
+        'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+      ].join(' '),
     }),
   });
 
@@ -58,7 +62,11 @@ export function getOAuthUrl(state: string): string {
     client_id: EBAY_CLIENT_ID,
     redirect_uri: process.env.EBAY_REDIRECT_URI ?? '',
     response_type: 'code',
-    scope: 'https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+    scope: [
+      'https://api.ebay.com/oauth/api_scope/sell.inventory',
+      'https://api.ebay.com/oauth/api_scope/sell.account',
+      'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+    ].join(' '),
     state,
   });
   return `${AUTH_URL}/oauth2/authorize?${params.toString()}`;
@@ -86,17 +94,66 @@ export async function exchangeCodeForToken(code: string): Promise<{ access_token
   return res.json() as Promise<{ access_token: string; refresh_token: string; expires_in: number }>;
 }
 
+// ─── Business Policies automatisch abrufen ────────────────────────────────────
+
+interface PolicyCache {
+  fulfillmentPolicyId: string;
+  paymentPolicyId: string;
+  returnPolicyId: string;
+  fetchedAt: number;
+}
+let policyCache: PolicyCache | null = null;
+
+export async function getBusinessPolicies(): Promise<PolicyCache> {
+  // Cache 1 Stunde
+  if (policyCache && Date.now() - policyCache.fetchedAt < 3_600_000) {
+    return policyCache;
+  }
+
+  // Zuerst aus Env nehmen wenn gesetzt
+  const envFulfillment = process.env.EBAY_FULFILLMENT_POLICY_ID;
+  const envPayment = process.env.EBAY_PAYMENT_POLICY_ID;
+  const envReturn = process.env.EBAY_RETURN_POLICY_ID;
+  if (envFulfillment && envPayment && envReturn) {
+    policyCache = { fulfillmentPolicyId: envFulfillment, paymentPolicyId: envPayment, returnPolicyId: envReturn, fetchedAt: Date.now() };
+    return policyCache;
+  }
+
+  const token = await getAccessToken();
+
+  async function fetchFirst(path: string): Promise<string> {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' },
+    });
+    if (!res.ok) throw new Error(`Policy fetch failed: ${path} → ${res.status}`);
+    const data = await res.json() as { fulfillmentPolicies?: Array<{ fulfillmentPolicyId: string }>; paymentPolicies?: Array<{ paymentPolicyId: string }>; returnPolicies?: Array<{ returnPolicyId: string }> };
+    const list = data.fulfillmentPolicies ?? data.paymentPolicies ?? data.returnPolicies ?? [];
+    if (!list.length) throw new Error(`No policies found at ${path}`);
+    const first = list[0] as Record<string, string>;
+    return Object.values(first)[0];
+  }
+
+  const [fulfillmentPolicyId, paymentPolicyId, returnPolicyId] = await Promise.all([
+    fetchFirst('/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_DE'),
+    fetchFirst('/sell/account/v1/payment_policy?marketplace_id=EBAY_DE'),
+    fetchFirst('/sell/account/v1/return_policy?marketplace_id=EBAY_DE'),
+  ]);
+
+  policyCache = { fulfillmentPolicyId, paymentPolicyId, returnPolicyId, fetchedAt: Date.now() };
+  return policyCache;
+}
+
 // ─── Inventory Item erstellen ──────────────────────────────────────────────────
 
 export interface EbayListingInput {
-  sku: string; // z.B. ASIN
+  sku: string;
   title: string;
   description: string; // HTML
-  price: number; // in EUR
+  price: number; // EUR
   quantity: number;
   condition: 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD';
   imageUrls: string[];
-  categoryId?: string; // eBay Kategorie-ID
+  categoryId?: string;
 }
 
 export async function createOrUpdateInventoryItem(input: EbayListingInput): Promise<void> {
@@ -104,9 +161,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
 
   const body = {
     availability: {
-      shipToLocationAvailability: {
-        quantity: input.quantity,
-      },
+      shipToLocationAvailability: { quantity: input.quantity },
     },
     condition: input.condition,
     product: {
@@ -122,7 +177,6 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
       'Content-Language': 'de-DE',
-      'Accept-Language': 'de-DE',
     },
     body: JSON.stringify(body),
   });
@@ -133,17 +187,18 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
   }
 }
 
-// ─── Offer erstellen / publishen ──────────────────────────────────────────────
+// ─── Offer erstellen ──────────────────────────────────────────────────────────
 
 export async function createOffer(input: EbayListingInput): Promise<string> {
   const token = await getAccessToken();
+  const policies = await getBusinessPolicies();
 
   const body = {
     sku: input.sku,
     marketplaceId: 'EBAY_DE',
     format: 'FIXED_PRICE',
     availableQuantity: input.quantity,
-    categoryId: input.categoryId ?? '11700', // Fallback: Sonstiges
+    categoryId: input.categoryId ?? '11700',
     listingDescription: input.description,
     pricingSummary: {
       price: {
@@ -153,9 +208,9 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
     },
     merchantLocationKey: 'default',
     listingPolicies: {
-      fulfillmentPolicyId: process.env.EBAY_FULFILLMENT_POLICY_ID ?? '',
-      paymentPolicyId: process.env.EBAY_PAYMENT_POLICY_ID ?? '',
-      returnPolicyId: process.env.EBAY_RETURN_POLICY_ID ?? '',
+      fulfillmentPolicyId: policies.fulfillmentPolicyId,
+      paymentPolicyId: policies.paymentPolicyId,
+      returnPolicyId: policies.returnPolicyId,
     },
   };
 
@@ -178,6 +233,8 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   return data.offerId;
 }
 
+// ─── Offer publishen ─────────────────────────────────────────────────────────
+
 export async function publishOffer(offerId: string): Promise<string> {
   const token = await getAccessToken();
 
@@ -198,7 +255,7 @@ export async function publishOffer(offerId: string): Promise<string> {
   return data.listingId;
 }
 
-// ─── Alles in einem: Item anlegen + Offer erstellen + publishen ───────────────
+// ─── Alles in einem ───────────────────────────────────────────────────────────
 
 export async function listOnEbay(input: EbayListingInput): Promise<string> {
   await createOrUpdateInventoryItem(input);
@@ -207,7 +264,7 @@ export async function listOnEbay(input: EbayListingInput): Promise<string> {
   return listingId;
 }
 
-// ─── Kategorie-Suche ──────────────────────────────────────────────────────────
+// ─── Kategorie-Vorschlag ──────────────────────────────────────────────────────
 
 export async function suggestCategory(title: string): Promise<string | null> {
   const token = await getAccessToken();
@@ -228,4 +285,10 @@ export async function suggestCategory(title: string): Promise<string | null> {
     categorySuggestions?: Array<{ category: { categoryId: string } }>;
   };
   return data.categorySuggestions?.[0]?.category?.categoryId ?? null;
+}
+
+// ─── Policies als Info-Endpoint ───────────────────────────────────────────────
+
+export async function getPoliciesInfo(): Promise<PolicyCache> {
+  return getBusinessPolicies();
 }

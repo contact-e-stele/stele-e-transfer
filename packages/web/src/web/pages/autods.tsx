@@ -180,11 +180,27 @@ export default function AutoDS() {
         return;
       }
       const asin = extractAsin(url.trim());
-      setResult({
-        title: buildTitle(data.title, data.variants),
-        html: buildHTML(data.title, data.bullets, data.variants, data.description),
-        asin,
-      });
+      const generatedTitle = buildTitle(data.title, data.variants);
+      const html = buildHTML(data.title, data.bullets, data.variants, data.description);
+      setResult({ title: generatedTitle, html, asin });
+
+      // Produkt in DB speichern (fire & forget)
+      if (asin) {
+        fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            asin,
+            amazonUrl: url.trim(),
+            title: data.title,
+            generatedTitle,
+            htmlDescription: html,
+            bullets: data.bullets,
+            variants: data.variants,
+            description: data.description ?? "",
+          }),
+        }).catch(() => { /* DB optional, kein Fehler anzeigen */ });
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Netzwerkfehler – bitte erneut versuchen.");
     } finally {

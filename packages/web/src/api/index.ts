@@ -45,8 +45,19 @@ function fixText(text: string): string {
   fixed = fixed.replace(/(\b[\wäöüÄÖÜß][\wäöüÄÖÜß\s]{4,40}?)(\1)/gi, '$1');
   // Mit Leerzeichen getrennte Duplikate
   fixed = fixed.replace(/\b(.{8,40})\s+\1\b/gi, '$1');
+  // Nonsense-Keyword-Einschübe entfernen: alleinstehende Produktnamen ohne Kontext
+  // z.B. "dauer backfolie," oder ", backmatte," mitten im Satz
+  fixed = fixed.replace(/,\s*[a-zäöüß][a-zäöüßA-ZÄÖÜ\s]{3,25}?\s*,/g, (match) => {
+    // Nur entfernen wenn es kein normaler Satzteil ist (kein Verb, kein Adjektiv-Kontext)
+    const inner = match.replace(/,/g, '').trim();
+    // Behalte wenn es nach Komma ein sinnvolles Wort ist (Adjektiv/Verb-Form)
+    if (/^(und|oder|aber|sowie|bzw|auch|sehr|noch|mehr|für|mit|bei|von|zu|an)\b/i.test(inner)) return match;
+    // Entferne wenn es ein alleinstehender Compound-Nomen-Keyword ist (kein Verb, kein Artikel)
+    if (/^[a-z][a-zäöüß]+\s[a-z][a-zäöüß]+$/.test(inner)) return ', ';
+    return match;
+  });
   fixed = translatePieceTerms(fixed);
-  return fixed.replace(/\s{2,}/g, ' ').trim();
+  return fixed.replace(/,\s*,/g, ',').replace(/\s{2,}/g, ' ').trim();
 }
 
 function extractBullets(html: string): string[] {
