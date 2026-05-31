@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken } from './ebay';
+import { eq } from 'drizzle-orm';
 
 function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -229,6 +231,154 @@ const app = new Hono()
     // Eingehende Löschbenachrichtigungen — einfach 200 zurückgeben
     console.log('eBay deletion notification received');
     return c.json({ acknowledged: true }, 200);
+  })
+
+  // ─── eBay OAuth ─────────────────────────────────────────────────────────────
+  .get('/ebay/auth', (c) => {
+    const state = Math.random().toString(36).slice(2);
+    const url = getOAuthUrl(state);
+    return c.redirect(url);
+  })
+  .get('/ebay/callback', async (c) => {
+    const code = c.req.query('code');
+    if (!code) return c.json({ error: 'Kein Code' }, 400);
+    try {
+      const tokens = await exchangeCodeForToken(code);
+      // In Produktion: refresh_token in DB/Env speichern
+      console.log('eBay refresh token:', tokens.refresh_token);
+      return c.json({ message: 'Erfolgreich! Refresh Token in Server-Logs.', expires_in: tokens.expires_in }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Produkt speichern ───────────────────────────────────────────────────────
+  .post('/products', async (c) => {
+    let db;
+    try {
+      const { db: database, schema } = await import('../db/index').then(async m => {
+        const schema = await import('../db/schema');
+        return { db: m.db, schema };
+      });
+      db = database;
+      const body = await c.req.json() as {
+        asin: string;
+        amazonUrl: string;
+        title: string;
+        generatedTitle: string;
+        htmlDescription: string;
+        bullets: string[];
+        variants: string[];
+        description?: string;
+      };
+      const existing = await db.select().from(schema.products).where(eq(schema.products.asin, body.asin)).limit(1);
+      if (existing.length > 0) {
+        await db.update(schema.products).set({
+          generatedTitle: body.generatedTitle,
+          htmlDescription: body.htmlDescription,
+          bullets: JSON.stringify(body.bullets),
+          variants: JSON.stringify(body.variants),
+          updatedAt: new Date().toISOString(),
+        }).where(eq(schema.products.asin, body.asin));
+        return c.json({ id: existing[0].id, updated: true }, 200);
+      }
+      const result = await db.insert(schema.products).values({
+        asin: body.asin,
+        amazonUrl: body.amazonUrl,
+        title: body.title,
+        generatedTitle: body.generatedTitle,
+        htmlDescription: body.htmlDescription,
+        bullets: JSON.stringify(body.bullets),
+        variants: JSON.stringify(body.variants),
+        description: body.description ?? '',
+        ebayStatus: 'none',
+      }).returning({ id: schema.products.id });
+      return c.json({ id: result[0].id, created: true }, 201);
+    } catch (e) {
+      console.error('DB error:', e);
+      return c.json({ error: 'DB nicht verfügbar' }, 503);
+    }
+  })
+
+  .get('/products', async (c) => {
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const schema = await import('../db/schema');
+        return { db: m.db, schema };
+      });
+      const all = await db.select().from(schema.products).orderBy(schema.products.createdAt);
+      return c.json(all.map(p => ({
+        ...p,
+        bullets: JSON.parse(p.bullets),
+        variants: JSON.parse(p.variants),
+      })), 200);
+    } catch (e) {
+      return c.json({ error: 'DB nicht verfügbar' }, 503);
+    }
+  })
+
+  // ─── eBay Listing ────────────────────────────────────────────────────────────
+  .post('/ebay/list', async (c) => {
+    const body = await c.req.json() as {
+      asin: string;
+      title: string;
+      description: string;
+      price: number;
+      quantity: number;
+      imageUrls?: string[];
+    };
+
+    if (!body.asin || !body.title || !body.description || !body.price) {
+      return c.json({ error: 'asin, title, description, price sind Pflichtfelder' }, 400);
+    }
+
+    try {
+      // Kategorie vorschlagen
+      const categoryId = await suggestCategory(body.title).catch(() => null);
+
+      const listingId = await listOnEbay({
+        sku: body.asin,
+        title: body.title.slice(0, 80),
+        description: body.description,
+        price: body.price,
+        quantity: body.quantity ?? 10,
+        condition: 'NEW',
+        imageUrls: body.imageUrls ?? [],
+        categoryId: categoryId ?? undefined,
+      });
+
+      // Status in DB aktualisieren wenn vorhanden
+      try {
+        const { db, schema } = await import('../db/index').then(async m => {
+          const schema = await import('../db/schema');
+          return { db: m.db, schema };
+        });
+        await db.update(schema.products).set({
+          ebayListingId: listingId,
+          ebayStatus: 'listed',
+          updatedAt: new Date().toISOString(),
+        }).where(eq(schema.products.asin, body.asin));
+      } catch { /* DB optional */ }
+
+      return c.json({ listingId, success: true }, 200);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+
+      // Status in DB als error speichern
+      try {
+        const { db, schema } = await import('../db/index').then(async m => {
+          const schema = await import('../db/schema');
+          return { db: m.db, schema };
+        });
+        await db.update(schema.products).set({
+          ebayStatus: 'error',
+          ebayError: msg,
+          updatedAt: new Date().toISOString(),
+        }).where(eq(schema.products.asin, body.asin));
+      } catch { /* DB optional */ }
+
+      return c.json({ error: msg }, 500);
+    }
   });
 
 export type AppType = typeof app;

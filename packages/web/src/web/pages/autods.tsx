@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { hc } from "hono/client";
 import type { AppType } from "../../api/index";
-import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw } from "lucide-react";
+import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw, ShoppingCart } from "lucide-react";
 
 const client = hc<AppType>("/");
 
@@ -144,19 +144,29 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
+// ASIN aus URL extrahieren
+function extractAsin(url: string): string | null {
+  const m = url.match(/\/dp\/([A-Z0-9]{10})/i) ?? url.match(/\/gp\/product\/([A-Z0-9]{10})/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
 export default function AutoDS() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<{ title: string; html: string } | null>(null);
+  const [result, setResult] = useState<{ title: string; html: string; asin: string | null } | null>(null);
   const [copiedTitle, setCopiedTitle] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
+  const [ebayPrice, setEbayPrice] = useState("");
+  const [ebayLoading, setEbayLoading] = useState(false);
+  const [ebayResult, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
 
   const handleScrape = async () => {
     if (!url.trim()) return;
     setLoading(true);
     setError("");
     setResult(null);
+    setEbayResult(null);
 
     try {
       const res = await client.api["scrape-amazon"].$get({ query: { url: url.trim() } });
@@ -169,14 +179,44 @@ export default function AutoDS() {
         setError("Produkt nicht gefunden. Bitte direkte amazon.de/dp/ASIN URL verwenden.");
         return;
       }
+      const asin = extractAsin(url.trim());
       setResult({
         title: buildTitle(data.title, data.variants),
         html: buildHTML(data.title, data.bullets, data.variants, data.description),
+        asin,
       });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Netzwerkfehler – bitte erneut versuchen.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleEbayList = async () => {
+    if (!result || !result.asin) return;
+    const price = parseFloat(ebayPrice.replace(",", "."));
+    if (!price || price <= 0) return;
+    setEbayLoading(true);
+    setEbayResult(null);
+    try {
+      const res = await fetch("/api/ebay/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asin: result.asin,
+          title: result.title,
+          description: result.html,
+          price,
+          quantity: 10,
+          imageUrls: [],
+        }),
+      });
+      const data = await res.json() as { listingId?: string; error?: string };
+      setEbayResult(data);
+    } catch (e) {
+      setEbayResult({ error: e instanceof Error ? e.message : "Unbekannter Fehler" });
+    } finally {
+      setEbayLoading(false);
     }
   };
 
@@ -342,6 +382,81 @@ export default function AutoDS() {
               </div>
               <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8 }}
                 dangerouslySetInnerHTML={{ __html: result.html }} />
+            </div>
+
+            {/* eBay Listen */}
+            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFD700", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <ShoppingCart size={18} color="#0F172A" />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Auf eBay listen</span>
+                {result.asin && (
+                  <span style={{ fontSize: 11, color: "#64748B", background: "#F1F5F9", padding: "2px 8px", borderRadius: 6, fontFamily: "monospace" }}>
+                    {result.asin}
+                  </span>
+                )}
+              </div>
+
+              {!result.asin && (
+                <p style={{ color: "#F59E0B", fontSize: 13, margin: "0 0 12px" }}>⚠️ Keine ASIN in URL erkannt — direkte amazon.de/dp/ASIN URL verwenden</p>
+              )}
+
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#64748B", marginBottom: 4 }}>Verkaufspreis (€)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="19.99"
+                    value={ebayPrice}
+                    onChange={e => setEbayPrice(e.target.value)}
+                    style={{
+                      width: "100%", padding: "11px 14px", fontSize: 15, fontWeight: 600,
+                      border: "2px solid #E2E8F0", borderRadius: 10, outline: "none",
+                      fontFamily: "inherit", boxSizing: "border-box" as const, color: "#0F172A",
+                    }}
+                  />
+                </div>
+                <div style={{ paddingTop: 20 }}>
+                  <button
+                    onClick={handleEbayList}
+                    disabled={ebayLoading || !result.asin || !ebayPrice}
+                    style={{
+                      padding: "11px 20px", borderRadius: 10, border: "none",
+                      background: ebayLoading || !result.asin || !ebayPrice ? "#FDE68A" : "#FFD700",
+                      color: "#0F172A", fontWeight: 700, fontSize: 14,
+                      cursor: ebayLoading || !result.asin || !ebayPrice ? "not-allowed" : "pointer",
+                      fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8,
+                      whiteSpace: "nowrap" as const,
+                    }}
+                  >
+                    {ebayLoading
+                      ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Wird gelistet…</>
+                      : <><ShoppingCart size={16} /> Jetzt listen</>
+                    }
+                  </button>
+                </div>
+              </div>
+
+              {ebayResult && (
+                <div style={{
+                  marginTop: 14, padding: "12px 16px", borderRadius: 10,
+                  background: ebayResult.listingId ? "#F0FDF4" : "#FEF2F2",
+                  border: `1.5px solid ${ebayResult.listingId ? "#BBF7D0" : "#FECACA"}`,
+                }}>
+                  {ebayResult.listingId ? (
+                    <p style={{ margin: 0, color: "#15803D", fontWeight: 600, fontSize: 13 }}>
+                      ✓ Erfolgreich gelistet! Listing-ID: <span style={{ fontFamily: "monospace" }}>{ebayResult.listingId}</span>
+                    </p>
+                  ) : (
+                    <p style={{ margin: 0, color: "#DC2626", fontWeight: 600, fontSize: 13 }}>
+                      ✗ Fehler: {ebayResult.error}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}
