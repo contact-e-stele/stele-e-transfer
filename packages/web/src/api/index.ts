@@ -102,37 +102,27 @@ function extractBullets(html: string): string[] {
 
 function extractVariants(html: string): string[] {
   const variants = new Set<string>();
-
-  // Methode 1: twister-plus Buttons (Größen/Mengen Auswahl)
-  const twisterSection = html.match(/<div[^>]*id="twister"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/)?.[0] || 
-                         html.match(/<div[^>]*id="twister-plus-inline-twister"[^>]*>([\s\S]*?)<div[^>]*id="buybox"/)?.[1] || '';
-  
-  const re1 = /data-dp-url="[^"]*"[^>]*>\s*<span[^>]*class="[^"]*a-size-base[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
   let m;
-  while ((m = re1.exec(twisterSection || html)) !== null) {
-    const v = stripTags(m[1]).trim();
-    if (v.length > 0 && v.length < 60) variants.add(v);
+
+  // Methode 1: data-value auf li-Elementen (Twister Buttons)
+  const re1 = /data-value="([^"]{1,60})"/g;
+  while ((m = re1.exec(html)) !== null) {
+    const v = m[1].trim();
+    if (v.length > 0) variants.add(v);
   }
 
-  // Methode 2: inline-twister-dim-title (Variantenbezeichnungen wie "5er Set", "8er Set")
-  const re2 = /"inline-twister-dim-title-[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
+  // Methode 2: class="selection" spans
+  const re2 = /class="[^"]*selection[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
   while ((m = re2.exec(html)) !== null) {
-    const v = stripTags(m[1]).trim();
-    if (v.length > 0 && v.length < 60) variants.add(v);
-  }
-
-  // Methode 3: class="selection" spans (aktuelle Auswahl)
-  const re3 = /class="[^"]*selection[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
-  while ((m = re3.exec(html)) !== null) {
     const v = stripTags(m[1]).trim();
     if (v.length > 1 && v.length < 60) variants.add(v);
   }
 
-  // Methode 4: data-value direkt auf Buttons im twister
-  const re4 = /<li[^>]*data-value="([^"]{1,60})"[^>]*>/g;
-  while ((m = re4.exec(html)) !== null) {
-    const v = m[1].trim();
-    if (v.length > 0) variants.add(v);
+  // Methode 3: inline-twister-dim-title spans
+  const re3 = /inline-twister-dim-title[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
+  while ((m = re3.exec(html)) !== null) {
+    const v = stripTags(m[1]).trim();
+    if (v.length > 0 && v.length < 60) variants.add(v);
   }
 
   return [...variants]
