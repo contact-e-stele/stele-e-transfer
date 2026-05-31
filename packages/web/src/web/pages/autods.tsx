@@ -27,6 +27,9 @@ function cleanText(text: string): string {
     .replace(/[€$]\s*[\d,.]+/g, "")
     .replace(/[\d,.]+\s*[€$]/g, "")
     .replace(/\d+[\s%]\s*Rabatt/gi, "")
+    // doppelte Wörter/Phrasen entfernen (z.B. "dauer backfoliedauer backfolie")
+    .replace(/(\b\w{4,}\b)(\w*\s+\1\b)/gi, "$1")
+    .replace(/([a-zäöü]{4,})([A-ZÄÖÜ][a-zäöü])/g, "$1 $2") // fehlende Leerzeichen
     .trim();
 }
 
@@ -67,6 +70,18 @@ function buildTitle(rawTitle: string, variants: string[]): string {
     .replace(/^[A-ZÄÖÜ]{2,}\s+/, "")                        // Komplett-Großbuchstaben Marke
     .replace(/\s{2,}/g, " ")
     .trim();
+
+  // Größen/Maße/Mengen immer entfernen wenn mehrere Varianten
+  if (variants.length > 1) {
+    title = title
+      .replace(/,?\s*\d+[xX×]\d+\s*cm\b/gi, "")   // z.B. "40x33cm", "40x60 cm"
+      .replace(/,?\s*\d+er\s+Set\b/gi, "")          // z.B. "5er Set"
+      .replace(/,?\s*\d+\s*Stück\b/gi, "")          // z.B. "10 Stück"
+      .replace(/,?\s*\d+\s*x\s*\d+\s*cm\b/gi, "")  // z.B. "40 x 33 cm"
+      .replace(/\s{2,}/g, " ")
+      .replace(/^[,\s]+|[,\s]+$/g, "")
+      .trim();
+  }
 
   // Wenn mehrere Varianten → KEINE Größen/Mengen im Titel
   if (variants.length === 1) {
