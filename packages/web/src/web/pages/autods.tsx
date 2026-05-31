@@ -80,15 +80,14 @@ async function fetchAmazon(url: string): Promise<{ title: string; bullets: strin
 
   // CORS-Proxies versuchen
   const proxies = [
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(amazonUrl)}`,
     `https://corsproxy.io/?${encodeURIComponent(amazonUrl)}`,
     `https://api.allorigins.win/get?url=${encodeURIComponent(amazonUrl)}`,
   ];
 
   for (const proxyUrl of proxies) {
     try {
-      const res = await fetch(proxyUrl, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
-      });
+      const res = await fetch(proxyUrl);
       if (!res.ok) continue;
 
       let html: string;
@@ -99,7 +98,11 @@ async function fetchAmazon(url: string): Promise<{ title: string; bullets: strin
         html = await res.text();
       }
 
-      if (html.includes("api-services-support@amazon.com") || html.includes("validateCaptcha")) continue;
+      if (
+        html.includes("api-services-support@amazon.com") ||
+        html.includes("validateCaptcha") ||
+        !html.includes("productTitle")
+      ) continue;
 
       const data = parseAmazonHTML(html);
       if (data.title) return data;
