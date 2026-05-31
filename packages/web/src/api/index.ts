@@ -214,7 +214,7 @@ const app = new Hono()
     const challengeCode = c.req.query('challenge_code');
     if (!challengeCode) return c.json({ error: 'challenge_code fehlt' }, 400);
 
-    const VERIFY_TOKEN = 'stele-ebay-verify-2024';
+    const VERIFY_TOKEN = 'stele-ebay-marketplace-deletion-verify-2024';
     const ENDPOINT = 'https://stele-e-transfer.onrender.com/api/ebay/deletion';
 
     // eBay erwartet SHA-256 Hash von: challengeCode + verificationToken + endpoint
