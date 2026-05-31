@@ -7,12 +7,19 @@ function stripTags(html: string): string {
 }
 
 function fixText(text: string): string {
-  // Doppelte Phrasen entfernen: "dauer backfoliedauer backfolie" → "dauer backfolie"
-  // Erkennt wenn eine Phrase (4+ Zeichen) sich direkt selbst wiederholt
-  let fixed = text.replace(/(\b\w[\wäöüÄÖÜß]{3,}(?:\s+[\wäöüÄÖÜß]+){0,5})\1/gi, "$1");
-  // Fehlende Leerzeichen nur bei echtem CamelCase (kein ALLCAPS wie SPÜLMASCHINEN)
-  // Nur wenn: kleiner Buchstabe direkt gefolgt von Großbuchstabe der KEIN Teil eines Großworts ist
-  fixed = fixed.replace(/([a-zäöüß])([A-ZÄÖÜ])(?=[a-zäöüß])/g, "$1 $2");
+  // "SpÜLmaschinen" → "Spülmaschinen": gemischte Groß/Klein-Schreibung normalisieren
+  // Erkennt: Großbuchstabe mitten in Kleinbuchstaben-Wort (z.B. SpÜL, backFOLIE)
+  let fixed = text.replace(/\b([A-ZÄÖÜa-zäöüß]+)\b/g, word => {
+    // Wenn Wort gemischte Groß/Klein-Schreibung hat die nicht CamelCase ist
+    // z.B. "SpÜLmaschinen" oder "backFOLIE" → alles lowercase außer erstem Buchstaben
+    if (/[a-zäöüß][A-ZÄÖÜ]/.test(word) && /[A-ZÄÖÜ][a-zäöüß].*[A-ZÄÖÜ]/.test(word)) {
+      return word[0].toUpperCase() + word.slice(1).toLowerCase();
+    }
+    return word;
+  });
+  // Doppelte direkt aneinanderhängende Phrasen: "dauer backfoliedauer backfolie"
+  // Suche nach: Wortfolge die sich unmittelbar wiederholt
+  fixed = fixed.replace(/(\b[\wäöüÄÖÜß][\wäöüÄÖÜß\s]{4,40}?)(\1)/gi, "$1");
   return fixed.replace(/\s{2,}/g, " ").trim();
 }
 
@@ -69,7 +76,11 @@ function parseAmazonHTML(html: string): { title: string; bullets: string[]; vari
     title,
     bullets,
     variants: [...variants]
-      .filter(v => !/^(Größe|Farbe|Menge|Stil|Modell)\s*:?\s*$/.test(v))
+      .filter(v =>
+        !/^(Größe|Farbe|Menge|Stil|Modell)\s*:?\s*$/.test(v) &&
+        // Keine reinen Dimensionen wie "40 x 33 x 0 cm"
+        !/^\d+\s*[xX×]\s*\d+\s*([xX×]\s*\d+)?\s*(cm|mm|m)?$/.test(v.trim())
+      )
       .slice(0, 20),
     description,
   };
