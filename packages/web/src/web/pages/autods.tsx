@@ -58,13 +58,18 @@ function summarizeVariants(variants: string[], maxLen = 999): string {
 
 function buildTitle(rawTitle: string, variants: string[]): string {
   let title = decodeEntities(rawTitle).replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
-  if (variants.length > 0) {
+
+  // Wenn mehrere Varianten → KEINE Größen/Mengen im Titel, nur Produktname
+  // Wenn genau eine Variante → anhängen
+  if (variants.length === 1) {
     const baseTitle = title.length > 55 ? title.slice(0, 54).replace(/[,\s]+$/, "") : title;
     const remaining = 80 - baseTitle.length - 3;
     const variantSummary = summarizeVariants(variants, Math.max(15, remaining));
     const candidate = baseTitle + ` – ${variantSummary}`;
     title = candidate.length <= 80 ? candidate : candidate.slice(0, 77) + "...";
   }
+  // Bei mehreren Varianten: Titel sauber lassen, keine Mengen/Größen anhängen
+
   if (title.length > 80) title = title.slice(0, 77) + "...";
   return title;
 }
@@ -75,9 +80,8 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
     if (variants.length === 1) {
       lines.push(`<li><strong>【Variante】</strong> Erhältlich als: ${decodeEntities(variants[0])}</li>`);
     } else {
-      const summary = summarizeVariants(variants);
       const listStr = variants.map(v => decodeEntities(v)).join(", ");
-      lines.push(`<li><strong>【Verfügbare Varianten】</strong> ${summary} – wähle die passende Größe: ${listStr}</li>`);
+      lines.push(`<li><strong>【Verfügbare Varianten】</strong> Erhältlich in folgenden Ausführungen: ${listStr}</li>`);
     }
   }
   const usableBullets = bullets
