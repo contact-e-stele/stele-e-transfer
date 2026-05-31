@@ -105,7 +105,7 @@ function extractVariants(html: string): string[] {
 
   // Methode 1: twister-plus Buttons (Größen/Mengen Auswahl)
   const twisterSection = html.match(/<div[^>]*id="twister"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/)?.[0] || 
-                         html.match(/<div[^>]*id="twister-plus-inline-twister"[^>]*>([\s\S]*?)<div[^>]*id="buybox")/)?.[1] || '';
+                         html.match(/<div[^>]*id="twister-plus-inline-twister"[^>]*>([\s\S]*?)<div[^>]*id="buybox"/)?.[1] || '';
   
   const re1 = /data-dp-url="[^"]*"[^>]*>\s*<span[^>]*class="[^"]*a-size-base[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
   let m;
