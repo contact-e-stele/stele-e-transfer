@@ -5,6 +5,32 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+const PIECE_TRANSLATIONS: Record<string, string> = {
+  // Italienisch
+  'pezzi': 'Stück', 'pezzo': 'Stück', 'pz': 'Stück',
+  // Französisch
+  'pièces': 'Stück', 'pieces': 'Stück', 'pièce': 'Stück',
+  // Spanisch
+  'piezas': 'Stück', 'pieza': 'Stück', 'unidades': 'Stück', 'unidad': 'Stück',
+  // Englisch
+  'pieces': 'Stück', 'piece': 'Stück', 'pcs': 'Stück', 'pc': 'Stück', 'units': 'Stück', 'unit': 'Stück', 'pack': 'Stück',
+  // Niederländisch
+  'stuks': 'Stück', 'stuk': 'Stück',
+  // Polnisch
+  'sztuki': 'Stück', 'sztuka': 'Stück', 'szt': 'Stück',
+};
+
+function translatePieceTerms(text: string): string {
+  // Muster: (5 pezzi), (3er Set), (10 pcs) — in Klammern oder direkt nach Zahl
+  return text.replace(/\((\d+)\s+([a-zA-ZäöüÄÖÜßàáâãèéêìíîòóôùúûñç]+)\)/gi, (match, num, word) => {
+    const lower = word.toLowerCase();
+    if (PIECE_TRANSLATIONS[lower]) {
+      return `(${num} ${PIECE_TRANSLATIONS[lower]})`;
+    }
+    return match;
+  });
+}
+
 function fixText(text: string): string {
   // "SpÜLmaschinen" → normalisiere gemischte Groß/Klein-Schreibung
   let fixed = text.replace(/\b([A-ZÄÖÜa-zäöüß]+)\b/g, word => {
@@ -17,6 +43,7 @@ function fixText(text: string): string {
   fixed = fixed.replace(/(\b[\wäöüÄÖÜß][\wäöüÄÖÜß\s]{4,40}?)(\1)/gi, '$1');
   // Mit Leerzeichen getrennte Duplikate
   fixed = fixed.replace(/\b(.{8,40})\s+\1\b/gi, '$1');
+  fixed = translatePieceTerms(fixed);
   return fixed.replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -81,6 +108,7 @@ function extractVariants(html: string): string[] {
       // Keine reinen Dimensionen wie "40 x 33 x 0 cm" oder "30x40"
       !/^\d+\s*[xX×]\s*\d+\s*([xX×]\s*\d+)?\s*(cm|mm|m)?$/.test(v.trim())
     )
+    .map(v => translatePieceTerms(v))
     .slice(0, 20);
 }
 
