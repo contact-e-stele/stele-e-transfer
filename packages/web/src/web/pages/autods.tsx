@@ -236,7 +236,17 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
   lines.push("<ul>");
 
   const usableBullets = bullets
-    .map(b => cleanText(decodeEntities(b)))
+    .map(b => {
+      let text = cleanText(decodeEntities(b));
+      // Bei mehreren Varianten: Maßangaben in Klammern entfernen (z.B. "(40*33cm)", "(30x40 cm)")
+      if (variants.length > 1) {
+        text = text
+          .replace(/\(\d+\s*[*xX×]\s*\d+\s*(cm|mm)?\)/gi, "")
+          .replace(/\s{2,}/g, " ")
+          .trim();
+      }
+      return text;
+    })
     .filter(b => b.length > 15 && !b.toLowerCase().includes("sicherstellen") && !b.toLowerCase().includes("melden sie"));
   for (const bullet of usableBullets.slice(0, 8)) {
     // Wenn Bullet schon mit 【...】 beginnt, kein extra Keyword hinzufügen
