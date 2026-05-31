@@ -207,6 +207,28 @@ const app = new Hono()
     const data = await scrapeAmazon(url);
     if (!data) return c.json({ error: 'Amazon-Seite konnte nicht geladen werden. Bitte direkte Produkt-URL verwenden (amazon.de/dp/ASIN).' }, 503);
     return c.json(data, 200);
+  })
+  // eBay Marketplace Account Deletion Notification Endpoint
+  // Docs: https://developer.ebay.com/marketplace-account-deletion
+  .get('/ebay/deletion', async (c) => {
+    const challengeCode = c.req.query('challenge_code');
+    if (!challengeCode) return c.json({ error: 'challenge_code fehlt' }, 400);
+
+    const VERIFY_TOKEN = 'stele-ebay-verify-2024';
+    const ENDPOINT = 'https://stele-e-transfer.onrender.com/api/ebay/deletion';
+
+    // eBay erwartet SHA-256 Hash von: challengeCode + verificationToken + endpoint
+    const crypto = await import('crypto');
+    const hash = crypto.createHash('sha256')
+      .update(challengeCode + VERIFY_TOKEN + ENDPOINT)
+      .digest('hex');
+
+    return c.json({ challengeResponse: hash }, 200);
+  })
+  .post('/ebay/deletion', async (c) => {
+    // Eingehende Löschbenachrichtigungen — einfach 200 zurückgeben
+    console.log('eBay deletion notification received');
+    return c.json({ acknowledged: true }, 200);
   });
 
 export type AppType = typeof app;
