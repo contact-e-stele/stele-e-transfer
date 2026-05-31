@@ -76,13 +76,23 @@ function extractText(html: string, pattern: RegExp): string {
   return m ? stripTags(m[1]) : '';
 }
 
+function fixConcatenatedText(text: string): string {
+  // Fehlende Leerzeichen einfügen: "backfoliedauer" → "backfolie dauer"
+  // Erkennt: kleinbuchstabe direkt gefolgt von Großbuchstabe
+  let fixed = text.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, '$1 $2');
+  // Doppelte Phrasen entfernen (gleicher Text zweimal hintereinander)
+  fixed = fixed.replace(/^(.{5,60}?)\s+\1(\s|,|\.)/gi, '$1$2');
+  fixed = fixed.replace(/\s{2,}/g, ' ').trim();
+  return fixed;
+}
+
 function extractBullets(html: string): string[] {
   const section = html.match(/<div[^>]*id="feature-bullets"[^>]*>([\s\S]*?)<\/div>/)?.[1] || '';
   const items: string[] = [];
   const re = /<li[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>\s*<\/li>/g;
   let m;
   while ((m = re.exec(section)) !== null) {
-    const text = stripTags(m[1]).trim();
+    const text = fixConcatenatedText(stripTags(m[1]).trim());
     if (text.length > 10 && !text.includes('Make sure') && !text.includes('Stellen Sie sicher')) {
       items.push(text);
     }
@@ -93,23 +103,47 @@ function extractBullets(html: string): string[] {
 function extractVariants(html: string): string[] {
   const variants = new Set<string>();
 
-  // data-value attributes
-  const re1 = /data-value="([^"]{1,60})"/g;
+  // Methode 1: twister-plus Buttons (Größen/Mengen Auswahl)
+  const twisterSection = html.match(/<div[^>]*id="twister"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/)?.[0] || 
+                         html.match(/<div[^>]*id="twister-plus-inline-twister"[^>]*>([\s\S]*?)<div[^>]*id="buybox")/)?.[1] || '';
+  
+  const re1 = /data-dp-url="[^"]*"[^>]*>\s*<span[^>]*class="[^"]*a-size-base[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
   let m;
-  while ((m = re1.exec(html)) !== null) {
-    const v = m[1].trim();
-    if (v && !v.startsWith('search-') && v !== 'search-alias=aps') variants.add(v);
+  while ((m = re1.exec(twisterSection || html)) !== null) {
+    const v = stripTags(m[1]).trim();
+    if (v.length > 0 && v.length < 60) variants.add(v);
   }
 
-  // twister selections
-  const re2 = /class="selection"[^>]*>([\s\S]*?)<\/span>/g;
+  // Methode 2: inline-twister-dim-title (Variantenbezeichnungen wie "5er Set", "8er Set")
+  const re2 = /"inline-twister-dim-title-[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
   while ((m = re2.exec(html)) !== null) {
+    const v = stripTags(m[1]).trim();
+    if (v.length > 0 && v.length < 60) variants.add(v);
+  }
+
+  // Methode 3: class="selection" spans (aktuelle Auswahl)
+  const re3 = /class="[^"]*selection[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
+  while ((m = re3.exec(html)) !== null) {
     const v = stripTags(m[1]).trim();
     if (v.length > 1 && v.length < 60) variants.add(v);
   }
 
+  // Methode 4: data-value direkt auf Buttons im twister
+  const re4 = /<li[^>]*data-value="([^"]{1,60})"[^>]*>/g;
+  while ((m = re4.exec(html)) !== null) {
+    const v = m[1].trim();
+    if (v.length > 0) variants.add(v);
+  }
+
   return [...variants]
-    .filter(v => !v.includes('€') && !v.includes('Option von') && !/^[←→\d]+$/.test(v))
+    .filter(v =>
+      !v.includes('€') &&
+      !v.includes('Option von') &&
+      !v.startsWith('search-') &&
+      !v.includes('amazon') &&
+      !/^[←→\d\s]+$/.test(v) &&
+      v !== 'search-alias=aps'
+    )
     .slice(0, 20);
 }
 
