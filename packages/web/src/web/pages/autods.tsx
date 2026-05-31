@@ -27,9 +27,10 @@ function cleanText(text: string): string {
     .replace(/[€$]\s*[\d,.]+/g, "")
     .replace(/[\d,.]+\s*[€$]/g, "")
     .replace(/\d+[\s%]\s*Rabatt/gi, "")
-    // doppelte Wörter/Phrasen entfernen (z.B. "dauer backfoliedauer backfolie")
-    .replace(/(\b\w{4,}\b)(\w*\s+\1\b)/gi, "$1")
-    .replace(/([a-zäöü]{4,})([A-ZÄÖÜ][a-zäöü])/g, "$1 $2") // fehlende Leerzeichen
+    // fehlende Leerzeichen zwischen Wörtern einfügen (z.B. "backfoliedauer" → "backfolie Dauer")
+    .replace(/([a-zäöüß]{4,})([A-ZÄÖÜ])/g, "$1 $2")
+    // doppelte aufeinanderfolgende Phrasen entfernen (z.B. "dauer backfolie dauer backfolie")
+    .replace(/\b(.{10,40}?)\s+\1\b/gi, "$1")
     .trim();
 }
 
