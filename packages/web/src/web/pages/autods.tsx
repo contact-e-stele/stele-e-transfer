@@ -212,15 +212,18 @@ function buildTitle(rawTitle: string, variants: string[]): string {
 }
 
 function buildHTML(rawTitle: string, bullets: string[], variants: string[], description: string): string {
-  const lines: string[] = ["<ul>"];
-  if (variants.length > 0) {
-    if (variants.length === 1) {
-      lines.push(`<li><strong>【Variante】</strong> Erhältlich als: ${decodeEntities(variants[0])}</li>`);
-    } else {
-      const listStr = variants.map(v => decodeEntities(v)).join(", ");
-      lines.push(`<li><strong>【Verfügbare Varianten】</strong> Erhältlich in folgenden Ausführungen: ${listStr}</li>`);
-    }
+  const lines: string[] = [];
+
+  // Varianten ganz oben als eigener Absatz
+  if (variants.length > 1) {
+    const listStr = variants.map(v => decodeEntities(v)).join(" | ");
+    lines.push(`<p><strong>Verfügbare Ausführungen:</strong> ${listStr}</p>`);
+  } else if (variants.length === 1) {
+    lines.push(`<p><strong>Ausführung:</strong> ${decodeEntities(variants[0])}</p>`);
   }
+
+  lines.push("<ul>");
+
   const usableBullets = bullets
     .map(b => cleanText(decodeEntities(b)))
     .filter(b => b.length > 15 && !b.toLowerCase().includes("sicherstellen") && !b.toLowerCase().includes("melden sie"));
