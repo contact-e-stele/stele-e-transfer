@@ -31,7 +31,7 @@ function TabNav() {
 
   const tabs = [
     { path: "/", label: "💰 Preise" },
-    { path: "/autods", label: "📝 AutoDS" },
+    { path: "/autods", label: "📝 Beschreibung" },
     { path: "/dashboard", label: "📦 Produkte" },
   ];
 
