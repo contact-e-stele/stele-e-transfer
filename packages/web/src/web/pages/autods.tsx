@@ -1,9 +1,26 @@
 import { useState } from "react";
-import { hc } from "hono/client";
-import type { AppType } from "../../api/index";
-import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw, ShoppingCart } from "lucide-react";
+import { FileText, Search, Copy, Check, Loader, AlertCircle, RefreshCw, ShoppingCart, Package, Star, ChevronLeft } from "lucide-react";
 
-const client = hc<AppType>("/");
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface AliProduct {
+  productId: string;
+  title: string;
+  price: string;
+  imageUrl: string;
+  productUrl: string;
+  shipFrom: string;
+  orders: number;
+  rating: string;
+}
+
+interface ProductDetail {
+  title: string;
+  description: string;
+  images: string[];
+  price: string;
+  variants: string[];
+  shipFrom: string;
+}
 
 // ─── Text helpers ─────────────────────────────────────────────────────────────
 function decodeEntities(str: string): string {
@@ -21,12 +38,6 @@ function decodeEntities(str: string): string {
 
 function cleanText(text: string): string {
   return text
-    .replace(/\d+[\s,.]?\d*\s*Sterne[n]?/gi, "")
-    .replace(/\d+[\s,.]?\d*\s*Bewertung[en]*/gi, "")
-    .replace(/ASIN[:\s]+[A-Z0-9]+/gi, "")
-    .replace(/[€$]\s*[\d,.]+/g, "")
-    .replace(/[\d,.]+\s*[€$]/g, "")
-    .replace(/\d+[\s%]\s*Rabatt/gi, "")
     .replace(/([a-zäöüß]{4,})([A-ZÄÖÜ])/g, "$1 $2")
     .replace(/\b(.{10,40}?)\s+\1\b/gi, "$1")
     .trim();
@@ -38,56 +49,12 @@ function extractKeyword(text: string): string {
   return meaningful.join(" ") || words[0] || "Merkmal";
 }
 
-function summarizeVariants(variants: string[], maxLen = 999): string {
-  if (variants.length === 0) return "";
-  if (variants.length === 1) return variants[0].slice(0, maxLen);
-  const numPattern = /^(\d+)\s+(.+)$/;
-  const numbered = variants.map(v => {
-    const m = v.match(numPattern);
-    return m ? { num: parseInt(m[1]), label: m[2].trim() } : null;
-  });
-  if (numbered.every(Boolean)) {
-    const labels = [...new Set(numbered.map(n => n!.label))];
-    if (labels.length === 1) {
-      const nums = numbered.map(n => n!.num).sort((a, b) => a - b);
-      const s = nums.length <= 4 ? `${nums.join("/")} ${labels[0]}` : `${nums[0]}–${nums[nums.length - 1]} ${labels[0]}`;
-      return s.slice(0, maxLen);
-    }
-  }
-  if (variants.length <= 3) return variants.join(", ").slice(0, maxLen);
-  return `${variants.slice(0, 2).join(", ")} +${variants.length - 2} Varianten`.slice(0, maxLen);
-}
-
 function buildTitle(rawTitle: string, variants: string[]): string {
   let title = decodeEntities(rawTitle).replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
-
-  // Marke am Anfang entfernen
-  title = title
-    .replace(/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß&.\-]{1,30}\s+/, "")
-    .replace(/^[A-ZÄÖÜ]{2,}\s+/, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-
-  // Größen/Maße/Mengen entfernen wenn mehrere Varianten
+  title = title.replace(/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß&.\-]{1,30}\s+/, "").replace(/^[A-ZÄÖÜ]{2,}\s+/, "").trim();
   if (variants.length > 1) {
-    title = title
-      .replace(/,?\s*\d+[xX×]\d+\s*cm\b/gi, "")
-      .replace(/,?\s*\d+er\s+Set\b/gi, "")
-      .replace(/,?\s*\d+\s*Stück\b/gi, "")
-      .replace(/,?\s*\d+\s*x\s*\d+\s*cm\b/gi, "")
-      .replace(/\s{2,}/g, " ")
-      .replace(/^[,\s]+|[,\s]+$/g, "")
-      .trim();
+    title = title.replace(/,?\s*\d+[xX×]\d+\s*cm\b/gi, "").replace(/,?\s*\d+er\s+Set\b/gi, "").trim();
   }
-
-  if (variants.length === 1) {
-    const baseTitle = title.length > 55 ? title.slice(0, 54).replace(/[,\s]+$/, "") : title;
-    const remaining = 80 - baseTitle.length - 3;
-    const variantSummary = summarizeVariants(variants, Math.max(15, remaining));
-    const candidate = baseTitle + ` – ${variantSummary}`;
-    title = candidate.length <= 80 ? candidate : candidate.slice(0, 77) + "...";
-  }
-
   if (title.length > 80) title = title.slice(0, 77) + "...";
   return title;
 }
@@ -95,7 +62,6 @@ function buildTitle(rawTitle: string, variants: string[]): string {
 function buildHTML(rawTitle: string, bullets: string[], variants: string[], description: string): string {
   const lines: string[] = [];
 
-  // Varianten ganz oben
   if (variants.length > 1) {
     const listStr = variants.map(v => decodeEntities(v)).join(" | ");
     lines.push(`<p><strong>Verfügbare Ausführungen:</strong> ${listStr}</p>`);
@@ -103,113 +69,135 @@ function buildHTML(rawTitle: string, bullets: string[], variants: string[], desc
     lines.push(`<p><strong>Ausführung:</strong> ${decodeEntities(variants[0])}</p>`);
   }
 
-  lines.push("<ul>");
-
-  const usableBullets = bullets
-    .map(b => {
-      let text = cleanText(decodeEntities(b));
-      // Bei mehreren Varianten: Maßangaben entfernen
-      if (variants.length > 1) {
-        text = text
-          .replace(/\(\d+\s*[*xX×]\s*\d+\s*(cm|mm)?\)/gi, "")
-          .replace(/\s{2,}/g, " ")
-          .trim();
+  if (bullets.length > 0) {
+    lines.push("<ul>");
+    for (const bullet of bullets.slice(0, 8)) {
+      const text = cleanText(decodeEntities(bullet));
+      if (text.length > 10) {
+        lines.push(`<li><strong>【${extractKeyword(text)}】</strong> ${text}</li>`);
       }
-      return text;
-    })
-    .filter(b => b.length > 15 && !b.toLowerCase().includes("sicherstellen") && !b.toLowerCase().includes("melden sie"));
-
-  for (const bullet of usableBullets.slice(0, 8)) {
-    // Wenn Bullet schon mit 【...】 beginnt, kein extra Keyword
-    if (/^【/.test(bullet)) {
-      lines.push(`<li><strong>${bullet.match(/^(【[^】]*】)/)?.[1] ?? ""}</strong> ${bullet.replace(/^【[^】]*】\s*/, "")}</li>`);
-    } else {
-      lines.push(`<li><strong>【${extractKeyword(bullet)}】</strong> ${bullet}</li>`);
     }
+    lines.push("</ul>");
   }
-  lines.push("</ul>");
 
   if (description && description.length > 20) {
     const cleaned = cleanText(decodeEntities(description));
-    const paras = cleaned.split(/\n{2,}|(?<=\.)\s+(?=[A-ZÄÖÜ])/);
-    for (const para of paras) {
+    const paras = cleaned.split(/\n{2,}/);
+    for (const para of paras.slice(0, 3)) {
       const p = para.trim();
       if (p.length > 20) lines.push(`<p>${p}</p>`);
     }
-  } else if (usableBullets.length === 0) {
+  } else if (bullets.length === 0) {
     lines.push(`<p>${decodeEntities(rawTitle).trim()}</p>`);
   }
 
   return lines.join("\n");
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-// ASIN aus URL extrahieren
-function extractAsin(url: string): string | null {
-  const m = url.match(/\/dp\/([A-Z0-9]{10})/i) ?? url.match(/\/gp\/product\/([A-Z0-9]{10})/i);
-  return m ? m[1].toUpperCase() : null;
+// ─── Flag helper ─────────────────────────────────────────────────────────────
+function countryFlag(code: string): string {
+  const flags: Record<string, string> = {
+    DE: "🇩🇪", AT: "🇦🇹", CH: "🇨🇭", FR: "🇫🇷",
+    NL: "🇳🇱", PL: "🇵🇱", CZ: "🇨🇿", BE: "🇧🇪", LU: "🇱🇺",
+  };
+  return flags[code?.toUpperCase()] ?? "🇪🇺";
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function AutoDS() {
-  const [url, setUrl] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState<{ title: string; html: string; asin: string | null } | null>(null);
+  const [query, setQuery] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [products, setProducts] = useState<AliProduct[]>([]);
+  const [searched, setSearched] = useState(false);
+
+  const [selectedProduct, setSelectedProduct] = useState<AliProduct | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [result, setResult] = useState<{ title: string; html: string; productId: string } | null>(null);
+
   const [copiedTitle, setCopiedTitle] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [ebayPrice, setEbayPrice] = useState("");
   const [ebayLoading, setEbayLoading] = useState(false);
   const [ebayResult, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
 
-  const handleScrape = async () => {
-    if (!url.trim()) return;
-    setLoading(true);
-    setError("");
+  // ─── Search ─────────────────────────────────────────────────────────────────
+  const handleSearch = async () => {
+    if (!query.trim()) return;
+    setSearchLoading(true);
+    setSearchError("");
+    setProducts([]);
+    setSearched(false);
+    setResult(null);
+    setSelectedProduct(null);
+
+    try {
+      const res = await fetch(`/api/aliexpress/search?q=${encodeURIComponent(query.trim())}`);
+      const data = await res.json() as { products?: AliProduct[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? `Fehler ${res.status}`);
+      setProducts(data.products ?? []);
+      setSearched(true);
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : "Netzwerkfehler");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  // ─── Select product ──────────────────────────────────────────────────────────
+  const handleSelect = async (product: AliProduct) => {
+    setSelectedProduct(product);
+    setDetailLoading(true);
     setResult(null);
     setEbayResult(null);
 
     try {
-      const res = await client.api["scrape-amazon"].$get({ query: { url: url.trim() } });
-      if (!res.ok) {
-        const err = await res.json() as { error?: string };
-        throw new Error(err.error ?? `Server-Fehler ${res.status}`);
-      }
-      const data = await res.json() as { title: string; bullets: string[]; variants: string[]; description: string };
-      if (!data.title) {
-        setError("Produkt nicht gefunden. Bitte direkte amazon.de/dp/ASIN URL verwenden.");
-        return;
-      }
-      const asin = extractAsin(url.trim());
-      const generatedTitle = buildTitle(data.title, data.variants);
-      const html = buildHTML(data.title, data.bullets, data.variants, data.description);
-      setResult({ title: generatedTitle, html, asin });
+      const res = await fetch(`/api/aliexpress/product/${product.productId}`);
+      const detail = await res.json() as ProductDetail & { error?: string };
 
-      // Produkt in DB speichern (fire & forget)
-      if (asin) {
-        fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            asin,
-            amazonUrl: url.trim(),
-            title: data.title,
-            generatedTitle,
-            htmlDescription: html,
-            bullets: data.bullets,
-            variants: data.variants,
-            description: data.description ?? "",
-          }),
-        }).catch(() => { /* DB optional, kein Fehler anzeigen */ });
+      let bullets: string[] = [];
+      let variants: string[] = detail.variants ?? [];
+      let description = detail.description ?? "";
+
+      // Beschreibung in Bullets aufteilen wenn möglich
+      if (description.length > 0) {
+        const lines = description.split(/\n|<br\s*\/?>/).map(l => l.replace(/<[^>]*>/g, "").trim()).filter(l => l.length > 15);
+        bullets = lines.slice(0, 8);
+        description = lines.slice(8).join(" ");
       }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Netzwerkfehler – bitte erneut versuchen.");
+
+      const title = buildTitle(detail.title || product.title, variants);
+      const html = buildHTML(detail.title || product.title, bullets, variants, description);
+      setResult({ title, html, productId: product.productId });
+
+      // In DB speichern
+      fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asin: product.productId,
+          amazonUrl: product.productUrl,
+          title: detail.title || product.title,
+          generatedTitle: title,
+          htmlDescription: html,
+          bullets,
+          variants,
+          description,
+        }),
+      }).catch(() => {});
+    } catch (e) {
+      // Fallback: nur mit Suchergebnis arbeiten
+      const title = buildTitle(product.title, []);
+      const html = buildHTML(product.title, [], [], "");
+      setResult({ title, html, productId: product.productId });
     } finally {
-      setLoading(false);
+      setDetailLoading(false);
     }
   };
 
+  // ─── eBay list ───────────────────────────────────────────────────────────────
   const handleEbayList = async () => {
-    if (!result || !result.asin) return;
+    if (!result) return;
     const price = parseFloat(ebayPrice.replace(",", "."));
     if (!price || price <= 0) return;
     setEbayLoading(true);
@@ -219,12 +207,12 @@ export default function AutoDS() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          asin: result.asin,
+          asin: result.productId,
           title: result.title,
           description: result.html,
           price,
           quantity: 10,
-          imageUrls: [],
+          imageUrls: selectedProduct?.imageUrl ? [selectedProduct.imageUrl] : [],
         }),
       });
       const data = await res.json() as { listingId?: string; error?: string };
@@ -236,20 +224,8 @@ export default function AutoDS() {
     }
   };
 
-  const copyTitle = () => {
-    if (!result) return;
-    navigator.clipboard.writeText(result.title);
-    setCopiedTitle(true);
-    setTimeout(() => setCopiedTitle(false), 2000);
-  };
-
-  const copyHtml = () => {
-    if (!result) return;
-    navigator.clipboard.writeText(result.html);
-    setCopiedHtml(true);
-    setTimeout(() => setCopiedHtml(false), 2000);
-  };
-
+  const copyTitle = () => { if (!result) return; navigator.clipboard.writeText(result.title); setCopiedTitle(true); setTimeout(() => setCopiedTitle(false), 2000); };
+  const copyHtml = () => { if (!result) return; navigator.clipboard.writeText(result.html); setCopiedHtml(true); setTimeout(() => setCopiedHtml(false), 2000); };
   const charCount = result ? result.title.length : 0;
   const charColor = charCount > 80 ? "#DC2626" : charCount > 70 ? "#F59E0B" : "#16a34a";
 
@@ -257,7 +233,7 @@ export default function AutoDS() {
     width: "100%", padding: "13px 16px", fontSize: 14, fontWeight: 500,
     border: "2px solid #E2E8F0", borderRadius: 12, outline: "none",
     fontFamily: "inherit", boxSizing: "border-box" as const,
-    color: "#0F172A", background: "#F8FAFC", transition: "border-color 0.2s",
+    color: "#0F172A", background: "#F8FAFC",
   };
 
   return (
@@ -265,212 +241,208 @@ export default function AutoDS() {
       <div style={{ maxWidth: 520, margin: "0 auto" }}>
 
         {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: 56, height: 56, borderRadius: 16, background: "#8B5CF6",
-            marginBottom: 12, boxShadow: "0 4px 14px rgba(139,92,246,0.35)"
+            width: 56, height: 56, borderRadius: 16, background: "#FF6B00",
+            marginBottom: 12, boxShadow: "0 4px 14px rgba(255,107,0,0.35)"
           }}>
-            <FileText size={28} color="white" />
+            <Package size={28} color="white" />
           </div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#0F172A", margin: 0 }}>AutoDS Beschreibungsgenerator</h1>
-          <p style={{ color: "#64748B", marginTop: 4, fontSize: 14 }}>stele-e-transfer</p>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: "#0F172A", margin: 0 }}>AliExpress Produktsuche</h1>
+          <p style={{ color: "#64748B", marginTop: 4, fontSize: 13 }}>Nur EU-Lager · DE AT CH FR NL PL CZ BE LU</p>
         </div>
 
-        {/* Input */}
-        <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
-          <label style={{ display: "block", fontWeight: 600, color: "#0F172A", marginBottom: 8, fontSize: 14 }}>
-            Amazon Produkt-URL
-          </label>
-          <input
-            type="url"
-            placeholder="https://www.amazon.de/dp/..."
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleScrape()}
-            style={inputStyle}
-            onFocus={e => (e.target.style.borderColor = "#8B5CF6")}
-            onBlur={e => (e.target.style.borderColor = "#E2E8F0")}
-          />
-          <button
-            onClick={handleScrape}
-            disabled={loading || !url.trim()}
-            style={{
-              width: "100%", marginTop: 12,
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              padding: "13px 0", borderRadius: 12, border: "none",
-              background: loading || !url.trim() ? "#C4B5FD" : "#8B5CF6",
-              color: "#fff", fontWeight: 700, fontSize: 15,
-              cursor: loading || !url.trim() ? "not-allowed" : "pointer",
-              fontFamily: "inherit", transition: "background 0.2s"
-            }}
-          >
-            {loading
-              ? <><Loader size={18} style={{ animation: "spin 1s linear infinite" }} /> Lädt…</>
-              : <><Search size={18} /> Beschreibung generieren</>
-            }
-          </button>
+        {/* Suche */}
+        <div style={{ background: "#fff", borderRadius: 20, padding: 20, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="text"
+              placeholder="z.B. Staubsauger, Kaffeemaschine…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSearch()}
+              style={{ ...inputStyle, flex: 1 }}
+            />
+            <button
+              onClick={handleSearch}
+              disabled={searchLoading || !query.trim()}
+              style={{
+                padding: "13px 18px", borderRadius: 12, border: "none",
+                background: searchLoading || !query.trim() ? "#FDD0A8" : "#FF6B00",
+                color: "#fff", fontWeight: 700, fontSize: 14,
+                cursor: searchLoading || !query.trim() ? "not-allowed" : "pointer",
+                fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6,
+                whiteSpace: "nowrap" as const,
+              }}
+            >
+              {searchLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}
+              {searchLoading ? "" : "Suchen"}
+            </button>
+          </div>
         </div>
 
-        {/* Error */}
-        {error && (
-          <div style={{
-            background: "#FEF2F2", border: "1.5px solid #FECACA", borderRadius: 14,
-            padding: "14px 18px", marginBottom: 16,
-            display: "flex", alignItems: "flex-start", gap: 10
-          }}>
-            <AlertCircle size={18} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>
-              <p style={{ margin: 0, fontWeight: 600, color: "#DC2626", fontSize: 14 }}>Fehler</p>
-              <p style={{ margin: "4px 0 0", color: "#7F1D1D", fontSize: 13 }}>{error}</p>
-              <p style={{ margin: "6px 0 0", color: "#991B1B", fontSize: 12, fontWeight: 600 }}>
-                💡 Tipp: Direkte URL → <span style={{ fontFamily: "monospace", background: "#FEE2E2", padding: "1px 5px", borderRadius: 4 }}>amazon.de/dp/ASIN</span>
-              </p>
-            </div>
+        {/* Search Error */}
+        {searchError && (
+          <div style={{ background: "#FEF2F2", border: "1.5px solid #FECACA", borderRadius: 14, padding: "14px 18px", marginBottom: 16, display: "flex", gap: 10 }}>
+            <AlertCircle size={18} color="#DC2626" style={{ flexShrink: 0 }} />
+            <p style={{ margin: 0, color: "#DC2626", fontSize: 13, fontWeight: 600 }}>{searchError}</p>
+          </div>
+        )}
+
+        {/* Produktliste */}
+        {searched && !result && (
+          <>
+            {products.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "40px 0", color: "#94A3B8" }}>
+                <Package size={40} style={{ opacity: 0.3 }} />
+                <p style={{ marginTop: 12, fontWeight: 600 }}>Keine EU-Lager Produkte gefunden</p>
+                <p style={{ fontSize: 13 }}>Versuche einen anderen Suchbegriff</p>
+              </div>
+            ) : (
+              <>
+                <p style={{ fontSize: 13, color: "#64748B", marginBottom: 12, fontWeight: 600 }}>
+                  {products.length} Produkte gefunden — Produkt auswählen:
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {products.map(p => (
+                    <button
+                      key={p.productId}
+                      onClick={() => handleSelect(p)}
+                      style={{
+                        background: "#fff", borderRadius: 16, padding: 14,
+                        border: "2px solid #E2E8F0", cursor: "pointer",
+                        display: "flex", gap: 12, alignItems: "flex-start",
+                        textAlign: "left", fontFamily: "inherit",
+                        transition: "border-color 0.2s, box-shadow 0.2s",
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#FF6B00"; (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 12px rgba(255,107,0,0.12)"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#E2E8F0"; (e.currentTarget as HTMLButtonElement).style.boxShadow = "none"; }}
+                    >
+                      {p.imageUrl && (
+                        <img src={p.imageUrl} alt="" style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 600, color: "#0F172A", lineHeight: 1.4,
+                          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden" }}>
+                          {p.title}
+                        </p>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center" }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: "#FF6B00" }}>{p.price} €</span>
+                          <span style={{ fontSize: 12, color: "#64748B" }}>{countryFlag(p.shipFrom)} {p.shipFrom}</span>
+                          {p.orders > 0 && <span style={{ fontSize: 11, color: "#94A3B8" }}>{p.orders} Bestellungen</span>}
+                          {p.rating && <span style={{ fontSize: 11, color: "#F59E0B", display: "flex", alignItems: "center", gap: 2 }}><Star size={10} />{p.rating}</span>}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* Detail Loading */}
+        {detailLoading && (
+          <div style={{ textAlign: "center", padding: "32px 0" }}>
+            <Loader size={32} color="#FF6B00" style={{ animation: "spin 1s linear infinite" }} />
+            <p style={{ marginTop: 12, color: "#64748B", fontSize: 14 }}>Produktdetails werden geladen…</p>
           </div>
         )}
 
         {/* Results */}
-        {result && (
+        {result && selectedProduct && (
           <>
-            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Titel</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: charColor }}>{charCount}/80 Zeichen</span>
+            {/* Zurück-Button */}
+            <button
+              onClick={() => { setResult(null); setSelectedProduct(null); setEbayResult(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                background: "none", border: "none", color: "#64748B",
+                fontSize: 13, fontWeight: 600, cursor: "pointer",
+                fontFamily: "inherit", marginBottom: 14, padding: 0,
+              }}
+            >
+              <ChevronLeft size={16} /> Zurück zur Suche
+            </button>
+
+            {/* Produkt-Info */}
+            <div style={{ background: "#fff", borderRadius: 16, padding: 16, boxShadow: "0 2px 10px rgba(0,0,0,0.06)", marginBottom: 14, display: "flex", gap: 12 }}>
+              {selectedProduct.imageUrl && (
+                <img src={selectedProduct.imageUrl} alt="" style={{ width: 72, height: 72, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+              )}
+              <div>
+                <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, color: "#0F172A", lineHeight: 1.4 }}>{selectedProduct.title.slice(0, 100)}{selectedProduct.title.length > 100 ? "…" : ""}</p>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#FF6B00" }}>{selectedProduct.price} € · {countryFlag(selectedProduct.shipFrom)} {selectedProduct.shipFrom}</p>
               </div>
-              <div style={{
-                background: "#F8FAFC", borderRadius: 12, padding: "14px 16px",
-                fontSize: 14, color: "#0F172A", lineHeight: 1.6,
-                border: "1.5px solid #E2E8F0", marginBottom: 12,
-                fontWeight: 500, wordBreak: "break-word"
-              }}>
+            </div>
+
+            {/* Titel */}
+            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Titel</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: charColor }}>{charCount}/80</span>
+              </div>
+              <div style={{ background: "#F8FAFC", borderRadius: 10, padding: "12px 14px", fontSize: 14, color: "#0F172A", border: "1.5px solid #E2E8F0", marginBottom: 10, fontWeight: 500, lineHeight: 1.5 }}>
                 {result.title}
               </div>
-              <button onClick={copyTitle} style={{
-                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                padding: "11px 0", borderRadius: 10, border: "none",
-                background: copiedTitle ? "#22C55E" : "#8B5CF6",
-                color: "#fff", fontWeight: 700, fontSize: 14,
-                cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s"
-              }}>
+              <button onClick={copyTitle} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 0", borderRadius: 10, border: "none", background: copiedTitle ? "#22C55E" : "#FF6B00", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
                 {copiedTitle ? <Check size={16} /> : <Copy size={16} />}
                 {copiedTitle ? "Kopiert!" : "Titel kopieren"}
               </button>
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            {/* HTML */}
+            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>HTML Beschreibung</span>
                 <span style={{ fontSize: 11, color: "#94A3B8", background: "#F1F5F9", padding: "3px 8px", borderRadius: 6, fontWeight: 600 }}>AutoDS-Format</span>
               </div>
-              <div style={{
-                background: "#0F172A", borderRadius: 12, padding: "16px",
-                fontSize: 12, color: "#94A3B8", lineHeight: 1.7,
-                fontFamily: "monospace", marginBottom: 12,
-                overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
-                maxHeight: 360, overflowY: "auto"
-              }}>
+              <div style={{ background: "#0F172A", borderRadius: 12, padding: 16, fontSize: 12, color: "#94A3B8", fontFamily: "monospace", marginBottom: 10, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflowY: "auto" }}>
                 {result.html}
               </div>
-              <button onClick={copyHtml} style={{
-                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                padding: "11px 0", borderRadius: 10, border: "none",
-                background: copiedHtml ? "#22C55E" : "#0F172A",
-                color: "#fff", fontWeight: 700, fontSize: 14,
-                cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s"
-              }}>
+              <button onClick={copyHtml} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 0", borderRadius: 10, border: "none", background: copiedHtml ? "#22C55E" : "#0F172A", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
                 {copiedHtml ? <Check size={16} /> : <Copy size={16} />}
                 {copiedHtml ? "Kopiert!" : "HTML kopieren"}
               </button>
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            {/* Vorschau */}
+            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Vorschau</span>
-                <button onClick={handleScrape} style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  background: "#F1F5F9", border: "none", borderRadius: 8,
-                  padding: "6px 12px", fontSize: 12, fontWeight: 600,
-                  color: "#475569", cursor: "pointer", fontFamily: "inherit"
-                }}>
+                <button onClick={() => handleSelect(selectedProduct)} style={{ display: "flex", alignItems: "center", gap: 6, background: "#F1F5F9", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, color: "#475569", cursor: "pointer", fontFamily: "inherit" }}>
                   <RefreshCw size={12} /> Neu laden
                 </button>
               </div>
-              <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8 }}
-                dangerouslySetInnerHTML={{ __html: result.html }} />
+              <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8 }} dangerouslySetInnerHTML={{ __html: result.html }} />
             </div>
 
-            {/* eBay Listen */}
+            {/* eBay */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
                 <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFD700", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <ShoppingCart size={18} color="#0F172A" />
                 </div>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Auf eBay listen</span>
-                {result.asin && (
-                  <span style={{ fontSize: 11, color: "#64748B", background: "#F1F5F9", padding: "2px 8px", borderRadius: 6, fontFamily: "monospace" }}>
-                    {result.asin}
-                  </span>
-                )}
               </div>
-
-              {!result.asin && (
-                <p style={{ color: "#F59E0B", fontSize: 13, margin: "0 0 12px" }}>⚠️ Keine ASIN in URL erkannt — direkte amazon.de/dp/ASIN URL verwenden</p>
-              )}
-
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#64748B", marginBottom: 4 }}>Verkaufspreis (€)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    placeholder="19.99"
-                    value={ebayPrice}
-                    onChange={e => setEbayPrice(e.target.value)}
-                    style={{
-                      width: "100%", padding: "11px 14px", fontSize: 15, fontWeight: 600,
-                      border: "2px solid #E2E8F0", borderRadius: 10, outline: "none",
-                      fontFamily: "inherit", boxSizing: "border-box" as const, color: "#0F172A",
-                    }}
-                  />
+                  <input type="number" step="0.01" min="0.01" placeholder="19.99" value={ebayPrice} onChange={e => setEbayPrice(e.target.value)}
+                    style={{ width: "100%", padding: "11px 14px", fontSize: 15, fontWeight: 600, border: "2px solid #E2E8F0", borderRadius: 10, outline: "none", fontFamily: "inherit", boxSizing: "border-box" as const, color: "#0F172A" }} />
                 </div>
-                <div style={{ paddingTop: 20 }}>
-                  <button
-                    onClick={handleEbayList}
-                    disabled={ebayLoading || !result.asin || !ebayPrice}
-                    style={{
-                      padding: "11px 20px", borderRadius: 10, border: "none",
-                      background: ebayLoading || !result.asin || !ebayPrice ? "#FDE68A" : "#FFD700",
-                      color: "#0F172A", fontWeight: 700, fontSize: 14,
-                      cursor: ebayLoading || !result.asin || !ebayPrice ? "not-allowed" : "pointer",
-                      fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8,
-                      whiteSpace: "nowrap" as const,
-                    }}
-                  >
-                    {ebayLoading
-                      ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Wird gelistet…</>
-                      : <><ShoppingCart size={16} /> Jetzt listen</>
-                    }
-                  </button>
-                </div>
+                <button onClick={handleEbayList} disabled={ebayLoading || !ebayPrice}
+                  style={{ padding: "11px 20px", borderRadius: 10, border: "none", background: ebayLoading || !ebayPrice ? "#FDE68A" : "#FFD700", color: "#0F172A", fontWeight: 700, fontSize: 14, cursor: ebayLoading || !ebayPrice ? "not-allowed" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" as const }}>
+                  {ebayLoading ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Lädt…</> : <><ShoppingCart size={16} /> Listen</>}
+                </button>
               </div>
-
               {ebayResult && (
-                <div style={{
-                  marginTop: 14, padding: "12px 16px", borderRadius: 10,
-                  background: ebayResult.listingId ? "#F0FDF4" : "#FEF2F2",
-                  border: `1.5px solid ${ebayResult.listingId ? "#BBF7D0" : "#FECACA"}`,
-                }}>
-                  {ebayResult.listingId ? (
-                    <p style={{ margin: 0, color: "#15803D", fontWeight: 600, fontSize: 13 }}>
-                      ✓ Erfolgreich gelistet! Listing-ID: <span style={{ fontFamily: "monospace" }}>{ebayResult.listingId}</span>
-                    </p>
-                  ) : (
-                    <p style={{ margin: 0, color: "#DC2626", fontWeight: 600, fontSize: 13 }}>
-                      ✗ Fehler: {ebayResult.error}
-                    </p>
-                  )}
+                <div style={{ marginTop: 14, padding: "12px 16px", borderRadius: 10, background: ebayResult.listingId ? "#F0FDF4" : "#FEF2F2", border: `1.5px solid ${ebayResult.listingId ? "#BBF7D0" : "#FECACA"}` }}>
+                  {ebayResult.listingId
+                    ? <p style={{ margin: 0, color: "#15803D", fontWeight: 600, fontSize: 13 }}>✓ Gelistet! ID: <span style={{ fontFamily: "monospace" }}>{ebayResult.listingId}</span></p>
+                    : <p style={{ margin: 0, color: "#DC2626", fontWeight: 600, fontSize: 13 }}>✗ Fehler: {ebayResult.error}</p>
+                  }
                 </div>
               )}
             </div>
@@ -478,7 +450,7 @@ export default function AutoDS() {
         )}
 
         <p style={{ textAlign: "center", color: "#CBD5E1", fontSize: 12, marginTop: 24, marginBottom: 8 }}>
-          AutoDS Beschreibungsgenerator · stele-e-transfer
+          Stele E-Transfer · AliExpress EU-Lager
         </p>
       </div>
     </div>
