@@ -391,7 +391,7 @@ const app = new Hono()
 
       return c.json({ error: msg }, 500);
     }
-  });
+  })
 
   // ─── AliExpress ──────────────────────────────────────────────────────────────
   .get('/aliexpress/search', async (c) => {
