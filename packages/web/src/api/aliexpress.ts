@@ -1,6 +1,9 @@
 // AliExpress URL Scraper — JSON-LD based, no API key needed
+// Uses ScraperAPI (free tier) to bypass AliExpress bot-detection
 
-const HEADERS = {
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '';
+
+const DIRECT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
   'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -11,8 +14,7 @@ const HEADERS = {
   'Sec-Fetch-Mode': 'navigate',
   'Sec-Fetch-Site': 'none',
   'Upgrade-Insecure-Requests': '1',
-  // Force global site with EUR prices
-  'Cookie': 'aep_usuc_f=site=glo&c_tp=EUR&region=DE&b_locale=de_DE; xman_t=test; acs_usuc_t=x_csrf=test',
+  'Cookie': 'aep_usuc_f=site=glo&c_tp=EUR&region=DE&b_locale=de_DE',
 };
 
 export interface ScrapedProduct {
@@ -102,6 +104,58 @@ function extractSpecs(html: string): Record<string, string> {
   return specs;
 }
 
+async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
+  // Attempt 1: Direct fetch (may work on some IPs)
+  try {
+    const res = await fetch(targetUrl, { headers: DIRECT_HEADERS, redirect: 'follow' });
+    if (res.ok) {
+      const html = await res.text();
+      // Detect bot wall: empty runParams + no product content
+      if (html.length > 5000 && (html.includes('og:title') || html.includes('application/ld+json') || html.includes('productTitle'))) {
+        console.log(`[AliExpress] Direct fetch OK (${html.length} chars)`);
+        return html;
+      }
+      console.log(`[AliExpress] Direct fetch got shell page, trying proxy...`);
+    }
+  } catch (e) {
+    console.log(`[AliExpress] Direct fetch failed:`, e);
+  }
+
+  // Attempt 2: ScraperAPI (if key configured)
+  if (SCRAPER_API_KEY) {
+    try {
+      const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(targetUrl)}&render=false&country_code=de`;
+      const res = await fetch(scraperUrl, { signal: AbortSignal.timeout(30000) });
+      if (res.ok) {
+        const html = await res.text();
+        if (html.length > 5000) {
+          console.log(`[AliExpress] ScraperAPI OK (${html.length} chars)`);
+          return html;
+        }
+      }
+    } catch (e) {
+      console.log(`[AliExpress] ScraperAPI failed:`, e);
+    }
+  }
+
+  // Attempt 3: allorigins.win (free CORS proxy, no key needed)
+  try {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(20000) });
+    if (res.ok) {
+      const html = await res.text();
+      if (html.length > 5000) {
+        console.log(`[AliExpress] allorigins proxy OK (${html.length} chars)`);
+        return html;
+      }
+    }
+  } catch (e) {
+    console.log(`[AliExpress] allorigins failed:`, e);
+  }
+
+  return null;
+}
+
 export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
   // Normalize URL — force www.aliexpress.com global
   let fetchUrl = url;
@@ -114,21 +168,11 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
     fetchUrl = u.toString();
   } catch { /* keep original */ }
 
-  console.log(`[AliExpress] Fetching: ${fetchUrl}`);
+  console.log(`[AliExpress] Starting scrape: ${fetchUrl}`);
 
-  let html = '';
-  try {
-    const res = await fetch(fetchUrl, { headers: HEADERS, redirect: 'follow' });
-    console.log(`[AliExpress] Status: ${res.status} | URL: ${res.url}`);
-    if (!res.ok) return null;
-    html = await res.text();
-  } catch (e) {
-    console.error('[AliExpress] Fetch error:', e);
-    return null;
-  }
-
-  if (html.length < 1000) {
-    console.log('[AliExpress] Response too short, likely blocked');
+  const html = await fetchWithFallbacks(fetchUrl);
+  if (!html) {
+    console.log('[AliExpress] All fetch attempts failed');
     return null;
   }
 

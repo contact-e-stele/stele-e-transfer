@@ -90,6 +90,12 @@ export default function AutoDS() {
   const [urlInput, setUrlInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState<"url" | "manual">("url");
+
+  // Manual mode
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualDesc, setManualDesc] = useState("");
+  const [manualPrice, setManualPrice] = useState("");
 
   const [product, setProduct] = useState<ScrapedProduct | null>(null);
   const [result, setResult] = useState<{ title: string; html: string } | null>(null);
@@ -100,6 +106,22 @@ export default function AutoDS() {
   const [ebayPrice, setEbayPrice] = useState("");
   const [ebayLoading, setEbayLoading] = useState(false);
   const [ebayResult, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
+
+  // ─── Manual mode ─────────────────────────────────────────────────────────────
+  const handleManual = () => {
+    if (!manualTitle.trim()) return;
+    const fakeProduct: ScrapedProduct = {
+      title: manualTitle.trim(),
+      images: [],
+      price: manualPrice.trim(),
+      description: manualDesc.trim(),
+      specs: {},
+    };
+    setProduct(fakeProduct);
+    const title = buildTitle(fakeProduct.title);
+    const html = buildHTML(fakeProduct);
+    setResult({ title, html });
+  };
 
   // ─── Scrape ──────────────────────────────────────────────────────────────────
   const handleScrape = async () => {
@@ -217,7 +239,23 @@ export default function AutoDS() {
           <p style={{ color: "#64748B", marginTop: 4, fontSize: 13 }}>URL eingeben → Titel + HTML-Beschreibung generieren</p>
         </div>
 
+        {/* Mode Tabs */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {(["url", "manual"] as const).map(m => (
+            <button key={m} onClick={() => setMode(m)} style={{
+              flex: 1, padding: "10px 0", borderRadius: 12, border: "none",
+              background: mode === m ? "#FF6B00" : "#fff",
+              color: mode === m ? "#fff" : "#64748B",
+              fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+            }}>
+              {m === "url" ? "🔗 URL Scraper" : "✏️ Manuell"}
+            </button>
+          ))}
+        </div>
+
         {/* URL Input */}
+        {mode === "url" && (
         <div style={{ background: "#fff", borderRadius: 20, padding: 20, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#64748B", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
             AliExpress Produkt-URL
@@ -256,6 +294,65 @@ export default function AutoDS() {
             Tipp: Nur EU-Lager-Produkte (DE/AT/CH etc.) für AutoDS verwenden
           </p>
         </div>
+        )}
+
+        {/* Manual Input */}
+        {mode === "manual" && !result && (
+        <div style={{ background: "#fff", borderRadius: 20, padding: 20, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Produkttitel (Original)
+              </label>
+              <input
+                type="text"
+                placeholder="z.B. Staubsauger Roboter 4000Pa mit Wischfunktion..."
+                value={manualTitle}
+                onChange={e => setManualTitle(e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Preis (optional)
+              </label>
+              <input
+                type="text"
+                placeholder="z.B. 29.99 €"
+                value={manualPrice}
+                onChange={e => setManualPrice(e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Beschreibung / Features (optional)
+              </label>
+              <textarea
+                placeholder="Features, Spezifikationen etc. (je Zeile ein Punkt)..."
+                value={manualDesc}
+                onChange={e => setManualDesc(e.target.value)}
+                rows={5}
+                style={{ ...inputStyle, resize: "vertical" as const, lineHeight: 1.6 }}
+              />
+            </div>
+            <button
+              onClick={handleManual}
+              disabled={!manualTitle.trim()}
+              style={{
+                padding: "13px 18px", borderRadius: 12, border: "none",
+                background: !manualTitle.trim() ? "#FDD0A8" : "#FF6B00",
+                color: "#fff", fontWeight: 700, fontSize: 14,
+                cursor: !manualTitle.trim() ? "not-allowed" : "pointer",
+                fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}
+            >
+              <FileText size={16} />
+              HTML generieren
+            </button>
+          </div>
+        </div>
+        )}
 
         {/* Error */}
         {error && (
@@ -278,7 +375,7 @@ export default function AutoDS() {
           <>
             {/* Reset button */}
             <button
-              onClick={() => { setProduct(null); setResult(null); setEbayResult(null); setUrlInput(""); }}
+              onClick={() => { setProduct(null); setResult(null); setEbayResult(null); setUrlInput(""); setManualTitle(""); setManualDesc(""); setManualPrice(""); }}
               style={{
                 display: "flex", alignItems: "center", gap: 6,
                 background: "none", border: "none", color: "#64748B",
