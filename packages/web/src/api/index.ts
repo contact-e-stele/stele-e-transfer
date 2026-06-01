@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken } from './ebay';
-import { searchProducts, getProductDetail } from './aliexpress';
+import { scrapeAliExpressUrl } from './aliexpress';
 import { eq } from 'drizzle-orm';
 
 function stripTags(html: string): string {
@@ -393,28 +393,16 @@ const app = new Hono()
     }
   })
 
-  // ─── AliExpress ──────────────────────────────────────────────────────────────
-  .get('/aliexpress/search', async (c) => {
-    const keyword = c.req.query('q');
-    const page = Number(c.req.query('page') || '1');
-    if (!keyword) return c.json({ error: 'q fehlt' }, 400);
-    try {
-      const products = await searchProducts(keyword, page);
-      return c.json({ products }, 200);
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
-  })
+  // ─── AliExpress URL Scraper ───────────────────────────────────────────────────
+  .post('/aliexpress/scrape', async (c) => {
+    const body = await c.req.json() as { url?: string };
+    const url = body?.url?.trim();
+    if (!url) return c.json({ error: 'url fehlt' }, 400);
+    if (!url.includes('aliexpress')) return c.json({ error: 'Keine AliExpress-URL' }, 400);
 
-  .get('/aliexpress/product/:id', async (c) => {
-    const productId = c.req.param('id');
-    try {
-      const detail = await getProductDetail(productId);
-      if (!detail) return c.json({ error: 'Produkt nicht gefunden oder nicht aus EU-Lager' }, 404);
-      return c.json(detail, 200);
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
+    const data = await scrapeAliExpressUrl(url);
+    if (!data) return c.json({ error: 'AliExpress-Seite konnte nicht geladen werden. Bitte direkte Produkt-URL verwenden.' }, 503);
+    return c.json(data, 200);
   });
 
 export type AppType = typeof app;

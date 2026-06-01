@@ -1,146 +1,196 @@
-import crypto from 'crypto';
+// AliExpress URL Scraper — JSON-LD based, no API key needed
 
-const APP_KEY = process.env.ALIEXPRESS_APP_KEY!;
-const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET!;
-const API_URL = 'https://api-sg.aliexpress.com/sync';
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Accept-Encoding': 'identity',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Upgrade-Insecure-Requests': '1',
+  // Force global site with EUR prices
+  'Cookie': 'aep_usuc_f=site=glo&c_tp=EUR&region=DE&b_locale=de_DE; xman_t=test; acs_usuc_t=x_csrf=test',
+};
 
-// Nur Lager in Deutschland + angrenzende EU-Staaten
-const ALLOWED_SHIP_FROM = ['DE', 'AT', 'CH', 'FR', 'NL', 'PL', 'CZ', 'BE', 'LU'];
-
-function sign(params: Record<string, string>): string {
-  const sorted = Object.keys(params).sort().map(k => `${k}${params[k]}`).join('');
-  return crypto.createHmac('sha256', APP_SECRET).update(APP_SECRET + sorted + APP_SECRET).digest('hex').toUpperCase();
-}
-
-function buildParams(method: string, extra: Record<string, string>): Record<string, string> {
-  const params: Record<string, string> = {
-    method,
-    app_key: APP_KEY,
-    timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-    format: 'json',
-    v: '2.0',
-    sign_method: 'sha256',
-    ...extra,
-  };
-  params.sign = sign(params);
-  return params;
-}
-
-async function callApi(method: string, extra: Record<string, string>) {
-  const params = buildParams(method, extra);
-  const body = new URLSearchParams(params);
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
-  const json = await res.json() as Record<string, unknown>;
-  return json;
-}
-
-export interface AliProduct {
-  productId: string;
+export interface ScrapedProduct {
   title: string;
-  price: string;
-  imageUrl: string;
-  productUrl: string;
-  shipFrom: string;
-  orders: number;
-  rating: string;
-}
-
-export async function searchProducts(keyword: string, page = 1): Promise<AliProduct[]> {
-  const data = await callApi('aliexpress.affiliate.product.query', {
-    keywords: keyword,
-    page_no: String(page),
-    page_size: '50',
-    ship_to_country: 'DE',
-    target_currency: 'EUR',
-    target_language: 'DE',
-    tracking_id: 'stele2024',
-  });
-
-  // Pfad durch Response
-  const result = (data as Record<string, Record<string, Record<string, Record<string, unknown[]>>>>)
-    ?.['aliexpress_affiliate_product_query_response']
-    ?.['resp_result']
-    ?.['result']
-    ?.['products']
-    ?.['product'] as Record<string, unknown>[] | undefined;
-
-  if (!result) return [];
-
-  const products: AliProduct[] = [];
-
-  for (const p of result) {
-    const shipFrom = String(p['shop_url'] || '');
-    const logisticsInfo = (p['logistics_info'] as Record<string, unknown>) || {};
-    const shipFromCountry = String(logisticsInfo['ship_from_country'] || p['ship_from_country'] || '');
-
-    // Filter: nur erlaubte Länder
-    if (shipFromCountry && !ALLOWED_SHIP_FROM.includes(shipFromCountry.toUpperCase())) {
-      continue;
-    }
-
-    const priceInfo = (p['target_sale_price'] || p['sale_price'] || '0') as string;
-    const images = (p['product_main_image_url'] || p['product_small_image_urls'] as Record<string, string[]> || '') as string;
-
-    products.push({
-      productId: String(p['product_id']),
-      title: String(p['product_title'] || ''),
-      price: String(priceInfo),
-      imageUrl: typeof images === 'string' ? images : '',
-      productUrl: String(p['product_detail_url'] || `https://www.aliexpress.com/item/${p['product_id']}.html`),
-      shipFrom: shipFromCountry || 'DE',
-      orders: Number(p['lastest_volume'] || 0),
-      rating: String(p['evaluate_rate'] || ''),
-    });
-  }
-
-  return products;
-}
-
-export async function getProductDetail(productId: string): Promise<{
-  title: string;
-  description: string;
   images: string[];
   price: string;
-  variants: string[];
-  shipFrom: string;
-} | null> {
-  const data = await callApi('aliexpress.affiliate.productdetail.get', {
-    product_ids: productId,
-    target_currency: 'EUR',
-    target_language: 'DE',
-    tracking_id: 'stele2024',
-  });
+  description: string;
+  specs: Record<string, string>;
+}
 
-  const result = (data as Record<string, Record<string, Record<string, Record<string, Record<string, unknown>[]>>>>)
-    ?.['aliexpress_affiliate_productdetail_get_response']
-    ?.['resp_result']
-    ?.['result']
-    ?.['products']
-    ?.['product']?.[0] as Record<string, unknown> | undefined;
+function cleanTitle(raw: string): string {
+  return raw
+    .replace(/\s*-\s*AliExpress\s*$/i, '')
+    .replace(/\s*\|\s*AliExpress\s*$/i, '')
+    .replace(/\s+\d{1,3}\s*$/, '')      // trailing " 15" artifact
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(parseInt(c)))
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
 
-  if (!result) return null;
+function extractImages(html: string, jsonLdImages: string[]): string[] {
+  const all = new Set<string>(jsonLdImages);
 
-  const shipFromCountry = String(
-    (result['logistics_info'] as Record<string, unknown>)?.['ship_from_country'] || ''
-  );
-
-  if (shipFromCountry && !ALLOWED_SHIP_FROM.includes(shipFromCountry.toUpperCase())) {
-    return null; // Nicht aus erlaubtem Land
+  // Regex: all AliCDN image URLs in the page
+  const re = /https?:\/\/ae[a-z0-9]*\.alicdn\.com\/kf\/[^"'\s<>]+?\.jpg/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    // Skip tiny thumbnails (usually contain "_50x50" or "_x100")
+    if (!/_\d{2}x\d{2}/.test(m[0])) {
+      all.add(m[0].replace(/\\u002F/g, '/'));
+    }
   }
 
-  const imageList = result['product_small_image_urls'] as { string: string[] } | string[] | undefined;
-  const images: string[] = Array.isArray(imageList) ? imageList : (imageList as { string: string[] })?.string || [];
+  // Also grab og:image
+  const ogImg = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/);
+  if (ogImg) all.add(ogImg[1]);
 
-  return {
-    title: String(result['product_title'] || ''),
-    description: String(result['product_description'] || ''),
-    images,
-    price: String(result['target_sale_price'] || result['sale_price'] || '0'),
-    variants: [],
-    shipFrom: shipFromCountry || 'DE',
-  };
+  return [...all].slice(0, 10);
+}
+
+function extractPrice(html: string): string {
+  // JSON-LD offers.price
+  const ldMatch = html.match(/"price"\s*:\s*"?([\d.]+)"?/);
+  if (ldMatch) {
+    const num = parseFloat(ldMatch[1]);
+    if (!isNaN(num) && num > 0) return `${num.toFixed(2)} €`;
+  }
+
+  // EUR price in text
+  const eurMatch = html.match(/€\s*([\d]+[,.][\d]{2})/);
+  if (eurMatch) return `${eurMatch[1].replace(',', '.')} €`;
+
+  // data-price attribute
+  const dataPrice = html.match(/data-price="([\d.]+)"/);
+  if (dataPrice) return `${parseFloat(dataPrice[1]).toFixed(2)} €`;
+
+  return '';
+}
+
+function extractSpecs(html: string): Record<string, string> {
+  const specs: Record<string, string> = {};
+
+  // Try to find spec table rows: <th>Key</th><td>Value</td>
+  const tableRe = /<tr[^>]*>[\s\S]*?<th[^>]*>([\s\S]*?)<\/th>[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi;
+  let m;
+  while ((m = tableRe.exec(html)) !== null) {
+    const k = m[1].replace(/<[^>]*>/g, '').trim();
+    const v = m[2].replace(/<[^>]*>/g, '').trim();
+    if (k && v && k.length < 80 && v.length < 200) specs[k] = v;
+    if (Object.keys(specs).length >= 15) break;
+  }
+
+  // Fallback: dt/dd pairs
+  if (Object.keys(specs).length === 0) {
+    const dtRe = /<dt[^>]*>([\s\S]*?)<\/dt>[\s\S]*?<dd[^>]*>([\s\S]*?)<\/dd>/gi;
+    while ((m = dtRe.exec(html)) !== null) {
+      const k = m[1].replace(/<[^>]*>/g, '').trim();
+      const v = m[2].replace(/<[^>]*>/g, '').trim();
+      if (k && v) specs[k] = v;
+      if (Object.keys(specs).length >= 15) break;
+    }
+  }
+
+  return specs;
+}
+
+export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
+  // Normalize URL — force www.aliexpress.com global
+  let fetchUrl = url;
+  try {
+    const u = new URL(url);
+    // Always use www.aliexpress.com to avoid US redirect
+    if (u.hostname === 'de.aliexpress.com' || u.hostname === 'aliexpress.com') {
+      u.hostname = 'www.aliexpress.com';
+    }
+    fetchUrl = u.toString();
+  } catch { /* keep original */ }
+
+  console.log(`[AliExpress] Fetching: ${fetchUrl}`);
+
+  let html = '';
+  try {
+    const res = await fetch(fetchUrl, { headers: HEADERS, redirect: 'follow' });
+    console.log(`[AliExpress] Status: ${res.status} | URL: ${res.url}`);
+    if (!res.ok) return null;
+    html = await res.text();
+  } catch (e) {
+    console.error('[AliExpress] Fetch error:', e);
+    return null;
+  }
+
+  if (html.length < 1000) {
+    console.log('[AliExpress] Response too short, likely blocked');
+    return null;
+  }
+
+  // ── Parse JSON-LD ──────────────────────────────────────────────────────────
+  let title = '';
+  let jsonLdImages: string[] = [];
+  let jsonLdPrice = '';
+  let jsonLdDesc = '';
+
+  const ldBlocks = html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+  for (const block of ldBlocks) {
+    try {
+      const data = JSON.parse(block[1]) as Record<string, unknown>;
+      const items = Array.isArray(data['@graph']) ? data['@graph'] as Record<string, unknown>[] : [data];
+      for (const item of items) {
+        if (item['@type'] === 'Product') {
+          title = cleanTitle(String(item['name'] ?? ''));
+          const imgRaw = item['image'];
+          if (Array.isArray(imgRaw)) jsonLdImages = imgRaw.map(String);
+          else if (typeof imgRaw === 'string') jsonLdImages = [imgRaw];
+          const offers = item['offers'] as Record<string, unknown> | undefined;
+          if (offers) {
+            const p = parseFloat(String(offers['price'] ?? '0'));
+            if (p > 0) jsonLdPrice = `${p.toFixed(2)} €`;
+          }
+          jsonLdDesc = String(item['description'] ?? '');
+          break;
+        }
+      }
+    } catch { /* ignore malformed JSON-LD */ }
+    if (title) break;
+  }
+
+  // ── OG fallback ────────────────────────────────────────────────────────────
+  if (!title) {
+    const ogTitle = html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/);
+    if (ogTitle) title = cleanTitle(ogTitle[1]);
+  }
+
+  // ── Page <title> fallback ──────────────────────────────────────────────────
+  if (!title) {
+    const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/);
+    if (pageTitle) title = cleanTitle(pageTitle[1]);
+  }
+
+  if (!title) {
+    console.log('[AliExpress] Could not extract title');
+    return null;
+  }
+
+  const images = extractImages(html, jsonLdImages);
+  const price = jsonLdPrice || extractPrice(html);
+  const specs = extractSpecs(html);
+
+  // Clean description
+  const description = jsonLdDesc
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, 1000);
+
+  console.log(`[AliExpress] title="${title.slice(0, 60)}" images=${images.length} price="${price}"`);
+
+  return { title, images, price, description, specs };
 }
