@@ -1,51 +1,129 @@
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+// Automatischer DB-Backup per Email — 3x täglich (08:00, 13:00, 20:00)
+// Sendet alle Produkte als CSV-Anhang via Resend API
+
 import { db } from '../db/index';
 import * as schema from '../db/schema';
 
-const execFileAsync = promisify(execFile);
+const RESEND_API_KEY = process.env.RESEND_API_KEY ?? '';
+const BACKUP_TO = 'contact@stele-e-transfer.com';
 
-export async function createBackupArchive(): Promise<{ path: string; name: string }> {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const dir = join(tmpdir(), 'stele-backups');
-  await mkdir(dir, { recursive: true });
+// ─── CSV Generator ────────────────────────────────────────────────────────────
 
-  const jsonPath = join(dir, `backup-${stamp}.json`);
-  const zipPath = join(dir, `backup-${stamp}.zip`);
+function productsToCSV(products: typeof schema.products.$inferSelect[]): string {
+  const headers = [
+    'ID', 'Titel', 'ASIN', 'Quelle URL', 'EK Preis', 'VK Preis',
+    'eBay Status', 'eBay Listing ID', 'Preisalarm', 'Erstellt', 'Aktualisiert',
+  ];
 
-  const [products, priceHistory] = await Promise.all([
-    db.select().from(schema.products),
-    db.select().from(schema.priceHistory),
+  const rows = products.map(p => [
+    p.id,
+    `"${(p.generatedTitle ?? p.title ?? '').replace(/"/g, '""')}"`,
+    p.asin ?? '',
+    `"${(p.sourceUrl ?? p.amazonUrl ?? '').replace(/"/g, '""')}"`,
+    p.buyPrice?.toFixed(2) ?? '',
+    p.sellPrice?.toFixed(2) ?? '',
+    p.ebayStatus ?? 'none',
+    p.ebayListingId ?? '',
+    p.priceChanged ? 'Ja' : 'Nein',
+    p.createdAt ?? '',
+    p.updatedAt ?? '',
   ]);
 
-  const payload = {
-    createdAt: new Date().toISOString(),
-    meta: {
-      productCount: products.length,
-      priceHistoryCount: priceHistory.length,
-    },
-    products,
-    priceHistory,
-  };
-
-  await writeFile(jsonPath, JSON.stringify(payload, null, 2), 'utf8');
-  await execFileAsync('zip', ['-j', '-q', zipPath, jsonPath]);
-
-  return { path: zipPath, name: `stele-backup-${stamp}.zip` };
+  return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
 }
 
-export async function createBackupSummary(archiveName: string): Promise<string> {
-  const content = [
-    `Backup erstellt: ${new Date().toLocaleString('de-DE')}`,
-    `Datei: ${archiveName}`,
-    '',
-    'Wenn du die Daten brauchst, antworte direkt auf diese Mail.',
-  ].join('\n');
+// ─── Email via Resend API ─────────────────────────────────────────────────────
 
-  const path = join(tmpdir(), `${archiveName}.txt`);
-  await writeFile(path, content, 'utf8');
-  return path;
+async function sendBackupEmail(csv: string, productCount: number): Promise<void> {
+  if (!RESEND_API_KEY) {
+    console.warn('[Backup] RESEND_API_KEY fehlt');
+    return;
+  }
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('de-DE');
+  const timeStr = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const filename = `stele-backup-${now.toISOString().slice(0, 10)}-${now.getHours()}h.csv`;
+
+  const { Resend } = await import('resend');
+  const resend = new Resend(RESEND_API_KEY);
+
+  const result = await resend.emails.send({
+    from: 'Stele Backup <backup@stele-e-transfer.com>',
+    to: BACKUP_TO,
+    subject: `📦 Stele DB Backup — ${dateStr} ${timeStr} (${productCount} Produkte)`,
+    html: `
+      <h2>📦 Stele-E-Transfer Datenbank Backup</h2>
+      <p><strong>Datum:</strong> ${dateStr} ${timeStr}</p>
+      <p><strong>Produkte:</strong> ${productCount}</p>
+      <p>CSV-Datei im Anhang enthält alle gespeicherten Produkte mit EK/VK Preisen und eBay Status.</p>
+      <hr>
+      <small style="color:#999">Automatisch generiert · Stele-E-Transfer Backup System</small>
+    `,
+    attachments: [
+      {
+        filename,
+        content: Buffer.from(csv, 'utf-8').toString('base64'),
+      },
+    ],
+  });
+
+  if (result.error) {
+    throw new Error(`Resend Fehler: ${JSON.stringify(result.error)}`);
+  }
+
+  console.log(`[Backup] Email gesendet an ${BACKUP_TO} — ${productCount} Produkte (id: ${result.data?.id})`);
+}
+
+// ─── Backup ausführen ─────────────────────────────────────────────────────────
+
+export async function runBackup(): Promise<void> {
+  try {
+    console.log('[Backup] Starte DB Export...');
+    const products = await db.select().from(schema.products);
+    const csv = productsToCSV(products);
+    await sendBackupEmail(csv, products.length);
+  } catch (e) {
+    console.error('[Backup] Fehler:', e);
+  }
+}
+
+// ─── Scheduler — 08:00, 13:00, 20:00 Uhr ────────────────────────────────────
+
+export function startBackupScheduler(): void {
+  if (!RESEND_API_KEY) {
+    console.warn('[Backup] Kein RESEND_API_KEY — Scheduler deaktiviert');
+    return;
+  }
+
+  const BACKUP_HOURS = [8, 13, 20];
+
+  function scheduleNext(): void {
+    const now = new Date();
+    const currentHour = now.getHours();
+
+    let nextHour = BACKUP_HOURS.find(h => h > currentHour);
+    let daysOffset = 0;
+
+    if (!nextHour) {
+      nextHour = BACKUP_HOURS[0];
+      daysOffset = 1;
+    }
+
+    const next = new Date(now);
+    next.setDate(now.getDate() + daysOffset);
+    next.setHours(nextHour, 0, 0, 0);
+
+    const msUntilNext = next.getTime() - now.getTime();
+
+    console.log(`[Backup] Nächstes Backup um ${next.toLocaleTimeString('de-DE')} (in ${Math.round(msUntilNext / 60000)} Min)`);
+
+    setTimeout(async () => {
+      await runBackup();
+      scheduleNext();
+    }, msUntilNext);
+  }
+
+  scheduleNext();
+  console.log('[Backup] Scheduler gestartet — täglich 08:00, 13:00, 20:00 Uhr');
 }

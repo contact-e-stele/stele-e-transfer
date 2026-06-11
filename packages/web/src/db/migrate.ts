@@ -20,6 +20,7 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN sell_price REAL`,
   `ALTER TABLE products ADD COLUMN last_price_check TEXT`,
   `ALTER TABLE products ADD COLUMN price_changed INTEGER DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN specs TEXT`,
   // Preis-Historie Tabelle
   `CREATE TABLE IF NOT EXISTS price_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

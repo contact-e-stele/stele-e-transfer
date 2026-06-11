@@ -1,4 +1,6 @@
 import app from "./api";
+import { startBackupScheduler } from "./api/backup";
+import { runMigrations } from "./db/migrate";
 
 const port = Number(process.env.PORT ?? 3000);
 const distDir = `${import.meta.dir}/../dist`;
@@ -35,6 +37,16 @@ const server = Bun.serve({
 });
 
 console.log(`Web server listening on http://localhost:${server.port}`);
+
+// DB-Migrationen beim Start ausführen
+try {
+  await runMigrations();
+} catch (e) {
+  console.error('[migrate] Fehler:', e);
+}
+
+// Automatischer DB-Backup: täglich 08:00, 13:00, 20:00 Uhr
+startBackupScheduler();
 
 function getStaticFilePath(pathname: string) {
   const cleanPath = decodeURIComponent(pathname)

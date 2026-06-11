@@ -20,6 +20,7 @@ export const products = sqliteTable('products', {
   lastPriceCheck: text('last_price_check'),    // ISO datetime
   priceChanged: integer('price_changed', { mode: 'boolean' }).default(false),
   // eBay
+  specs: text('specs'),                        // JSON object — AliExpress Produktspezifikationen
   ebayListingId: text('ebay_listing_id'),
   ebayStatus: text('ebay_status').default('none'), // none | listed | error
   ebayError: text('ebay_error'),

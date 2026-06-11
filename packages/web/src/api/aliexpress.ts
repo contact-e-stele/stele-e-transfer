@@ -1,7 +1,7 @@
 // AliExpress URL Scraper — JSON-LD based, no API key needed
-// Uses ScraperAPI (free tier) to bypass AliExpress bot-detection
+// Uses ScrapingAnt (residential proxies) to bypass AliExpress bot-detection
 
-const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '';
+const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY || '';
 
 const DIRECT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -23,6 +23,8 @@ export interface ScrapedProduct {
   price: string;
   description: string;
   specs: Record<string, string>;
+  shipsFromDE: boolean;   // true wenn Versand aus DE/EU erkannt
+  shipsFrom: string;      // z.B. "Germany", "Spain", "China"
 }
 
 function cleanTitle(raw: string): string {
@@ -77,6 +79,30 @@ function extractPrice(html: string): string {
   return '';
 }
 
+function extractShipsFrom(html: string): { shipsFrom: string; shipsFromDE: boolean } {
+  // AliExpress speichert "shipFromCountry" oder "ship from" im HTML/JSON
+  const patterns = [
+    /ship(?:s)?\s*from[^:]*:\s*([A-Za-z ]+)/i,
+    /"shipFromCountry"\s*:\s*"([^"]+)"/i,
+    /"countryCode"\s*:\s*"([A-Z]{2})"/i,
+    /fromCountry[^>]*>\s*([A-Za-z ]+)\s*</i,
+    /data-shipping-from="([^"]+)"/i,
+  ];
+
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m) {
+      const country = m[1].trim();
+      const euCountries = ['germany', 'spain', 'france', 'italy', 'poland', 'netherlands', 'de', 'es', 'fr', 'it', 'pl', 'nl', 'czech', 'cz'];
+      const shipsFromDE = euCountries.some(c => country.toLowerCase().includes(c));
+      return { shipsFrom: country, shipsFromDE };
+    }
+  }
+
+  // Kein Versandland gefunden → China (Standard AliExpress)
+  return { shipsFrom: 'China', shipsFromDE: false };
+}
+
 function extractSpecs(html: string): Record<string, string> {
   const specs: Record<string, string> = {};
 
@@ -121,20 +147,23 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
     console.log(`[AliExpress] Direct fetch failed:`, e);
   }
 
-  // Attempt 2: ScraperAPI (if key configured)
-  if (SCRAPER_API_KEY) {
+  // Attempt 2: ScrapingAnt (residential proxies, 10k free/month permanent)
+  if (SCRAPINGANT_API_KEY) {
     try {
-      const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(targetUrl)}&render=false&country_code=de&premium=true`;
-      const res = await fetch(scraperUrl, { signal: AbortSignal.timeout(30000) });
+      const antUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=false&proxy_country=DE`;
+      const res = await fetch(antUrl, { signal: AbortSignal.timeout(30000) });
       if (res.ok) {
         const html = await res.text();
         if (html.length > 5000) {
-          console.log(`[AliExpress] ScraperAPI OK (${html.length} chars)`);
+          console.log(`[AliExpress] ScrapingAnt OK (${html.length} chars)`);
           return html;
         }
+        console.log(`[AliExpress] ScrapingAnt response too small (${html.length} chars), trying next...`);
+      } else {
+        console.log(`[AliExpress] ScrapingAnt HTTP ${res.status}, trying next...`);
       }
     } catch (e) {
-      console.log(`[AliExpress] ScraperAPI failed:`, e);
+      console.log(`[AliExpress] ScrapingAnt failed:`, e);
     }
   }
 
@@ -226,6 +255,7 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   const images = extractImages(html, jsonLdImages);
   const price = jsonLdPrice || extractPrice(html);
   const specs = extractSpecs(html);
+  const { shipsFrom, shipsFromDE } = extractShipsFrom(html);
 
   // Clean description
   const description = jsonLdDesc
@@ -234,7 +264,7 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
     .trim()
     .slice(0, 1000);
 
-  console.log(`[AliExpress] title="${title.slice(0, 60)}" images=${images.length} price="${price}"`);
+  console.log(`[AliExpress] title="${title.slice(0, 60)}" images=${images.length} price="${price}" shipsFrom="${shipsFrom}"`);
 
-  return { title, images, price, description, specs };
+  return { title, images, price, description, specs, shipsFrom, shipsFromDE };
 }

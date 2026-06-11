@@ -8,7 +8,6 @@ import {
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
   TrendingDown, Save, Eye, EyeOff,
 } from "lucide-react";
-import { normalizeShippingText } from "../lib/text-helpers";
 
 interface ScrapedProduct {
   title: string;
@@ -42,6 +41,9 @@ function cleanText(text: string): string {
 function buildTitle(rawTitle: string): string {
   let title = decodeEntities(rawTitle)
     .replace(/\[.*?\]/g, "")
+    // Mengenangaben am Anfang entfernen: "1/4 Stück", "2 Paar", "1 Stück", "3 Stück " etc.
+    .replace(/^\d+\/\d+\s*(Stück|Paar|stücke|St\.?|pc\.?|pcs\.?)\s*/i, "")
+    .replace(/^\d+\s*(Stück|Paar|stücke|St\.?|pc\.?|pcs\.?)\s*/i, "")
     .replace(/\s{2,}/g, " ")
     .trim();
   if (title.length > 80) title = title.slice(0, 77) + "...";
@@ -49,31 +51,40 @@ function buildTitle(rawTitle: string): string {
 }
 
 function buildHTML(product: ScrapedProduct): string {
-  const lines: string[] = [];
-  const { description, specs } = product;
-
+  const { description, specs, title } = product;
   const specEntries = Object.entries(specs);
+
+  // Produkttitel sauber
+  const cleanTitle = cleanText(decodeEntities(title));
+
+  // Specs als strukturierte Bullet-Liste
+  let specsHtml = "";
   if (specEntries.length > 0) {
-    lines.push("<ul>");
-    for (const [k, v] of specEntries.slice(0, 10)) {
+    const rows = specEntries.slice(0, 10).map(([k, v]) => {
       const key = cleanText(decodeEntities(k));
-      const val = normalizeShippingText(cleanText(decodeEntities(v)));
-      if (key && val) lines.push(`<li><strong>【${key}】</strong> ${val}</li>`);
-    }
-    lines.push("</ul>");
+      const val = cleanText(decodeEntities(v));
+      return key && val ? `<li><strong>${key}:</strong> ${val}</li>` : null;
+    }).filter(Boolean).join("\n");
+    if (rows) specsHtml = `<ul style="line-height:1.9;">\n${rows}\n</ul>`;
   }
 
+  // Beschreibung bereinigen
+  let descHtml = "";
   if (description && description.length > 20) {
-    const cleaned = normalizeShippingText(cleanText(decodeEntities(description)));
-    for (const para of cleaned.split(/\n{2,}/).slice(0, 3)) {
-      const p = para.trim();
-      if (p.length > 20) lines.push(`<p>${p}</p>`);
-    }
-  } else if (specEntries.length === 0) {
-    lines.push(`<p>${normalizeShippingText(decodeEntities(product.title).trim())}</p>`);
+    const cleaned = cleanText(decodeEntities(description));
+    const paras = cleaned.split(/\n{2,}/).slice(0, 3).filter(p => p.trim().length > 20);
+    descHtml = paras.map(p => `<p style="color:#a89050;">${p.trim()}</p>`).join("\n");
   }
 
-  return lines.join("\n");
+  // Verfügbare Ausführungen (Varianten-Hinweis falls specs vorhanden)
+  const variantHint = specEntries.length > 0
+    ? `<p style="margin-bottom:12px;"><strong style="color:#C9A84C;">Verfügbare Ausführungen:</strong> Bitte Variante im Dropdown wählen</p>`
+    : "";
+
+  return `<h3 style="color:#C9A84C; border-bottom:1px solid #3a2a0a; padding-bottom:8px; letter-spacing:1px;">${cleanTitle}</h3>
+${variantHint}
+${specsHtml}
+${descHtml}`.trim();
 }
 
 function parsePrice(raw: string): number {
@@ -113,7 +124,10 @@ export default function Lieferanten() {
   // ─── Marge berechnen ──────────────────────────────────────────────────────
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
   const verkauf = parseFloat(ebayPrice.replace(",", ".")) || 0;
-  const ebayFee = verkauf * 0.13 + 0.35; // ~13% + 0.35€
+  // Gleiche Formel wie Preise-Tab: 18% netto × 1.19 MwSt + 0.45€ Fix × 1.19
+  const EBAY_FEE = (18 / 100) * 1.19;
+  const FIXBETRAG = 0.45 * 1.19;
+  const ebayFee = verkauf * EBAY_FEE + FIXBETRAG;
   const gewinn = verkauf - einkauf - ebayFee;
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
 
@@ -198,20 +212,37 @@ export default function Lieferanten() {
     setEbayLoading(true);
     setEbayResult(null);
     try {
-      const res = await fetch("/api/ebay/list", {
+      // 1. Erst in DB speichern (mit sellPrice)
+      const saveRes = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           asin: `ali_${Date.now()}`,
-          title: result.title,
-          description: result.html,
-          price,
-          quantity: 10,
-          imageUrls: product.images.slice(0, 3),
+          amazonUrl: urlInput || "manual",
+          sourceUrl: urlInput || "manual",
+          title: product.title,
+          generatedTitle: result.title,
+          htmlDescription: result.html,
+          bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
+          variants: [],
+          description: product.description,
+          images: product.images,
+          buyPrice: einkauf || null,
+          sellPrice: price,
         }),
       });
-      const data = await res.json() as { listingId?: string; error?: string };
+      const saveData = await saveRes.json() as { id?: number; error?: string };
+      if (!saveData.id) throw new Error(saveData.error ?? "Speichern fehlgeschlagen");
+
+      // 2. Mit productId listen
+      const listRes = await fetch("/api/ebay/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: saveData.id }),
+      });
+      const data = await listRes.json() as { listingId?: string; error?: string };
       setEbayResult(data);
+      setSaveResult(saveData); // auch als gespeichert markieren
     } catch (e) {
       setEbayResult({ error: e instanceof Error ? e.message : "Fehler" });
     } finally {

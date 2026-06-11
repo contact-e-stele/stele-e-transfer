@@ -6,8 +6,13 @@ import { useState, useEffect } from "react";
 import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
-  TrendingDown, AlertTriangle, Search, Trash2,
+  TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X,
 } from "lucide-react";
+
+interface VariantGroup {
+  name: string;
+  values: string[];
+}
 
 interface Product {
   id: number;
@@ -18,7 +23,7 @@ interface Product {
   generatedTitle: string;
   htmlDescription: string;
   bullets: string[];
-  variants: string[];
+  variants: string[] | VariantGroup[];
   images: string | null;
   buyPrice: number | null;
   sellPrice: number | null;
@@ -47,7 +52,9 @@ function StatusBadge({ status, listingId }: { status: string; listingId: string 
 
 function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) {
   if (!buy && !sell) return null;
-  const margin = (buy && sell) ? ((sell - buy) / sell * 100) : null;
+  // Gleiche Formel wie Preise-Tab: 18% × 1.19 MwSt + 0.45€ × 1.19
+  const ebayFee = sell ? sell * (0.18 * 1.19) + (0.45 * 1.19) : 0;
+  const margin = (buy && sell) ? ((sell - buy - ebayFee) / sell * 100) : null;
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
       {buy && <span style={{ fontSize: 11, background: "#FEF3C7", color: "#92400E", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>EK: {buy.toFixed(2)} €</span>}
@@ -61,12 +68,223 @@ function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) 
   );
 }
 
+// Hilfsfunktion: Varianten aus DB-Format lesen (entweder alt: string[] oder neu: VariantGroup[])
+function parseVariants(raw: string[] | VariantGroup[]): VariantGroup[] {
+  if (!raw || raw.length === 0) return [];
+  if (typeof raw[0] === "object" && "name" in raw[0]) {
+    return raw as VariantGroup[];
+  }
+  return [];
+}
+
+interface VariantenModalProps {
+  product: Product;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
+  const [groups, setGroups] = useState<VariantGroup[]>(() => parseVariants(product.variants));
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newValues, setNewValues] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  const addGroup = () => {
+    const name = newGroupName.trim();
+    if (!name) return;
+    setGroups(g => [...g, { name, values: [] }]);
+    setNewGroupName("");
+  };
+
+  const removeGroup = (idx: number) => {
+    setGroups(g => g.filter((_, i) => i !== idx));
+  };
+
+  const addValue = (groupIdx: number) => {
+    const val = (newValues[groupIdx] ?? "").trim();
+    if (!val) return;
+    setGroups(g => g.map((group, i) =>
+      i === groupIdx ? { ...group, values: [...group.values, val] } : group
+    ));
+    setNewValues(v => ({ ...v, [groupIdx]: "" }));
+  };
+
+  const removeValue = (groupIdx: number, valIdx: number) => {
+    setGroups(g => g.map((group, i) =>
+      i === groupIdx ? { ...group, values: group.values.filter((_, j) => j !== valIdx) } : group
+    ));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const res = await fetch(`/api/products/${product.id}/variants`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variants: groups }),
+      });
+      if (res.ok) {
+        setSaveMsg("Gespeichert!");
+        onSaved();
+        setTimeout(onClose, 800);
+      } else {
+        setSaveMsg("Fehler beim Speichern");
+      }
+    } catch {
+      setSaveMsg("Netzwerkfehler");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const totalCombos = groups.reduce((acc, g) => acc * (g.values.length || 1), 1);
+  const hasRealVariants = groups.some(g => g.values.length > 0);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+    }} onClick={onClose}>
+      <div style={{
+        background: "#fff", borderRadius: 20, padding: 24, maxWidth: 480, width: "100%",
+        maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+      }} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#0F172A" }}>Varianten bearbeiten</h2>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748B" }}>{product.generatedTitle.slice(0, 50)}…</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Info */}
+        <div style={{ background: "#EFF6FF", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#1D4ED8" }}>
+          Füge Varianten-Gruppen hinzu (z.B. "Farbe", "Größe") und trage die möglichen Werte ein.
+          {hasRealVariants && <><br /><strong>{totalCombos} Kombinationen</strong> → wird als eBay Variation Listing gelistet.</>}
+        </div>
+
+        {/* Gruppen */}
+        {groups.map((group, gi) => (
+          <div key={gi} style={{ border: "1.5px solid #E2E8F0", borderRadius: 12, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: "#0F172A" }}>{group.name}</span>
+              <button onClick={() => removeGroup(gi)} style={{ background: "#FEF2F2", border: "none", borderRadius: 6, padding: "3px 8px", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Gruppe löschen
+              </button>
+            </div>
+
+            {/* Werte */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {group.values.map((val, vi) => (
+                <span key={vi} style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  background: "#F5F3FF", color: "#7C3AED", padding: "4px 10px",
+                  borderRadius: 20, fontSize: 12, fontWeight: 700,
+                }}>
+                  {val}
+                  <button onClick={() => removeValue(gi, vi)} style={{ background: "none", border: "none", cursor: "pointer", color: "#A78BFA", padding: 0, display: "flex", alignItems: "center" }}>
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+              {group.values.length === 0 && (
+                <span style={{ fontSize: 11, color: "#CBD5E1" }}>Noch keine Werte</span>
+              )}
+            </div>
+
+            {/* Wert hinzufügen */}
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                type="text"
+                placeholder="Wert eingeben (z.B. Rot)"
+                value={newValues[gi] ?? ""}
+                onChange={e => setNewValues(v => ({ ...v, [gi]: e.target.value }))}
+                onKeyDown={e => e.key === "Enter" && addValue(gi)}
+                style={{
+                  flex: 1, padding: "6px 10px", borderRadius: 8,
+                  border: "2px solid #E2E8F0", fontSize: 12, fontFamily: "inherit", outline: "none",
+                }}
+              />
+              <button onClick={() => addValue(gi)} style={{
+                padding: "6px 12px", borderRadius: 8, background: "#7C3AED", color: "#fff",
+                border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 4,
+              }}>
+                <Plus size={12} /> Hinzufügen
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {/* Neue Gruppe */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+          <input
+            type="text"
+            placeholder="Gruppe hinzufügen (z.B. Farbe, Größe)"
+            value={newGroupName}
+            onChange={e => setNewGroupName(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && addGroup()}
+            style={{
+              flex: 1, padding: "8px 12px", borderRadius: 10,
+              border: "2px dashed #C4B5FD", fontSize: 13, fontFamily: "inherit", outline: "none",
+              color: "#7C3AED", background: "#FAFAFE",
+            }}
+          />
+          <button onClick={addGroup} style={{
+            padding: "8px 14px", borderRadius: 10, background: "#F5F3FF", color: "#7C3AED",
+            border: "2px dashed #C4B5FD", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            display: "flex", alignItems: "center", gap: 4,
+          }}>
+            <Plus size={13} /> Gruppe
+          </button>
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+          {saveMsg && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: saveMsg.includes("Fehler") || saveMsg.includes("Netzwerk") ? "#DC2626" : "#16A34A" }}>
+              {saveMsg}
+            </span>
+          )}
+          <button onClick={onClose} style={{
+            padding: "8px 16px", borderRadius: 10, background: "#F1F5F9", color: "#64748B",
+            border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+          }}>
+            Abbrechen
+          </button>
+          <button onClick={save} disabled={saving} style={{
+            padding: "8px 20px", borderRadius: 10, background: "#7C3AED", color: "#fff",
+            border: "none", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            {saving ? <Loader size={13} style={{ animation: "spin 1s linear infinite" }} /> : null}
+            Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Produkte() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [checkingPrice, setCheckingPrice] = useState<number | null>(null);
+  const [listingProduct, setListingProduct] = useState<number | null>(null);
+  const [listingResult, setListingResult] = useState<{ id: number; success: boolean; msg: string } | null>(null);
+  const [locationMsg, setLocationMsg] = useState("");
+  const [editingPrice, setEditingPrice] = useState<number | null>(null);
+  const [priceInput, setPriceInput] = useState("");
+  const [editingTitle, setEditingTitle] = useState<number | null>(null);
+  const [titleInput, setTitleInput] = useState("");
+  const [variantenModal, setVariantenModal] = useState<Product | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -113,6 +331,74 @@ export default function Produkte() {
     }
   };
 
+  const saveTitle = async (productId: number) => {
+    const t = titleInput.trim();
+    if (!t) return;
+    await fetch(`/api/products/${productId}/title`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ generatedTitle: t.slice(0, 80) }),
+    });
+    setEditingTitle(null);
+    setTitleInput("");
+    load();
+  };
+
+  const saveSellPrice = async (productId: number) => {
+    const price = parseFloat(priceInput.replace(",", "."));
+    if (isNaN(price) || price <= 0) return;
+    await fetch(`/api/products/${productId}/sellprice`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sellPrice: price }),
+    });
+    setEditingPrice(null);
+    setPriceInput("");
+    load();
+  };
+
+  const deleteProduct = async (product: Product) => {
+    if (!confirm(`"${product.generatedTitle.slice(0, 50)}…" aus DB löschen?`)) return;
+    await fetch(`/api/products/${product.id}`, { method: "DELETE" });
+    load();
+  };
+
+  const endEbayListing = async (product: Product) => {
+    if (!confirm(`eBay Listing #${product.ebayListingId} beenden?`)) return;
+    const res = await fetch(`/api/products/${product.id}/ebay-listing`, { method: "DELETE" });
+    const data = await res.json() as { ok?: boolean; error?: string };
+    if (data.ok) {
+      setListingResult({ id: product.id, success: true, msg: "eBay Listing beendet" });
+    } else {
+      setListingResult({ id: product.id, success: false, msg: data.error ?? "Fehler" });
+    }
+    load();
+  };
+
+  const listOnEbay = async (product: Product) => {
+    setListingProduct(product.id);
+    setListingResult(null);
+    try {
+      const res = await fetch("/api/ebay/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: product.id }),
+      });
+      const data = await res.json() as { listingId?: string; success?: boolean; error?: string };
+      if (data.success && data.listingId) {
+        setListingResult({ id: product.id, success: true, msg: `eBay Listing erstellt: #${data.listingId}` });
+        load();
+      } else {
+        setListingResult({ id: product.id, success: false, msg: data.error ?? "Unbekannter Fehler" });
+        load();
+      }
+    } catch (e) {
+      setListingResult({ id: product.id, success: false, msg: e instanceof Error ? e.message : "Netzwerkfehler" });
+    } finally {
+      setListingProduct(null);
+    }
+  };
+
   const filtered = products.filter(p =>
     !search || p.generatedTitle.toLowerCase().includes(search.toLowerCase()) || p.title.toLowerCase().includes(search.toLowerCase())
   );
@@ -126,6 +412,13 @@ export default function Produkte() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F8FAFC", fontFamily: "'Poppins', sans-serif", padding: "24px 16px" }}>
+      {variantenModal && (
+        <VariantenModal
+          product={variantenModal}
+          onClose={() => setVariantenModal(null)}
+          onSaved={load}
+        />
+      )}
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
 
         {/* Header */}
@@ -148,7 +441,21 @@ export default function Produkte() {
             <RefreshCw size={14} style={loading ? { animation: "spin 1s linear infinite" } : {}} />
             Aktualisieren
           </button>
+          <button onClick={async () => {
+            setLocationMsg("...");
+            const res = await fetch("/api/ebay/setup-location", { method: "POST" });
+            const d = await res.json() as { ok?: boolean; status?: string; error?: string };
+            setLocationMsg(d.error ?? (d.status === "already_exists" ? "✓ Location existiert bereits" : "✓ Location angelegt"));
+            setTimeout(() => setLocationMsg(""), 4000);
+          }} style={{
+            background: "#EFF6FF", border: "1.5px solid #BFDBFE", borderRadius: 10,
+            padding: "8px 14px", fontSize: 12, fontWeight: 600, color: "#1D4ED8",
+            cursor: "pointer", fontFamily: "inherit",
+          }}>
+            eBay Location Setup
+          </button>
         </div>
+        {locationMsg && <div style={{ marginBottom: 12, padding: "8px 14px", borderRadius: 8, background: "#F0FDF4", color: "#15803D", fontSize: 13, fontWeight: 600 }}>{locationMsg}</div>}
 
         {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
@@ -222,9 +529,31 @@ export default function Produkte() {
                   <img src={thumb} alt="" style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flexShrink: 0, background: "#F8FAFC" }} />
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", lineHeight: 1.4, marginBottom: 6 }}>
-                    {product.generatedTitle}
-                  </div>
+                  {editingTitle === product.id ? (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                      <input
+                        type="text"
+                        maxLength={80}
+                        value={titleInput}
+                        onChange={e => setTitleInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") saveTitle(product.id); if (e.key === "Escape") setEditingTitle(null); }}
+                        autoFocus
+                        style={{ flex: 1, padding: "5px 10px", borderRadius: 8, border: "2px solid #F59E0B", fontSize: 13, fontFamily: "inherit", outline: "none" }}
+                      />
+                      <button onClick={() => saveTitle(product.id)} style={{ padding: "5px 10px", borderRadius: 8, background: "#F59E0B", color: "#fff", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✓</button>
+                      <button onClick={() => setEditingTitle(null)} style={{ padding: "5px 8px", borderRadius: 8, background: "#F1F5F9", color: "#64748B", border: "none", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => { setEditingTitle(product.id); setTitleInput(product.generatedTitle); }}
+                      title="Klicken zum Bearbeiten"
+                      style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", lineHeight: 1.4, marginBottom: 6, cursor: "pointer", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px 4px", transition: "background 0.15s" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "#FEF9C3")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                    >
+                      {product.generatedTitle}
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                     <span style={{ fontSize: 10, fontFamily: "monospace", background: "#F1F5F9", padding: "2px 6px", borderRadius: 5, color: "#475569" }}>
                       {product.asin}
@@ -237,6 +566,32 @@ export default function Produkte() {
                     )}
                   </div>
                   <PriceBadge buy={product.buyPrice} sell={product.sellPrice} />
+                  {/* VK Preis setzen */}
+                  {editingPrice === product.id ? (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="VK Preis z.B. 19.99"
+                        value={priceInput}
+                        onChange={e => setPriceInput(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && saveSellPrice(product.id)}
+                        autoFocus
+                        style={{ width: 140, padding: "5px 10px", borderRadius: 8, border: "2px solid #8B5CF6", fontSize: 13, fontFamily: "inherit", outline: "none" }}
+                      />
+                      <button onClick={() => saveSellPrice(product.id)} style={{ padding: "5px 12px", borderRadius: 8, background: "#8B5CF6", color: "#fff", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        Speichern
+                      </button>
+                      <button onClick={() => setEditingPrice(null)} style={{ padding: "5px 10px", borderRadius: 8, background: "#F1F5F9", color: "#64748B", border: "none", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setEditingPrice(product.id); setPriceInput(product.sellPrice?.toFixed(2) ?? ""); }} style={{ marginTop: 6, padding: "3px 10px", borderRadius: 6, background: "#F5F3FF", color: "#8B5CF6", border: "1px solid #DDD6FE", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      {product.sellPrice ? "VK ändern" : "VK Preis setzen"}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -263,18 +618,76 @@ export default function Produkte() {
                     </button>
                   </>
                 )}
-                {product.ebayStatus === "listed" && product.ebayListingId && (
-                  <a href={`https://www.ebay.de/itm/${product.ebayListingId}`} target="_blank" rel="noopener noreferrer" style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    padding: "6px 10px", borderRadius: 8, background: "#FFD700", color: "#0F172A",
-                    fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit",
-                  }}>
-                    <ShoppingCart size={11} /> eBay
-                  </a>
+                {product.ebayStatus !== "listed" && (
+                  <button
+                    onClick={() => listOnEbay(product)}
+                    disabled={listingProduct === product.id}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 12px", borderRadius: 8,
+                      background: listingProduct === product.id ? "#E2E8F0" : "#FFD700",
+                      color: "#0F172A", fontSize: 11, fontWeight: 700,
+                      border: "none", cursor: listingProduct === product.id ? "not-allowed" : "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {listingProduct === product.id
+                      ? <><Loader size={11} style={{ animation: "spin 1s linear infinite" }} /> Wird gelistet…</>
+                      : <><ShoppingCart size={11} /> Bei eBay listen</>
+                    }
+                  </button>
                 )}
+                {product.ebayStatus === "listed" && product.ebayListingId && (
+                  <>
+                    <a href={`https://www.ebay.de/itm/${product.ebayListingId}`} target="_blank" rel="noopener noreferrer" style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#FFD700", color: "#0F172A",
+                      fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit",
+                    }}>
+                      <ShoppingCart size={11} /> eBay ansehen
+                    </a>
+                    <button onClick={() => endEbayListing(product)} style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#FEF2F2", color: "#DC2626",
+                      fontSize: 11, fontWeight: 700, border: "1px solid #FECACA", cursor: "pointer", fontFamily: "inherit",
+                    }}>
+                      <XCircle size={11} /> Listing beenden
+                    </button>
+                  </>
+                )}
+                {/* Varianten */}
+                <button onClick={() => setVariantenModal(product)} style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  padding: "6px 10px", borderRadius: 8, background: "#F5F3FF", color: "#7C3AED",
+                  fontSize: 11, fontWeight: 700, border: "1px solid #DDD6FE", cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  <Layers size={11} />
+                  {parseVariants(product.variants).length > 0
+                    ? `Varianten (${parseVariants(product.variants).length})`
+                    : "Varianten"
+                  }
+                </button>
+
+                {/* Produkt löschen */}
+                <button onClick={() => deleteProduct(product)} style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  padding: "6px 10px", borderRadius: 8, background: "#FEF2F2", color: "#DC2626",
+                  fontSize: 11, fontWeight: 700, border: "1px solid #FECACA", cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  <Trash2 size={11} /> Löschen
+                </button>
               </div>
 
-              {product.ebayError && (
+              {listingResult?.id === product.id && (
+                <div style={{
+                  fontSize: 11, padding: "6px 10px", borderRadius: 6, marginTop: 8, fontWeight: 600,
+                  background: listingResult.success ? "#F0FDF4" : "#FEF2F2",
+                  color: listingResult.success ? "#16A34A" : "#DC2626",
+                }}>
+                  {listingResult.msg}
+                </div>
+              )}
+              {product.ebayError && !listingResult && (
                 <div style={{ fontSize: 11, color: "#DC2626", background: "#FEF2F2", padding: "6px 10px", borderRadius: 6, marginTop: 8 }}>
                   {product.ebayError.slice(0, 120)}
                 </div>
