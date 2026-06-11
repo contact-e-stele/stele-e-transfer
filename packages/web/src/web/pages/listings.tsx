@@ -5,7 +5,7 @@
 import { useState, useEffect } from "react";
 import {
   ShoppingCart, RefreshCw, Loader, CheckCircle, XCircle,
-  Clock, ExternalLink, Package, TrendingUp,
+  Clock, ExternalLink, Package, TrendingUp, Trash2, StopCircle,
 } from "lucide-react";
 
 interface Product {
@@ -31,6 +31,8 @@ export default function Listings() {
   const [listingLoading, setListingLoading] = useState<number | null>(null);
   const [listingResult, setListingResult] = useState<Record<number, { ok?: string; err?: string }>>({});
   const [priceEdits, setPriceEdits] = useState<Record<number, string>>({});
+  const [deleteLoading, setDeleteLoading] = useState<number | null>(null);
+  const [endLoading, setEndLoading] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -83,6 +85,30 @@ export default function Listings() {
       setListingResult(r => ({ ...r, [product.id]: { err: e instanceof Error ? e.message : "Fehler" } }));
     } finally {
       setListingLoading(null);
+    }
+  };
+
+  const handleDeleteProduct = async (productId: number) => {
+    if (!confirm("Produkt wirklich aus der Datenbank löschen?")) return;
+    setDeleteLoading(productId);
+    try {
+      await fetch(`/api/products/${productId}`, { method: "DELETE" });
+      load();
+    } finally {
+      setDeleteLoading(null);
+    }
+  };
+
+  const handleEndListing = async (productId: number) => {
+    if (!confirm("eBay Listing wirklich beenden?")) return;
+    setEndLoading(productId);
+    try {
+      const res = await fetch(`/api/products/${productId}/ebay-listing`, { method: "DELETE" });
+      const data = await res.json() as { ok?: boolean; warning?: string; error?: string };
+      if (data.ok || data.warning) load();
+      else alert(data.error ?? "Fehler beim Beenden");
+    } finally {
+      setEndLoading(null);
     }
   };
 
@@ -199,6 +225,21 @@ export default function Listings() {
                         : <ShoppingCart size={14} />}
                       {listingLoading === product.id ? "Lädt…" : "Listen"}
                     </button>
+                    <button
+                      onClick={() => handleDeleteProduct(product.id)}
+                      disabled={deleteLoading === product.id}
+                      title="Aus Datenbank löschen"
+                      style={{
+                        padding: "10px 12px", borderRadius: 10, border: "1.5px solid #FECACA",
+                        background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 13,
+                        cursor: deleteLoading === product.id ? "not-allowed" : "pointer",
+                        fontFamily: "inherit", display: "flex", alignItems: "center",
+                      }}
+                    >
+                      {deleteLoading === product.id
+                        ? <Loader size={14} style={{ animation: "spin 1s linear infinite" }} />
+                        : <Trash2 size={14} />}
+                    </button>
                   </div>
                   {res?.ok && (
                     <div style={{ marginTop: 10, padding: "10px 14px", background: "#F0FDF4", borderRadius: 8, fontSize: 12, color: "#16A34A", fontWeight: 600 }}>
@@ -247,7 +288,7 @@ export default function Listings() {
                         )}
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0, flexDirection: "column", alignItems: "flex-end" }}>
                       <a href={`https://www.ebay.de/itm/${product.ebayListingId}`} target="_blank" rel="noopener noreferrer" style={{
                         display: "inline-flex", alignItems: "center", gap: 4,
                         padding: "7px 12px", borderRadius: 8, background: "#FFD700", color: "#0F172A",
@@ -255,6 +296,44 @@ export default function Listings() {
                       }}>
                         <ExternalLink size={11} /> eBay
                       </a>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button
+                          onClick={() => handleEndListing(product.id)}
+                          disabled={endLoading === product.id}
+                          title="eBay Listing beenden"
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            padding: "6px 10px", borderRadius: 8,
+                            background: endLoading === product.id ? "#FEF9C3" : "#FFFBEB",
+                            border: "1.5px solid #FDE68A", color: "#92400E",
+                            fontSize: 11, fontWeight: 700, cursor: endLoading === product.id ? "not-allowed" : "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          {endLoading === product.id
+                            ? <Loader size={10} style={{ animation: "spin 1s linear infinite" }} />
+                            : <StopCircle size={10} />}
+                          Ende
+                        </button>
+                        <button
+                          onClick={() => handleDeleteProduct(product.id)}
+                          disabled={deleteLoading === product.id}
+                          title="Aus Datenbank löschen"
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            padding: "6px 10px", borderRadius: 8,
+                            background: deleteLoading === product.id ? "#FEE2E2" : "#FEF2F2",
+                            border: "1.5px solid #FECACA", color: "#DC2626",
+                            fontSize: 11, fontWeight: 700, cursor: deleteLoading === product.id ? "not-allowed" : "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          {deleteLoading === product.id
+                            ? <Loader size={10} style={{ animation: "spin 1s linear infinite" }} />
+                            : <Trash2 size={10} />}
+                          DB
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

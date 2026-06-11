@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag } from "lucide-react";
+import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
 
 function formatEuro(val: number) {
   return val.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -86,6 +86,30 @@ export default function Index() {
   const [vorlageIndex, setVorlageIndex] = useState(0);
   const [verlustVorlageIndex, setVerlustVorlageIndex] = useState(0);
   const [nullVorlageIndex, setNullVorlageIndex] = useState(0);
+
+  // Preisüberwachung
+  const [priceChecking, setPriceChecking] = useState(false);
+  const [priceCheckResult, setPriceCheckResult] = useState<{
+    checked: number;
+    results: { id: number; title: string; status: string; oldPrice?: number | null; newPrice?: number }[];
+  } | null>(null);
+  const [priceCheckError, setPriceCheckError] = useState("");
+
+  const handleCheckAllPrices = async () => {
+    setPriceChecking(true);
+    setPriceCheckResult(null);
+    setPriceCheckError("");
+    try {
+      const res = await fetch("/api/products/check-all-prices", { method: "POST" });
+      if (!res.ok) throw new Error(`Fehler ${res.status}`);
+      const data = await res.json() as typeof priceCheckResult;
+      setPriceCheckResult(data);
+    } catch (e) {
+      setPriceCheckError(e instanceof Error ? e.message : "Fehler");
+    } finally {
+      setPriceChecking(false);
+    }
+  };
 
   const listen = parseFloat(listenpreis.replace(",", ".")) || 0;
   const vorschlagVal = parseFloat(vorschlag.replace(",", ".")) || 0;
@@ -451,6 +475,78 @@ export default function Index() {
         <p style={{ textAlign: "center", color: "#CBD5E1", fontSize: 12, marginTop: 24 }}>
           eBay: {gebuehr || 18}% + 0,45 € Fix + 19% MwSt.{anzeigegebuehrProzent > 0 ? ` + ${anzeigegebuehr}% Anzeige` : ""} · stele-e-transfer
         </p>
+
+        {/* ─── Preisüberwachung ──────────────────────────────────────────────────── */}
+        <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginTop: 24, border: "1.5px solid #E2E8F0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: "#0F172A", display: "flex", alignItems: "center", gap: 8 }}>
+                <TrendingDown size={18} color="#8B5CF6" /> Preisüberwachung
+              </div>
+              <div style={{ fontSize: 12, color: "#64748B", marginTop: 2 }}>AliExpress Preise aller Produkte prüfen</div>
+            </div>
+            <button
+              onClick={handleCheckAllPrices}
+              disabled={priceChecking}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 18px", borderRadius: 12, border: "none",
+                background: priceChecking ? "#EDE9FE" : "#8B5CF6",
+                color: priceChecking ? "#8B5CF6" : "#fff",
+                fontWeight: 700, fontSize: 13, cursor: priceChecking ? "not-allowed" : "pointer",
+                fontFamily: "inherit", transition: "all 0.2s",
+              }}
+            >
+              <RefreshCw size={15} style={priceChecking ? { animation: "spin 1s linear infinite" } : {}} />
+              {priceChecking ? "Prüfe..." : "Jetzt prüfen"}
+            </button>
+          </div>
+
+          {priceCheckError && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#FEF2F2", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "#DC2626", fontWeight: 600 }}>
+              <AlertCircle size={15} /> {priceCheckError}
+            </div>
+          )}
+
+          {priceCheckResult && (
+            <div>
+              {/* Zusammenfassung */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+                {[
+                  { label: "Geprüft", value: priceCheckResult.results.filter(r => r.status !== "skipped").length, color: "#8B5CF6", bg: "#F5F3FF" },
+                  { label: "Geändert", value: priceCheckResult.results.filter(r => r.status === "changed").length, color: "#F59E0B", bg: "#FFFBEB" },
+                  { label: "Übersprungen", value: priceCheckResult.results.filter(r => r.status === "skipped").length, color: "#94A3B8", bg: "#F8FAFC" },
+                ].map(s => (
+                  <div key={s.label} style={{ background: s.bg, borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: 11, color: "#64748B" }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Geänderte Preise */}
+              {priceCheckResult.results.filter(r => r.status === "changed").length > 0 && (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#F59E0B", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Preisänderungen</div>
+                  {priceCheckResult.results.filter(r => r.status === "changed").map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#FFFBEB", borderRadius: 10, padding: "10px 14px", marginBottom: 6, border: "1px solid #FDE68A" }}>
+                      <div style={{ fontSize: 12, color: "#374151", flex: 1, marginRight: 12 }}>{r.title?.slice(0, 50)}…</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#F59E0B", whiteSpace: "nowrap" }}>
+                        {r.oldPrice?.toFixed(2)} € → {r.newPrice?.toFixed(2)} €
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {priceCheckResult.results.filter(r => r.status === "changed").length === 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#F0FDF4", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "#16A34A", fontWeight: 600 }}>
+                  <CheckCircle size={15} /> Alle Preise aktuell — keine Änderungen
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

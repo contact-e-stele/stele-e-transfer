@@ -418,9 +418,24 @@ const app = new Hono()
 
     // Produktinhalt für die Vorlage
     const productTitle = (product.generatedTitle ?? product.title).slice(0, 80);
+
+    // Specs als HTML-Tabelle aufbauen (aus product.specs JSON)
+    const specsObj: Record<string, string> = (() => {
+      try { return JSON.parse(product.specs ?? '{}') as Record<string, string>; } catch { return {}; }
+    })();
+    const specEntries = Object.entries(specsObj).slice(0, 12);
+    let specsTableHtml = '';
+    if (specEntries.length > 0) {
+      const rows = specEntries.map(([k, v]) =>
+        `<tr><td style="padding:6px 10px;color:#C9A84C;font-weight:bold;width:40%;border-bottom:1px solid #2a1a0a;">${k}</td><td style="padding:6px 10px;color:#a89050;border-bottom:1px solid #2a1a0a;">${v}</td></tr>`
+      ).join('');
+      specsTableHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">${rows}</table>`;
+    }
+
+    // HTML-Beschreibung direkt nutzen (bereits aufbereitet durch buildHTML in lieferanten.tsx)
     const rawContent = product.htmlDescription ?? `<p>${product.generatedTitle ?? product.title}</p>`;
-    // Strip to plain text and limit to 800 chars to stay under eBay's 4000 char description limit
-    const productContent = `<p>${rawContent.replace(/<[^>]*>/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 800)}</p>`;
+    // htmlDescription ist bereits valides HTML — direkt verwenden, kein Strip
+    const productContent = rawContent;
 
     // Versandhinweis (nur intern, nicht in Anzeige)
     const shippingNote = isEU
@@ -435,7 +450,7 @@ const app = new Hono()
 <td width="33%" style="padding:12px;text-align:center;border-right:1px solid #C9A84C"><b style="color:#C9A84C;font-size:12px">30 TAGE R&Uuml;CKGABE</b><br><small style="color:#8a7040">K&auml;uferschutz &uuml;ber eBay</small></td>
 <td width="34%" style="padding:12px;text-align:center"><b style="color:#C9A84C;font-size:12px">KUNDENSERVICE</b><br><small style="color:#8a7040">contact@stele-e-transfer.com</small></td>
 </tr></table>
-<div style="padding:18px;background:#0f0f07;color:#a89050;border-top:1px solid #C9A84C"><h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:6px;margin-top:0">${productTitle}</h3>${productContent}<p style="font-size:11px;color:#5a4a20"><b>&sect;19 UStG:</b> Keine MwSt. als Kleinunternehmer.</p></div>
+<div style="padding:18px;background:#0f0f07;color:#a89050;border-top:1px solid #C9A84C"><h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:6px;margin-top:0">${productTitle}</h3>${specsTableHtml}${productContent}<p style="font-size:11px;color:#5a4a20"><b>&sect;19 UStG:</b> Keine MwSt. als Kleinunternehmer.</p></div>
 <div style="padding:14px;background:#0a0a0a;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">Versand:</b> Kostenlos &middot; 3-7 Werktage &middot; DHL/Deutsche Post &middot; 30 Tage R&uuml;ckgabe</div>
 <div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">GPSR:</b> Stele-E-Transfer | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | contact@stele-e-transfer.com | +49 159 04826737</div>
 <div style="padding:14px;background:#0a0a0a;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">Impressum:</b> STELE-E-TRANSFER | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | &sect;19 UStG: Keine MwSt.</div>
