@@ -300,7 +300,7 @@ const app = new Hono()
   })
   .get('/aliexpress/status', async (c) => {
     const hasToken = !!(process.env.ALIEXPRESS_ACCESS_TOKEN);
-    return c.json({ connected: hasToken, appKey: '530690' });
+    return c.json({ connected: hasToken, appKey: '535690' });
   })
 
   // ─── Produkt speichern ───────────────────────────────────────────────────────
