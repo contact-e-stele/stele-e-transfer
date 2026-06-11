@@ -438,7 +438,7 @@ export default function Lieferanten() {
                         onClick={(e) => { e.stopPropagation(); removeImage(i); }}
                         title="Bild entfernen"
                         style={{
-                          position: "absolute", top: -6, right: -6,
+                          position: "absolute", bottom: -6, right: -6,
                           width: 18, height: 18, borderRadius: "50%",
                           background: "#EF4444", border: "none",
                           display: "flex", alignItems: "center", justifyContent: "center",
