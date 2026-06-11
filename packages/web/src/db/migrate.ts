@@ -31,24 +31,26 @@ const migrations = [
   )`,
 ];
 
-async function run() {
-  console.log('Starting migrations...');
+export async function runMigrations() {
+  console.log('[migrate] Starting migrations...');
   for (const sql of migrations) {
     try {
       await client.execute(sql);
-      console.log(`✓ ${sql.slice(0, 60)}...`);
+      console.log(`[migrate] ✓ ${sql.slice(0, 60)}...`);
     } catch (e: unknown) {
-      // "duplicate column name" ist OK — Spalte existiert bereits
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('duplicate column') || msg.includes('already exists')) {
-        console.log(`→ Skip (already exists): ${sql.slice(0, 60)}`);
+        console.log(`[migrate] → Skip (already exists): ${sql.slice(0, 60)}`);
       } else {
-        console.error(`✗ FAILED: ${sql}`);
+        console.error(`[migrate] ✗ FAILED: ${sql}`);
         console.error(msg);
       }
     }
   }
-  console.log('Done.');
+  console.log('[migrate] Done.');
 }
 
-run();
+// Direct execution
+if (import.meta.main) {
+  runMigrations();
+}
