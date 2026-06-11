@@ -1,6 +1,7 @@
 import app from "./api";
 import { startBackupScheduler } from "./api/backup";
 import { runMigrations } from "./db/migrate";
+import { runStartupCheck } from "./startup-check";
 
 const port = Number(process.env.PORT ?? 3000);
 const distDir = `${import.meta.dir}/../dist`;
@@ -44,6 +45,9 @@ try {
 } catch (e) {
   console.error('[migrate] Fehler:', e);
 }
+
+// Startup-Check: alle kritischen Features prüfen
+await runStartupCheck();
 
 // Automatischer DB-Backup: täglich 08:00, 13:00, 20:00 Uhr
 startBackupScheduler();
