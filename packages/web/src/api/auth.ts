@@ -1,15 +1,19 @@
 import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
 
-const APP_USER = process.env.APP_USERNAME || 'admin';
-const APP_PASS = process.env.APP_PASSWORD || 'stele2024';
+// Unterstützt 2 User: AUTH_USER1_NAME/PASS und AUTH_USER2_NAME/PASS
+const USERS = [
+  { name: process.env.AUTH_USER1_NAME || '', pass: process.env.AUTH_USER1_PASS || '' },
+  { name: process.env.AUTH_USER2_NAME || '', pass: process.env.AUTH_USER2_PASS || '' },
+].filter(u => u.name && u.pass);
 
 export const authRouter = new Hono()
   .post('/login', async (c) => {
     try {
       const body = await c.req.json() as { username?: string; password?: string };
-      if (body.username === APP_USER && body.password === APP_PASS) {
-        return c.json({ ok: true, username: body.username }, 200);
+      const match = USERS.find(u => u.name === body.username && u.pass === body.password);
+      if (match) {
+        return c.json({ ok: true, username: match.name }, 200);
       }
       return c.json({ ok: false, error: 'Falscher Benutzername oder Passwort' }, 401);
     } catch {
