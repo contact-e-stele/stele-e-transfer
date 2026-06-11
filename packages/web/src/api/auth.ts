@@ -19,6 +19,14 @@ export const authRouter = new Hono()
     } catch {
       return c.json({ ok: false, error: 'Ungültige Anfrage' }, 400);
     }
+  })
+  .get('/me', async (c) => {
+    // Session is managed via localStorage on frontend — server always returns not logged in
+    // Frontend uses this only as a fallback; real session state lives in localStorage
+    return c.json({ loggedIn: false });
+  })
+  .post('/logout', async (c) => {
+    return c.json({ ok: true });
   });
 
 // No-op middleware — app is self-hosted, login handled on frontend

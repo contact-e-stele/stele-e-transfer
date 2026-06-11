@@ -13,7 +13,7 @@ export default function Einstellungen() {
     fetch("/api/aliexpress/status", { credentials: "include" })
       .then(r => r.json())
       .then(d => setAliStatus(d as AliStatus))
-      .catch(() => setAliStatus({ connected: false, appKey: "530690" }))
+      .catch(() => setAliStatus({ connected: false, appKey: "535690" }))
       .finally(() => setLoading(false));
   }, []);
 
@@ -58,7 +58,7 @@ export default function Einstellungen() {
             </div>
             <p style={{ fontSize: 13, color: "#64748B", margin: 0, maxWidth: 360 }}>
               Offizielle Produktdaten: Titel, Preise, Bilder, Versandland — zuverlässig ohne Scraping.
-              App Key: <code style={{ background: "#F1F5F9", padding: "1px 6px", borderRadius: 4 }}>530690</code>
+              App Key: <code style={{ background: "#F1F5F9", padding: "1px 6px", borderRadius: 4 }}>535690</code>
             </p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>

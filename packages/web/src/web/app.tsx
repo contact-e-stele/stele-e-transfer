@@ -44,7 +44,7 @@ function TabNav() {
     { path: "/produkte",    label: "🗂️",  title: "Produkte" },
     { path: "/listings",    label: "🛒",  title: "Listings"  },
     { path: "/retouren",    label: "🔄",  title: "Retouren"  },
-    { path: "/einstellungen", label: "⚙️", title: "Settings"  },
+    { path: "/einstellungen", label: "⚙️", title: "Einst."  },
   ];
 
   return (
@@ -59,7 +59,6 @@ function TabNav() {
         display: "flex", gap: 4,
         background: "#E2E8F0",
         borderRadius: 14, padding: 4,
-        position: "relative",
       }}>
         {tabs.map(tab => (
           <button
@@ -69,15 +68,14 @@ function TabNav() {
             title={tab.title}
           >
             <span>{tab.label}</span>
-            <span style={{ display: "none" }}>{/* sm:block */}</span>
             <span style={{ fontSize: 11 }}>{tab.title}</span>
           </button>
         ))}
+      </div>
+      <div style={{ textAlign: "center", marginTop: 3 }}>
         <span style={{
-          position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
           fontSize: 9, fontWeight: 700, color: "#94A3B8", letterSpacing: 1,
-          background: "#CBD5E1", borderRadius: 4, padding: "2px 5px",
-          fontFamily: "monospace", pointerEvents: "none",
+          fontFamily: "monospace",
         }}>v0.5</span>
       </div>
     </div>
@@ -89,17 +87,14 @@ function App() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    fetch("/api/auth/me", { credentials: "include" })
-      .then(r => r.json())
-      .then((d: { loggedIn: boolean; username?: string }) => {
-        if (d.loggedIn && d.username) setUser(d.username);
-      })
-      .catch(() => {})
-      .finally(() => setChecking(false));
+    // Session stored in localStorage — no server-side session needed
+    const saved = localStorage.getItem("stele_user");
+    if (saved) setUser(saved);
+    setChecking(false);
   }, []);
 
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  const handleLogout = () => {
+    localStorage.removeItem("stele_user");
     setUser(null);
   };
 
@@ -115,7 +110,7 @@ function App() {
     return (
       <Provider>
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-        <Login onLogin={setUser} />
+        <Login onLogin={(u) => { localStorage.setItem("stele_user", u); setUser(u); }} />
       </Provider>
     );
   }
