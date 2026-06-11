@@ -2,11 +2,11 @@
  * Lieferanten-Tab — AliExpress URL scrapen → Produkt importieren
  * Ersetzt AutoDS komplett für den Import-Schritt
  */
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
-  TrendingDown, Save, Eye, EyeOff,
+  TrendingDown, Save, Eye, EyeOff, X,
 } from "lucide-react";
 
 interface ScrapedProduct {
@@ -107,6 +107,7 @@ export default function Lieferanten() {
   const [manualPrice, setManualPrice] = useState("");
 
   const [product, setProduct] = useState<ScrapedProduct | null>(null);
+  const [visibleImages, setVisibleImages] = useState<string[]>([]);
   const [result, setResult] = useState<{ title: string; html: string } | null>(null);
   const [selectedImage, setSelectedImage] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
@@ -151,6 +152,7 @@ export default function Lieferanten() {
       const data = await res.json() as ScrapedProduct & { error?: string };
       if (!res.ok) throw new Error(data.error ?? `Fehler ${res.status}`);
       setProduct(data);
+      setVisibleImages(data.images ?? []);
       setResult({ title: buildTitle(data.title), html: buildHTML(data) });
       // Preis vorausfüllen
       const p = parsePrice(data.price);
@@ -166,6 +168,7 @@ export default function Lieferanten() {
     if (!manualTitle.trim()) return;
     const fp: ScrapedProduct = { title: manualTitle.trim(), images: [], price: manualPrice.trim(), description: manualDesc.trim(), specs: {} };
     setProduct(fp);
+    setVisibleImages([]);
     setResult({ title: buildTitle(fp.title), html: buildHTML(fp) });
     const p = parsePrice(fp.price);
     if (p > 0) setBuyPrice(p.toFixed(2));
@@ -190,7 +193,7 @@ export default function Lieferanten() {
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: [],
           description: product.description,
-          images: product.images,
+          images: visibleImages,
           buyPrice: einkauf || null,
           sellPrice: verkauf || null,
         }),
@@ -226,7 +229,7 @@ export default function Lieferanten() {
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: [],
           description: product.description,
-          images: product.images,
+          images: visibleImages,
           buyPrice: einkauf || null,
           sellPrice: price,
         }),
@@ -266,11 +269,22 @@ export default function Lieferanten() {
     color: "#0F172A", background: "#F8FAFC",
   };
 
+  const removeImage = useCallback((index: number) => {
+    setVisibleImages(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      setSelectedImage(si => {
+        if (si >= next.length) return Math.max(0, next.length - 1);
+        return si;
+      });
+      return next;
+    });
+  }, []);
+
   const reset = () => {
     setProduct(null); setResult(null); setEbayResult(null);
     setSaveResult(null); setUrlInput(""); setManualTitle("");
     setManualDesc(""); setManualPrice(""); setBuyPrice(""); setEbayPrice("");
-    setShowPreview(false);
+    setShowPreview(false); setVisibleImages([]); setSelectedImage(0);
   };
 
   return (
@@ -408,22 +422,38 @@ export default function Lieferanten() {
             </button>
 
             {/* Produktbild */}
-            {product.images.length > 0 && (
+            {visibleImages.length > 0 && (
               <div style={{ background: "#fff", borderRadius: 16, padding: 16, boxShadow: "0 2px 10px rgba(0,0,0,0.06)", marginBottom: 14 }}>
-                <img src={product.images[selectedImage]} alt="" style={{ width: "100%", maxHeight: 260, objectFit: "contain", borderRadius: 10, background: "#F8FAFC" }} />
-                {product.images.length > 1 && (
-                  <div style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 4 }}>
-                    {product.images.map((img, i) => (
-                      <img key={i} src={img} alt="" onClick={() => setSelectedImage(i)} style={{
+                <img src={visibleImages[selectedImage]} alt="" style={{ width: "100%", maxHeight: 260, objectFit: "contain", borderRadius: 10, background: "#F8FAFC" }} />
+                <div style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 4 }}>
+                  {visibleImages.map((img, i) => (
+                    <div key={i} style={{ position: "relative", flexShrink: 0 }}>
+                      <img src={img} alt="" onClick={() => setSelectedImage(i)} style={{
                         width: 48, height: 48, borderRadius: 8, objectFit: "cover",
-                        cursor: "pointer", flexShrink: 0,
+                        cursor: "pointer", display: "block",
                         border: i === selectedImage ? "2px solid #FF6B00" : "2px solid transparent",
                         opacity: i === selectedImage ? 1 : 0.6,
                       }} />
-                    ))}
-                  </div>
-                )}
-                {product.price && <p style={{ margin: "12px 0 0", fontSize: 16, fontWeight: 700, color: "#FF6B00" }}>{product.price}</p>}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeImage(i); }}
+                        title="Bild entfernen"
+                        style={{
+                          position: "absolute", top: -6, right: -6,
+                          width: 18, height: 18, borderRadius: "50%",
+                          background: "#EF4444", border: "none",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          cursor: "pointer", padding: 0, zIndex: 10,
+                        }}
+                      >
+                        <X size={10} color="#fff" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94A3B8" }}>
+                  {visibleImages.length} Bild{visibleImages.length !== 1 ? "er" : ""} · X zum Entfernen
+                </p>
+                {product.price && <p style={{ margin: "8px 0 0", fontSize: 16, fontWeight: 700, color: "#FF6B00" }}>{product.price}</p>}
               </div>
             )}
 
