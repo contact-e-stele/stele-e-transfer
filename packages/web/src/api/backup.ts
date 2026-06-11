@@ -96,26 +96,25 @@ export function startBackupScheduler(): void {
     return;
   }
 
-  const BACKUP_HOURS = [8, 13, 20];
+  // [Stunde, Minute]
+  const BACKUP_TIMES: [number, number][] = [[8, 0], [13, 0], [20, 0], [23, 35]];
 
   function scheduleNext(): void {
     const now = new Date();
-    const currentHour = now.getHours();
-
-    let nextHour = BACKUP_HOURS.find(h => h > currentHour);
-    let daysOffset = 0;
-
-    if (!nextHour) {
-      nextHour = BACKUP_HOURS[0];
-      daysOffset = 1;
-    }
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
     const next = new Date(now);
-    next.setDate(now.getDate() + daysOffset);
-    next.setHours(nextHour, 0, 0, 0);
+    const found = BACKUP_TIMES.find(([h, m]) => h * 60 + m > nowMinutes);
+
+    if (found) {
+      next.setHours(found[0], found[1], 0, 0);
+    } else {
+      // nächster Tag, erster Eintrag
+      next.setDate(now.getDate() + 1);
+      next.setHours(BACKUP_TIMES[0][0], BACKUP_TIMES[0][1], 0, 0);
+    }
 
     const msUntilNext = next.getTime() - now.getTime();
-
     console.log(`[Backup] Nächstes Backup um ${next.toLocaleTimeString('de-DE')} (in ${Math.round(msUntilNext / 60000)} Min)`);
 
     setTimeout(async () => {
@@ -125,5 +124,5 @@ export function startBackupScheduler(): void {
   }
 
   scheduleNext();
-  console.log('[Backup] Scheduler gestartet — täglich 08:00, 13:00, 20:00 Uhr');
+  console.log('[Backup] Scheduler gestartet — täglich 08:00, 13:00, 20:00, 23:35 Uhr');
 }
