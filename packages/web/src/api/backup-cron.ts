@@ -1,16 +1,8 @@
-import { createBackupArchive } from './backup';
-import { sendBackupEmail } from './mailer';
+import { runBackup } from './backup';
 
 async function main() {
-  const archive = await createBackupArchive();
-  await sendBackupEmail({
-    to: 'contact@stele-e-transfer.com',
-    subject: `Daily Backup ${new Date().toLocaleDateString('de-DE')}`,
-    text: 'Daily backup abgeschlossen. Anhang ist beigefügt.',
-    attachmentPath: archive.path,
-    attachmentName: archive.name,
-  });
-  console.log(`Backup sent: ${archive.name}`);
+  await runBackup();
+  console.log('Backup done');
 }
 
 main().catch(err => {
