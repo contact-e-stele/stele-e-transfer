@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
-  TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X,
+  TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye,
 } from "lucide-react";
 
 interface VariantGroup {
@@ -285,6 +285,7 @@ export default function Produkte() {
   const [editingTitle, setEditingTitle] = useState<number | null>(null);
   const [titleInput, setTitleInput] = useState("");
   const [variantenModal, setVariantenModal] = useState<Product | null>(null);
+  const [previewProduct, setPreviewProduct] = useState<Product | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -418,6 +419,31 @@ export default function Produkte() {
           onClose={() => setVariantenModal(null)}
           onSaved={load}
         />
+      )}
+
+      {/* Beschreibungs-Preview Modal */}
+      {previewProduct && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1000,
+          background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
+          padding: 16,
+        }} onClick={() => setPreviewProduct(null)}>
+          <div style={{
+            background: "#fff", borderRadius: 16, width: "100%", maxWidth: 800,
+            maxHeight: "90vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #E2E8F0", position: "sticky", top: 0, background: "#fff", zIndex: 10 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>eBay Beschreibungs-Vorschau</span>
+              <button onClick={() => setPreviewProduct(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" }}>
+                <X size={18} color="#94A3B8" />
+              </button>
+            </div>
+            <div style={{ padding: 20 }}>
+              <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 12 }}>So wird die Beschreibung im eBay Listing angezeigt:</div>
+              <div dangerouslySetInnerHTML={{ __html: previewProduct.htmlDescription }} />
+            </div>
+          </div>
+        </div>
       )}
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
 
@@ -655,6 +681,15 @@ export default function Produkte() {
                     </button>
                   </>
                 )}
+                {/* Beschreibung Preview */}
+                <button onClick={() => setPreviewProduct(product)} style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  padding: "6px 10px", borderRadius: 8, background: "#F0FDF4", color: "#16A34A",
+                  fontSize: 11, fontWeight: 700, border: "1px solid #BBF7D0", cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  <Eye size={11} /> Vorschau
+                </button>
+
                 {/* Varianten */}
                 <button onClick={() => setVariantenModal(product)} style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
