@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken } from './ebay';
 import { scrapeAliExpressUrl } from './aliexpress';
+import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 
@@ -267,6 +268,41 @@ const app = new Hono()
     }
   })
 
+  // ─── AliExpress OAuth ────────────────────────────────────────────────────────
+  .get('/aliexpress/auth', (c) => {
+    const baseUrl = process.env.WEBSITE_URL || process.env.RENDER_EXTERNAL_URL || 'https://stele-e-transfer.onrender.com';
+    const redirectUri = `${baseUrl.replace(/\/$/, '')}/api/aliexpress/callback`;
+    const state = Math.random().toString(36).slice(2);
+    const url = getAliExpressOAuthUrl(redirectUri, state);
+    console.log('[AliExpress OAuth] Redirect URI:', redirectUri);
+    return c.redirect(url);
+  })
+  .get('/aliexpress/callback', async (c) => {
+    const code = c.req.query('code');
+    if (!code) return c.json({ error: 'Kein Code von AliExpress' }, 400);
+    const baseUrl = process.env.WEBSITE_URL || process.env.RENDER_EXTERNAL_URL || 'https://stele-e-transfer.onrender.com';
+    const redirectUri = `${baseUrl.replace(/\/$/, '')}/api/aliexpress/callback`;
+    const tokens = await exchangeAliCodeForToken(code, redirectUri);
+    if (!tokens) return c.json({ error: 'Token-Exchange fehlgeschlagen' }, 500);
+    console.log('[AliExpress OAuth] Access token obtained:', tokens.access_token.slice(0, 20) + '...');
+    console.log('[AliExpress OAuth] Refresh token:', tokens.refresh_token.slice(0, 20) + '...');
+    // In Produktion: Tokens in DB/Env speichern
+    return c.html(`
+      <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff">
+        <h2 style="color:#C9A227">✅ AliExpress verbunden!</h2>
+        <p>Access Token erhalten. Bitte diese Werte in den Render-Umgebungsvariablen speichern:</p>
+        <p><b>ALIEXPRESS_ACCESS_TOKEN=</b><code style="color:#C9A227">${tokens.access_token}</code></p>
+        <p><b>ALIEXPRESS_REFRESH_TOKEN=</b><code style="color:#C9A227">${tokens.refresh_token}</code></p>
+        <p><small>Expires: ${tokens.expires_in}</small></p>
+        <p><a href="/" style="color:#C9A227">Zurück zur App</a></p>
+      </body></html>
+    `);
+  })
+  .get('/aliexpress/status', async (c) => {
+    const hasToken = !!(process.env.ALIEXPRESS_ACCESS_TOKEN);
+    return c.json({ connected: hasToken, appKey: '530690' });
+  })
+
   // ─── Produkt speichern ───────────────────────────────────────────────────────
   .post('/products', async (c) => {
     let db;
@@ -472,8 +508,22 @@ const app = new Hono()
     if (!url) return c.json({ error: 'url fehlt' }, 400);
     if (!url.includes('aliexpress')) return c.json({ error: 'Keine AliExpress-URL' }, 400);
 
+    // Extract product ID from URL
+    const productIdMatch = url.match(/\/item\/(\d+)\.html/) || url.match(/[?&]id=(\d+)/);
+    const productId = productIdMatch?.[1];
+
+    // Try AliExpress DS API first (official, reliable) if access_token available
+    const accessToken = process.env.ALIEXPRESS_ACCESS_TOKEN;
+    if (accessToken && productId) {
+      console.log(`[AliExpress] Using DS API for product ${productId}`);
+      const apiData = await getAliProductByApi(productId, accessToken);
+      if (apiData) return c.json(apiData, 200);
+      console.log('[AliExpress] DS API failed, falling back to scraper...');
+    }
+
+    // Fallback: scraper
     const data = await scrapeAliExpressUrl(url);
-    if (!data) return c.json({ error: 'AliExpress-Seite konnte nicht geladen werden. Bitte direkte Produkt-URL verwenden.' }, 503);
+    if (!data) return c.json({ error: 'AliExpress-Seite konnte nicht geladen werden. Bitte direkte Produkt-URL verwenden (z.B. https://de.aliexpress.com/item/XXXX.html). Für bessere Ergebnisse AliExpress-Verbindung in den Einstellungen aktivieren.' }, 503);
     return c.json(data, 200);
   })
 
@@ -817,7 +867,17 @@ const app = new Hono()
           continue;
         }
         try {
-          const scraped = await scrapeAliExpressUrl(url);
+          // Try DS API first if token available
+          const accessToken = process.env.ALIEXPRESS_ACCESS_TOKEN;
+          const productIdMatch = url.match(/\/item\/(\d+)\.html/) || url.match(/[?&]id=(\d+)/);
+          const productId = productIdMatch?.[1];
+          let scraped = null;
+          if (accessToken && productId) {
+            scraped = await getAliProductByApi(productId, accessToken);
+          }
+          if (!scraped) {
+            scraped = await scrapeAliExpressUrl(url);
+          }
           if (!scraped?.price) {
             results.push({ id: product.id, title: product.generatedTitle, status: 'no_price' });
             continue;

@@ -136,34 +136,42 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
     const res = await fetch(targetUrl, { headers: DIRECT_HEADERS, redirect: 'follow' });
     if (res.ok) {
       const html = await res.text();
-      // Detect bot wall: empty runParams + no product content
       if (html.length > 5000 && (html.includes('og:title') || html.includes('application/ld+json') || html.includes('productTitle'))) {
         console.log(`[AliExpress] Direct fetch OK (${html.length} chars)`);
         return html;
       }
-      console.log(`[AliExpress] Direct fetch got shell page, trying proxy...`);
+      console.log(`[AliExpress] Direct fetch got shell page (${html.length} chars), trying ScrapingAnt...`);
     }
   } catch (e) {
     console.log(`[AliExpress] Direct fetch failed:`, e);
   }
 
-  // Attempt 2: ScrapingAnt (residential proxies, 10k free/month permanent)
+  // Attempt 2: ScrapingAnt with browser=true (JS-rendered, residential DE proxy)
   if (SCRAPINGANT_API_KEY) {
-    try {
-      const antUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=false&proxy_country=DE`;
-      const res = await fetch(antUrl, { signal: AbortSignal.timeout(30000) });
-      if (res.ok) {
-        const html = await res.text();
-        if (html.length > 5000) {
-          console.log(`[AliExpress] ScrapingAnt OK (${html.length} chars)`);
-          return html;
+    // Two tries: first with wait_for_selector, then without (fallback)
+    const attempts = [
+      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&wait_for_selector=.pdp-info-main&block_resources=false`,
+      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&block_resources=false`,
+    ];
+    for (const antUrl of attempts) {
+      try {
+        console.log(`[AliExpress] ScrapingAnt attempt: ${antUrl.slice(0, 120)}...`);
+        const res = await fetch(antUrl, { signal: AbortSignal.timeout(60000) });
+        if (res.ok) {
+          const html = await res.text();
+          const hasProduct = html.includes('application/ld+json') || html.includes('og:title') || html.includes('pdp-info-main') || html.includes('product-title');
+          if (html.length > 10000 && hasProduct) {
+            console.log(`[AliExpress] ScrapingAnt browser OK (${html.length} chars)`);
+            return html;
+          }
+          console.log(`[AliExpress] ScrapingAnt response insufficient (${html.length} chars, hasProduct=${hasProduct}), trying next...`);
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.log(`[AliExpress] ScrapingAnt HTTP ${res.status}: ${errText.slice(0, 200)}`);
         }
-        console.log(`[AliExpress] ScrapingAnt response too small (${html.length} chars), trying next...`);
-      } else {
-        console.log(`[AliExpress] ScrapingAnt HTTP ${res.status}, trying next...`);
+      } catch (e) {
+        console.log(`[AliExpress] ScrapingAnt attempt failed:`, e);
       }
-    } catch (e) {
-      console.log(`[AliExpress] ScrapingAnt failed:`, e);
     }
   }
 
@@ -186,15 +194,22 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
 }
 
 export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
-  // Normalize URL — force www.aliexpress.com global
+  // Normalize URL — always use de.aliexpress.com + clean URL (strip tracking params)
   let fetchUrl = url;
   try {
     const u = new URL(url);
-    // Always use www.aliexpress.com to avoid US redirect
-    if (u.hostname === 'de.aliexpress.com' || u.hostname === 'aliexpress.com') {
-      u.hostname = 'www.aliexpress.com';
+    // Force de.aliexpress.com (German store, EUR prices, EU shipping visible)
+    u.hostname = 'de.aliexpress.com';
+    // Extract product ID from path and build clean URL
+    const itemMatch = u.pathname.match(/\/item\/(\d+)\.html/);
+    if (itemMatch) {
+      fetchUrl = `https://de.aliexpress.com/item/${itemMatch[1]}.html`;
+    } else {
+      // Keep path but strip all query params
+      u.search = '';
+      u.hash = '';
+      fetchUrl = u.toString();
     }
-    fetchUrl = u.toString();
   } catch { /* keep original */ }
 
   console.log(`[AliExpress] Starting scrape: ${fetchUrl}`);

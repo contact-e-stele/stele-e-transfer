@@ -6,6 +6,7 @@ import Produkte from "./pages/produkte";
 import Listings from "./pages/listings";
 import Suche from "./pages/suche";
 import Retouren from "./pages/retouren";
+import Einstellungen from "./pages/einstellungen";
 import Login from "./pages/login";
 import { Provider } from "./components/provider";
 import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
@@ -43,6 +44,7 @@ function TabNav() {
     { path: "/produkte",    label: "🗂️",  title: "Produkte" },
     { path: "/listings",    label: "🛒",  title: "Listings"  },
     { path: "/retouren",    label: "🔄",  title: "Retouren"  },
+    { path: "/einstellungen", label: "⚙️", title: "Settings"  },
   ];
 
   return (
@@ -149,6 +151,7 @@ function App() {
         <Route path="/produkte"    component={Produkte}    />
         <Route path="/listings"    component={Listings}    />
         <Route path="/retouren"    component={Retouren}    />
+        <Route path="/einstellungen" component={Einstellungen} />
       </Switch>
       {import.meta.env.DEV && <AgentFeedback />}
       {<RunableBadge />}
