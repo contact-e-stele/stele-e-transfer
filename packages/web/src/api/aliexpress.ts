@@ -272,12 +272,25 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   const specs = extractSpecs(html);
   const { shipsFrom, shipsFromDE } = extractShipsFrom(html);
 
-  // Clean description
+  // Clean description — HTML raus, Footer/Spam-Zeilen filtern
+  const BLOCKED = [
+    /aliexpress/i, /alibaba/i, /alimama/i, /taobao/i, /tmall/i,
+    /amazon/i, /temu/i, /mehrsprachige/i, /browse by category/i,
+    /hilfe.?center/i, /streitigkeiten/i, /transparenz/i, /dsa.*osa/i,
+    /русский|portuguese|español|français|italiano|türkçe/i,
+  ];
   const description = jsonLdDesc
-    .replace(/<[^>]*>/g, '')
+    .replace(/<[^>]*>/g, ' ')
     .replace(/\s{2,}/g, ' ')
+    .split(/[.\n]/)
+    .filter(s => {
+      const t = s.trim();
+      return t.length > 15 && !BLOCKED.some(re => re.test(t));
+    })
+    .slice(0, 6)
+    .join('. ')
     .trim()
-    .slice(0, 1000);
+    .slice(0, 800);
 
   console.log(`[AliExpress] title="${title.slice(0, 60)}" images=${images.length} price="${price}" shipsFrom="${shipsFrom}"`);
 

@@ -50,6 +50,27 @@ function buildTitle(rawTitle: string): string {
   return title;
 }
 
+// Bekannte Footer/Spam-Phrasen die aus AliExpress HTML kommen
+const BLOCKED_PHRASES = [
+  /aliexpress/gi, /alibaba/gi, /alimama/gi, /taobao/gi, /tmall/gi, /fliggy/gi,
+  /dingtalk/gi, /juhuasuan/gi, /alintern/gi, /alicdn/gi, /alipay/gi,
+  /amazon/gi, /temu/gi, /wish\.com/gi, /ebay\.com/gi,
+  /mehrsprachige.*websites/gi, /browse by category/gi,
+  /hilfe-?center/gi, /streitigkeiten/gi, /rückgabe.*erstattung/gi,
+  /transparenz.*zentrum/gi, /dsa.*osa/gi, /integrität.*konformität/gi,
+  /beschwerdeein.*stieg/gi, /rückruf/gi,
+  /русский|portuguese|español|français|italiano|türkçe|日本語|한국어|عربي|hebrew|polski/gi,
+];
+
+function isCleanLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length < 15) return false;
+  for (const re of BLOCKED_PHRASES) {
+    if (re.test(trimmed)) return false;
+  }
+  return true;
+}
+
 function buildHTML(product: ScrapedProduct): string {
   const { description, specs, title } = product;
   const specEntries = Object.entries(specs);
@@ -57,32 +78,34 @@ function buildHTML(product: ScrapedProduct): string {
   // Produkttitel sauber
   const cleanTitle = cleanText(decodeEntities(title));
 
-  // Specs als strukturierte Bullet-Liste
+  // Specs als strukturierte Tabelle — nur saubere Einträge
   let specsHtml = "";
   if (specEntries.length > 0) {
-    const rows = specEntries.slice(0, 10).map(([k, v]) => {
+    const rows = specEntries.slice(0, 12).map(([k, v]) => {
       const key = cleanText(decodeEntities(k));
       const val = cleanText(decodeEntities(v));
-      return key && val ? `<li><strong>${key}:</strong> ${val}</li>` : null;
+      if (!key || !val) return null;
+      if (!isCleanLine(key) || !isCleanLine(val)) return null;
+      return `<tr><td style="padding:6px 10px;font-weight:600;color:#C9A84C;white-space:nowrap;border-bottom:1px solid #2a2a2a;">${key}</td><td style="padding:6px 10px;color:#e0d0a0;border-bottom:1px solid #2a2a2a;">${val}</td></tr>`;
     }).filter(Boolean).join("\n");
-    if (rows) specsHtml = `<ul style="line-height:1.9;">\n${rows}\n</ul>`;
+    if (rows) specsHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">\n${rows}\n</table>`;
   }
 
-  // Beschreibung bereinigen
+  // Beschreibung — nur saubere Zeilen, keine Plattform-Erwähnungen
   let descHtml = "";
   if (description && description.length > 20) {
     const cleaned = cleanText(decodeEntities(description));
-    const paras = cleaned.split(/\n{2,}/).slice(0, 3).filter(p => p.trim().length > 20);
-    descHtml = paras.map(p => `<p style="color:#a89050;">${p.trim()}</p>`).join("\n");
+    const paras = cleaned
+      .split(/[\n.]{2,}/)
+      .map(p => p.trim())
+      .filter(p => p.length > 20 && isCleanLine(p))
+      .slice(0, 4);
+    if (paras.length > 0) {
+      descHtml = paras.map(p => `<p style="color:#c0a870;line-height:1.7;margin:8px 0;">${p}</p>`).join("\n");
+    }
   }
 
-  // Verfügbare Ausführungen (Varianten-Hinweis falls specs vorhanden)
-  const variantHint = specEntries.length > 0
-    ? `<p style="margin-bottom:12px;"><strong style="color:#C9A84C;">Verfügbare Ausführungen:</strong> Bitte Variante im Dropdown wählen</p>`
-    : "";
-
-  return `<h3 style="color:#C9A84C; border-bottom:1px solid #3a2a0a; padding-bottom:8px; letter-spacing:1px;">${cleanTitle}</h3>
-${variantHint}
+  return `<h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:8px;letter-spacing:1px;margin-bottom:12px;">${cleanTitle}</h3>
 ${specsHtml}
 ${descHtml}`.trim();
 }
