@@ -9,6 +9,15 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger backup on Render
+      - name: Render aufwecken
         run: |
-          curl -fsS https://stele-e-transfer.onrender.com/api/backup/run
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://stele-e-transfer.onrender.com/api/health)
+            echo "Versuch $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then break; fi
+            sleep 15
+          done
+
+      - name: Backup auslösen
+        run: |
+          curl -fsS --max-time 30 https://stele-e-transfer.onrender.com/api/backup/run
