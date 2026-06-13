@@ -934,5 +934,16 @@ app.get('/backup/test', async (c) => {
   }
 });
 
+// Alias für GitHub Actions Workflow
+app.get('/backup/run', async (c) => {
+  try {
+    const { runBackup } = await import('./backup');
+    await runBackup();
+    return c.json({ success: true, message: 'Backup Email gesendet' }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 export type AppType = typeof app;
 export default app;
