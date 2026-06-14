@@ -3,7 +3,7 @@
 
 import * as crypto from 'crypto';
 
-const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
+const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '530690';
 const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
 const IOP_ENDPOINT = 'https://api-sg.aliexpress.com/sync';
 
