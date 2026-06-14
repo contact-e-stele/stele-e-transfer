@@ -31,6 +31,11 @@ function cleanText(text: string): string {
     .replace(/([a-zäöüß]{4,})([A-ZÄÖÜ])/g, "$1 $2")
     .replace(/\b(.{10,40}?)\s+\1\b/gi, "$1")
     .replace(/\s{2,}/g, " ")
+    // AliExpress Müll raus
+    .replace(/\b\d+\/\d+\s*(st[üu]ck?|pcs?|pieces?)?\b/gi, "")
+    .replace(/aliexpress\s*\d*/gi, "")
+    .replace(/\b200\d{6,}\b/g, "")
+    .replace(/\s{2,}/g, " ")
     .trim();
 }
 
@@ -42,6 +47,15 @@ function isGarbage(text: string): boolean {
   // Zu viele Sonderzeichen
   const specialRatio = (text.match(/[^a-zA-ZäöüÄÖÜß0-9\s.,!?:;()\-–€%°²³+]/g)?.length ?? 0) / text.length;
   if (specialRatio > 0.3) return true;
+  // AliExpress Navigation/Kategorien Müll
+  const trashPhrases = [
+    "aliexpress", "browse by category", "alibaba group", "mehrsprachige",
+    "help center", "buyer protection", "app store", "google play",
+    "intellectual property", "privacy policy", "sitemap", "newsletter",
+    "back to top", "customer service", "report ipr",
+  ];
+  const lower = text.toLowerCase();
+  if (trashPhrases.some(p => lower.includes(p))) return true;
   return false;
 }
 
@@ -162,7 +176,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   <div style="display:table-cell;width:33%;border-right:1px solid #C9A84C;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
-      <div style="font-size:11px;color:#8a7040;line-height:1.7;">Lieferzeit 3–7 Werktage<br/>Versand per DHL / Deutsche Post</div>
+      <div style="font-size:11px;color:#8a7040;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
     </div>
   </div>
   <div style="display:table-cell;width:33%;border-right:1px solid #C9A84C;vertical-align:top;">
@@ -228,7 +242,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       <h3>Versandinformationen</h3>
       <ul style="line-height:1.9;">
         <li><strong>Kostenloser Versand</strong> auf alle Bestellungen</li>
-        <li>Lieferzeit: <strong>3–7 Werktage</strong></li>
+        <li>Lieferzeit: <strong>3–10 Werktage</strong></li>
         <li>Versand per <strong>DHL, Deutsche Post oder Amazon Logistik</strong></li>
         <li>Sendungsverfolgung wird per eBay-Nachricht mitgeteilt</li>
       </ul>
@@ -272,7 +286,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       <p><strong>&sect; 4 Zahlung</strong><br/>
       Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
       <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
-      Lieferung innerhalb Deutschlands. Lieferzeit: 3–7 Werktage nach Zahlungseingang.<br/>
+      Lieferung innerhalb Deutschlands. Lieferzeit: 3–10 Werktage nach Zahlungseingang.<br/>
       Keine Haftung f&uuml;r Verz&ouml;gerungen durch den Versanddienstleister.</p>
       <p><strong>&sect; 6 Eigentumsvorbehalt</strong><br/>
       Die Ware bleibt bis zur vollst&auml;ndigen Bezahlung Eigentum von stele-e-transfer.</p>
