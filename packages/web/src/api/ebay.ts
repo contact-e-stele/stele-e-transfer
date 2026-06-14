@@ -442,6 +442,7 @@ export async function deleteExistingOffers(sku: string): Promise<void> {
 export async function createOffer(input: EbayListingInput): Promise<string> {
   const token = await getAccessToken();
   const policies = await getBusinessPolicies();
+  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
   const GPSR_RESPONSIBLE_PERSON = {
@@ -472,6 +473,10 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
       fulfillmentPolicyId: policies.fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
+    },
+    // Artikelmerkmale direkt im Offer (eBay verlangt es beim publishOffer)
+    itemSpecifics: {
+      aspects: Object.fromEntries(Object.entries(aspects).map(([k, v]) => [k, v])),
     },
     // GPSR Responsible Person
     productSafety: {
