@@ -160,7 +160,8 @@ export interface VariantGroup {
 export interface EbayListingInput {
   sku: string;
   title: string;
-  description: string; // HTML
+  description: string; // HTML – geht in listingDescription (Offer), max 500KB
+  shortDescription?: string; // Plain-Text – geht in inventory_item description, max 4000 Zeichen
   price: number; // EUR
   quantity: number;
   condition: 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD';
@@ -229,6 +230,10 @@ function buildAspects(specs: Record<string, string> = {}, mpn?: string): Record<
 export async function createOrUpdateInventoryItem(input: EbayListingInput): Promise<void> {
   const token = await getAccessToken();
 
+  // Inventory Item: nur Plain-Text, max 4000 Zeichen
+  // Das volle HTML kommt in listingDescription (Offer)
+  const plainDesc = (input.shortDescription ?? input.description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 4000);
+
   const body = {
     availability: {
       shipToLocationAvailability: { quantity: input.quantity },
@@ -236,7 +241,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
     condition: input.condition,
     product: {
       title: input.title,
-      description: input.description,
+      description: plainDesc,
       imageUrls: input.imageUrls,
       aspects: buildAspects(input.specs, input.mpn),
     },
@@ -387,6 +392,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const combos = buildCombinations(groups);
   const groupSku = `${input.sku}-GROUP`;
 
+  // Plain-Text Beschreibung für Inventory Items (max 4000 Zeichen)
+  const plainDesc = (input.shortDescription ?? input.description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 4000);
+
   // 1. Pro Kombination: Inventory Item anlegen
   const variantSkus: string[] = [];
   for (const combo of combos) {
@@ -399,7 +407,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       condition: input.condition,
       product: {
         title: input.title,
-        description: input.description,
+        description: plainDesc,
         imageUrls: input.imageUrls,
         aspects: Object.fromEntries(Object.entries(combo).map(([k, v]) => [k, [v]])),
       },
@@ -424,7 +432,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const groupBody = {
     inventoryItemGroupKey: groupSku,
     title: input.title,
-    description: input.description,
+    description: plainDesc,
     imageUrls: input.imageUrls,
     aspects: Object.fromEntries(groups.map(g => [g.name, g.values])),
     variantSKUs: variantSkus,
