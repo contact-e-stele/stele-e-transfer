@@ -199,20 +199,36 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
               )}
             </div>
 
-            {/* Wert hinzufügen */}
+            {/* Wert hinzufügen - Komma-Trennung möglich */}
             <div style={{ display: "flex", gap: 6 }}>
               <input
                 type="text"
-                placeholder="Wert eingeben (z.B. Rot)"
+                placeholder="Wert(e) eingeben, Komma trennt (z.B. Rot, Blau, Grün)"
                 value={newValues[gi] ?? ""}
                 onChange={e => setNewValues(v => ({ ...v, [gi]: e.target.value }))}
-                onKeyDown={e => e.key === "Enter" && addValue(gi)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    const vals = (newValues[gi] ?? "").split(",").map(v => v.trim()).filter(Boolean);
+                    if (vals.length === 0) return;
+                    setGroups(g => g.map((group, i) =>
+                      i === gi ? { ...group, values: [...group.values, ...vals.filter(v => !group.values.includes(v))] } : group
+                    ));
+                    setNewValues(v => ({ ...v, [gi]: "" }));
+                  }
+                }}
                 style={{
                   flex: 1, padding: "6px 10px", borderRadius: 8,
                   border: "2px solid #E2E8F0", fontSize: 12, fontFamily: "inherit", outline: "none",
                 }}
               />
-              <button onClick={() => addValue(gi)} style={{
+              <button onClick={() => {
+                const vals = (newValues[gi] ?? "").split(",").map(v => v.trim()).filter(Boolean);
+                if (vals.length === 0) return;
+                setGroups(g => g.map((group, i) =>
+                  i === gi ? { ...group, values: [...group.values, ...vals.filter(v => !group.values.includes(v))] } : group
+                ));
+                setNewValues(v => ({ ...v, [gi]: "" }));
+              }} style={{
                 padding: "6px 12px", borderRadius: 8, background: "#7C3AED", color: "#fff",
                 border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
                 display: "flex", alignItems: "center", gap: 4,
