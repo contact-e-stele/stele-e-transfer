@@ -576,6 +576,15 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Pflichtaspekte einmal abrufen (gilt für alle Varianten)
   const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token);
 
+  // Varianten-Aspekt-Namen (gemappt) — diese dürfen NICHT in baseAspects stecken
+  // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler
+  const variantAspectNames = new Set(groups.map(g => mapVariantGroupName(g.name)));
+
+  // baseAspects ohne Varianten-Aspekte (für Items und Gruppe)
+  const baseAspectsFiltered = Object.fromEntries(
+    Object.entries(baseAspects).filter(([k]) => !variantAspectNames.has(k))
+  );
+
   // 1. Pro Kombination: Inventory Item anlegen
   const variantSkus: string[] = [];
   for (const combo of combos) {
@@ -583,10 +592,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     const varSku = `${input.sku}-${suffix}`;
     variantSkus.push(varSku);
 
-    // Varianten-Aspekte: Basis-Aspekte + spezifische Kombo-Werte
-    // Gruppen-Namen automatisch auf eBay Aspekt-Namen mappen
+    // Varianten-Aspekte: gefilterte Basis-Aspekte + spezifischer Kombo-Wert (1 Wert pro Variante)
     const variantAspects = {
-      ...baseAspects,
+      ...baseAspectsFiltered,
       ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [mapVariantGroupName(k), [v]])),
     };
 
@@ -625,7 +633,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     description: plainDesc,
     imageUrls: input.imageUrls,
     aspects: {
-      ...Object.fromEntries(Object.entries(baseAspects).map(([k, v]) => [k, Array.isArray(v) ? v : [v]])),
+      ...Object.fromEntries(Object.entries(baseAspectsFiltered).map(([k, v]) => [k, Array.isArray(v) ? v : [v]])),
       ...Object.fromEntries(groups.map(g => [mapVariantGroupName(g.name), g.values])),
     },
     variantSKUs: variantSkus,
