@@ -202,45 +202,21 @@ export default function Lieferanten() {
     }
   };
 
-  // ─── eBay listen ──────────────────────────────────────────────────────────
+  // ─── eBay listen (nur mit bereits gespeicherter productId) ───────────────
   const handleEbayList = async () => {
-    if (!result || !product) return;
+    if (!saveResult?.id) return;
     const price = parseFloat(ebayPrice.replace(",", "."));
     if (!price || price <= 0) return;
     setEbayLoading(true);
     setEbayResult(null);
     try {
-      // 1. Erst in DB speichern (mit sellPrice)
-      const saveRes = await fetch("/api/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          asin: `ali_${Date.now()}`,
-          amazonUrl: urlInput || "manual",
-          sourceUrl: urlInput || "manual",
-          title: product.title,
-          generatedTitle: result.title,
-          htmlDescription: result.html,
-          bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
-          variants: product.variants ?? [],
-          description: product.description,
-          images: visibleImages,
-          buyPrice: einkauf || null,
-          sellPrice: price,
-        }),
-      });
-      const saveData = await saveRes.json() as { id?: number; error?: string };
-      if (!saveData.id) throw new Error(saveData.error ?? "Speichern fehlgeschlagen");
-
-      // 2. Mit productId listen
       const listRes = await fetch("/api/ebay/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId: saveData.id }),
+        body: JSON.stringify({ productId: saveResult.id }),
       });
       const data = await listRes.json() as { listingId?: string; error?: string };
       setEbayResult(data);
-      setSaveResult(saveData); // auch als gespeichert markieren
     } catch (e) {
       setEbayResult({ error: e instanceof Error ? e.message : "Fehler" });
     } finally {
@@ -670,16 +646,22 @@ export default function Lieferanten() {
                 <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFD700", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <ShoppingCart size={18} color="#0F172A" />
                 </div>
-                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Direkt auf eBay listen</span>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Auf eBay listen</span>
               </div>
+              {!saveResult?.id && (
+                <p style={{ margin: "0 0 10px", fontSize: 12, color: "#94A3B8", textAlign: "center" }}>
+                  Zuerst in DB speichern (Schritt 2 oben)
+                </p>
+              )}
               <button
                 onClick={handleEbayList}
-                disabled={ebayLoading || !ebayPrice || parseFloat(ebayPrice) <= 0}
+                disabled={ebayLoading || !ebayPrice || parseFloat(ebayPrice) <= 0 || !saveResult?.id}
                 style={{
                   width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
-                  background: ebayLoading || !ebayPrice ? "#FDE68A" : "#FFD700",
-                  color: "#0F172A", fontWeight: 700, fontSize: 14,
-                  cursor: ebayLoading || !ebayPrice ? "not-allowed" : "pointer",
+                  background: (!saveResult?.id || !ebayPrice) ? "#E2E8F0" : ebayLoading ? "#FDE68A" : "#FFD700",
+                  color: (!saveResult?.id || !ebayPrice) ? "#94A3B8" : "#0F172A",
+                  fontWeight: 700, fontSize: 14,
+                  cursor: (!saveResult?.id || !ebayPrice || ebayLoading) ? "not-allowed" : "pointer",
                   fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
