@@ -1,8 +1,12 @@
-// Automatischer DB-Backup per Email — 3x täglich (08:00, 13:00, 20:00)
-// Sendet: CSV + vollständiges DB-JSON + RESTORE.md
+// Automatischer DB-Backup per Email — 4x täglich (08:00, 13:00, 20:00, 23:35)
+// Sendet: CSV + vollständiges DB-JSON + Code-ZIP + AGENT-RESTORE.md
 
 import { db } from '../db/index';
 import * as schema from '../db/schema';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as zlib from 'zlib';
+import { promisify } from 'util';
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY ?? '';
 const BACKUP_TO = 'contact@stele-e-transfer.com';
@@ -40,129 +44,322 @@ async function exportDatabaseJSON(): Promise<string> {
     db.select().from(schema.priceHistory),
   ]);
 
-  const dump = {
+  return JSON.stringify({
     exportedAt: new Date().toISOString(),
-    version: '1.0',
+    version: '2.0',
     tables: {
-      products: {
-        count: products.length,
-        rows: products,
-      },
-      price_history: {
-        count: priceHistory.length,
-        rows: priceHistory,
-      },
+      products: { count: products.length, rows: products },
+      price_history: { count: priceHistory.length, rows: priceHistory },
     },
-  };
-
-  return JSON.stringify(dump, null, 2);
+  }, null, 2);
 }
 
-// ─── RESTORE.md Generator ─────────────────────────────────────────────────────
+// ─── Code ZIP Generator ───────────────────────────────────────────────────────
+// Packt den kompletten src/ Ordner + wichtige Root-Dateien als ZIP
 
-function generateRestoreMd(productCount: number, priceHistoryCount: number, dateStr: string): string {
-  return `# STELE-E-TRANSFER — Wiederherstellungsanleitung
-Backup vom: ${dateStr}
+async function generateCodeZip(): Promise<Buffer> {
+  // Wir nutzen node:zlib + tar-Format nicht — stattdessen bauen wir ein
+  // einfaches ZIP-ähnliches Archiv aus concatenierten Dateien mit Trennzeichen.
+  // Echter ZIP via archiver wäre besser, aber archiver ist kein Dependency.
+  // Wir verwenden den nativen Ansatz: alle Dateien sammeln, als JSON-Bundle.
+
+  const rootDir = path.resolve(__dirname, '../../../../');
+  const srcDir = path.join(rootDir, 'packages/web/src');
+  const schemaDir = path.join(rootDir, 'packages/web/drizzle');
+
+  const bundle: Record<string, string> = {};
+
+  // Alle .ts/.tsx Dateien aus src/ sammeln
+  function collectFiles(dir: string, relBase: string): void {
+    if (!fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.join(relBase, entry.name);
+      if (entry.isDirectory()) {
+        // node_modules, .git überspringen
+        if (['node_modules', '.git', 'dist', '.turbo'].includes(entry.name)) continue;
+        collectFiles(fullPath, relPath);
+      } else if (/\.(ts|tsx|json|sql|md|html|css|env\.example)$/.test(entry.name)) {
+        try {
+          bundle[relPath] = fs.readFileSync(fullPath, 'utf-8');
+        } catch { /* skip unreadable */ }
+      }
+    }
+  }
+
+  collectFiles(srcDir, 'src');
+
+  // Wichtige Root-Dateien
+  const rootFiles = [
+    'package.json',
+    'packages/web/package.json',
+    'packages/web/tsconfig.json',
+    'packages/web/drizzle.config.ts',
+    'packages/web/vite.config.ts',
+  ];
+  for (const rel of rootFiles) {
+    const full = path.join(rootDir, rel);
+    if (fs.existsSync(full)) {
+      try { bundle[rel] = fs.readFileSync(full, 'utf-8'); } catch { /* skip */ }
+    }
+  }
+
+  // Drizzle-Migrations falls vorhanden
+  if (fs.existsSync(schemaDir)) collectFiles(schemaDir, 'drizzle');
+
+  const json = JSON.stringify(bundle, null, 2);
+
+  // GZIP komprimieren um Größe zu reduzieren
+  const gzip = promisify(zlib.gzip);
+  return gzip(Buffer.from(json, 'utf-8'));
+}
+
+// ─── AGENT-RESTORE.md Generator ───────────────────────────────────────────────
+// KI-lesbare Komplettanleitung — damit die KI OHNE Erklärung alles wiederherstellt
+
+function generateAgentRestoreMd(productCount: number, priceHistoryCount: number, isoDate: string): string {
+  return `# STELE-E-TRANSFER — AGENT RESTORE GUIDE
+> Diese Datei ist für die KI (Runable / Claude). Zeige sie der KI und sage nur "Restore".
+> Die KI liest diese Datei und stellt alles ohne weitere Erklärung wieder her.
+
+Backup-Datum: ${isoDate}
 Produkte: ${productCount} | Preis-Einträge: ${priceHistoryCount}
 
 ---
 
-## 1. Voraussetzungen
+## ÜBERBLICK
 
-- Node.js 18+ oder Bun installiert
-- Git-Zugriff auf: https://github.com/contact-e-stele/stele-e-transfer
-- Turso-Konto (kostenlos: https://turso.tech)
-- Render-Konto (https://render.com)
-- Resend-Konto (https://resend.com)
+**App-Name:** STELE-E-TRANSFER  
+**Betreiber:** Evgenij Stele, stele-e-transfer (eBay DE), Kleingewerbe §19 UStG, Wiesbaden  
+**Zweck:** Dropshipping-App — AliExpress → eigene DB → eBay DE  
+**Repo:** https://github.com/contact-e-stele/stele-e-transfer  
+**Live-URL:** https://stele-e-transfer.onrender.com  
 
 ---
 
-## 2. Umgebungsvariablen (alle benötigt)
-
-Diese Werte in Render → Environment hinterlegen:
+## TECH-STACK
 
 \`\`\`
-DATABASE_URL=libsql://...turso.io         # Turso DB URL
-DATABASE_AUTH_TOKEN=...                    # Turso Auth Token
-GEMINI_API_KEY=...                         # Google AI Studio
-SCRAPINGANT_API_KEY=...                    # ScrapingAnt
-ALIEXPRESS_APP_KEY=535690                  # AliExpress App Key
-ALIEXPRESS_APP_SECRET=...                  # AliExpress App Secret
-RESEND_API_KEY=...                         # E-Mail Versand
-EBAY_APP_ID=...                            # eBay API App ID
-EBAY_DEV_ID=...                            # eBay API Dev ID
-EBAY_CERT_ID=...                           # eBay API Cert ID
-EBAY_USER_TOKEN=...                        # eBay OAuth User Token
+Monorepo: Bun Workspaces
+Backend:  Hono (TypeScript) auf Bun
+Frontend: React + Vite + TailwindCSS (SPA)
+DB:       Turso (libSQL / SQLite-kompatibel) via Drizzle ORM
+Deploy:   Render.com (Web Service, automatisch bei git push)
+Email:    Resend API
+Scraping: ScrapingAnt API (AliExpress Produkt-Daten)
+AI:       Google Gemini API (Titel/Beschreibung generieren)
+eBay API: Trading API + Inventory API (OAuth User Token)
+\`\`\`
+
+---
+
+## ARCHITEKTUR
+
+\`\`\`
+stele-app/
+├── packages/
+│   └── web/
+│       ├── src/
+│       │   ├── server.ts          ← Hono Server Entry Point
+│       │   ├── db/
+│       │   │   ├── index.ts       ← Turso DB Connection
+│       │   │   └── schema.ts      ← Drizzle Schema (products, priceHistory)
+│       │   ├── api/
+│       │   │   ├── index.ts       ← alle API-Routes registriert
+│       │   │   ├── aliexpress.ts  ← AliExpress Scraper (ScrapingAnt)
+│       │   │   ├── aliexpress-api.ts ← AliExpress DS API (OAuth)
+│       │   │   ├── ebay.ts        ← eBay Listing API
+│       │   │   ├── price-monitor.ts ← Preis-Überwachung Cron
+│       │   │   ├── backup.ts      ← dieser Backup-Service
+│       │   │   ├── backup-cron.ts ← Backup CLI runner
+│       │   │   ├── mailer.ts      ← Resend E-Mail Wrapper
+│       │   │   └── auth.ts        ← Login (einfaches Passwort-Auth)
+│       │   └── web/
+│       │       ├── pages/
+│       │       │   ├── dashboard.tsx   ← Tab 1: Übersicht
+│       │       │   ├── lieferanten.tsx ← Tab 2: AliExpress Produkt importieren
+│       │       │   ├── produkte.tsx    ← Tab 3: Produktverwaltung
+│       │       │   ├── listings.tsx    ← Tab 4: eBay Listings
+│       │       │   ├── einstellungen.tsx ← Tab 6: API-Keys etc.
+│       │       │   ├── suche.tsx       ← AliExpress Suche
+│       │       │   ├── retouren.tsx    ← Retouren-Workflow
+│       │       │   └── autods.tsx      ← AutoDS CSV Export
+│       │       └── App.tsx / main.tsx / index.html
+│       ├── package.json
+│       ├── tsconfig.json
+│       ├── vite.config.ts
+│       └── drizzle.config.ts
+└── package.json
+\`\`\`
+
+---
+
+## DATENBANK-SCHEMA
+
+### Tabelle: products
+\`\`\`sql
+CREATE TABLE products (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  asin             TEXT NOT NULL UNIQUE,     -- intern: ali_<timestamp>
+  source_url       TEXT,                      -- AliExpress URL
+  amazon_url       TEXT NOT NULL,             -- legacy alias für source_url
+  title            TEXT NOT NULL,             -- Original AliExpress Titel
+  generated_title  TEXT NOT NULL,             -- KI-generierter eBay Titel (≤80 Zeichen)
+  html_description TEXT NOT NULL,             -- HTML für eBay Vorlage
+  bullets          TEXT NOT NULL,             -- JSON Array: Bullet Points
+  variants         TEXT NOT NULL,             -- JSON Array: [{name, values[]}]
+  description      TEXT,
+  images           TEXT,                      -- JSON Array: Bild-URLs
+  buy_price        REAL,                      -- Einkaufspreis €
+  sell_price       REAL,                      -- Verkaufspreis €
+  last_price_check TEXT,                      -- ISO datetime
+  price_changed    INTEGER DEFAULT 0,         -- 0=nein, 1=ja (Boolean)
+  specs            TEXT,                      -- JSON Object: Produktspezifikationen
+  ebay_listing_id  TEXT,
+  ebay_status      TEXT DEFAULT 'none',       -- none | listed | error
+  ebay_error       TEXT,
+  created_at       TEXT DEFAULT (datetime('now')),
+  updated_at       TEXT DEFAULT (datetime('now'))
+);
+\`\`\`
+
+### Tabelle: price_history
+\`\`\`sql
+CREATE TABLE price_history (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id  INTEGER NOT NULL,
+  price       REAL NOT NULL,
+  source      TEXT DEFAULT 'aliexpress',
+  checked_at  TEXT DEFAULT (datetime('now'))
+);
+\`\`\`
+
+---
+
+## RESTORE-SCHRITTE (KI führt diese durch)
+
+### SCHRITT 1: Code wiederherstellen
+
+Die Datei \`stele-code-DATUM.json.gz\` enthält ALLE Source-Dateien als JSON-Bundle.
+
+\`\`\`bash
+# Entpacken
+gunzip stele-code-DATUM.json.gz
+# → stele-code-DATUM.json enthält { "src/server.ts": "...", "package.json": "...", ... }
+\`\`\`
+
+KI liest das JSON und schreibt jede Datei an den richtigen Pfad zurück.
+
+### SCHRITT 2: Abhängigkeiten installieren
+
+\`\`\`bash
+cd stele-app
+bun install
+\`\`\`
+
+### SCHRITT 3: ENV-Variablen setzen (in Render oder .env)
+
+\`\`\`env
+DATABASE_URL=libsql://...turso.io
+DATABASE_AUTH_TOKEN=...
+GEMINI_API_KEY=...
+SCRAPINGANT_API_KEY=...
+ALIEXPRESS_APP_KEY=535690
+ALIEXPRESS_APP_SECRET=...
+RESEND_API_KEY=...
+EBAY_APP_ID=...
+EBAY_DEV_ID=...
+EBAY_CERT_ID=...
+EBAY_USER_TOKEN=...
+ALIEXPRESS_ACCESS_TOKEN=...
 NODE_ENV=production
 \`\`\`
 
----
+> WICHTIG: Alle ENV-Werte stehen in Render.com → Umgebungsvariablen. 
+> Evgenij muss diese aus Render kopieren und in die neue Instanz eintragen.
 
-## 3. Fresh Deploy (neue Installation)
+### SCHRITT 4: DB-Schema erstellen (neue DB)
 
 \`\`\`bash
-# 1. Repository klonen
-git clone https://github.com/contact-e-stele/stele-e-transfer
-cd stele-e-transfer
-
-# 2. Abhängigkeiten installieren
-bun install
-
-# 3. .env Datei erstellen (alle Vars von oben eintragen)
-cp .env.example .env
-nano .env
-
-# 4. Datenbank Schema erstellen
 cd packages/web
 bun run db:push
-
-# 5. App lokal starten (Test)
-bun run dev
 \`\`\`
 
----
+### SCHRITT 5: Daten wiederherstellen aus JSON
 
-## 4. Datenbank wiederherstellen aus diesem Backup
-
-Die JSON-Datei \`stele-db-${dateStr}.json\` enthält alle Tabellen.
-
-Ich zeige dir die Datei — ich (KI) importiere sie direkt:
+Die Datei \`stele-db-DATUM.json\` enthält alle Zeilen.
+KI importiert sie direkt via Drizzle oder Turso Shell:
 
 \`\`\`bash
-# Option A: Skript aus dem Repo verwenden
-node scripts/restore-db.js stele-db-${dateStr}.json
-
-# Option B: Manuell via Turso Shell
-turso db shell <dein-db-name>
+# KI schreibt ein restore-script und führt es aus:
+bun run scripts/restore-db.ts stele-db-DATUM.json
 \`\`\`
 
-**ODER:** Einfach die JSON-Datei an mich (die KI) schicken und sagen "Restore".
-Ich lese sie aus und füge alle Datensätze direkt per API in die neue DB ein.
-
----
-
-## 5. Render Deploy (nach Code-Änderungen)
+### SCHRITT 6: Deploy
 
 \`\`\`bash
 git add .
-git commit -m "restore"
+git commit -m "restore: $(date +%Y-%m-%d)"
 git push origin main
-# → Render baut automatisch neu (ca. 2-3 Min)
+# → Render baut automatisch (2-3 Min) → App ist live
 \`\`\`
 
 ---
 
-## 6. Wichtige URLs
+## WICHTIGE BUSINESS-LOGIK
 
-- App live: https://stele-e-transfer.onrender.com
-- GitHub: https://github.com/contact-e-stele/stele-e-transfer
-- Turso Dashboard: https://app.turso.tech
-- Render Dashboard: https://dashboard.render.com
-- Resend Dashboard: https://resend.com/emails
+### Preisformel (eBay)
+\`\`\`
+Gebühren = 18% (13% eBay + 5% Anzeigen)
+Mindestgewinn = 1,60€
+sellPrice = buyPrice / (1 - 0.18) + 1.60
+\`\`\`
+
+### AliExpress → eBay Workflow
+1. URL in "Lieferanten"-Tab eingeben
+2. ScrapingAnt scrapt AliExpress Seite
+3. Gemini generiert Titel (≤80 Zeichen) + HTML-Beschreibung + Bullets
+4. Benutzer prüft + bearbeitet Varianten manuell (Scraper liefert oft keine Varianten)
+5. "Bei eBay listen" → eBay Inventory API + Offer erstellen
+6. Preis-Cron (täglich) prüft AliExpress-Preis → passt eBay-Preis an
+
+### eBay Listing Details
+- Kategorie: wird per eBay API automatisch vorgeschlagen
+- Merchant Location: wird automatisch erstellt ("default", Wiesbaden)
+- Pflichtaspekte: werden per eBay getItemAspectsForCategory API befüllt
+- Varianten-Mapping: farbe→Rahmenfarbe, größe→Größe etc. (VARIANT_GROUP_MAP in ebay.ts)
+
+### Backup-Email
+- Von: onboarding@resend.dev
+- An: contact@stele-e-transfer.com
+- 4x täglich: 08:00, 13:00, 20:00, 23:35 Uhr
 
 ---
 
-*Automatisch generiert · Stele-E-Transfer Backup System*
+## EXTERNE DIENSTE & ACCOUNTS
+
+| Dienst | URL | Zweck |
+|--------|-----|-------|
+| Render | render.com | Hosting/Deploy |
+| Turso | app.turso.tech | Datenbank |
+| Resend | resend.com | E-Mail |
+| ScrapingAnt | scrapingant.com | AliExpress Scraping |
+| Google AI Studio | aistudio.google.com | Gemini API |
+| eBay Developer | developer.ebay.com | eBay API |
+| AliExpress Open Platform | open.aliexpress.com | DS API |
+
+---
+
+## BEKANNTE PROBLEME (Stand Backup-Datum)
+
+1. **AliExpress Scraper** — Bot-Schutz blockiert Server-IPs → Varianten oft leer → User trägt manuell ein
+2. **shipsFrom-Detection** — Scraper kann Versandort nicht lesen → TODO nach Go-Live
+3. **AliExpress DS API** — OAuth access_token noch nicht eingerichtet (ALIEXPRESS_ACCESS_TOKEN in Render setzen)
+
+---
+
+*Automatisch generiert · Stele-E-Transfer Backup System v2.0*
 `;
 }
 
@@ -171,7 +368,8 @@ git push origin main
 async function sendBackupEmail(
   csv: string,
   dbJson: string,
-  restoreMd: string,
+  agentRestoreMd: string,
+  codeZipBuffer: Buffer,
   productCount: number,
   priceHistoryCount: number
 ): Promise<void> {
@@ -192,35 +390,47 @@ async function sendBackupEmail(
   const result = await resend.emails.send({
     from: 'Stele Backup <onboarding@resend.dev>',
     to: BACKUP_TO,
-    subject: `📦 Stele DB Backup — ${dateStr} ${timeStr} (${productCount} Produkte)`,
+    subject: `📦 Stele Backup — ${dateStr} ${timeStr} (${productCount} Produkte)`,
     html: `
-      <h2>📦 Stele-E-Transfer Datenbank Backup</h2>
+      <h2>📦 Stele-E-Transfer Vollständiges Backup</h2>
       <p><strong>Datum:</strong> ${dateStr} ${timeStr}</p>
       <p><strong>Produkte:</strong> ${productCount}</p>
       <p><strong>Preis-Einträge:</strong> ${priceHistoryCount}</p>
       <hr>
       <h3>Anhänge in dieser Mail:</h3>
-      <ul>
-        <li><strong>stele-backup-${isoDate}-${hourStr}.csv</strong> — Produktliste (Übersicht)</li>
-        <li><strong>stele-db-${isoDate}-${hourStr}.json</strong> — Vollständige Datenbank (alle Tabellen)</li>
-        <li><strong>stele-restore-guide-${isoDate}.md</strong> — Wiederherstellungsanleitung</li>
-      </ul>
-      <p style="color:#888">Zum Wiederherstellen: JSON-Datei + Restore-Guide an die KI schicken und "Restore" sagen.</p>
+      <ol>
+        <li><strong>stele-db-${isoDate}-${hourStr}.json</strong> — Vollständige Datenbank (alle Tabellen, alle Felder)</li>
+        <li><strong>stele-backup-${isoDate}-${hourStr}.csv</strong> — Produktliste (menschenlesbare Übersicht)</li>
+        <li><strong>stele-code-${isoDate}.json.gz</strong> — Kompletter Source-Code (alle .ts/.tsx Dateien gepackt)</li>
+        <li><strong>AGENT-RESTORE-${isoDate}.md</strong> — KI-Wiederherstellungsanleitung (zeige der KI + sage "Restore")</li>
+      </ol>
       <hr>
-      <small style="color:#999">Automatisch generiert · Stele-E-Transfer Backup System</small>
+      <h3>🚨 Im Notfall so vorgehen:</h3>
+      <ol>
+        <li>Alle 4 Dateien aus dieser Mail speichern</li>
+        <li>KI öffnen (Runable)</li>
+        <li>Alle 4 Dateien hochladen + schreiben: <strong>"Restore"</strong></li>
+        <li>KI stellt alles automatisch wieder her</li>
+      </ol>
+      <hr>
+      <small style="color:#999">Automatisch generiert · Stele-E-Transfer Backup System v2.0</small>
     `,
     attachments: [
-      {
-        filename: `stele-backup-${isoDate}-${hourStr}.csv`,
-        content: Buffer.from(csv, 'utf-8').toString('base64'),
-      },
       {
         filename: `stele-db-${isoDate}-${hourStr}.json`,
         content: Buffer.from(dbJson, 'utf-8').toString('base64'),
       },
       {
-        filename: `stele-restore-guide-${isoDate}.md`,
-        content: Buffer.from(restoreMd, 'utf-8').toString('base64'),
+        filename: `stele-backup-${isoDate}-${hourStr}.csv`,
+        content: Buffer.from(csv, 'utf-8').toString('base64'),
+      },
+      {
+        filename: `stele-code-${isoDate}.json.gz`,
+        content: codeZipBuffer.toString('base64'),
+      },
+      {
+        filename: `AGENT-RESTORE-${isoDate}.md`,
+        content: Buffer.from(agentRestoreMd, 'utf-8').toString('base64'),
       },
     ],
   });
@@ -236,7 +446,7 @@ async function sendBackupEmail(
 
 export async function runBackup(): Promise<{ ok: boolean; error?: string; productCount?: number }> {
   try {
-    console.log('[Backup] Starte DB Export...');
+    console.log('[Backup] Starte vollständigen Backup...');
 
     const [products, priceHistoryRows] = await Promise.all([
       db.select().from(schema.products),
@@ -244,20 +454,28 @@ export async function runBackup(): Promise<{ ok: boolean; error?: string; produc
     ]);
 
     const now = new Date();
-    const dateStr = now.toLocaleDateString('de-DE');
+    const isoDate = now.toISOString().slice(0, 10);
+
+    console.log(`[Backup] ${products.length} Produkte, ${priceHistoryRows.length} Preis-Einträge`);
 
     const csv = productsToCSV(products);
     const dbJson = JSON.stringify({
       exportedAt: now.toISOString(),
-      version: '1.0',
+      version: '2.0',
       tables: {
         products: { count: products.length, rows: products },
         price_history: { count: priceHistoryRows.length, rows: priceHistoryRows },
       },
     }, null, 2);
-    const restoreMd = generateRestoreMd(products.length, priceHistoryRows.length, dateStr);
 
-    await sendBackupEmail(csv, dbJson, restoreMd, products.length, priceHistoryRows.length);
+    const agentRestoreMd = generateAgentRestoreMd(products.length, priceHistoryRows.length, isoDate);
+
+    console.log('[Backup] Generiere Code-ZIP...');
+    const codeZipBuffer = await generateCodeZip();
+    console.log(`[Backup] Code-ZIP: ${(codeZipBuffer.length / 1024).toFixed(1)} KB`);
+
+    await sendBackupEmail(csv, dbJson, agentRestoreMd, codeZipBuffer, products.length, priceHistoryRows.length);
+
     return { ok: true, productCount: products.length };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
