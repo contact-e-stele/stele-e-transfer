@@ -2,7 +2,7 @@
  * Lieferanten-Tab — AliExpress URL scrapen → Produkt importieren
  * Ersetzt AutoDS komplett für den Import-Schritt
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
@@ -325,6 +325,24 @@ export default function Lieferanten() {
     color: "#0F172A", background: "#F8FAFC",
   };
 
+  const gpsrInputRef = useRef<HTMLInputElement>(null);
+
+  const handleGpsrUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (dataUrl) {
+        setVisibleImages(prev => [...prev, dataUrl]);
+        setSelectedImage(prev => prev); // keep current selection
+      }
+    };
+    reader.readAsDataURL(file);
+    // Reset input so same file can be re-uploaded
+    e.target.value = "";
+  }, []);
+
   const removeImage = useCallback((index: number) => {
     setVisibleImages(prev => {
       const next = prev.filter((_, i) => i !== index);
@@ -506,9 +524,30 @@ export default function Lieferanten() {
                     </div>
                   ))}
                 </div>
-                <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94A3B8" }}>
-                  {visibleImages.length} Bild{visibleImages.length !== 1 ? "er" : ""} · X zum Entfernen
-                </p>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                  <p style={{ margin: 0, fontSize: 11, color: "#94A3B8" }}>
+                    {visibleImages.length} Bild{visibleImages.length !== 1 ? "er" : ""} · X zum Entfernen
+                  </p>
+                  <button
+                    onClick={() => gpsrInputRef.current?.click()}
+                    title="GPSR-Bild hochladen"
+                    style={{
+                      display: "flex", alignItems: "center", gap: 5,
+                      padding: "5px 10px", borderRadius: 8, border: "1px solid #C9A227",
+                      background: "#0f0f0f", color: "#C9A227", fontSize: 11,
+                      fontWeight: 700, cursor: "pointer", letterSpacing: 0.5,
+                    }}
+                  >
+                    📎 GPSR-Bild
+                  </button>
+                  <input
+                    ref={gpsrInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={handleGpsrUpload}
+                  />
+                </div>
                 {product.price && <p style={{ margin: "8px 0 0", fontSize: 16, fontWeight: 700, color: "#FF6B00" }}>{product.price}</p>}
               </div>
             )}
