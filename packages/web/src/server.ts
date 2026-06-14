@@ -1,5 +1,6 @@
 import app from "./api";
 import { startBackupScheduler } from "./api/backup";
+import { startPriceMonitor } from "./api/price-monitor";
 import { runMigrations } from "./db/migrate";
 import { runStartupCheck } from "./startup-check";
 
@@ -51,6 +52,9 @@ await runStartupCheck();
 
 // Automatischer DB-Backup: täglich 08:00, 13:00, 20:00 Uhr
 startBackupScheduler();
+
+// Preisüberwachung: alle 6h AliExpress-Preise prüfen, erster Check nach 2 Min
+startPriceMonitor();
 
 function getStaticFilePath(pathname: string) {
   const cleanPath = decodeURIComponent(pathname)

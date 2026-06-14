@@ -20,4 +20,4 @@ dist/assets/index-CCgcF6ca.js   662.40 kB │ gzip: 184.48 kB
 - Using dynamic import() to code-split the application
 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
-✓ built in 2.75s
+✓ built in 3.26s
