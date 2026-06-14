@@ -43,6 +43,8 @@ console.log(`Web server listening on http://localhost:${server.port}`);
 // DB-Migrationen beim Start ausführen
 try {
   await runMigrations();
+  // Uploads-Ordner sicherstellen
+  await Bun.write(`${distDir}/uploads/.gitkeep`, '').catch(() => {});
 } catch (e) {
   console.error('[migrate] Fehler:', e);
 }

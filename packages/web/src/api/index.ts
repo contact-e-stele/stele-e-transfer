@@ -791,6 +791,25 @@ const app = new Hono()
   })
 
   // ─── Fehler zurücksetzen ─────────────────────────────────────────────────────
+  // ─── Bild-Upload (Base64 → öffentliche URL) ────────────────────────────────
+  .post('/upload-image', async (c) => {
+    try {
+      const { dataUrl, filename } = await c.req.json() as { dataUrl: string; filename?: string };
+      if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+        return c.json({ error: 'Kein gültiges Bild' }, 400);
+      }
+      const base64 = dataUrl.split(',')[1];
+      const ext = dataUrl.match(/data:image\/(\w+);/)?.[1] ?? 'jpg';
+      const name = (filename ?? `img-${Date.now()}`).replace(/[^a-z0-9_-]/gi, '_') + '.' + ext;
+      const uploadsDir = `${import.meta.dir}/../../dist/uploads`;
+      await Bun.write(`${uploadsDir}/${name}`, Buffer.from(base64, 'base64'));
+      const baseUrl = process.env.PUBLIC_URL ?? 'https://stele-e-transfer.onrender.com';
+      return c.json({ url: `${baseUrl}/uploads/${name}` }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
   .post('/products/:id/reset-error', async (c) => {
     const id = parseInt(c.req.param('id'));
     if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);

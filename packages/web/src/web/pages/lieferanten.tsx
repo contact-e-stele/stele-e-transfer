@@ -262,15 +262,30 @@ export default function Lieferanten() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const dataUrl = ev.target?.result as string;
-      if (dataUrl) {
+      if (!dataUrl) return;
+      try {
+        // Bild auf Server hochladen → öffentliche URL (eBay akzeptiert kein base64)
+        const res = await fetch('/api/upload-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataUrl, filename: `gpsr-${Date.now()}` }),
+        });
+        const data = await res.json() as { url?: string; error?: string };
+        if (data.url) {
+          setVisibleImages(prev => [...prev, data.url!]);
+        } else {
+          // Fallback: base64 lokal anzeigen aber Warnung
+          setVisibleImages(prev => [...prev, dataUrl]);
+          console.warn('[GPSR Upload] Fehler:', data.error);
+        }
+      } catch {
+        // Fallback base64
         setVisibleImages(prev => [...prev, dataUrl]);
-        setSelectedImage(prev => prev); // keep current selection
       }
     };
     reader.readAsDataURL(file);
-    // Reset input so same file can be re-uploaded
     e.target.value = "";
   }, []);
 
