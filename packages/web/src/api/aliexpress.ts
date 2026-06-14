@@ -26,6 +26,7 @@ export interface ScrapedProduct {
   shipsFromDE: boolean;   // true wenn Versand aus DE/EU erkannt
   shipsFrom: string;      // z.B. "Germany", "Spain", "China"
   variants: Array<{ name: string; values: string[] }>; // z.B. [{name:"Farbe", values:["Schwarz","Blau"]}]
+  seller?: string;        // AliExpress Shopname für GPSR
 }
 
 function cleanTitle(raw: string): string {
@@ -343,6 +344,36 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   const specs = extractSpecs(html);
   const { shipsFrom, shipsFromDE } = extractShipsFrom(html);
 
+  // ── Seller/Shop Name ───────────────────────────────────────────────────────
+  let seller = '';
+  // Try JSON-LD seller
+  const ldBlocksSeller = html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+  for (const block of ldBlocksSeller) {
+    try {
+      const data = JSON.parse(block[1]) as Record<string, unknown>;
+      const items = Array.isArray(data['@graph']) ? data['@graph'] as Record<string, unknown>[] : [data];
+      for (const item of items) {
+        if (item['@type'] === 'Product') {
+          const brand = item['brand'] as Record<string, unknown> | undefined;
+          if (brand?.['name']) { seller = String(brand['name']); break; }
+          const offers = item['offers'] as Record<string, unknown> | undefined;
+          if (offers?.['seller']) {
+            const s = offers['seller'] as Record<string, unknown>;
+            if (s?.['name']) { seller = String(s['name']); break; }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+    if (seller) break;
+  }
+  // Fallback: storeName in page HTML
+  if (!seller) {
+    const m = html.match(/"storeName"\s*:\s*"([^"]+)"/) ||
+              html.match(/store-name[^>]*>([^<]{3,60})</) ||
+              html.match(/"sellerName"\s*:\s*"([^"]+)"/);
+    if (m) seller = m[1].trim();
+  }
+
   // Clean description — HTML raus, Footer/Spam-Zeilen filtern
   const BLOCKED = [
     /aliexpress/i, /alibaba/i, /alimama/i, /taobao/i, /tmall/i,
@@ -368,5 +399,7 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   const variants = extractVariants(html);
   console.log(`[AliExpress] variants=${JSON.stringify(variants.map(v => `${v.name}:${v.values.length}`))}`);
 
-  return { title, images, price, description, specs, shipsFrom, shipsFromDE, variants };
+  if (seller) console.log(`[AliExpress] seller="${seller}"`);
+
+  return { title, images, price, description, specs, shipsFrom, shipsFromDE, variants, seller };
 }

@@ -148,6 +148,7 @@ export default function Lieferanten() {
       setProduct(data);
       setVisibleImages(data.images ?? []);
       setResult({ title: buildTitle(data.title), html: buildHTML(data) });
+      if (data.seller) setGpsrHersteller(data.seller);
       // Preis vorausfüllen
       const p = parsePrice(data.price);
       if (p > 0) setBuyPrice(p.toFixed(2));
@@ -293,7 +294,7 @@ export default function Lieferanten() {
   }, []);
 
   const reset = () => {
-    setProduct(null); setResult(null); setEbayResult(null);
+    setProduct(null); setResult(null); setEbayResult(null); setGpsrHersteller("");
     setSaveResult(null); setUrlInput(""); setManualTitle("");
     setManualDesc(""); setManualPrice(""); setBuyPrice(""); setEbayPrice("");
     setShowPreview(false); setVisibleImages([]); setSelectedImage(0);
