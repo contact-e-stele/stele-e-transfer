@@ -206,6 +206,14 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
                 placeholder="Wert(e) eingeben, Komma trennt (z.B. Rot, Blau, Grün)"
                 value={newValues[gi] ?? ""}
                 onChange={e => setNewValues(v => ({ ...v, [gi]: e.target.value }))}
+                onBlur={() => {
+                  const vals = (newValues[gi] ?? "").split(",").map(v => v.trim()).filter(Boolean);
+                  if (vals.length === 0) return;
+                  setGroups(g => g.map((group, i) =>
+                    i === gi ? { ...group, values: [...group.values, ...vals.filter(v => !group.values.includes(v))] } : group
+                  ));
+                  setNewValues(v => ({ ...v, [gi]: "" }));
+                }}
                 onKeyDown={e => {
                   if (e.key === "Enter") {
                     const vals = (newValues[gi] ?? "").split(",").map(v => v.trim()).filter(Boolean);
