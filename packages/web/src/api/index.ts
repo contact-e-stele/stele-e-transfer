@@ -543,7 +543,7 @@ const app = new Hono()
         : undefined;
 
       const listingId = await listOnEbay({
-        sku: `${product.id}-${Date.now()}-ALI`,
+        sku: `stele-${product.id}`,
         title: (product.generatedTitle ?? product.title).slice(0, 80),
         description: fullDescription,
         price: product.sellPrice,
