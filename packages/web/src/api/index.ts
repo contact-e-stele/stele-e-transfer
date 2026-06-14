@@ -432,18 +432,22 @@ const app = new Hono()
       specsTableHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">${rows}</table>`;
     }
 
-    // HTML-Beschreibung direkt nutzen (bereits aufbereitet durch buildHTML in lieferanten.tsx)
-    const rawContent = product.htmlDescription ?? `<p>${product.generatedTitle ?? product.title}</p>`;
-    // htmlDescription ist bereits valides HTML — direkt verwenden, kein Strip
-    const productContent = rawContent;
+    // HTML-Beschreibung nutzen — neue Vorlage enthält bereits alles (Header, Tabs, Footer)
+    // Wenn htmlDescription mit unserer Vorlage beginnt → direkt verwenden, kein Wrapper
+    const rawHtml = product.htmlDescription ?? '';
+    const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && rawHtml.includes('stet-tabs');
 
-    // Versandhinweis (nur intern, nicht in Anzeige)
-    const shippingNote = isEU
-      ? 'Lieferzeit 3-10 Werktage<br />Versand per DHL / Deutsche Post'
-      : 'Lieferzeit 10-25 Werktage<br />Versand per Direktversand';
-
-    // Black & Gold Vorlage — GPSR nur im Impressum-Tab, nicht in der Anzeige sichtbar
-    const fullDescription = `<div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#e8d5a0;background:#0a0a0a;border:1px solid #C9A84C;border-radius:8px">
+    let fullDescription: string;
+    if (isFullTemplate) {
+      // Neue vollständige Vorlage — direkt nutzen
+      fullDescription = rawHtml;
+    } else {
+      // Fallback für ältere Einträge ohne neue Vorlage
+      const productContent = rawHtml || `<p>${productTitle}</p>`;
+      const shippingNote = isEU
+        ? 'Lieferzeit 3-10 Werktage<br />Versand per DHL / Deutsche Post'
+        : 'Lieferzeit 10-25 Werktage<br />Versand per Direktversand';
+      fullDescription = `<div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#e8d5a0;background:#0a0a0a;border:1px solid #C9A84C;border-radius:8px">
 <div style="background:#111;padding:14px;text-align:center;border-bottom:2px solid #C9A84C"><div style="color:#C9A84C;font-size:20px;font-weight:bold;letter-spacing:4px">STELE-E-TRANSFER</div><div style="color:#8a7040;font-size:11px;margin-top:4px">PREMIUM QUALITAET &middot; SCHNELLE LIEFERUNG</div></div>
 <table width="100%" style="background:#111;border-collapse:collapse"><tr>
 <td width="33%" style="padding:12px;text-align:center;border-right:1px solid #C9A84C"><b style="color:#C9A84C;font-size:12px">KOSTENLOSER VERSAND</b><br><small style="color:#8a7040">${shippingNote}</small></td>
@@ -456,6 +460,7 @@ const app = new Hono()
 <div style="padding:14px;background:#0a0a0a;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">Impressum:</b> STELE-E-TRANSFER | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | &sect;19 UStG: Keine MwSt.</div>
 <div style="background:#111;padding:10px;text-align:center;border-top:2px solid #C9A84C"><span style="color:#C9A84C;font-size:11px;letter-spacing:4px;font-weight:bold">STELE-E-TRANSFER</span> <span style="color:#5a4a20;font-size:10px">WIESBADEN &middot; DEUTSCHLAND</span></div>
 </div>`;
+    }
 
     try {
       const categoryId = await suggestCategory(product.generatedTitle ?? product.title).catch(() => null);

@@ -3,6 +3,7 @@
  * Ersetzt AutoDS komplett für den Import-Schritt
  */
 import { useState, useCallback, useRef } from "react";
+import { buildEbayHTML } from "../lib/ebay-description";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
@@ -76,72 +77,7 @@ function isCleanLine(line: string): boolean {
 }
 
 function buildHTML(product: ScrapedProduct): string {
-  const { description, specs, title } = product;
-  const specEntries = Object.entries(specs);
-
-  // Produkttitel sauber
-  const cleanTitle = cleanText(decodeEntities(title));
-
-  // Specs als strukturierte Tabelle — nur saubere Einträge
-  let specsHtml = "";
-  if (specEntries.length > 0) {
-    const rows = specEntries.slice(0, 12).map(([k, v]) => {
-      const key = cleanText(decodeEntities(k));
-      const val = cleanText(decodeEntities(v));
-      if (!key || !val) return null;
-      if (!isCleanLine(key) || !isCleanLine(val)) return null;
-      return `<tr><td style="padding:6px 10px;font-weight:600;color:#C9A84C;white-space:nowrap;border-bottom:1px solid #2a2a2a;">${key}</td><td style="padding:6px 10px;color:#e0d0a0;border-bottom:1px solid #2a2a2a;">${val}</td></tr>`;
-    }).filter(Boolean).join("\n");
-    if (rows) specsHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">\n${rows}\n</table>`;
-  }
-
-  // Beschreibung — aus description oder aus Specs+Titel automatisch aufbauen
-  let descHtml = "";
-  if (description && description.length > 20) {
-    const cleaned = cleanText(decodeEntities(description));
-    const paras = cleaned
-      .split(/[\n.]{2,}/)
-      .map(p => p.trim())
-      .filter(p => p.length > 20 && isCleanLine(p))
-      .slice(0, 4);
-    if (paras.length > 0) {
-      descHtml = paras.map(p => `<p style="color:#c0a870;line-height:1.7;margin:8px 0;">${p}</p>`).join("\n");
-    }
-  }
-
-  // Fallback: Wenn keine Beschreibung → aus Titel + Specs eine sinnvolle Beschreibung generieren
-  if (!descHtml) {
-    const autoLines: string[] = [];
-
-    // Hauptsatz aus Titel
-    autoLines.push(`${cleanTitle} — hochwertige Qualität für anspruchsvolle Anwender.`);
-
-    // Relevante Specs als lesbaren Text
-    const relevantKeys = ["Material", "Farbe", "Größe", "Gewicht", "Abmessungen", "Maße",
-      "Linsenfarbe", "Rahmenfarbe", "Schutz", "UV", "Polarisiert", "Modell", "Stil",
-      "Wasserdicht", "Kompatibel", "Verwendung", "Typ"];
-    const specParts: string[] = [];
-    for (const [k, v] of specEntries) {
-      const key = cleanText(decodeEntities(k));
-      const val = cleanText(decodeEntities(v));
-      if (!key || !val || !isCleanLine(key) || !isCleanLine(val)) continue;
-      if (relevantKeys.some(r => key.toLowerCase().includes(r.toLowerCase()))) {
-        specParts.push(`${key}: ${val}`);
-      }
-      if (specParts.length >= 5) break;
-    }
-    if (specParts.length > 0) {
-      autoLines.push(`Eigenschaften: ${specParts.join(" · ")}.`);
-    }
-
-    autoLines.push("Kostenloser Versand aus Deutschland. Lieferung in 3–10 Werktagen. 30 Tage Rückgaberecht.");
-
-    descHtml = autoLines.map(l => `<p style="color:#c0a870;line-height:1.7;margin:8px 0;">${l}</p>`).join("\n");
-  }
-
-  return `<h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:8px;letter-spacing:1px;margin-bottom:12px;">${cleanTitle}</h3>
-${specsHtml}
-${descHtml}`.trim();
+  return buildEbayHTML(product);
 }
 
 function parsePrice(raw: string): number {

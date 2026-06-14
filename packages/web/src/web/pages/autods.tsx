@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { FileText, Copy, Check, Loader, AlertCircle, RefreshCw, ShoppingCart, Package, Link, ChevronLeft } from "lucide-react";
 import { normalizeShippingText } from "../lib/text-helpers";
+import { buildEbayHTML } from "../lib/ebay-description";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ScrapedProduct {
@@ -48,38 +49,7 @@ function buildTitle(rawTitle: string): string {
 }
 
 function buildHTML(product: ScrapedProduct): string {
-  const lines: string[] = [];
-  const { title, description, specs } = product;
-
-  if (product.price) {
-    lines.push(`<p><strong>Preis:</strong> ${product.price}</p>`);
-  }
-
-  const specEntries = Object.entries(specs);
-  if (specEntries.length > 0) {
-    lines.push("<ul>");
-    for (const [k, v] of specEntries.slice(0, 10)) {
-      const key = cleanText(decodeEntities(k));
-      const val = normalizeShippingText(cleanText(decodeEntities(v)));
-      if (key && val) {
-        lines.push(`<li><strong>【${key}】</strong> ${val}</li>`);
-      }
-    }
-    lines.push("</ul>");
-  }
-
-  if (description && description.length > 20) {
-    const cleaned = normalizeShippingText(cleanText(decodeEntities(description)));
-    const paras = cleaned.split(/\n{2,}/);
-    for (const para of paras.slice(0, 3)) {
-      const p = para.trim();
-      if (p.length > 20) lines.push(`<p>${p}</p>`);
-    }
-  } else if (specEntries.length === 0) {
-    lines.push(`<p>${normalizeShippingText(decodeEntities(title).trim())}</p>`);
-  }
-
-  return lines.join("\n");
+  return buildEbayHTML(product);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
