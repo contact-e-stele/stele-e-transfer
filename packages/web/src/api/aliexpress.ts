@@ -213,8 +213,9 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
   if (SCRAPINGANT_API_KEY) {
     // Two tries: first with wait_for_selector, then without (fallback)
     const attempts = [
-      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&wait_for_selector=.pdp-info-main&block_resources=false`,
-      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&block_resources=false`,
+      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&wait_for_selector=.sku-property`,
+      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&js_snippet=${encodeURIComponent('window._wait=2000')}`,
+      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE`,
     ];
     for (const antUrl of attempts) {
       try {
@@ -258,6 +259,35 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
 
 function extractVariants(html: string): Array<{ name: string; values: string[] }> {
   const variants: Array<{ name: string; values: string[] }> = [];
+
+  // Versuch 0: Gerenderte DOM-Elemente (wenn ScrapingAnt JS ausgeführt hat)
+  // Format: <div class="sku-property"> <div class="sku-property-title">Farbe</div> <span class="sku-property-item-skew-title">Schwarz</span> ...
+  const skuPropBlocks = html.match(/<div[^>]+class="[^"]*sku-property[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/g) ?? [];
+  if (skuPropBlocks.length > 0) {
+    for (const block of skuPropBlocks) {
+      const titleMatch = block.match(/sku-property-title[^>]*>([^<]+)</);
+      if (!titleMatch) continue;
+      const name = titleMatch[1].trim();
+      const valueMatches = [...block.matchAll(/sku-property-item[^>]*title="([^"]+)"/g)];
+      const values = valueMatches.map(m => m[1].trim()).filter(Boolean);
+      if (name && values.length > 0) variants.push({ name, values });
+    }
+    if (variants.length > 0) return variants;
+  }
+
+  // Versuch 0b: data-sku-id Buttons im gerenderten HTML
+  const skuTitleMatches = [...html.matchAll(/<div[^>]+class="[^"]*skuTitle[^"]*"[^>]*>([\s\S]*?)<\/div>/g)];
+  if (skuTitleMatches.length > 0) {
+    for (const m of skuTitleMatches) {
+      const name = m[1].replace(/<[^>]+>/g, '').trim();
+      // Suche zugehörige Werte in benachbartem Block
+      const idx = m.index ?? 0;
+      const nextChunk = html.slice(idx, idx + 2000);
+      const vals = [...nextChunk.matchAll(/skuPropertyItemTitle[^>]*>\s*([^<]{1,50})\s*</g)].map(v => v[1].trim()).filter(Boolean);
+      if (name && vals.length > 0) variants.push({ name, values: [...new Set(vals)] });
+    }
+    if (variants.length > 0) return variants;
+  }
 
   // AliExpress speichert Varianten in window.runParams oder skuInfoMap JSON
   // Versuch 1: skuAttr / skuPropertyList im JS
