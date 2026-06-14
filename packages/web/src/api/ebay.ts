@@ -349,6 +349,61 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
   }
 }
 
+// ─── Merchant Location sicherstellen ─────────────────────────────────────────
+
+let locationEnsured = false;
+
+async function ensureMerchantLocation(): Promise<void> {
+  if (locationEnsured) return;
+  const token = await getAccessToken();
+
+  // Erst prüfen ob Location schon existiert
+  const checkRes = await fetch(`${BASE_URL}/sell/inventory/v1/location/default`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (checkRes.ok) {
+    console.log('[eBay] Merchant location "default" already exists');
+    locationEnsured = true;
+    return;
+  }
+
+  // Anlegen
+  const body = {
+    location: {
+      address: {
+        addressLine1: 'Am Hochfeld 47',
+        city: 'Wiesbaden',
+        stateOrProvince: 'Hessen',
+        postalCode: '65205',
+        country: 'DE',
+      },
+    },
+    locationTypes: ['WAREHOUSE'],
+    name: 'Stele E-Transfer Lager',
+    merchantLocationStatus: 'ENABLED',
+  };
+
+  const res = await fetch(`${BASE_URL}/sell/inventory/v1/location/default`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Content-Language': 'de-DE',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const resText = await res.text();
+  const alreadyExists = res.status === 409 || resText.includes('already exists') || res.status === 204;
+  if (!res.ok && !alreadyExists) {
+    console.error('[eBay] ensureMerchantLocation failed:', res.status, resText);
+    // Nicht werfen — weiter versuchen, eBay wirft ggf. seinen eigenen Fehler
+  } else {
+    console.log('[eBay] Merchant location "default" created/confirmed:', res.status);
+  }
+  locationEnsured = true;
+}
+
 // ─── Offer erstellen ──────────────────────────────────────────────────────────
 
 export async function createOffer(input: EbayListingInput): Promise<string> {
@@ -597,6 +652,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 // ─── Alles in einem ───────────────────────────────────────────────────────────
 
 export async function listOnEbay(input: EbayListingInput): Promise<string> {
+  // Merchant Location sicherstellen (wird nur einmal pro Server-Start ausgeführt)
+  await ensureMerchantLocation();
+
   const hasVariants = input.variantGroups && input.variantGroups.length > 0 &&
     input.variantGroups.some(g => g.values.length > 0);
 
