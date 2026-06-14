@@ -925,24 +925,18 @@ const app = new Hono()
   });
 
 app.get('/backup/test', async (c) => {
-  try {
-    const { runBackup } = await import('./backup');
-    await runBackup();
-    return c.json({ success: true, message: 'Backup Email gesendet' }, 200);
-  } catch (e) {
-    return c.json({ error: String(e) }, 500);
-  }
+  const { runBackup } = await import('./backup');
+  const result = await runBackup();
+  if (!result.ok) return c.json({ success: false, error: result.error }, 500);
+  return c.json({ success: true, message: `Backup gesendet — ${result.productCount} Produkte` }, 200);
 });
 
 // Alias für GitHub Actions Workflow
 app.get('/backup/run', async (c) => {
-  try {
-    const { runBackup } = await import('./backup');
-    await runBackup();
-    return c.json({ success: true, message: 'Backup Email gesendet' }, 200);
-  } catch (e) {
-    return c.json({ error: String(e) }, 500);
-  }
+  const { runBackup } = await import('./backup');
+  const result = await runBackup();
+  if (!result.ok) return c.json({ success: false, error: result.error }, 500);
+  return c.json({ success: true, message: `Backup gesendet — ${result.productCount} Produkte` }, 200);
 });
 
 export type AppType = typeof app;

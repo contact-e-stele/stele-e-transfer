@@ -77,14 +77,17 @@ async function sendBackupEmail(csv: string, productCount: number): Promise<void>
 
 // ─── Backup ausführen ─────────────────────────────────────────────────────────
 
-export async function runBackup(): Promise<void> {
+export async function runBackup(): Promise<{ ok: boolean; error?: string; productCount?: number }> {
   try {
     console.log('[Backup] Starte DB Export...');
     const products = await db.select().from(schema.products);
     const csv = productsToCSV(products);
     await sendBackupEmail(csv, products.length);
+    return { ok: true, productCount: products.length };
   } catch (e) {
-    console.error('[Backup] Fehler:', e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[Backup] Fehler:', msg);
+    return { ok: false, error: msg };
   }
 }
 
