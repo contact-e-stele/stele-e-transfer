@@ -411,6 +411,26 @@ async function ensureMerchantLocation(): Promise<void> {
 
 // ─── Offer erstellen ──────────────────────────────────────────────────────────
 
+// ─── Bestehende Offers für SKU löschen ───────────────────────────────────────
+
+export async function deleteExistingOffers(sku: string): Promise<void> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!res.ok) return; // keine Offers oder Fehler → ignorieren
+  const data = await res.json() as { offers?: { offerId: string }[] };
+  const offers = data.offers ?? [];
+  for (const offer of offers) {
+    const delRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offer.offerId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    console.log(`[eBay] DELETE offer ${offer.offerId}: ${delRes.status}`);
+  }
+}
+
 export async function createOffer(input: EbayListingInput): Promise<string> {
   const token = await getAccessToken();
   const policies = await getBusinessPolicies();
@@ -737,6 +757,8 @@ export async function listOnEbay(input: EbayListingInput): Promise<string> {
     return listOnEbayWithVariants(input);
   }
 
+  // Alte Offers für diese SKU löschen (verhindert Konflikte bei Re-Import)
+  await deleteExistingOffers(input.sku);
   await createOrUpdateInventoryItem(input);
   const offerId = await createOffer(input);
   const listingId = await publishOffer(offerId);
