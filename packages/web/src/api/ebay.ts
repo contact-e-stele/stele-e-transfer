@@ -622,7 +622,12 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     title: input.title,
     description: plainDesc,
     imageUrls: input.imageUrls,
-    aspects: Object.fromEntries(groups.map(g => [mapVariantGroupName(g.name), g.values])),
+    // Basis-Pflichtaspekte + Varianten-Gruppen-Werte zusammenführen
+    // eBay erwartet alle Pflichtaspekte auch in der Gruppe (nicht nur in einzelnen Items)
+    aspects: {
+      ...Object.fromEntries(Object.entries(baseAspects).map(([k, v]) => [k, Array.isArray(v) ? v : [v]])),
+      ...Object.fromEntries(groups.map(g => [mapVariantGroupName(g.name), g.values])),
+    },
     variantSKUs: variantSkus,
   };
 
