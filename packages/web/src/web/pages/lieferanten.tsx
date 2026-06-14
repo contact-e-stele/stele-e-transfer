@@ -485,6 +485,34 @@ export default function Lieferanten() {
                     onChange={handleGpsrUpload}
                   />
                 </div>
+
+                {/* GPSR Kopier-Box */}
+                <div style={{ marginTop: 10, border: "1px solid #C9A227", borderRadius: 6, overflow: "hidden" }}>
+                  <div style={{ background: "#1a1a1a", padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: "#C9A227", fontSize: 11, fontWeight: 700 }}>GPSR — kopierbar</span>
+                    <button
+                      onClick={() => {
+                        const text = `Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nAm Hochfeld 47, 65205 Wiesbaden, Deutschland\nE-Mail: contact@stele-e-transfer.com\nTel.: +49 159 04826737\n\nHersteller / Lieferant: Angaben gemäß Produktkennzeichnung\nBestimmungsgemäßer Gebrauch: Siehe Produktbeschreibung und Herstellerangaben\nWarnhinweise: Bitte Produktbeschreibung und beiliegende Hinweise beachten\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden\n\nBei Fragen zur Produktsicherheit: contact@stele-e-transfer.com`;
+                        navigator.clipboard.writeText(text).catch(() => {});
+                      }}
+                      style={{
+                        background: "#C9A227", color: "#0f0f0f", border: "none",
+                        padding: "4px 12px", borderRadius: 4, fontSize: 11,
+                        fontWeight: 700, cursor: "pointer"
+                      }}
+                    >
+                      Kopieren
+                    </button>
+                  </div>
+                  <div style={{
+                    background: "#111", color: "#ccc", fontFamily: "monospace",
+                    fontSize: 11, lineHeight: 1.6, padding: "10px 12px",
+                    whiteSpace: "pre-wrap", userSelect: "text"
+                  }}>
+                    {`Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nAm Hochfeld 47, 65205 Wiesbaden, Deutschland\nE-Mail: contact@stele-e-transfer.com\nTel.: +49 159 04826737\n\nHersteller / Lieferant: Angaben gemäß Produktkennzeichnung\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden`}
+                  </div>
+                </div>
+
                 {product.price && <p style={{ margin: "8px 0 0", fontSize: 16, fontWeight: 700, color: "#FF6B00" }}>{product.price}</p>}
               </div>
             )}
