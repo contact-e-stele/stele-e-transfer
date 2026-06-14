@@ -125,26 +125,67 @@ function extractShipsFrom(html: string): { shipsFrom: string; shipsFromDE: boole
   return { shipsFrom: 'China', shipsFromDE: false };
 }
 
+// Schlüsselwörter die auf Navigation/Müll hinweisen → rausfiltern
+const SPEC_BLACKLIST = [
+  'hilfe', 'streitigkeiten', 'berichte', 'melden', 'käuferschutz', 'sicherheit',
+  'datenschutz', 'nutzungsbedingungen', 'impressum', 'kontakt', 'newsletter',
+  'anmelden', 'registrieren', 'warenkorb', 'wunschliste', 'vergleichen',
+  'bewertung', 'frage stellen', 'seller', 'shop', 'feedback', 'report',
+  'dispute', 'protection', 'policy', 'terms', 'privacy', 'cookie',
+  'help', 'support', 'contact', 'login', 'sign in', 'register',
+];
+
+function isSpecJunk(key: string, value: string): boolean {
+  const kl = key.toLowerCase();
+  const vl = value.toLowerCase();
+  // Zu lang → Navigation
+  if (key.length > 60 || value.length > 150) return true;
+  // Enthält URLs
+  if (value.includes('http') || value.includes('www.')) return true;
+  // Blacklist
+  if (SPEC_BLACKLIST.some(b => kl.includes(b) || vl.includes(b))) return true;
+  // Nur Zahlen/Sonderzeichen als Key
+  if (/^[\d\s\W]+$/.test(key)) return true;
+  return false;
+}
+
 function extractSpecs(html: string): Record<string, string> {
   const specs: Record<string, string> = {};
 
-  // Try to find spec table rows: <th>Key</th><td>Value</td>
-  const tableRe = /<tr[^>]*>[\s\S]*?<th[^>]*>([\s\S]*?)<\/th>[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi;
-  let m;
-  while ((m = tableRe.exec(html)) !== null) {
-    const k = m[1].replace(/<[^>]*>/g, '').trim();
-    const v = m[2].replace(/<[^>]*>/g, '').trim();
-    if (k && v && k.length < 80 && v.length < 200) specs[k] = v;
-    if (Object.keys(specs).length >= 15) break;
+  // 1) AliExpress JSON props (most reliable)
+  const jsonProps = html.match(/"properties"\s*:\s*\[([^\]]+)\]/);
+  if (jsonProps) {
+    try {
+      const arr = JSON.parse(`[${jsonProps[1]}]`) as Array<{name?: string; value?: string}>;
+      for (const item of arr) {
+        if (item.name && item.value && !isSpecJunk(item.name, item.value)) {
+          specs[item.name] = item.value;
+          if (Object.keys(specs).length >= 15) break;
+        }
+      }
+    } catch { /* ignore */ }
   }
 
-  // Fallback: dt/dd pairs
+  // 2) Table rows: <th>Key</th><td>Value</td>
+  if (Object.keys(specs).length === 0) {
+    const tableRe = /<tr[^>]*>[\s\S]*?<th[^>]*>([\s\S]*?)<\/th>[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi;
+    let m;
+    while ((m = tableRe.exec(html)) !== null) {
+      const k = m[1].replace(/<[^>]*>/g, '').trim();
+      const v = m[2].replace(/<[^>]*>/g, '').trim();
+      if (k && v && !isSpecJunk(k, v)) specs[k] = v;
+      if (Object.keys(specs).length >= 15) break;
+    }
+  }
+
+  // 3) dt/dd pairs
   if (Object.keys(specs).length === 0) {
     const dtRe = /<dt[^>]*>([\s\S]*?)<\/dt>[\s\S]*?<dd[^>]*>([\s\S]*?)<\/dd>/gi;
+    let m;
     while ((m = dtRe.exec(html)) !== null) {
       const k = m[1].replace(/<[^>]*>/g, '').trim();
       const v = m[2].replace(/<[^>]*>/g, '').trim();
-      if (k && v) specs[k] = v;
+      if (k && v && !isSpecJunk(k, v)) specs[k] = v;
       if (Object.keys(specs).length >= 15) break;
     }
   }
@@ -400,6 +441,11 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
     /amazon/i, /temu/i, /mehrsprachige/i, /browse by category/i,
     /hilfe.?center/i, /streitigkeiten/i, /transparenz/i, /dsa.*osa/i,
     /русский|portuguese|español|français|italiano|türkçe/i,
+    /käuferschutz/i, /datenschutz/i, /nutzungsbedingungen/i, /impressum/i,
+    /warenkorb/i, /wunschliste/i, /anmelden/i, /registrieren/i,
+    /cookie/i, /newsletter/i, /alle rechte vorbehalten/i, /sitemap/i,
+    /^\s*\d+\s*$/, // nur Zahlen
+    /http[s]?:\/\//i, // URLs
   ];
   const description = jsonLdDesc
     .replace(/<[^>]*>/g, ' ')

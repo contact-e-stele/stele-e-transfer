@@ -7,10 +7,22 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 
-// ─── Gemini Beschreibung generieren ──────────────────────────────────────────
+// ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
+function generateFallbackDescription(title: string, specs: Record<string, string>): string {
+  const specsEntries = Object.entries(specs).slice(0, 5);
+  const specsText = specsEntries.map(([k, v]) => `${k}: ${v}`).join(' | ');
+  let desc = `${title} – hochwertige Qualität für anspruchsvolle Anwendungen.`;
+  if (specsText) desc += ` Technische Details: ${specsText}.`;
+  desc += ' Schnelle Lieferung aus dem EU-Lager. Einfache Rückgabe innerhalb von 30 Tagen.';
+  return desc;
+}
+
 async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return '';
+  if (!key) {
+    console.log('[Gemini] Kein API Key – nutze Fallback-Beschreibung');
+    return generateFallbackDescription(title, specs);
+  }
   try {
     const genAI = new GoogleGenerativeAI(key);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
@@ -33,7 +45,7 @@ Regeln:
     return result.response.text().trim();
   } catch (e) {
     console.error('[Gemini] Fehler:', e);
-    return '';
+    return generateFallbackDescription(title, specs);
   }
 }
 
