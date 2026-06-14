@@ -634,11 +634,35 @@ export default function Lieferanten() {
               </button>
             </div>
 
-            {saveResult?.error && (
-              <div style={{ background: "#FEF2F2", border: "1.5px solid #FECACA", borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
-                <p style={{ margin: 0, color: "#DC2626", fontSize: 13, fontWeight: 600 }}>Fehler: {saveResult.error}</p>
+            {/* In DB speichern */}
+            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#0F172A", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Save size={18} color="#C9A227" />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>In DB speichern</span>
+                {saveResult?.id && <span style={{ fontSize: 12, color: "#15803D", fontWeight: 600 }}>✓ Gespeichert (ID: {saveResult.id})</span>}
               </div>
-            )}
+              <button
+                onClick={handleSave}
+                disabled={saveLoading || !!saveResult?.id}
+                style={{
+                  width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
+                  background: saveResult?.id ? "#F0FDF4" : saveLoading ? "#E2E8F0" : "#0F172A",
+                  color: saveResult?.id ? "#15803D" : saveLoading ? "#94A3B8" : "#C9A227",
+                  fontWeight: 700, fontSize: 14,
+                  cursor: (saveLoading || !!saveResult?.id) ? "not-allowed" : "pointer",
+                  fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  border: saveResult?.id ? "1.5px solid #BBF7D0" : "none",
+                }}
+              >
+                {saveLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={16} />}
+                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : "In DB speichern"}
+              </button>
+              {saveResult?.error && (
+                <p style={{ margin: "8px 0 0", color: "#DC2626", fontSize: 13, fontWeight: 600 }}>Fehler: {saveResult.error}</p>
+              )}
+            </div>
 
             {/* eBay Listen */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>

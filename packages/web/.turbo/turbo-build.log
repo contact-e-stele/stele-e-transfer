@@ -1,15 +1,23 @@
 $ tsc --noEmit && vite build
 vite v7.3.2 building client environment for production...
 transforming...
+[plugin vite:esbuild] src/web/pages/lieferanten.tsx: Duplicate key "border" in object literal
+654 |                    cursor: (saveLoading || !!saveResult?.id) ? "not-allowed" : "pointer",
+655 |                    fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+656 |                    border: saveResult?.id ? "1.5px solid #BBF7D0" : "none",
+    |                    ^
+657 |                  }}
+658 |                >
+
 ✓ 1830 modules transformed.
 rendering chunks...
 computing gzip size...
 dist/index.html                   1.08 kB │ gzip:   0.56 kB
 dist/assets/index-C0uKGpwk.css   18.61 kB │ gzip:   4.08 kB
-dist/assets/index-JSLcjBHG.js   659.48 kB │ gzip: 183.90 kB
+dist/assets/index-CCgcF6ca.js   662.40 kB │ gzip: 184.48 kB
 
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
-✓ built in 2.62s
+✓ built in 2.65s
