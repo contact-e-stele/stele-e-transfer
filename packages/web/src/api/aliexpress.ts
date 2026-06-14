@@ -25,6 +25,7 @@ export interface ScrapedProduct {
   specs: Record<string, string>;
   shipsFromDE: boolean;   // true wenn Versand aus DE/EU erkannt
   shipsFrom: string;      // z.B. "Germany", "Spain", "China"
+  variants: Array<{ name: string; values: string[] }>; // z.B. [{name:"Farbe", values:["Schwarz","Blau"]}]
 }
 
 function cleanTitle(raw: string): string {
@@ -193,6 +194,76 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
   return null;
 }
 
+function extractVariants(html: string): Array<{ name: string; values: string[] }> {
+  const variants: Array<{ name: string; values: string[] }> = [];
+
+  // AliExpress speichert Varianten in window.runParams oder skuInfoMap JSON
+  // Versuch 1: skuAttr / skuPropertyList im JS
+  const skuMatch = html.match(/"skuPropertyList"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+  if (skuMatch) {
+    try {
+      const list = JSON.parse(skuMatch[1]) as Array<{ skuPropertyName: string; skuPropertyValues: Array<{ propertyValueName: string }> }>;
+      for (const group of list) {
+        const name = group.skuPropertyName?.trim();
+        const values = (group.skuPropertyValues ?? []).map(v => v.propertyValueName?.trim()).filter(Boolean);
+        if (name && values.length > 0) variants.push({ name, values });
+      }
+      if (variants.length > 0) return variants;
+    } catch { /* ignore */ }
+  }
+
+  // Versuch 2: runParams.data.skuInfoMap oder props
+  const runParamsMatch = html.match(/window\.runParams\s*=\s*(\{[\s\S]{100,50000}\});?\s*\n/);
+  if (runParamsMatch) {
+    try {
+      const data = JSON.parse(runParamsMatch[1]) as Record<string, unknown>;
+      const skuList = (data?.['data'] as Record<string, unknown>)?.['skuInfoMap'];
+      if (Array.isArray(skuList)) {
+        for (const group of skuList as Array<{ name: string; values: string[] }>) {
+          if (group.name && Array.isArray(group.values)) {
+            variants.push({ name: group.name, values: group.values });
+          }
+        }
+        if (variants.length > 0) return variants;
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Versuch 3: "props" Array im JSON-LD Produkt
+  const propsMatch = html.match(/"additionalProperty"\s*:\s*(\[[\s\S]*?\])/);
+  if (propsMatch) {
+    try {
+      const props = JSON.parse(propsMatch[1]) as Array<{ name: string; value: string }>;
+      const grouped: Record<string, string[]> = {};
+      for (const p of props) {
+        if (!grouped[p.name]) grouped[p.name] = [];
+        if (p.value && !grouped[p.name].includes(p.value)) grouped[p.name].push(p.value);
+      }
+      for (const [name, values] of Object.entries(grouped)) {
+        if (values.length > 0) variants.push({ name, values });
+      }
+      if (variants.length > 0) return variants;
+    } catch { /* ignore */ }
+  }
+
+  // Versuch 4: Specs als Varianten-Hinweise (Farbe, Größe aus specs)
+  // Suche nach typischen Varianten-Keywords im HTML
+  const colorMatch = html.match(/["'](?:Color|Farbe|Colour)["']\s*[,:]\s*["']([^"']{2,50})["']/gi);
+  const sizeMatch = html.match(/["'](?:Size|Größe|Groesse)["']\s*[,:]\s*["']([^"']{1,30})["']/gi);
+  if (colorMatch || sizeMatch) {
+    if (colorMatch) {
+      const values = [...new Set(colorMatch.map(m => m.replace(/.*[,:]\s*["']/, '').replace(/["'].*/, '').trim()))].slice(0, 10);
+      if (values.length > 0) variants.push({ name: 'Farbe', values });
+    }
+    if (sizeMatch) {
+      const values = [...new Set(sizeMatch.map(m => m.replace(/.*[,:]\s*["']/, '').replace(/["'].*/, '').trim()))].slice(0, 10);
+      if (values.length > 0) variants.push({ name: 'Größe', values });
+    }
+  }
+
+  return variants;
+}
+
 export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
   // Normalize URL — always use de.aliexpress.com + clean URL (strip tracking params)
   let fetchUrl = url;
@@ -294,5 +365,8 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
 
   console.log(`[AliExpress] title="${title.slice(0, 60)}" images=${images.length} price="${price}" shipsFrom="${shipsFrom}"`);
 
-  return { title, images, price, description, specs, shipsFrom, shipsFromDE };
+  const variants = extractVariants(html);
+  console.log(`[AliExpress] variants=${JSON.stringify(variants.map(v => `${v.name}:${v.values.length}`))}`);
+
+  return { title, images, price, description, specs, shipsFrom, shipsFromDE, variants };
 }

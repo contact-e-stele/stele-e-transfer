@@ -15,6 +15,7 @@ interface ScrapedProduct {
   price: string;
   description: string;
   specs: Record<string, string>;
+  variants?: Array<{ name: string; values: string[] }>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -247,7 +248,7 @@ export default function Lieferanten() {
           generatedTitle: result.title,
           htmlDescription: result.html,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
-          variants: [],
+          variants: product.variants ?? [],
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,
@@ -283,7 +284,7 @@ export default function Lieferanten() {
           generatedTitle: result.title,
           htmlDescription: result.html,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
-          variants: [],
+          variants: product.variants ?? [],
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,

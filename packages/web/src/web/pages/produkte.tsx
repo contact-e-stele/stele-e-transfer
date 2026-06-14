@@ -164,7 +164,9 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
 
         {/* Info */}
         <div style={{ background: "#EFF6FF", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#1D4ED8" }}>
-          Füge Varianten-Gruppen hinzu (z.B. "Farbe", "Größe") und trage die möglichen Werte ein.
+          {groups.length > 0
+            ? <><strong>✅ Varianten automatisch erkannt!</strong> Prüfe die Werte und ergänze falls nötig.</>
+            : <>Füge Varianten-Gruppen hinzu (z.B. "Farbe", "Größe") und trage die möglichen Werte ein.</>}
           {hasRealVariants && <><br /><strong>{totalCombos} Kombinationen</strong> → wird als eBay Variation Listing gelistet.</>}
         </div>
 
