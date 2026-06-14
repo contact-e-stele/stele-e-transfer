@@ -549,7 +549,7 @@ const app = new Hono()
         price: product.sellPrice,
         quantity: 3,
         condition: 'NEW',
-        imageUrls: images.slice(0, 8),
+        imageUrls: images.filter(u => u.startsWith('http')).slice(0, 8),
         categoryId: categoryId ?? undefined,
         variantGroups: variantGroups.length > 0 ? variantGroups : undefined,
         specs,
