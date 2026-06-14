@@ -41,6 +41,9 @@ function cleanText(text: string): string {
 function buildTitle(rawTitle: string): string {
   let title = decodeEntities(rawTitle)
     .replace(/\[.*?\]/g, "")
+    // AliExpress Plattform-Müll entfernen: "– AliExpress 200000297", "- AliExpress", etc.
+    .replace(/[-–]\s*AliExpress\s*\d*/gi, "")
+    .replace(/\bAliExpress\s*\d*/gi, "")
     // Mengenangaben am Anfang entfernen: "1/4 Stück", "2 Paar", "1 Stück", "3 Stück " etc.
     .replace(/^\d+\/\d+\s*(Stück|Paar|stücke|St\.?|pc\.?|pcs\.?)\s*/i, "")
     .replace(/^\d+\s*(Stück|Paar|stücke|St\.?|pc\.?|pcs\.?)\s*/i, "")
@@ -91,7 +94,7 @@ function buildHTML(product: ScrapedProduct): string {
     if (rows) specsHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">\n${rows}\n</table>`;
   }
 
-  // Beschreibung — nur saubere Zeilen, keine Plattform-Erwähnungen
+  // Beschreibung — aus description oder aus Specs+Titel automatisch aufbauen
   let descHtml = "";
   if (description && description.length > 20) {
     const cleaned = cleanText(decodeEntities(description));
@@ -103,6 +106,36 @@ function buildHTML(product: ScrapedProduct): string {
     if (paras.length > 0) {
       descHtml = paras.map(p => `<p style="color:#c0a870;line-height:1.7;margin:8px 0;">${p}</p>`).join("\n");
     }
+  }
+
+  // Fallback: Wenn keine Beschreibung → aus Titel + Specs eine sinnvolle Beschreibung generieren
+  if (!descHtml) {
+    const autoLines: string[] = [];
+
+    // Hauptsatz aus Titel
+    autoLines.push(`${cleanTitle} — hochwertige Qualität für anspruchsvolle Anwender.`);
+
+    // Relevante Specs als lesbaren Text
+    const relevantKeys = ["Material", "Farbe", "Größe", "Gewicht", "Abmessungen", "Maße",
+      "Linsenfarbe", "Rahmenfarbe", "Schutz", "UV", "Polarisiert", "Modell", "Stil",
+      "Wasserdicht", "Kompatibel", "Verwendung", "Typ"];
+    const specParts: string[] = [];
+    for (const [k, v] of specEntries) {
+      const key = cleanText(decodeEntities(k));
+      const val = cleanText(decodeEntities(v));
+      if (!key || !val || !isCleanLine(key) || !isCleanLine(val)) continue;
+      if (relevantKeys.some(r => key.toLowerCase().includes(r.toLowerCase()))) {
+        specParts.push(`${key}: ${val}`);
+      }
+      if (specParts.length >= 5) break;
+    }
+    if (specParts.length > 0) {
+      autoLines.push(`Eigenschaften: ${specParts.join(" · ")}.`);
+    }
+
+    autoLines.push("Kostenloser Versand aus Deutschland. Lieferung in 3–7 Werktagen. 30 Tage Rückgaberecht.");
+
+    descHtml = autoLines.map(l => `<p style="color:#c0a870;line-height:1.7;margin:8px 0;">${l}</p>`).join("\n");
   }
 
   return `<h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:8px;letter-spacing:1px;margin-bottom:12px;">${cleanTitle}</h3>
