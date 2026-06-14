@@ -105,6 +105,9 @@ export default function Lieferanten() {
   const [selectedImage, setSelectedImage] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
 
+  // Varianten-Auswahl: { "Farbe": ["Schwarz", "Blau"], "Größe": ["M"] }
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string[]>>({});
+
   const [copiedTitle, setCopiedTitle] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
 
@@ -149,6 +152,12 @@ export default function Lieferanten() {
       setVisibleImages(data.images ?? []);
       setResult({ title: buildTitle(data.title), html: buildHTML(data) });
       if (data.seller) setGpsrHersteller(data.seller);
+      // Varianten: alle vorselektieren
+      const initVariants: Record<string, string[]> = {};
+      for (const g of (data.variants ?? [])) {
+        initVariants[g.name] = [...g.values];
+      }
+      setSelectedVariants(initVariants);
       // Preis vorausfüllen
       const p = parsePrice(data.price);
       if (p > 0) setBuyPrice(p.toFixed(2));
@@ -186,7 +195,7 @@ export default function Lieferanten() {
           generatedTitle: result.title,
           htmlDescription: result.html,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
-          variants: product.variants ?? [],
+          variants: Object.entries(selectedVariants).map(([name, values]) => ({ name, values })).filter(g => g.values.length > 0),
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,
@@ -633,6 +642,76 @@ export default function Lieferanten() {
                 <RefreshCw size={16} /> Neu scrapen
               </button>
             </div>
+
+            {/* Varianten-Auswahl */}
+            {product?.variants && product.variants.length > 0 && (
+              <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "#7C3AED", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Package size={18} color="#fff" />
+                  </div>
+                  <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Varianten auswählen</span>
+                  <span style={{ fontSize: 11, color: "#94A3B8", marginLeft: "auto" }}>
+                    {Object.values(selectedVariants).reduce((a, b) => a + b.length, 0)} ausgewählt
+                  </span>
+                </div>
+
+                {product.variants.map((group) => (
+                  <div key={group.name} style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#64748B", textTransform: "uppercase", marginBottom: 8, letterSpacing: 0.5 }}>
+                      {group.name}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {group.values.map((val) => {
+                        const isSelected = (selectedVariants[group.name] ?? []).includes(val);
+                        return (
+                          <button
+                            key={val}
+                            onClick={() => {
+                              setSelectedVariants(prev => {
+                                const current = prev[group.name] ?? [];
+                                const next = isSelected
+                                  ? current.filter(v => v !== val)
+                                  : [...current, val];
+                                return { ...prev, [group.name]: next };
+                              });
+                            }}
+                            style={{
+                              padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                              cursor: "pointer", transition: "all 0.15s",
+                              background: isSelected ? "#7C3AED" : "#F1F5F9",
+                              color: isSelected ? "#fff" : "#475569",
+                              border: isSelected ? "2px solid #7C3AED" : "2px solid #E2E8F0",
+                            }}
+                          >
+                            {val}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
+                      <button
+                        onClick={() => setSelectedVariants(prev => ({ ...prev, [group.name]: [...group.values] }))}
+                        style={{ fontSize: 11, color: "#7C3AED", background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}
+                      >
+                        Alle wählen
+                      </button>
+                      <span style={{ color: "#CBD5E1", fontSize: 11 }}>|</span>
+                      <button
+                        onClick={() => setSelectedVariants(prev => ({ ...prev, [group.name]: [] }))}
+                        style={{ fontSize: 11, color: "#94A3B8", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                      >
+                        Alle abwählen
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <div style={{ marginTop: 8, padding: "10px 14px", background: "#F5F3FF", borderRadius: 10, fontSize: 12, color: "#6D28D9" }}>
+                  💡 Ausgewählte Varianten werden als eBay-Listing mit Dropdown erstellt
+                </div>
+              </div>
+            )}
 
             {/* In DB speichern */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
