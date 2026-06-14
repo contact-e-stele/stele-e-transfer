@@ -180,70 +180,129 @@ function normalizeAbteilung(val: string): string {
   return 'Unisex';
 }
 
-// Specs → eBay Aspekte (Record<string, string[]>)
-function buildAspects(specs: Record<string, string> = {}, mpn?: string): Record<string, string[]> {
+// Bekannte Standardwerte für häufige Pflichtfelder
+const ASPECT_DEFAULTS: Record<string, string> = {
+  'Abteilung': 'Unisex',
+  'Marke': 'Markenlos',
+  'Herstellernummer': 'Nicht zutreffend',
+  'Produktart': 'Unbekannt',
+  'Artikelzustand': 'Neu',
+  'Stil': 'Unbekannt',
+  'Anlass': 'Unbekannt',
+  'Thema': 'Unbekannt',
+  'Besonderheiten': 'Ohne',
+  'Verschluss': 'Unbekannt',
+  'Muster': 'Einfarbig',
+  'Passform': 'Normal',
+  'Pflegehinweis': 'Keine Angabe',
+  'Aufschrift': 'Nein',
+  'Trägertyp': 'Unbekannt',
+  'Kragenart': 'Unbekannt',
+  'Beinlänge': 'Unbekannt',
+  'Ärmelstil': 'Unbekannt',
+  'Ausschnitt': 'Unbekannt',
+  'Schnittform': 'Unbekannt',
+  'Produktlinie': 'Unbekannt',
+  'Rahmenmaterial': 'Unbekannt',
+  'Linsenfarbe': 'Unbekannt',
+  'Rahmenform': 'Unbekannt',
+  'Linsenmaterial': 'Unbekannt',
+  'Schutzfaktor': 'Unbekannt',
+};
+
+// Cache: categoryId → Pflichtaspekte (Name → erster erlaubter Wert oder null)
+const aspectCache = new Map<string, Record<string, string | null>>();
+
+// Pflichtfelder für eine Kategorie per eBay API abrufen
+async function getRequiredAspects(categoryId: string, token: string): Promise<Record<string, string | null>> {
+  if (aspectCache.has(categoryId)) return aspectCache.get(categoryId)!;
+
+  try {
+    const res = await fetch(
+      `${BASE_URL}/commerce/taxonomy/v1/category_tree/77/get_item_aspects_for_category?category_id=${categoryId}`,
+      { headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' } }
+    );
+    if (!res.ok) {
+      console.log('[eBay] getItemAspectsForCategory failed:', res.status);
+      aspectCache.set(categoryId, {});
+      return {};
+    }
+    const data = await res.json() as {
+      aspects?: Array<{
+        localizedAspectName: string;
+        aspectConstraint?: { aspectRequired?: boolean };
+        aspectValues?: Array<{ localizedValue: string }>;
+      }>;
+    };
+
+    const required: Record<string, string | null> = {};
+    for (const aspect of data.aspects ?? []) {
+      if (aspect.aspectConstraint?.aspectRequired) {
+        // Ersten erlaubten Wert nehmen oder null
+        required[aspect.localizedAspectName] = aspect.aspectValues?.[0]?.localizedValue ?? null;
+      }
+    }
+    console.log(`[eBay] Required aspects for category ${categoryId}:`, Object.keys(required));
+    aspectCache.set(categoryId, required);
+    return required;
+  } catch (e) {
+    console.error('[eBay] getItemAspectsForCategory error:', e);
+    aspectCache.set(categoryId, {});
+    return {};
+  }
+}
+
+// Specs → eBay Aspekte (async, befüllt Pflichtfelder automatisch)
+async function buildAspects(
+  specs: Record<string, string> = {},
+  mpn?: string,
+  categoryId?: string,
+  token?: string
+): Promise<Record<string, string[]>> {
   // Key-Mapping: AliExpress Spec-Keys → eBay Aspekt-Namen (DE)
   const KEY_MAP: Record<string, string> = {
-    'Marke': 'Marke',
-    'Brand': 'Marke',
-    'brand': 'Marke',
-    'Farbe': 'Farbe',
-    'Color': 'Farbe',
-    'color': 'Farbe',
-    'Colour': 'Farbe',
-    'colour': 'Farbe',
-    'Material': 'Material',
-    'material': 'Material',
-    'Größe': 'Größe',
-    'Groesse': 'Größe',
-    'Size': 'Größe',
-    'size': 'Größe',
-    'Gewicht': 'Gewicht',
-    'Weight': 'Gewicht',
-    'weight': 'Gewicht',
-    'Typ': 'Typ',
-    'Type': 'Typ',
-    'type': 'Typ',
-    'Stil': 'Stil',
-    'Style': 'Stil',
-    'style': 'Stil',
-    'Modell': 'Modell',
-    'Model': 'Modell',
-    'model': 'Modell',
-    // Gender → Abteilung
-    'Gender': 'Abteilung',
-    'gender': 'Abteilung',
-    'Geschlecht': 'Abteilung',
-    'geschlecht': 'Abteilung',
-    'Abteilung': 'Abteilung',
+    'Marke': 'Marke', 'Brand': 'Marke', 'brand': 'Marke',
+    'Farbe': 'Farbe', 'Color': 'Farbe', 'color': 'Farbe', 'Colour': 'Farbe', 'colour': 'Farbe',
+    'Material': 'Material', 'material': 'Material',
+    'Größe': 'Größe', 'Groesse': 'Größe', 'Size': 'Größe', 'size': 'Größe',
+    'Gewicht': 'Gewicht', 'Weight': 'Gewicht', 'weight': 'Gewicht',
+    'Typ': 'Typ', 'Type': 'Typ', 'type': 'Typ',
+    'Stil': 'Stil', 'Style': 'Stil', 'style': 'Stil',
+    'Modell': 'Modell', 'Model': 'Modell', 'model': 'Modell',
+    'Gender': 'Abteilung', 'gender': 'Abteilung', 'Geschlecht': 'Abteilung',
+    'geschlecht': 'Abteilung', 'Abteilung': 'Abteilung',
   };
 
   const aspects: Record<string, string[]> = {};
 
-  // Specs durchlaufen und mappen
+  // Specs mappen
   for (const [key, value] of Object.entries(specs)) {
     const mapped = KEY_MAP[key];
     if (mapped && value && !aspects[mapped]) {
-      // Abteilung normalisieren
       const finalVal = mapped === 'Abteilung' ? normalizeAbteilung(value) : value.slice(0, 100);
       aspects[mapped] = [finalVal];
     }
   }
 
-  // Marke: Fallback auf "Markenlos"
-  if (!aspects['Marke']) {
-    aspects['Marke'] = ['Markenlos'];
+  // Pflichtfelder per API abrufen und fehlende automatisch befüllen
+  if (categoryId && token) {
+    const required = await getRequiredAspects(categoryId, token);
+    for (const [name, firstAllowed] of Object.entries(required)) {
+      if (!aspects[name]) {
+        // Priorität: 1. erster erlaubter Wert der API, 2. bekannter Default, 3. "Nicht angegeben"
+        const fallback = firstAllowed ?? ASPECT_DEFAULTS[name] ?? 'Nicht angegeben';
+        aspects[name] = [fallback];
+        console.log(`[eBay] Auto-filled required aspect "${name}" = "${fallback}"`);
+      }
+    }
   }
 
-  // Abteilung: Fallback auf "Unisex" – viele Kategorien verlangen dieses Pflichtfeld
-  if (!aspects['Abteilung']) {
-    aspects['Abteilung'] = ['Unisex'];
-  }
+  // Immer: Marke + Abteilung als Minimum
+  if (!aspects['Marke']) aspects['Marke'] = ['Markenlos'];
+  if (!aspects['Abteilung']) aspects['Abteilung'] = ['Unisex'];
 
-  // MPN hinzufügen wenn vorhanden
-  if (mpn) {
-    aspects['MPN'] = [mpn];
-  }
+  // MPN
+  if (mpn) aspects['MPN'] = [mpn];
 
   return aspects;
 }
@@ -264,7 +323,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       title: input.title,
       description: plainDesc,
       imageUrls: input.imageUrls,
-      aspects: buildAspects(input.specs, input.mpn),
+      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, token),
     },
   };
 
@@ -416,12 +475,21 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Plain-Text Beschreibung für Inventory Items (max 4000 Zeichen)
   const plainDesc = (input.shortDescription ?? input.description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 4000);
 
+  // Pflichtaspekte einmal abrufen (gilt für alle Varianten)
+  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token);
+
   // 1. Pro Kombination: Inventory Item anlegen
   const variantSkus: string[] = [];
   for (const combo of combos) {
     const suffix = Object.values(combo).map(slugify).join('-');
     const varSku = `${input.sku}-${suffix}`;
     variantSkus.push(varSku);
+
+    // Varianten-Aspekte: Basis-Aspekte + spezifische Kombo-Werte
+    const variantAspects = {
+      ...baseAspects,
+      ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [k, [v]])),
+    };
 
     const varBody = {
       availability: { shipToLocationAvailability: { quantity: input.quantity } },
@@ -430,7 +498,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         title: input.title,
         description: plainDesc,
         imageUrls: input.imageUrls,
-        aspects: Object.fromEntries(Object.entries(combo).map(([k, v]) => [k, [v]])),
+        aspects: variantAspects,
       },
     };
 
