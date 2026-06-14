@@ -202,10 +202,6 @@ export default function Lieferanten() {
           htmlDescription: result.html,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: editedVariants
-            .map(g => ({
-              name: g.name,
-              values: g.values.filter(v => (selectedVariants[g.name] ?? []).includes(v))
-            }))
             .filter(g => g.values.length > 0),
           description: product.description,
           images: visibleImages,
@@ -828,7 +824,8 @@ export default function Lieferanten() {
                         onClick={() => {
                           const newVal = "Neu";
                           setEditedVariants(prev => prev.map((g, i) => i === gi ? { ...g, values: [...g.values, newVal] } : g));
-                          setSelectedVariants(prev => ({ ...prev, [group.name]: [...(prev[group.name] ?? []), newVal] }));
+                          // Neuen Wert automatisch selektieren
+                          setSelectedVariants(prev => ({ ...prev, [group.name]: [...group.values, newVal] }));
                           // Sofort in Edit-Modus
                           setTimeout(() => {
                             const newVi = group.values.length;
