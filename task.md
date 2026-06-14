@@ -1,28 +1,50 @@
-# Task
+# STELE APP - Task Board (14.06.2026)
 
-Ziel: stele-e-transfer App aus Backup verstehen, Blocker finden, Weiterentwicklung vorbereiten.
+## PROBLEM: AliExpress Produktdaten holen
 
-Status:
-- Backup extrahiert nach /home/user/backup_review/stele-app
-- App ist eine AliExpress/eBay Dropshipping-App
-- API-Routen vorhanden in packages/web/src/api/index.ts
-- DB-Schema in packages/web/src/db/schema.ts
-- Frontend-Pages in packages/web/src/web/pages/
-- Daily backup endpoint added: GET /api/backup/run
-- Daily backup sends email to contact@stele-e-transfer.com with zip attachment
-- GitHub Actions workflow added to trigger backup daily at 02:00 Europe/Berlin equivalent offset via cron
+### Was nicht funktioniert:
+- DS API (`aliexpress.ds.product.get`) → braucht access_token (OAuth blockiert, AppKey nicht aktiviert)
+- Affiliate API → InsufficientPermission (App nicht freigeschaltet)
+- ScrapingAnt → gibt nur 74KB Bot-Seite zurück
+- Playwright direkt → CAPTCHA sofort
+- Direktes Scraping → Bot-Block
 
-Wichtige Erkenntnisse:
-- /api/aliexpress/scrape existiert
-- /api/products existiert
-- /api/ebay/list existiert
-- /api/health existiert
-- Route /autods existiert nicht; AutoDS war nur eine frühere Bezeichnung/Seite
-- likely blocker may be missing env vars or runtime issue, not missing route
+### Was funktioniert (ScrapingAnt früher):
+- Titel ✅
+- Preis ✅  
+- Bilder ✅
+- Beschreibung ✅
+- Versandland ✅
+- Varianten ❌ (kommen nicht weil JS nicht vollständig rendert)
 
-Next steps:
-- build/typecheck the app
-- inspect missing env / database setup
-- identify runtime error if chat stops responding
-- then propose next development step
-- if user wants, connect this backup workflow to their real GitHub repo by committing the workflow file
+## LÖSUNG - Plan B: Zenrows oder ScraperAPI
+
+**Zenrows** ist besser als ScrapingAnt für JS-heavy Sites:
+- Premium residential proxies
+- Bessere JS-Rendering
+- Kostenpflichtiger aber zuverlässiger
+
+**ScraperAPI** mit `render=true`:
+- Hat auch gute AliExpress-Unterstützung
+
+**ODER: Manuelle Varianten-Eingabe (pragmatisch für Go-Live)**
+- Produkt scrapen → Titel/Preis/Bilder kommen schon
+- Varianten: User tippt sie manuell ein (bereits gebaut in lieferanten.tsx!)
+- Das reicht für Go-Live 15.06!
+
+## ENTSCHEIDUNG FÜR GO-LIVE 15.06:
+1. Scraping mit ScrapingAnt wie bisher (Titel/Preis/Bilder funktionieren)
+2. Varianten manuell eingeben (UI bereits fertig)
+3. eBay Listen funktioniert bereits
+4. Preisüberwachung via Scraping (nur Preis, kein Variant-Bedarf)
+
+## NÄCHSTE SCHRITTE:
+1. Prüfe ob ScrapingAnt aktuell noch Produktseiten zurückgibt (war vorher 282KB)
+2. Wenn ja: Varianten manuell lassen, live gehen
+3. Beschreibung verbessern (Gemini AI nutzen)
+4. Preisüberwachung Cron testen
+
+## OFFEN:
+- AutoDS Import CSV hochladen
+- eBay Vorlage in AutoDS 
+- Ecomsniper gekündigt ✅

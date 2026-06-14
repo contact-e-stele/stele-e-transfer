@@ -751,6 +751,15 @@ export default function Produkte() {
               {product.ebayError && !listingResult && (
                 <div style={{ fontSize: 11, color: "#DC2626", background: "#FEF2F2", padding: "6px 10px", borderRadius: 6, marginTop: 8 }}>
                   {product.ebayError.slice(0, 120)}
+                  <button
+                    onClick={async () => {
+                      await fetch(`/api/products/${product.id}/reset-error`, { method: 'POST' });
+                      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayStatus: 'none', ebayError: null } : p));
+                    }}
+                    style={{ display: 'block', marginTop: 6, padding: '3px 10px', fontSize: 11, background: '#DC2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                  >
+                    Fehler zurücksetzen
+                  </button>
                 </div>
               )}
 

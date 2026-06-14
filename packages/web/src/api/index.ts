@@ -790,6 +790,26 @@ const app = new Hono()
     }
   })
 
+  // ─── Fehler zurücksetzen ─────────────────────────────────────────────────────
+  .post('/products/:id/reset-error', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      await db.update(schema.products).set({
+        ebayStatus: 'none',
+        ebayError: null,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.products.id, id));
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ error: 'DB Fehler' }, 503);
+    }
+  })
+
   // ─── Preis-Historie abrufen ──────────────────────────────────────────────────
   .get('/products/:id/price-history', async (c) => {
     const id = parseInt(c.req.param('id'));
