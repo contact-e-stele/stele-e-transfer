@@ -514,7 +514,7 @@ function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
     const next: Record<string, string>[] = [];
     for (const combo of result) {
       for (const value of group.values) {
-        next.push({ ...combo, [group.name]: value });
+        next.push({ ...combo, [mapVariantGroupName(group.name)]: value });
       }
     }
     result.splice(0, result.length, ...next);
@@ -524,6 +524,44 @@ function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
 
 function slugify(s: string): string {
   return s.toUpperCase().replace(/[^A-Z0-9]/g, '-').slice(0, 20);
+}
+
+// Varianten-Gruppen-Name → eBay Aspekt-Name mappen
+// Damit funktioniert es egal wie der User die Gruppe benennt
+const VARIANT_GROUP_MAP: Record<string, string> = {
+  // Farbe
+  'farbe': 'Rahmenfarbe',
+  'color': 'Rahmenfarbe',
+  'colour': 'Rahmenfarbe',
+  'rahmenfarbe': 'Rahmenfarbe',
+  'frame color': 'Rahmenfarbe',
+  'linsenfarbe': 'Linsenfarbe',
+  'lens color': 'Linsenfarbe',
+  // Größe
+  'größe': 'Größe',
+  'groesse': 'Größe',
+  'size': 'Größe',
+  'gr': 'Größe',
+  // Material
+  'material': 'Material',
+  // Stil
+  'stil': 'Stil',
+  'style': 'Stil',
+  // Menge/Set
+  'menge': 'Menge',
+  'anzahl': 'Menge',
+  'set': 'Menge',
+  'quantity': 'Menge',
+  // Modell
+  'modell': 'Modell',
+  'model': 'Modell',
+  // Typ
+  'typ': 'Typ',
+  'type': 'Typ',
+};
+
+function mapVariantGroupName(name: string): string {
+  return VARIANT_GROUP_MAP[name.toLowerCase().trim()] ?? name;
 }
 
 export async function listOnEbayWithVariants(input: EbayListingInput): Promise<string> {
@@ -546,9 +584,10 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     variantSkus.push(varSku);
 
     // Varianten-Aspekte: Basis-Aspekte + spezifische Kombo-Werte
+    // Gruppen-Namen automatisch auf eBay Aspekt-Namen mappen
     const variantAspects = {
       ...baseAspects,
-      ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [k, [v]])),
+      ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [mapVariantGroupName(k), [v]])),
     };
 
     const varBody = {
@@ -583,7 +622,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     title: input.title,
     description: plainDesc,
     imageUrls: input.imageUrls,
-    aspects: Object.fromEntries(groups.map(g => [g.name, g.values])),
+    aspects: Object.fromEntries(groups.map(g => [mapVariantGroupName(g.name), g.values])),
     variantSKUs: variantSkus,
   };
 
