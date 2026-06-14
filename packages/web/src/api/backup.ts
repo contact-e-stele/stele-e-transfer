@@ -49,7 +49,7 @@ async function sendBackupEmail(csv: string, productCount: number): Promise<void>
   const resend = new Resend(RESEND_API_KEY);
 
   const result = await resend.emails.send({
-    from: 'Stele Backup <backup@stele-e-transfer.com>',
+    from: 'Stele Backup <onboarding@resend.dev>',
     to: BACKUP_TO,
     subject: `📦 Stele DB Backup — ${dateStr} ${timeStr} (${productCount} Produkte)`,
     html: `

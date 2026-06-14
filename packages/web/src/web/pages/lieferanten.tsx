@@ -113,6 +113,7 @@ export default function Lieferanten() {
   const [ebayLoading, setEbayLoading] = useState(false);
   const [ebayResult, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [gpsrHersteller, setGpsrHersteller] = useState("");
   const [saveResult, setSaveResult] = useState<{ id?: number; error?: string } | null>(null);
 
   // ─── Marge berechnen ──────────────────────────────────────────────────────
@@ -492,7 +493,7 @@ export default function Lieferanten() {
                     <span style={{ color: "#C9A227", fontSize: 11, fontWeight: 700 }}>GPSR — kopierbar</span>
                     <button
                       onClick={() => {
-                        const text = `Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nAm Hochfeld 47, 65205 Wiesbaden, Deutschland\nE-Mail: contact@stele-e-transfer.com\nTel.: +49 159 04826737\n\nHersteller / Lieferant: Angaben gemäß Produktkennzeichnung\nBestimmungsgemäßer Gebrauch: Siehe Produktbeschreibung und Herstellerangaben\nWarnhinweise: Bitte Produktbeschreibung und beiliegende Hinweise beachten\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden\n\nBei Fragen zur Produktsicherheit: contact@stele-e-transfer.com`;
+                        const text = `Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nE-Mail: contact@stele-e-transfer.com\n\nHersteller / Lieferant:\n${gpsrHersteller || '[Hersteller eintragen]'}\n\nBestimmungsgemäßer Gebrauch: Siehe Produktbeschreibung und Herstellerangaben\nWarnhinweise: Bitte Produktbeschreibung und beiliegende Hinweise beachten\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden\n\nBei Fragen zur Produktsicherheit: contact@stele-e-transfer.com`;
                         navigator.clipboard.writeText(text).catch(() => {});
                       }}
                       style={{
@@ -504,12 +505,27 @@ export default function Lieferanten() {
                       Kopieren
                     </button>
                   </div>
+                  {/* Hersteller Eingabe */}
+                  <div style={{ background: "#1a1a1a", padding: "6px 10px", borderTop: "1px solid #333" }}>
+                    <span style={{ color: "#aaa", fontSize: 10, display: "block", marginBottom: 4 }}>Hersteller / Lieferant (von AliExpress eintragen):</span>
+                    <textarea
+                      value={gpsrHersteller}
+                      onChange={e => setGpsrHersteller(e.target.value)}
+                      placeholder="z.B. Shenzhen XYZ Co., Ltd. | No. 1 Tech Road, Shenzhen, China"
+                      rows={2}
+                      style={{
+                        width: "100%", background: "#111", color: "#fff", border: "1px solid #444",
+                        borderRadius: 4, padding: "6px 8px", fontSize: 11, fontFamily: "monospace",
+                        resize: "vertical", boxSizing: "border-box"
+                      }}
+                    />
+                  </div>
                   <div style={{
                     background: "#111", color: "#ccc", fontFamily: "monospace",
                     fontSize: 11, lineHeight: 1.6, padding: "10px 12px",
                     whiteSpace: "pre-wrap", userSelect: "text"
                   }}>
-                    {`Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nAm Hochfeld 47, 65205 Wiesbaden, Deutschland\nE-Mail: contact@stele-e-transfer.com\nTel.: +49 159 04826737\n\nHersteller / Lieferant: Angaben gemäß Produktkennzeichnung\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden`}
+                    {`Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nE-Mail: contact@stele-e-transfer.com\n\nHersteller / Lieferant:\n${gpsrHersteller || '[Hersteller eintragen]'}\n\nBestimmungsgemäßer Gebrauch: Siehe Produktbeschreibung und Herstellerangaben\nWarnhinweise: Bitte Produktbeschreibung und beiliegende Hinweise beachten\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden`}
                   </div>
                 </div>
 
@@ -622,20 +638,10 @@ export default function Lieferanten() {
               )}
             </div>
 
-            {/* Speichern */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-              <button onClick={handleSave} disabled={saveLoading} style={{
-                padding: "13px 0", borderRadius: 12, border: "none",
-                background: saveResult?.id ? "#22C55E" : saveLoading ? "#E2E8F0" : "#0F172A",
-                color: "#fff", fontWeight: 700, fontSize: 14,
-                cursor: saveLoading ? "not-allowed" : "pointer",
-                fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              }}>
-                {saveLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={16} />}
-                {saveResult?.id ? "Gespeichert ✓" : "In DB speichern"}
-              </button>
+            {/* Neu scrapen */}
+            <div style={{ marginBottom: 14 }}>
               <button onClick={handleScrape} disabled={!urlInput.trim() || loading} style={{
-                padding: "13px 0", borderRadius: 12, border: "1.5px solid #E2E8F0",
+                width: "100%", padding: "13px 0", borderRadius: 12, border: "1.5px solid #E2E8F0",
                 background: "#fff", color: "#475569", fontWeight: 700, fontSize: 14,
                 cursor: !urlInput.trim() ? "not-allowed" : "pointer",
                 fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
