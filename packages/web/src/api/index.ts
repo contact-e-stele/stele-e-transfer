@@ -25,21 +25,34 @@ async function generateDescriptionWithGemini(title: string, specs: Record<string
   }
   try {
     const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const specsText = Object.entries(specs).map(([k, v]) => `- ${k}: ${v}`).join('\n');
-    const prompt = `Du bist ein eBay-Produkttexter für den deutschen Markt. Erstelle eine professionelle, verkaufsstarke Produktbeschreibung auf Deutsch.
+    // gemini-2.5-flash-lite: eigene Quota, kostenlos, schnell
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+    const specsText = Object.entries(specs).slice(0, 10).map(([k, v]) => `- ${k}: ${v}`).join('\n');
 
-Produkt: ${title}
-${specsText ? `\nTechnische Daten:\n${specsText}` : ''}
-${description ? `\nZusatzinfo: ${description.slice(0, 400)}` : ''}
+    const prompt = `Du bist ein erfahrener eBay-Produkttexter für den deutschen Markt.
 
-Regeln:
-- Maximal 5 kurze Sätze
+PRODUKT: ${title}
+${specsText ? `\nTECHNISCHE DATEN:\n${specsText}` : ''}
+${description ? `\nHERSTELLERINFO: ${description.slice(0, 600)}` : ''}
+
+AUFGABE: Schreibe eine professionelle, verkaufsstarke Produktbeschreibung auf Deutsch.
+
+FORMAT - gib NUR folgendes zurück (kein Markdown, keine Überschriften, keine Formatierung):
+Zeile 1: Ein prägnanter Einleitungssatz der den Hauptnutzen beschreibt (max. 20 Wörter)
+Zeile 2: leer
+Zeile 3: Bullet "- " + konkreter Vorteil/Feature (aus technischen Daten)
+Zeile 4: Bullet "- " + konkreter Vorteil/Feature
+Zeile 5: Bullet "- " + konkreter Vorteil/Feature
+Zeile 6: Bullet "- " + konkreter Vorteil/Feature
+Zeile 7: leer
+Zeile 8: Abschlusssatz mit Qualitätsversprechen (max. 15 Wörter)
+
+REGELN:
+- Bullets aus echten Produktinfos (Maße, Material, Funktion) – KEIN generisches Marketing
 - Keine Emojis, keine Sonderzeichen
-- Keine Erwähnung von AliExpress, Amazon, China
-- Kundenvorteil in den Vordergrund stellen
-- Professioneller, sachlicher Ton
-- Nur den Beschreibungstext ausgeben, keine Überschrift`;
+- KEIN Erwähnen von AliExpress, China, Amazon, Hersteller-Namen
+- Deutsche Maßeinheiten (cm, ml, g) verwenden
+- Sachlicher aber überzeugender Ton`;
 
     const result = await model.generateContent(prompt);
     return result.response.text().trim();
