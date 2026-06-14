@@ -494,7 +494,10 @@ export default function Lieferanten() {
                     <span style={{ color: "#C9A227", fontSize: 11, fontWeight: 700 }}>GPSR — kopierbar</span>
                     <button
                       onClick={() => {
-                        const text = `Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nE-Mail: contact@stele-e-transfer.com\n\nHersteller / Lieferant:\n${gpsrHersteller || '[Hersteller eintragen]'}\n\nBestimmungsgemäßer Gebrauch: Siehe Produktbeschreibung und Herstellerangaben\nWarnhinweise: Bitte Produktbeschreibung und beiliegende Hinweise beachten\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden\n\nBei Fragen zur Produktsicherheit: contact@stele-e-transfer.com`;
+                        const gpsr = gpsrHersteller.trim();
+                        const text = gpsr
+                          ? `Produktsicherheit (GPSR)\n\n${gpsr}`
+                          : `Produktsicherheit (GPSR)\n\n[Compliance-Text von AliExpress einfügen]`;
                         navigator.clipboard.writeText(text).catch(() => {});
                       }}
                       style={{
@@ -506,14 +509,16 @@ export default function Lieferanten() {
                       Kopieren
                     </button>
                   </div>
-                  {/* Hersteller Eingabe */}
+                  {/* AliExpress Compliance einfügen */}
                   <div style={{ background: "#1a1a1a", padding: "6px 10px", borderTop: "1px solid #333" }}>
-                    <span style={{ color: "#aaa", fontSize: 10, display: "block", marginBottom: 4 }}>Hersteller / Lieferant (von AliExpress eintragen):</span>
+                    <span style={{ color: "#aaa", fontSize: 10, display: "block", marginBottom: 4 }}>
+                      Compliance-Text von AliExpress einfügen (Manufacturer + EU responsible person + Product identifier):
+                    </span>
                     <textarea
                       value={gpsrHersteller}
                       onChange={e => setGpsrHersteller(e.target.value)}
-                      placeholder="z.B. Shenzhen XYZ Co., Ltd. | No. 1 Tech Road, Shenzhen, China"
-                      rows={2}
+                      placeholder={"Manufacturer information\nName:...\nAddress:...\nEmail:...\nPhone:...\n\nEU responsible person information\nName:...\n..."}
+                      rows={5}
                       style={{
                         width: "100%", background: "#111", color: "#fff", border: "1px solid #444",
                         borderRadius: 4, padding: "6px 8px", fontSize: 11, fontFamily: "monospace",
@@ -521,13 +526,15 @@ export default function Lieferanten() {
                       }}
                     />
                   </div>
-                  <div style={{
-                    background: "#111", color: "#ccc", fontFamily: "monospace",
-                    fontSize: 11, lineHeight: 1.6, padding: "10px 12px",
-                    whiteSpace: "pre-wrap", userSelect: "text"
-                  }}>
-                    {`Produktsicherheit (GPSR)\n\nVerantwortliche Person (EU):\nSTELE-E-TRANSFER | Inhaber: Evgenij Stele\nE-Mail: contact@stele-e-transfer.com\n\nHersteller / Lieferant:\n${gpsrHersteller || '[Hersteller eintragen]'}\n\nBestimmungsgemäßer Gebrauch: Siehe Produktbeschreibung und Herstellerangaben\nWarnhinweise: Bitte Produktbeschreibung und beiliegende Hinweise beachten\nCE-Kennzeichnung: Soweit gesetzlich vorgeschrieben vorhanden`}
-                  </div>
+                  {gpsrHersteller.trim() && (
+                    <div style={{
+                      background: "#111", color: "#ccc", fontFamily: "monospace",
+                      fontSize: 11, lineHeight: 1.6, padding: "10px 12px",
+                      whiteSpace: "pre-wrap", userSelect: "text"
+                    }}>
+                      {`Produktsicherheit (GPSR)\n\n${gpsrHersteller.trim()}`}
+                    </div>
+                  )}
                 </div>
 
                 {product.price && <p style={{ margin: "8px 0 0", fontSize: 16, fontWeight: 700, color: "#FF6B00" }}>{product.price}</p>}
