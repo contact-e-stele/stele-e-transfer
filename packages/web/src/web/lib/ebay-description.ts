@@ -198,13 +198,11 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   #stet-t1:checked~.stet-tab-labels label[for="stet-t1"],
   #stet-t2:checked~.stet-tab-labels label[for="stet-t2"],
   #stet-t3:checked~.stet-tab-labels label[for="stet-t3"],
-  #stet-t4:checked~.stet-tab-labels label[for="stet-t4"],
-  #stet-t5:checked~.stet-tab-labels label[for="stet-t5"]{background:#C9A84C;color:#000;border-color:#C9A84C;}
+  #stet-t4:checked~.stet-tab-labels label[for="stet-t4"]{background:#C9A84C;color:#000;border-color:#C9A84C;}
   #stet-t1:checked~.stet-contents #stet-c1,
   #stet-t2:checked~.stet-contents #stet-c2,
   #stet-t3:checked~.stet-contents #stet-c3,
-  #stet-t4:checked~.stet-contents #stet-c4,
-  #stet-t5:checked~.stet-contents #stet-c5{display:block;}
+  #stet-t4:checked~.stet-contents #stet-c4{display:block;}
 </style>
 
 <div class="stet-tabs">
@@ -212,13 +210,11 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   <input id="stet-t2" name="stet-tab" type="radio"/>
   <input id="stet-t3" name="stet-tab" type="radio"/>
   <input id="stet-t4" name="stet-tab" type="radio"/>
-  <input id="stet-t5" name="stet-tab" type="radio"/>
   <div class="stet-tab-labels">
     <label for="stet-t1">Beschreibung</label>
     <label for="stet-t2">Versand &amp; Retouren</label>
-    <label for="stet-t3">Zahlung</label>
-    <label for="stet-t4">Impressum</label>
-    <label for="stet-t5">AGB</label>
+    <label for="stet-t3">Impressum</label>
+    <label for="stet-t4">AGB</label>
   </div>
   <div class="stet-contents">
 
@@ -246,21 +242,8 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       <p style="font-size:11px;color:#5a4a20;margin-top:20px;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
     </div>
 
-    <!-- TAB 3: Zahlung -->
+    <!-- TAB 3: Impressum -->
     <div class="stet-content" id="stet-c3">
-      <h3>Zahlungsmethoden</h3>
-      <ul style="line-height:1.9;">
-        <li><strong>PayPal</strong></li>
-        <li><strong>Kreditkarte</strong> (Visa, Mastercard)</li>
-        <li><strong>Lastschrift</strong></li>
-        <li><strong>Apple Pay / Google Pay</strong></li>
-      </ul>
-      <p>Die Zahlung wird sicher &uuml;ber eBay abgewickelt. Alle Zahlungsmethoden sind durch den eBay-K&auml;uferschutz abgesichert.</p>
-      <p style="font-size:11px;color:#5a4a20;margin-top:20px;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
-    </div>
-
-    <!-- TAB 4: Impressum -->
-    <div class="stet-content" id="stet-c4">
       <h3>Impressum</h3>
       <p><strong>STELE-E-TRANSFER</strong><br/>
       Inhaber: Evgenij Stele<br/>
@@ -274,8 +257,8 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       STELE-E-TRANSFER, Am Hochfeld 47, 65205 Wiesbaden</p>
     </div>
 
-    <!-- TAB 5: AGB -->
-    <div class="stet-content" id="stet-c5">
+    <!-- TAB 4: AGB -->
+    <div class="stet-content" id="stet-c4">
       <h3>Allgemeine Gesch&auml;ftsbedingungen (AGB)</h3>
       <p style="color:#5a4a20;font-size:13px;">stele-e-transfer | eBay-Shop</p>
       <p><strong>&sect; 1 Geltungsbereich</strong><br/>
