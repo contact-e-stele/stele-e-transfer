@@ -306,6 +306,14 @@ async function buildAspects(
   if (!aspects['Marke']) aspects['Marke'] = ['Markenlos'];
   if (!aspects['Abteilung']) aspects['Abteilung'] = ['Unisex'];
 
+  // Alle ASPECT_DEFAULTS als Fallback einfügen falls noch nicht gesetzt
+  // (eBay meldet manche Pflichtfelder nicht über die API, verlangt sie aber beim Publish)
+  for (const [name, val] of Object.entries(ASPECT_DEFAULTS)) {
+    if (!aspects[name]) {
+      aspects[name] = [val];
+    }
+  }
+
   // MPN
   if (mpn) aspects['MPN'] = [mpn];
 

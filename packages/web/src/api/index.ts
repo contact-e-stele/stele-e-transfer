@@ -519,7 +519,7 @@ const app = new Hono()
     }
 
     try {
-      const categoryId = await suggestCategory(product.generatedTitle ?? product.title).catch(() => null);
+      const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
 
       // Varianten parsen
       const variantGroups: Array<{ name: string; values: string[] }> = (() => {
