@@ -17,9 +17,10 @@ function calcSellPrice(buyPrice: number): number {
 }
 
 function parsePrice(raw: string): number {
-  const m = raw.match(/[\d,]+\.?\d*/);
+  // Handle formats: "9.99 €", "9,99 €", "EUR 9.99", "9.99"
+  const m = raw.match(/(\d+)[,.](\d{1,2})/);
   if (!m) return 0;
-  return parseFloat(m[0].replace(',', '.'));
+  return parseFloat(`${m[1]}.${m[2]}`);
 }
 
 export async function runPriceCheck(): Promise<{ checked: number; updated: number; errors: number }> {
@@ -43,8 +44,21 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
     try {
       checked++;
       const data = await scrapeAliExpressUrl(url);
-      if (!data || !data.price) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: Kein Preis gescrapt`);
+      if (!data) {
+        console.log(`[PriceMonitor] Produkt ${product.id}: Scrape fehlgeschlagen`);
+        errors++;
+        continue;
+      }
+
+      // China-Versand überspringen (kein EU-Lager)
+      if (!data.shipsFromDE) {
+        console.log(`[PriceMonitor] Produkt ${product.id}: shipsFrom="${data.shipsFrom}" — übersprungen (kein EU-Lager)`);
+        // Nicht als Fehler zählen, einfach weiter
+        continue;
+      }
+
+      if (!data.price) {
+        console.log(`[PriceMonitor] Produkt ${product.id}: Kein Preis gescrapt (EU-Produkt, shipsFrom="${data.shipsFrom}")`);
         errors++;
         continue;
       }
