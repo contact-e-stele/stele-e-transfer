@@ -172,6 +172,14 @@ export interface EbayListingInput {
   mpn?: string; // AliExpress Produkt-ID als MPN
 }
 
+// Gender-Wert → eBay "Abteilung" normalisieren
+function normalizeAbteilung(val: string): string {
+  const v = val.toLowerCase();
+  if (v.includes('herr') || v.includes('men') || v.includes('male') || v === 'männer') return 'Herren';
+  if (v.includes('dam') || v.includes('wom') || v.includes('female') || v === 'frauen') return 'Damen';
+  return 'Unisex';
+}
+
 // Specs → eBay Aspekte (Record<string, string[]>)
 function buildAspects(specs: Record<string, string> = {}, mpn?: string): Record<string, string[]> {
   // Key-Mapping: AliExpress Spec-Keys → eBay Aspekt-Namen (DE)
@@ -202,6 +210,12 @@ function buildAspects(specs: Record<string, string> = {}, mpn?: string): Record<
     'Modell': 'Modell',
     'Model': 'Modell',
     'model': 'Modell',
+    // Gender → Abteilung
+    'Gender': 'Abteilung',
+    'gender': 'Abteilung',
+    'Geschlecht': 'Abteilung',
+    'geschlecht': 'Abteilung',
+    'Abteilung': 'Abteilung',
   };
 
   const aspects: Record<string, string[]> = {};
@@ -210,13 +224,20 @@ function buildAspects(specs: Record<string, string> = {}, mpn?: string): Record<
   for (const [key, value] of Object.entries(specs)) {
     const mapped = KEY_MAP[key];
     if (mapped && value && !aspects[mapped]) {
-      aspects[mapped] = [value.slice(0, 100)];
+      // Abteilung normalisieren
+      const finalVal = mapped === 'Abteilung' ? normalizeAbteilung(value) : value.slice(0, 100);
+      aspects[mapped] = [finalVal];
     }
   }
 
   // Marke: Fallback auf "Markenlos"
   if (!aspects['Marke']) {
     aspects['Marke'] = ['Markenlos'];
+  }
+
+  // Abteilung: Fallback auf "Unisex" – viele Kategorien verlangen dieses Pflichtfeld
+  if (!aspects['Abteilung']) {
+    aspects['Abteilung'] = ['Unisex'];
   }
 
   // MPN hinzufügen wenn vorhanden
