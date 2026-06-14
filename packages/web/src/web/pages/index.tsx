@@ -202,7 +202,7 @@ export default function Index() {
           }}>
             <Calculator size={28} color="white" />
           </div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#0F172A", margin: 0 }}>eBay Preisrechner</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#0F172A", margin: 0 }}>STELE-DS-APP</h1>
           <p style={{ color: "#64748B", marginTop: 4, fontSize: 14 }}>stele-e-transfer</p>
         </div>
 

@@ -1,6 +1,6 @@
 {
-  "name": "eBay Preisrechner",
-  "short_name": "Preisrechner",
+  "name": "STELE-DS-APP",
+  "short_name": "STELE-DS",
   "description": "eBay Preisvorschlag-Rechner von stele-e-transfer",
   "start_url": "/",
   "display": "standalone",
