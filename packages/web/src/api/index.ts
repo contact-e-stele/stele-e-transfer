@@ -3,8 +3,39 @@ import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken } from './ebay';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
+
+// ─── Gemini Beschreibung generieren ──────────────────────────────────────────
+async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string): Promise<string> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return '';
+  try {
+    const genAI = new GoogleGenerativeAI(key);
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const specsText = Object.entries(specs).map(([k, v]) => `- ${k}: ${v}`).join('\n');
+    const prompt = `Du bist ein eBay-Produkttexter für den deutschen Markt. Erstelle eine professionelle, verkaufsstarke Produktbeschreibung auf Deutsch.
+
+Produkt: ${title}
+${specsText ? `\nTechnische Daten:\n${specsText}` : ''}
+${description ? `\nZusatzinfo: ${description.slice(0, 400)}` : ''}
+
+Regeln:
+- Maximal 5 kurze Sätze
+- Keine Emojis, keine Sonderzeichen
+- Keine Erwähnung von AliExpress, Amazon, China
+- Kundenvorteil in den Vordergrund stellen
+- Professioneller, sachlicher Ton
+- Nur den Beschreibungstext ausgeben, keine Überschrift`;
+
+    const result = await model.generateContent(prompt);
+    return result.response.text().trim();
+  } catch (e) {
+    console.error('[Gemini] Fehler:', e);
+    return '';
+  }
+}
 
 function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -537,13 +568,25 @@ const app = new Hono()
     if (accessToken && productId) {
       console.log(`[AliExpress] Using DS API for product ${productId}`);
       const apiData = await getAliProductByApi(productId, accessToken);
-      if (apiData) return c.json(apiData, 200);
+      if (apiData) {
+        const aiDesc = await generateDescriptionWithGemini(apiData.title, apiData.specs ?? {}, apiData.description ?? '');
+        if (aiDesc) apiData.description = aiDesc;
+        return c.json(apiData, 200);
+      }
       console.log('[AliExpress] DS API failed, falling back to scraper...');
     }
 
     // Fallback: scraper
     const data = await scrapeAliExpressUrl(url);
     if (!data) return c.json({ error: 'AliExpress-Seite konnte nicht geladen werden. Bitte direkte Produkt-URL verwenden (z.B. https://de.aliexpress.com/item/XXXX.html). Für bessere Ergebnisse AliExpress-Verbindung in den Einstellungen aktivieren.' }, 503);
+
+    // Gemini Beschreibung automatisch generieren
+    const aiDescription = await generateDescriptionWithGemini(data.title, data.specs, data.description);
+    if (aiDescription) {
+      console.log('[Gemini] Beschreibung generiert:', aiDescription.slice(0, 80));
+      data.description = aiDescription;
+    }
+
     return c.json(data, 200);
   })
 
