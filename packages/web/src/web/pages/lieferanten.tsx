@@ -133,7 +133,7 @@ function buildHTML(product: ScrapedProduct): string {
       autoLines.push(`Eigenschaften: ${specParts.join(" · ")}.`);
     }
 
-    autoLines.push("Kostenloser Versand aus Deutschland. Lieferung in 3–7 Werktagen. 30 Tage Rückgaberecht.");
+    autoLines.push("Kostenloser Versand aus Deutschland. Lieferung in 3–10 Werktagen. 30 Tage Rückgaberecht.");
 
     descHtml = autoLines.map(l => `<p style="color:#c0a870;line-height:1.7;margin:8px 0;">${l}</p>`).join("\n");
   }
