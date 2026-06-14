@@ -652,57 +652,68 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     throw new Error(`createInventoryItemGroup failed: ${groupRes.status} ${text}`);
   }
 
-  // 3. Offer für die Gruppe erstellen
+  // 3. Pro Varianten-SKU ein Offer erstellen
+  // Bei Variation Listings: Offer wird pro einzelnem Inventory Item SKU erstellt (NICHT für den Group-Key)
+  // eBay verknüpft automatisch alle Offers mit der Group beim publish
   const policies = await getBusinessPolicies();
-  const offerBody = {
-    sku: groupSku,
-    marketplaceId: 'EBAY_DE',
-    format: 'FIXED_PRICE',
-    availableQuantity: input.quantity * variantSkus.length,
-    categoryId: input.categoryId ?? '79720',
-    listingDescription: input.description,
-    pricingSummary: {
-      price: { value: input.price.toFixed(2), currency: 'EUR' },
-    },
-    merchantLocationKey: 'default',
-    listingPolicies: {
-      fulfillmentPolicyId: policies.fulfillmentPolicyId,
-      paymentPolicyId: policies.paymentPolicyId,
-      returnPolicyId: policies.returnPolicyId,
-    },
-    productSafety: {
-      responsiblePersons: [{
-        companyName: 'Stele-E-Transfer',
-        address: {
-          addressLine1: 'Am Hochfeld 47',
-          city: 'Wiesbaden',
-          postalCode: '65205',
-          country: 'DE',
-        },
-        email: 'contact@stele-e-transfer.com',
-        phone: '+4915904826737',
-        type: 'RESPONSIBLE_PERSON',
-      }],
-    },
+
+  const gpsr = {
+    responsiblePersons: [{
+      companyName: 'Stele-E-Transfer',
+      address: {
+        addressLine1: 'Am Hochfeld 47',
+        city: 'Wiesbaden',
+        postalCode: '65205',
+        country: 'DE',
+      },
+      email: 'contact@stele-e-transfer.com',
+      phone: '+4915904826737',
+      type: 'RESPONSIBLE_PERSON',
+    }],
   };
 
-  const offerRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Content-Language': 'de-DE',
-    },
-    body: JSON.stringify(offerBody),
-  });
-  if (!offerRes.ok) {
-    const text = await offerRes.text();
-    throw new Error(`createOffer (group) failed: ${offerRes.status} ${text}`);
-  }
-  const offerData = await offerRes.json() as { offerId: string };
+  const offerIds: string[] = [];
+  for (const varSku of variantSkus) {
+    const offerBody = {
+      sku: varSku,
+      marketplaceId: 'EBAY_DE',
+      format: 'FIXED_PRICE',
+      availableQuantity: input.quantity,
+      categoryId: input.categoryId ?? '79720',
+      listingDescription: input.description,
+      pricingSummary: {
+        price: { value: input.price.toFixed(2), currency: 'EUR' },
+      },
+      merchantLocationKey: 'default',
+      listingPolicies: {
+        fulfillmentPolicyId: policies.fulfillmentPolicyId,
+        paymentPolicyId: policies.paymentPolicyId,
+        returnPolicyId: policies.returnPolicyId,
+      },
+      productSafety: gpsr,
+    };
 
-  // 4. Offer publishen
-  return publishOffer(offerData.offerId);
+    const offerRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Language': 'de-DE',
+      },
+      body: JSON.stringify(offerBody),
+    });
+    if (!offerRes.ok) {
+      const text = await offerRes.text();
+      throw new Error(`createOffer (variant ${varSku}) failed: ${offerRes.status} ${text}`);
+    }
+    const offerData = await offerRes.json() as { offerId: string };
+    offerIds.push(offerData.offerId);
+    console.log(`[eBay] Offer created for ${varSku}: ${offerData.offerId}`);
+  }
+
+  // 4. Ersten Offer publishen — eBay publisht automatisch alle Varianten zusammen
+  if (offerIds.length === 0) throw new Error('Keine Offers erstellt');
+  return publishOffer(offerIds[0]);
 }
 
 // ─── Alles in einem ───────────────────────────────────────────────────────────
