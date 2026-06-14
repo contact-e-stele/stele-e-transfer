@@ -617,18 +617,25 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   }
 
   // 2. Inventory Item Group erstellen
+  // eBay erwartet: variationInformation mit variantSKUs + variantAspectName
+  const mappedGroupNames = groups.map(g => mapVariantGroupName(g.name));
   const groupBody = {
     inventoryItemGroupKey: groupSku,
     title: input.title,
     description: plainDesc,
     imageUrls: input.imageUrls,
-    // Basis-Pflichtaspekte + Varianten-Gruppen-Werte zusammenführen
-    // eBay erwartet alle Pflichtaspekte auch in der Gruppe (nicht nur in einzelnen Items)
     aspects: {
       ...Object.fromEntries(Object.entries(baseAspects).map(([k, v]) => [k, Array.isArray(v) ? v : [v]])),
       ...Object.fromEntries(groups.map(g => [mapVariantGroupName(g.name), g.values])),
     },
     variantSKUs: variantSkus,
+    variesBy: {
+      aspectsImageVariesBy: mappedGroupNames.slice(0, 1), // erstes Attribut für Bildwechsel
+      specifications: groups.map(g => ({
+        name: mapVariantGroupName(g.name),
+        values: g.values,
+      })),
+    },
   };
 
   const groupRes = await fetch(`${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`, {
