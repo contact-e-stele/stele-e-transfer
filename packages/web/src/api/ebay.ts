@@ -203,11 +203,16 @@ const ASPECT_DEFAULTS: Record<string, string> = {
   'Ausschnitt': 'Unbekannt',
   'Schnittform': 'Unbekannt',
   'Produktlinie': 'Unbekannt',
-  'Rahmenmaterial': 'Unbekannt',
-  'Linsenfarbe': 'Unbekannt',
+  'Rahmenmaterial': 'Kunststoff',
+  'Linsenfarbe': 'Schwarz',
+  'Rahmenfarbe': 'Schwarz',
   'Rahmenform': 'Unbekannt',
-  'Linsenmaterial': 'Unbekannt',
-  'Schutzfaktor': 'Unbekannt',
+  'Linsenmaterial': 'Kunststoff',
+  'Schutzfaktor': 'UV400',
+  'Farbe': 'Schwarz',
+  'Außenfarbe': 'Schwarz',
+  'Innenfarbe': 'Schwarz',
+  'Hauptfarbe': 'Schwarz',
 };
 
 // Cache: categoryId → Pflichtaspekte (Name → erster erlaubter Wert oder null)
