@@ -63,18 +63,38 @@ function extractImages(html: string, jsonLdImages: string[]): string[] {
 }
 
 function extractPrice(html: string): string {
-  // JSON-LD offers.price
+  // 1) AliExpress window.__INIT_DATA__ or _dida_config_ with price fields
+  const initDataPatterns = [
+    /"actPrice"\s*:\s*([\d.]+)/,
+    /"originalPrice"\s*:\s*([\d.]+)/,
+    /"salePrice"\s*:\s*([\d.]+)/,
+    /"minPrice"\s*:\s*([\d.]+)/,
+    /"formattedPrice"\s*:\s*"EUR\s*([\d.]+)"/i,
+    /"discountedPrice"\s*:\s*([\d.]+)/,
+    /"maxActivityAmount"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/,
+    /"minActivityAmount"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/,
+    /"amount"\s*:\s*"([\d.]+)"/,
+  ];
+  for (const pattern of initDataPatterns) {
+    const m = html.match(pattern);
+    if (m) {
+      const num = parseFloat(m[1]);
+      if (!isNaN(num) && num > 0.5 && num < 10000) return `${num.toFixed(2)} €`;
+    }
+  }
+
+  // 2) JSON-LD offers.price
   const ldMatch = html.match(/"price"\s*:\s*"?([\d.]+)"?/);
   if (ldMatch) {
     const num = parseFloat(ldMatch[1]);
     if (!isNaN(num) && num > 0.5) return `${num.toFixed(2)} €`;
   }
 
-  // EUR price in text — both "€ 9,99" and "9,99 €" formats
+  // 3) EUR price in text — both "€ 9,99" and "9,99 €" formats
   const eurMatch = html.match(/€\s*([\d]+[,.][\d]{2})/) || html.match(/([\d]+[,.][\d]{2})\s*€/);
   if (eurMatch) return `${eurMatch[1].replace(',', '.')} €`;
 
-  // data-price attribute
+  // 4) data-price attribute
   const dataPrice = html.match(/data-price="([\d.]+)"/);
   if (dataPrice) return `${parseFloat(dataPrice[1]).toFixed(2)} €`;
 

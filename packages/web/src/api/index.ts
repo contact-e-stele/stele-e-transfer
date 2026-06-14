@@ -13,7 +13,7 @@ async function generateDescriptionWithGemini(title: string, specs: Record<string
   if (!key) return '';
   try {
     const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const specsText = Object.entries(specs).map(([k, v]) => `- ${k}: ${v}`).join('\n');
     const prompt = `Du bist ein eBay-Produkttexter für den deutschen Markt. Erstelle eine professionelle, verkaufsstarke Produktbeschreibung auf Deutsch.
 
