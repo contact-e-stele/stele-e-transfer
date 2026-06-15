@@ -17,6 +17,23 @@ interface ScrapedProduct {
   description: string;
   specs: Record<string, string>;
   variants?: Array<{ name: string; values: string[] }>;
+  shipsFrom?: string;
+  shipsFromDE?: boolean;
+}
+
+// EU-Länder die akzeptiert werden (schnelle Lieferung, kein Zoll)
+const EU_COUNTRIES = ['germany', 'deutschland', 'austria', 'österreich', 'france', 'frankreich',
+  'netherlands', 'niederlande', 'poland', 'polen', 'czech', 'tschechien', 'belgium',
+  'belgien', 'luxembourg', 'spain', 'spanien', 'italy', 'italien', 'sweden', 'schweden',
+  'denmark', 'dänemark', 'finland', 'finnland', 'portugal', 'hungary', 'ungarn',
+  'romania', 'rumänien', 'slovakia', 'slowakei', 'slovenia', 'slowenien',
+  'switzerland', 'schweiz', // nicht EU aber Zollfrei-nah
+];
+
+function isEUShipping(shipsFrom?: string): boolean {
+  if (!shipsFrom) return false;
+  const lower = shipsFrom.toLowerCase();
+  return EU_COUNTRIES.some(c => lower.includes(c));
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -122,6 +139,7 @@ export default function Lieferanten() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
   const [saveResult, setSaveResult] = useState<{ id?: number; error?: string } | null>(null);
+  const [shipsFromInfo, setShipsFromInfo] = useState<{ country: string; isEU: boolean } | null>(null);
 
   // ─── Marge berechnen ──────────────────────────────────────────────────────
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
@@ -156,6 +174,15 @@ export default function Lieferanten() {
       setVisibleImages(data.images ?? []);
       setResult({ title: buildTitle(data.title), html: buildHTML(data) });
       if (data.seller) setGpsrHersteller(data.seller);
+
+      // EU-Filter: shipsFrom prüfen und anzeigen
+      if (data.shipsFrom) {
+        const euOk = isEUShipping(data.shipsFrom);
+        setShipsFromInfo({ country: data.shipsFrom, isEU: euOk });
+      } else {
+        setShipsFromInfo(null);
+      }
+
       // Varianten: alle vorselektieren + editierbare Kopie anlegen
       const initVariants: Record<string, string[]> = {};
       for (const g of (data.variants ?? [])) {
@@ -302,7 +329,7 @@ export default function Lieferanten() {
 
   const reset = () => {
     setProduct(null); setResult(null); setEbayResult(null); setGpsrHersteller("");
-    setSaveResult(null); setUrlInput(""); setManualTitle("");
+    setSaveResult(null); setUrlInput(""); setManualTitle(""); setShipsFromInfo(null);
     setManualDesc(""); setManualPrice(""); setBuyPrice(""); setEbayPrice("");
     setShowPreview(false); setVisibleImages([]); setSelectedImage(0);
   };
@@ -440,6 +467,30 @@ export default function Lieferanten() {
             }}>
               <ChevronLeft size={16} /> Neue URL eingeben
             </button>
+
+            {/* EU-Lager Banner */}
+            {shipsFromInfo && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                background: shipsFromInfo.isEU ? "#F0FDF4" : "#FFF7ED",
+                border: `1.5px solid ${shipsFromInfo.isEU ? "#86EFAC" : "#FED7AA"}`,
+                borderRadius: 12, padding: "10px 14px", marginBottom: 14,
+              }}>
+                <span style={{ fontSize: 20 }}>{shipsFromInfo.isEU ? "✅" : "⚠️"}</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: shipsFromInfo.isEU ? "#15803D" : "#C2410C" }}>
+                    {shipsFromInfo.isEU
+                      ? `EU-Lager erkannt: ${shipsFromInfo.country}`
+                      : `Kein EU-Lager: ${shipsFromInfo.country}`}
+                  </div>
+                  <div style={{ fontSize: 11, color: shipsFromInfo.isEU ? "#16A34A" : "#EA580C", marginTop: 2 }}>
+                    {shipsFromInfo.isEU
+                      ? "Schnelle Lieferung (3–7 Tage), kein Zollrisiko"
+                      : "China-Versand = langer Lieferweg + mögliche Zollprobleme. Besser: EU-Lager Variante suchen."}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Produktbild */}
             {visibleImages.length > 0 && (

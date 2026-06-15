@@ -17,6 +17,9 @@ function generateFallbackDescription(title: string, specs: Record<string, string
   return desc;
 }
 
+// Modelle in Reihenfolge: primary zuerst, dann Fallback-Modelle bei 503
+const GEMINI_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
 async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string, retries = 3): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
@@ -49,23 +52,37 @@ REGELN:
 - Deutsche Maßeinheiten (cm, ml, g) verwenden
 - Sachlicher aber überzeugender Ton`;
 
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const genAI = new GoogleGenerativeAI(key);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-      const result = await model.generateContent(prompt);
-      const text = result.response.text().trim();
-      console.log(`[Gemini] Beschreibung generiert (Versuch ${attempt})`);
-      return text;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[Gemini] Versuch ${attempt}/${retries} fehlgeschlagen:`, msg);
-      if (attempt < retries) {
-        await new Promise(r => setTimeout(r, 2000 * attempt)); // 2s, 4s warten
+  // Versuche jedes Modell nacheinander (Fallback bei 503/Überlastung)
+  for (const modelName of GEMINI_MODELS) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const genAI = new GoogleGenerativeAI(key);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        const text = result.response.text().trim();
+        console.log(`[Gemini] Beschreibung generiert (Modell: ${modelName}, Versuch ${attempt})`);
+        return text;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const is503 = msg.includes('503') || msg.includes('Service Unavailable') || msg.includes('overloaded');
+        const isQuota = msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
+        console.error(`[Gemini] ${modelName} Versuch ${attempt}/${retries} fehlgeschlagen:`, msg.slice(0, 120));
+
+        if (attempt < retries) {
+          // Exponential Backoff: 5s, 10s, 20s — länger bei 503
+          const waitMs = (is503 || isQuota) ? 5000 * attempt : 2000 * attempt;
+          console.log(`[Gemini] Warte ${waitMs / 1000}s vor Versuch ${attempt + 1}…`);
+          await new Promise(r => setTimeout(r, waitMs));
+        } else if (is503 || isQuota) {
+          // Modell überlastet → nächstes Modell versuchen
+          console.log(`[Gemini] ${modelName} überlastet → versuche nächstes Modell`);
+          break; // aus dem attempt-Loop raus, nächstes Modell
+        }
       }
     }
   }
-  console.log('[Gemini] Alle Versuche fehlgeschlagen – nutze Fallback');
+
+  console.log('[Gemini] Alle Modelle fehlgeschlagen – nutze Fallback');
   return generateFallbackDescription(title, specs);
 }
 
