@@ -90,6 +90,50 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// ─── Deutschen eBay-Titel generieren (max. 80 Zeichen) ────────────────────────
+async function generateGermanTitle(rawTitle: string, specs: Record<string, string>): Promise<string> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return rawTitle.slice(0, 80);
+
+  const specsHint = Object.entries(specs).slice(0, 5).map(([k, v]) => `${k}: ${v}`).join(', ');
+  const prompt = `Du bist ein eBay-Titeltexter für den deutschen Markt.
+
+AUFGABE: Übersetze und optimiere diesen englischen Produkttitel für eBay Deutschland.
+Englischer Rohtitel: "${rawTitle}"
+${specsHint ? `Produktinfos: ${specsHint}` : ''}
+
+REGELN:
+- Ausgabe: NUR der fertige deutsche eBay-Titel, keine Erklärung, kein Kommentar
+- Sprache: Deutsch
+- Länge: exakt 75-80 Zeichen (sehr wichtig – eBay nutzt alle 80 Zeichen)
+- Keine Mengenangaben (Stück, Set, Pack)
+- Keine Maße/Größen (werden als Varianten gelistet)
+- Keine Sonderzeichen, keine Emojis
+- Wichtigste Keywords vorne
+- Kein AliExpress, China, Amazon, Markenname
+- Sachlich, klar, verkaufsstark`;
+
+  for (const modelName of GEMINI_MODELS) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const genAI = new GoogleGenerativeAI(key);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        const text = result.response.text().trim().replace(/^["']|["']$/g, '').slice(0, 80);
+        console.log(`[Gemini-Titel] "${text}" (${text.length} Zeichen)`);
+        return text;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const is503 = msg.includes('503') || msg.includes('Service Unavailable') || msg.includes('overloaded');
+        if (attempt < 2) await new Promise(r => setTimeout(r, is503 ? 5000 : 2000));
+        else if (is503) break; // nächstes Modell
+      }
+    }
+  }
+  // Fallback: Rohtitel kürzen
+  return rawTitle.slice(0, 80);
+}
+
 const PIECE_TRANSLATIONS: Record<string, string> = {
   // Italienisch
   'pezzi': 'Stück', 'pezzo': 'Stück', 'pz': 'Stück',
@@ -408,19 +452,20 @@ const app = new Hono()
         specs?: Record<string, string>;
       };
 
-      // Beschreibung beim Import generieren + speichern (nie mehr beim Listen generieren)
+      // Titel + Beschreibung parallel generieren (schneller)
       const specs = body.specs ?? {};
-      const generatedDescription = await generateDescriptionWithGemini(
-        body.generatedTitle ?? body.title,
-        specs,
-        body.description ?? ''
-      );
-      console.log('[Import] Beschreibung generiert und gespeichert');
+      const rawTitle = body.generatedTitle ?? body.title;
+
+      const [germanTitle, generatedDescription] = await Promise.all([
+        generateGermanTitle(rawTitle, specs),
+        generateDescriptionWithGemini(rawTitle, specs, body.description ?? ''),
+      ]);
+      console.log(`[Import] Titel: "${germanTitle}" | Beschreibung generiert`);
 
       const existing = await db.select().from(schema.products).where(eq(schema.products.asin, body.asin)).limit(1);
       if (existing.length > 0) {
         await db.update(schema.products).set({
-          generatedTitle: body.generatedTitle,
+          generatedTitle: germanTitle,
           generatedDescription,
           htmlDescription: body.htmlDescription,
           bullets: JSON.stringify(body.bullets),
@@ -438,7 +483,7 @@ const app = new Hono()
         amazonUrl: body.amazonUrl,
         sourceUrl: body.sourceUrl ?? body.amazonUrl,
         title: body.title,
-        generatedTitle: body.generatedTitle,
+        generatedTitle: germanTitle,
         generatedDescription,
         htmlDescription: body.htmlDescription,
         bullets: JSON.stringify(body.bullets),
