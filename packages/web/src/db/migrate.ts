@@ -14,6 +14,7 @@ const client = createClient({ url, authToken });
 
 const migrations = [
   // Neue Spalten in products
+  `ALTER TABLE products ADD COLUMN generated_description TEXT`,
   `ALTER TABLE products ADD COLUMN source_url TEXT`,
   `ALTER TABLE products ADD COLUMN images TEXT`,
   `ALTER TABLE products ADD COLUMN buy_price REAL`,

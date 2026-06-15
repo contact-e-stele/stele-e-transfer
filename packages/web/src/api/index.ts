@@ -17,22 +17,17 @@ function generateFallbackDescription(title: string, specs: Record<string, string
   return desc;
 }
 
-async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string): Promise<string> {
+async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string, retries = 3): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     console.log('[Gemini] Kein API Key – nutze Fallback-Beschreibung');
     return generateFallbackDescription(title, specs);
   }
-  try {
-    const genAI = new GoogleGenerativeAI(key);
-    // gemini-2.5-flash-lite: eigene Quota, kostenlos, schnell
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-    const specsText = Object.entries(specs).slice(0, 10).map(([k, v]) => `- ${k}: ${v}`).join('\n');
 
-    const prompt = `Du bist ein erfahrener eBay-Produkttexter für den deutschen Markt.
+  const prompt = `Du bist ein erfahrener eBay-Produkttexter für den deutschen Markt.
 
 PRODUKT: ${title}
-${specsText ? `\nTECHNISCHE DATEN:\n${specsText}` : ''}
+${Object.entries(specs).slice(0, 10).map(([k, v]) => `- ${k}: ${v}`).join('\n') ? `\nTECHNISCHE DATEN:\n${Object.entries(specs).slice(0, 10).map(([k, v]) => `- ${k}: ${v}`).join('\n')}` : ''}
 ${description ? `\nHERSTELLERINFO: ${description.slice(0, 600)}` : ''}
 
 AUFGABE: Schreibe eine professionelle, verkaufsstarke Produktbeschreibung auf Deutsch.
@@ -54,12 +49,24 @@ REGELN:
 - Deutsche Maßeinheiten (cm, ml, g) verwenden
 - Sachlicher aber überzeugender Ton`;
 
-    const result = await model.generateContent(prompt);
-    return result.response.text().trim();
-  } catch (e) {
-    console.error('[Gemini] Fehler:', e);
-    return generateFallbackDescription(title, specs);
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const genAI = new GoogleGenerativeAI(key);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+      const result = await model.generateContent(prompt);
+      const text = result.response.text().trim();
+      console.log(`[Gemini] Beschreibung generiert (Versuch ${attempt})`);
+      return text;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[Gemini] Versuch ${attempt}/${retries} fehlgeschlagen:`, msg);
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, 2000 * attempt)); // 2s, 4s warten
+      }
+    }
   }
+  console.log('[Gemini] Alle Versuche fehlgeschlagen – nutze Fallback');
+  return generateFallbackDescription(title, specs);
 }
 
 function stripTags(html: string): string {
@@ -383,10 +390,21 @@ const app = new Hono()
         sourceUrl?: string;
         specs?: Record<string, string>;
       };
+
+      // Beschreibung beim Import generieren + speichern (nie mehr beim Listen generieren)
+      const specs = body.specs ?? {};
+      const generatedDescription = await generateDescriptionWithGemini(
+        body.generatedTitle ?? body.title,
+        specs,
+        body.description ?? ''
+      );
+      console.log('[Import] Beschreibung generiert und gespeichert');
+
       const existing = await db.select().from(schema.products).where(eq(schema.products.asin, body.asin)).limit(1);
       if (existing.length > 0) {
         await db.update(schema.products).set({
           generatedTitle: body.generatedTitle,
+          generatedDescription,
           htmlDescription: body.htmlDescription,
           bullets: JSON.stringify(body.bullets),
           variants: JSON.stringify(body.variants),
@@ -404,6 +422,7 @@ const app = new Hono()
         sourceUrl: body.sourceUrl ?? body.amazonUrl,
         title: body.title,
         generatedTitle: body.generatedTitle,
+        generatedDescription,
         htmlDescription: body.htmlDescription,
         bullets: JSON.stringify(body.bullets),
         variants: JSON.stringify(body.variants),
@@ -488,18 +507,23 @@ const app = new Hono()
       specsTableHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">${rows}</table>`;
     }
 
-    // HTML-Beschreibung nutzen — neue Vorlage enthält bereits alles (Header, Tabs, Footer)
-    // Wenn htmlDescription mit unserer Vorlage beginnt → direkt verwenden, kein Wrapper
+    // Beschreibung: generatedDescription aus DB bevorzugen (beim Import generiert, kein Gemini-Call hier)
     const rawHtml = product.htmlDescription ?? '';
     const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && rawHtml.includes('stet-tabs');
 
     let fullDescription: string;
     if (isFullTemplate) {
-      // Neue vollständige Vorlage — direkt nutzen
       fullDescription = rawHtml;
     } else {
-      // Fallback für ältere Einträge ohne neue Vorlage
-      const productContent = rawHtml || `<p>${productTitle}</p>`;
+      // generatedDescription aus DB nehmen (Gemini beim Import), sonst Fallback
+      const aiText = product.generatedDescription ?? product.description ?? '';
+      const aiHtml = aiText
+        ? aiText.split('\n').map((line: string) => line.startsWith('- ')
+          ? `<li style="margin:4px 0;color:#a89050">${line.slice(2)}</li>`
+          : `<p style="margin:6px 0;color:#a89050">${line}</p>`
+        ).join('')
+        : '';
+      const productContent = aiHtml ? `<ul style="padding-left:20px;margin:8px 0">${aiHtml}</ul>` : `<p>${productTitle}</p>`;
       const shippingNote = isEU
         ? 'Lieferzeit 3-10 Werktage<br />Versand per DHL / Deutsche Post'
         : 'Lieferzeit 10-25 Werktage<br />Versand per Direktversand';

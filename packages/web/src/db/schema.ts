@@ -9,6 +9,7 @@ export const products = sqliteTable('products', {
   amazonUrl: text('amazon_url').notNull(),     // legacy (= sourceUrl)
   title: text('title').notNull(),              // Original-Titel
   generatedTitle: text('generated_title').notNull(),
+  generatedDescription: text('generated_description'), // fertige HTML-Beschreibung für eBay
   htmlDescription: text('html_description').notNull(),
   bullets: text('bullets').notNull(),          // JSON array
   variants: text('variants').notNull(),        // JSON array
