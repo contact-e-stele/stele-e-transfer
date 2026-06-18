@@ -121,8 +121,8 @@ function extractShipsFrom(html: string): { shipsFrom: string; shipsFromDE: boole
     }
   }
 
-  // Kein Versandland gefunden → China (Standard AliExpress)
-  return { shipsFrom: 'China', shipsFromDE: false };
+  // Kein Versandland gefunden → unbekannt (NICHT als China annehmen)
+  return { shipsFrom: 'Unknown', shipsFromDE: true };
 }
 
 // Schlüsselwörter die auf Navigation/Müll hinweisen → rausfiltern

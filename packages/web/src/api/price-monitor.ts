@@ -50,12 +50,13 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         continue;
       }
 
-      // China-Versand überspringen (kein EU-Lager)
-      if (!data.shipsFromDE) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: shipsFrom="${data.shipsFrom}" — übersprungen (kein EU-Lager)`);
-        // Nicht als Fehler zählen, einfach weiter
+      // China-Versand überspringen — NUR wenn eindeutig China bestätigt
+      const isConfirmedChina = data.shipsFrom?.toLowerCase() === 'china';
+      if (isConfirmedChina) {
+        console.log(`[PriceMonitor] Produkt ${product.id}: shipsFrom="${data.shipsFrom}" — übersprungen (China-Versand bestätigt)`);
         continue;
       }
+      // Bei Unknown oder EU-Land: weitermachen
 
       if (!data.price) {
         console.log(`[PriceMonitor] Produkt ${product.id}: Kein Preis gescrapt (EU-Produkt, shipsFrom="${data.shipsFrom}")`);
