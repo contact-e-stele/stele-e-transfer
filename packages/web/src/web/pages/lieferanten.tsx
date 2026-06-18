@@ -3,7 +3,7 @@
  * Ersetzt AutoDS komplett für den Import-Schritt
  */
 import { useState, useCallback, useRef } from "react";
-import { buildEbayHTML } from "../lib/ebay-description";
+import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
@@ -93,8 +93,8 @@ function isCleanLine(line: string): boolean {
   return true;
 }
 
-function buildHTML(product: ScrapedProduct): string {
-  return buildEbayHTML(product);
+function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "dark"): string {
+  return theme === "light" ? buildEbayHTMLLight(product) : buildEbayHTML(product);
 }
 
 function parsePrice(raw: string): number {
@@ -133,6 +133,7 @@ export default function Lieferanten() {
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [editableTitle, setEditableTitle] = useState("");
   const [editableHtml, setEditableHtml] = useState("");
+  const [htmlTheme, setHtmlTheme] = useState<"dark" | "light">("dark");
 
   const [ebayPrice, setEbayPrice] = useState("");
   const [buyPrice, setBuyPrice] = useState("");
@@ -175,7 +176,7 @@ export default function Lieferanten() {
       setProduct(data);
       setVisibleImages(data.images ?? []);
       const t = buildTitle(data.title);
-      const h = buildHTML(data);
+      const h = buildHTML(data, htmlTheme);
       setResult({ title: t, html: h });
       setEditableTitle(t);
       setEditableHtml(h);
@@ -213,7 +214,7 @@ export default function Lieferanten() {
     setProduct(fp);
     setVisibleImages([]);
     const t2 = buildTitle(fp.title);
-    const h2 = buildHTML(fp);
+    const h2 = buildHTML(fp, htmlTheme);
     setResult({ title: t2, html: h2 });
     setEditableTitle(t2);
     setEditableHtml(h2);
@@ -641,15 +642,38 @@ export default function Lieferanten() {
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>HTML Beschreibung</span>
-                <button onClick={() => setShowPreview(v => !v)} style={{
-                  display: "flex", alignItems: "center", gap: 5,
-                  background: "#F1F5F9", border: "none", borderRadius: 8,
-                  padding: "5px 10px", fontSize: 11, fontWeight: 600,
-                  color: "#475569", cursor: "pointer", fontFamily: "inherit",
-                }}>
-                  {showPreview ? <EyeOff size={12} /> : <Eye size={12} />}
-                  {showPreview ? "Code" : "Vorschau"}
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {/* Theme Toggle */}
+                  <div style={{ display: "flex", background: "#F1F5F9", borderRadius: 8, overflow: "hidden", border: "1px solid #E2E8F0" }}>
+                    <button onClick={() => {
+                      setHtmlTheme("dark");
+                      if (product) setEditableHtml(buildHTML(product, "dark"));
+                    }} style={{
+                      padding: "5px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
+                      background: htmlTheme === "dark" ? "#0F172A" : "transparent",
+                      color: htmlTheme === "dark" ? "#C9A84C" : "#64748B",
+                      fontFamily: "inherit",
+                    }}>🌑 Dunkel</button>
+                    <button onClick={() => {
+                      setHtmlTheme("light");
+                      if (product) setEditableHtml(buildHTML(product, "light"));
+                    }} style={{
+                      padding: "5px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
+                      background: htmlTheme === "light" ? "#B8860B" : "transparent",
+                      color: htmlTheme === "light" ? "#ffffff" : "#64748B",
+                      fontFamily: "inherit",
+                    }}>☀️ Hell</button>
+                  </div>
+                  <button onClick={() => setShowPreview(v => !v)} style={{
+                    display: "flex", alignItems: "center", gap: 5,
+                    background: "#F1F5F9", border: "none", borderRadius: 8,
+                    padding: "5px 10px", fontSize: 11, fontWeight: 600,
+                    color: "#475569", cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                    {showPreview ? <EyeOff size={12} /> : <Eye size={12} />}
+                    {showPreview ? "Code" : "Vorschau"}
+                  </button>
+                </div>
               </div>
               {showPreview ? (
                 <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8, marginBottom: 10 }} dangerouslySetInnerHTML={{ __html: editableHtml }} />

@@ -321,3 +321,247 @@ export function buildEbayHTML(product: ScrapedProduct): string {
 
 </div>`;
 }
+
+
+/**
+ * Helle Version — STELE-E-TRANSFER eBay Beschreibungs-Generator
+ * Gleiche Struktur wie Black & Gold, aber weißer Hintergrund für bessere Lesbarkeit.
+ */
+export function buildEbayHTMLLight(product: ScrapedProduct): string {
+  const title = cleanText(product.title || "");
+  const specs = product.specs ?? {};
+  const specEntries = Object.entries(specs).filter(([k, v]) => {
+    const key = cleanText(k);
+    const val = cleanText(v);
+    return key && val && !isGarbage(key) && !isGarbage(val);
+  }).slice(0, 14);
+
+  // ── Bullet Points ─────────────────────────────────────────────────────────
+  let bulletsHtml = "";
+  const bullets: string[] = [];
+
+  if (product.bullets && product.bullets.length > 0) {
+    for (const b of product.bullets) {
+      const c = cleanText(b);
+      if (c.length > 15 && !isGarbage(c)) bullets.push(c);
+      if (bullets.length >= 8) break;
+    }
+  }
+
+  if (bullets.length < 3 && product.description) {
+    const lines = product.description
+      .split(/[\n•\-\*]/)
+      .map(l => cleanText(l))
+      .filter(l => l.length > 20 && !isGarbage(l));
+    for (const l of lines) {
+      if (!bullets.includes(l)) bullets.push(l);
+      if (bullets.length >= 8) break;
+    }
+  }
+
+  if (bullets.length > 0) {
+    bulletsHtml = `
+    <ul style="margin:0 0 16px 0;padding:0;list-style:none;">
+      ${bullets.map(b => `
+      <li style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #e8e0d0;">
+        <span style="color:#B8860B;font-size:16px;line-height:1;flex-shrink:0;">✓</span>
+        <span style="color:#333333;line-height:1.7;font-size:14px;">${b}</span>
+      </li>`).join("")}
+    </ul>`;
+  }
+
+  // ── Beschreibungstext ──────────────────────────────────────────────────────
+  let descParas = "";
+  if (product.description && product.description.length > 30) {
+    const cleaned = cleanText(product.description);
+    const parts = cleaned
+      .split(/[.!?]\s+/)
+      .map(p => p.trim())
+      .filter(p => p.length > 25 && !isGarbage(p))
+      .slice(0, 3);
+    if (parts.length > 0) {
+      descParas = parts.map(p => `<p style="color:#444444;line-height:1.8;margin:8px 0;font-size:14px;">${p}.</p>`).join("\n");
+    }
+  }
+
+  if (!descParas && !bulletsHtml) {
+    descParas = `<p style="color:#444444;line-height:1.8;margin:8px 0;font-size:14px;">${title} — hochwertige Qualität für anspruchsvolle Anwender.</p>`;
+  }
+
+  // ── Specs-Tabelle ──────────────────────────────────────────────────────────
+  let specsHtml = "";
+  if (specEntries.length > 0) {
+    const rows = specEntries.map(([k, v], i) => {
+      const key = cleanText(k);
+      const val = cleanText(v);
+      return `<tr style="background:${i % 2 === 0 ? "#ffffff" : "#f9f6f0"};">
+        <td style="padding:9px 14px;font-weight:700;color:#B8860B;white-space:nowrap;border-bottom:1px solid #e8e0d0;width:35%;font-size:13px;">${key}</td>
+        <td style="padding:9px 14px;color:#333333;border-bottom:1px solid #e8e0d0;font-size:13px;">${val}</td>
+      </tr>`;
+    }).join("\n");
+    specsHtml = `
+    <table style="width:100%;border-collapse:collapse;margin:16px 0;border:1px solid #e8e0d0;border-radius:4px;overflow:hidden;">
+      <thead>
+        <tr style="background:#B8860B;">
+          <th colspan="2" style="padding:10px 14px;text-align:left;color:#ffffff;font-size:12px;letter-spacing:1px;">TECHNISCHE DATEN</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>`;
+  }
+
+  // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
+  const tab1 = `
+    <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:10px;letter-spacing:1px;margin:0 0 16px 0;font-size:16px;">${title}</h3>
+    ${bulletsHtml}
+    ${descParas}
+    ${specsHtml}
+    <hr style="margin:20px 0;border:none;border-top:1px solid #e8e0d0;" />
+    <p style="font-size:11px;color:#888888;margin:0;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
+  `.trim();
+
+  return `<!-- STELE-E-TRANSFER eBay Vorlage - Light Edition -->
+<div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#333333;background:#ffffff;border:2px solid #B8860B;border-radius:8px;overflow:hidden;">
+
+<!-- HEADER -->
+<div style="background:linear-gradient(135deg,#1a1a0a 0%,#2a2008 50%,#1a1a0a 100%);padding:18px;text-align:center;border-bottom:3px solid #B8860B;">
+  <div style="color:#C9A84C;font-size:22px;font-weight:bold;letter-spacing:5px;">STELE-E-TRANSFER</div>
+  <div style="color:#a89050;font-size:11px;letter-spacing:3px;margin-top:6px;">PREMIUM QUALIT&Auml;T &middot; SCHNELLE LIEFERUNG</div>
+  <div style="height:1px;background:linear-gradient(to right,#1a1a0a,#C9A84C,#1a1a0a);margin-top:12px;">&nbsp;</div>
+</div>
+
+<!-- INFO BOXEN -->
+<div style="display:table;width:100%;border-collapse:collapse;background:#fdf9f0;">
+  <div style="display:table-cell;width:33%;border-right:1px solid #e8d8a0;vertical-align:top;">
+    <div style="padding:18px 15px;text-align:center;">
+      <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
+      <div style="font-size:12px;color:#555555;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
+    </div>
+  </div>
+  <div style="display:table-cell;width:33%;border-right:1px solid #e8d8a0;vertical-align:top;">
+    <div style="padding:18px 15px;text-align:center;">
+      <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">30 TAGE R&Uuml;CKGABE</div>
+      <div style="font-size:12px;color:#555555;line-height:1.7;">Einfache R&uuml;ckgabe<br/>K&auml;uferschutz &uuml;ber eBay</div>
+    </div>
+  </div>
+  <div style="display:table-cell;width:33%;vertical-align:top;">
+    <div style="padding:18px 15px;text-align:center;">
+      <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">KUNDENSERVICE</div>
+      <div style="font-size:12px;color:#555555;line-height:1.7;">contact@stele-e-transfer.com<br/>Wir helfen gerne weiter</div>
+    </div>
+  </div>
+</div>
+
+<div style="height:2px;background:linear-gradient(to right,#ffffff,#B8860B,#ffffff);"></div>
+
+<!-- CSS TABS -->
+<style type="text/css">
+  .stet-l-tabs{width:100%;background:#ffffff;}
+  .stet-l-tabs input[type="radio"]{display:none;}
+  .stet-l-tab-labels{display:flex;flex-wrap:wrap;border-bottom:2px solid #B8860B;margin:0;padding:8px 8px 0;background:#fdf9f0;}
+  .stet-l-tab-labels label{padding:9px 16px;background:#f0ebe0;color:#888888;cursor:pointer;font-size:13px;font-weight:bold;border-radius:4px 4px 0 0;margin-right:3px;border:1px solid #ddd0b0;border-bottom:none;letter-spacing:.5px;}
+  .stet-l-tab-labels label:hover{background:#e8dfc8;color:#B8860B;}
+  .stet-l-content{display:none;padding:24px 28px;background:#ffffff;color:#333333;line-height:1.8;}
+  .stet-l-content h3{color:#B8860B;border-bottom:2px solid #e8d8a0;padding-bottom:8px;letter-spacing:1px;}
+  .stet-l-content ul{color:#444444;}
+  .stet-l-content strong{color:#B8860B;}
+  .stet-l-content p{color:#444444;}
+  #stet-l1:checked~.stet-l-tab-labels label[for="stet-l1"],
+  #stet-l2:checked~.stet-l-tab-labels label[for="stet-l2"],
+  #stet-l3:checked~.stet-l-tab-labels label[for="stet-l3"],
+  #stet-l4:checked~.stet-l-tab-labels label[for="stet-l4"]{background:#B8860B;color:#ffffff;border-color:#B8860B;}
+  #stet-l1:checked~.stet-l-contents #stet-lc1,
+  #stet-l2:checked~.stet-l-contents #stet-lc2,
+  #stet-l3:checked~.stet-l-contents #stet-lc3,
+  #stet-l4:checked~.stet-l-contents #stet-lc4{display:block;}
+</style>
+
+<div class="stet-l-tabs">
+  <input checked="checked" id="stet-l1" name="stet-l-tab" type="radio"/>
+  <input id="stet-l2" name="stet-l-tab" type="radio"/>
+  <input id="stet-l3" name="stet-l-tab" type="radio"/>
+  <input id="stet-l4" name="stet-l-tab" type="radio"/>
+  <div class="stet-l-tab-labels">
+    <label for="stet-l1">Beschreibung</label>
+    <label for="stet-l2">Versand &amp; Retouren</label>
+    <label for="stet-l3">Impressum</label>
+    <label for="stet-l4">AGB</label>
+  </div>
+  <div class="stet-l-contents">
+
+    <!-- TAB 1 -->
+    <div class="stet-l-content" id="stet-lc1">
+      ${tab1}
+    </div>
+
+    <!-- TAB 2: Versand -->
+    <div class="stet-l-content" id="stet-lc2">
+      <h3>Versandinformationen</h3>
+      <ul style="line-height:1.9;">
+        <li><strong>Kostenloser Versand</strong> auf alle Bestellungen</li>
+        <li>Lieferzeit: <strong>3–10 Werktage</strong></li>
+        <li>Versand per <strong>DHL, Deutsche Post oder Amazon Logistik</strong></li>
+        <li>Sendungsverfolgung wird per eBay-Nachricht mitgeteilt</li>
+      </ul>
+      <h3>Retouren &amp; R&uuml;ckgabe</h3>
+      <ul style="line-height:1.9;">
+        <li><strong>30 Tage R&uuml;ckgaberecht</strong> ab Erhalt der Ware</li>
+        <li>R&uuml;cksendekosten tr&auml;gt der K&auml;ufer (sofern kein Defekt)</li>
+        <li>Bei Defekt oder Falschlieferung: R&uuml;cksendekosten werden erstattet</li>
+        <li>R&uuml;ckerstattung innerhalb von 3–5 Werktagen nach Wareneingang</li>
+      </ul>
+      <p style="font-size:11px;color:#888888;margin-top:20px;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
+    </div>
+
+    <!-- TAB 3: Impressum -->
+    <div class="stet-l-content" id="stet-lc3">
+      <h3>Impressum</h3>
+      <p><strong>STELE-E-TRANSFER</strong><br/>
+      Inhaber: Evgenij Stele<br/>
+      Am Hochfeld 47<br/>
+      65205 Wiesbaden<br/>
+      Deutschland</p>
+      <p><strong>E-Mail:</strong> contact@stele-e-transfer.com</p>
+      <p><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong><br/>
+      Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
+    </div>
+
+    <!-- TAB 4: AGB -->
+    <div class="stet-l-content" id="stet-lc4">
+      <h3>Allgemeine Gesch&auml;ftsbedingungen (AGB)</h3>
+      <p><strong>&sect; 1 Geltungsbereich</strong><br/>
+      Diese AGB gelten f&uuml;r alle K&auml;ufe &uuml;ber den eBay-Shop von stele-e-transfer.<br/>
+      Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden | E-Mail: contact@stele-e-transfer.com</p>
+      <p><strong>&sect; 2 Vertragsschluss</strong><br/>
+      Mit dem Klick auf &quot;Sofort-Kaufen&quot; gibt der K&auml;ufer ein verbindliches Angebot ab.</p>
+      <p><strong>&sect; 3 Preise</strong><br/>
+      Alle Preise sind Endpreise in Euro (EUR). Als Kleinunternehmer gem. &sect;19 UStG wird keine Umsatzsteuer berechnet.</p>
+      <p><strong>&sect; 4 Zahlung</strong><br/>
+      Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
+      <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
+      Lieferzeit: 3–10 Werktage nach Zahlungseingang.</p>
+      <p><strong>&sect; 6 Widerrufsrecht</strong><br/>
+      30 Tage Widerrufsrecht. Widerruf an: contact@stele-e-transfer.com<br/>
+      K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kauf&uuml;bersicht zur Verf&uuml;gung.</p>
+      <p><strong>&sect; 7 Gew&auml;hrleistung</strong><br/>
+      Gesetzliche Gew&auml;hrleistung: 2 Jahre ab Lieferung.</p>
+      <p><strong>&sect; 8 Datenschutz</strong><br/>
+      Daten werden ausschlie&szlig;lich zur Vertragserf&uuml;llung genutzt. Es gelten eBay-Datenschutzbestimmungen und DSGVO.</p>
+      <p><strong>&sect; 9 Streitbeilegung</strong><br/>
+      EU-Streitschlichtung: <a href="https://ec.europa.eu/consumers/odr" style="color:#B8860B;">https://ec.europa.eu/consumers/odr</a></p>
+      <p><em>Stand: Juni 2026</em></p>
+    </div>
+
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div style="background:#1a1a0a;padding:14px;text-align:center;border-top:3px solid #B8860B;">
+  <span style="color:#C9A84C;font-size:11px;letter-spacing:5px;font-weight:bold;">STELE-E-TRANSFER</span><br/>
+  <span style="color:#8a7040;font-size:10px;letter-spacing:2px;">WIESBADEN &middot; DEUTSCHLAND</span>
+</div>
+
+</div>`;
+}
