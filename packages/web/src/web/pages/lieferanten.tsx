@@ -131,6 +131,8 @@ export default function Lieferanten() {
 
   const [copiedTitle, setCopiedTitle] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
+  const [editableTitle, setEditableTitle] = useState("");
+  const [editableHtml, setEditableHtml] = useState("");
 
   const [ebayPrice, setEbayPrice] = useState("");
   const [buyPrice, setBuyPrice] = useState("");
@@ -172,7 +174,11 @@ export default function Lieferanten() {
       if (!res.ok) throw new Error(data.error ?? `Fehler ${res.status}`);
       setProduct(data);
       setVisibleImages(data.images ?? []);
-      setResult({ title: buildTitle(data.title), html: buildHTML(data) });
+      const t = buildTitle(data.title);
+      const h = buildHTML(data);
+      setResult({ title: t, html: h });
+      setEditableTitle(t);
+      setEditableHtml(h);
       if (data.seller) setGpsrHersteller(data.seller);
 
       // EU-Filter: shipsFrom prüfen und anzeigen
@@ -206,7 +212,11 @@ export default function Lieferanten() {
     const fp: ScrapedProduct = { title: manualTitle.trim(), images: [], price: manualPrice.trim(), description: manualDesc.trim(), specs: {} };
     setProduct(fp);
     setVisibleImages([]);
-    setResult({ title: buildTitle(fp.title), html: buildHTML(fp) });
+    const t2 = buildTitle(fp.title);
+    const h2 = buildHTML(fp);
+    setResult({ title: t2, html: h2 });
+    setEditableTitle(t2);
+    setEditableHtml(h2);
     const p = parsePrice(fp.price);
     if (p > 0) setBuyPrice(p.toFixed(2));
   };
@@ -225,8 +235,8 @@ export default function Lieferanten() {
           amazonUrl: urlInput || "manual",
           sourceUrl: urlInput || "manual",
           title: product.title,
-          generatedTitle: result.title,
-          htmlDescription: result.html,
+          generatedTitle: editableTitle,
+          htmlDescription: editableHtml,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: editedVariants
             .filter(g => g.values.length > 0),
@@ -273,7 +283,7 @@ export default function Lieferanten() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const charCount = result?.title.length ?? 0;
+  const charCount = editableTitle.length;
   const charColor = charCount > 80 ? "#DC2626" : charCount > 70 ? "#F59E0B" : "#16a34a";
 
   const inputStyle: React.CSSProperties = {
@@ -605,10 +615,18 @@ export default function Lieferanten() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>eBay Titel</span>
                 <span style={{ fontSize: 12, fontWeight: 700, color: charColor }}>{charCount}/80</span>
               </div>
-              <div style={{ background: "#F8FAFC", borderRadius: 10, padding: "12px 14px", fontSize: 14, color: "#0F172A", border: "1.5px solid #E2E8F0", marginBottom: 10, fontWeight: 500, lineHeight: 1.5 }}>
-                {result.title}
-              </div>
-              <button onClick={() => copy(result.title, setCopiedTitle)} style={{
+              <textarea
+                value={editableTitle}
+                onChange={e => setEditableTitle(e.target.value)}
+                rows={2}
+                style={{
+                  width: "100%", background: "#F8FAFC", borderRadius: 10, padding: "12px 14px",
+                  fontSize: 14, color: "#0F172A", border: "1.5px solid #E2E8F0", marginBottom: 10,
+                  fontWeight: 500, lineHeight: 1.5, resize: "vertical", outline: "none",
+                  fontFamily: "inherit", boxSizing: "border-box",
+                }}
+              />
+              <button onClick={() => copy(editableTitle, setCopiedTitle)} style={{
                 width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
                 gap: 8, padding: "11px 0", borderRadius: 10, border: "none",
                 background: copiedTitle ? "#22C55E" : "#FF6B00", color: "#fff",
@@ -634,18 +652,22 @@ export default function Lieferanten() {
                 </button>
               </div>
               {showPreview ? (
-                <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8, marginBottom: 10 }} dangerouslySetInnerHTML={{ __html: result.html }} />
+                <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8, marginBottom: 10 }} dangerouslySetInnerHTML={{ __html: editableHtml }} />
               ) : (
-                <div style={{
-                  background: "#0F172A", borderRadius: 12, padding: 16, fontSize: 12,
-                  color: "#94A3B8", fontFamily: "monospace", marginBottom: 10,
-                  overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
-                  maxHeight: 260, overflowY: "auto",
-                }}>
-                  {result.html}
-                </div>
+                <textarea
+                  value={editableHtml}
+                  onChange={e => setEditableHtml(e.target.value)}
+                  rows={10}
+                  style={{
+                    width: "100%", background: "#0F172A", borderRadius: 12, padding: 16,
+                    fontSize: 12, color: "#94A3B8", fontFamily: "monospace", marginBottom: 10,
+                    whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 260,
+                    overflowY: "auto", resize: "vertical", outline: "none",
+                    border: "none", boxSizing: "border-box",
+                  }}
+                />
               )}
-              <button onClick={() => copy(result.html, setCopiedHtml)} style={{
+              <button onClick={() => copy(editableHtml, setCopiedHtml)} style={{
                 width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
                 gap: 8, padding: "11px 0", borderRadius: 10, border: "none",
                 background: copiedHtml ? "#22C55E" : "#0F172A", color: "#fff",
