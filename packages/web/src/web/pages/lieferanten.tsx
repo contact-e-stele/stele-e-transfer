@@ -151,6 +151,10 @@ export default function Lieferanten() {
 
   const [ebayPrice, setEbayPrice] = useState("");
   const [buyPrice, setBuyPrice] = useState("");
+  const [adRate, setAdRate] = useState<number>(() => {
+    const saved = localStorage.getItem("stele_ad_rate");
+    return saved ? parseFloat(saved) : 5;
+  });
   const [ebayLoading, setEbayLoading] = useState(false);
   const [ebayResult, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -161,10 +165,11 @@ export default function Lieferanten() {
   // ─── Marge berechnen ──────────────────────────────────────────────────────
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
   const verkauf = parseFloat(ebayPrice.replace(",", ".")) || 0;
-  // Gleiche Formel wie Preise-Tab: 18% netto × 1.19 MwSt + 0.45€ Fix × 1.19
-  const EBAY_FEE = (18 / 100) * 1.19;
+  // Formel: (13% eBay + adRate%) × 1.19 MwSt + 0.45€ Fix × 1.19
+  const EBAY_BASE = 13; // eBay fix
+  const totalFeePercent = (EBAY_BASE + adRate) / 100;
   const FIXBETRAG = 0.45 * 1.19;
-  const ebayFee = verkauf * EBAY_FEE + FIXBETRAG;
+  const ebayFee = verkauf * totalFeePercent * 1.19 + FIXBETRAG;
   const gewinn = verkauf - einkauf - ebayFee;
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
 
@@ -260,6 +265,7 @@ export default function Lieferanten() {
           images: visibleImages,
           buyPrice: einkauf || null,
           sellPrice: verkauf || null,
+          adRate: adRate,
         }),
       });
       const data = await res.json() as { id?: number; error?: string };
@@ -725,7 +731,7 @@ export default function Lieferanten() {
                 </div>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Preiskalkulation</span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Einkauf (€)</label>
                   <input type="number" step="0.01" placeholder="0.00" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} style={{
@@ -743,6 +749,55 @@ export default function Lieferanten() {
                   }} />
                 </div>
               </div>
+
+              {/* Anzeigentarif */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>
+                  Anzeigentarif (Promoted Listings)
+                </label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {[2, 3, 5, 8, 10].map(rate => (
+                    <button
+                      key={rate}
+                      onClick={() => { setAdRate(rate); localStorage.setItem("stele_ad_rate", String(rate)); }}
+                      style={{
+                        padding: "7px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                        border: `2px solid ${adRate === rate ? "#FFD700" : "#E2E8F0"}`,
+                        background: adRate === rate ? "#FFF8DC" : "#F8FAFC",
+                        color: adRate === rate ? "#92400E" : "#64748B",
+                        cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+                      }}
+                    >{rate}%</button>
+                  ))}
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, color: "#94A3B8", fontWeight: 600 }}>Eigener:</span>
+                    <input
+                      type="number" min="1" max="20" step="0.5"
+                      value={![2, 3, 5, 8, 10].includes(adRate) ? adRate : ""}
+                      placeholder="z.B. 7"
+                      onChange={e => {
+                        const v = parseFloat(e.target.value);
+                        if (!isNaN(v) && v > 0 && v <= 20) {
+                          setAdRate(v);
+                          localStorage.setItem("stele_ad_rate", String(v));
+                        }
+                      }}
+                      style={{
+                        width: 64, padding: "7px 10px", fontSize: 13, fontWeight: 600,
+                        border: `2px solid ${![2, 3, 5, 8, 10].includes(adRate) ? "#FFD700" : "#E2E8F0"}`,
+                        borderRadius: 8, outline: "none", fontFamily: "inherit",
+                        background: ![2, 3, 5, 8, 10].includes(adRate) ? "#FFF8DC" : "#F8FAFC",
+                        color: "#0F172A",
+                      }}
+                    />
+                    <span style={{ fontSize: 11, color: "#94A3B8" }}>%</span>
+                  </div>
+                </div>
+                <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
+                  eBay 13% + Anzeige {adRate}% = {(13 + adRate)}% gesamt (× 1,19 MwSt)
+                </div>
+              </div>
+
               {verkauf > 0 && (
                 <div style={{
                   background: gewinn >= 0 ? "#F0FDF4" : "#FEF2F2",
@@ -751,7 +806,7 @@ export default function Lieferanten() {
                 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
                     {[
-                      { label: "eBay Gebühr", value: `−${ebayFee.toFixed(2)} €`, color: "#64748B" },
+                      { label: `Gebühr (${13 + adRate}%)`, value: `−${ebayFee.toFixed(2)} €`, color: "#64748B" },
                       { label: "Gewinn", value: `${gewinn >= 0 ? "+" : ""}${gewinn.toFixed(2)} €`, color: gewinn >= 0 ? "#16A34A" : "#DC2626" },
                       { label: "Marge", value: `${margePercent.toFixed(1)}%`, color: margePercent >= 15 ? "#16A34A" : margePercent >= 5 ? "#F59E0B" : "#DC2626" },
                     ].map(s => (

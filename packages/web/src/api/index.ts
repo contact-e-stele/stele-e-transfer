@@ -459,6 +459,7 @@ const app = new Hono()
         asin: schema.products.asin,
         sourceUrl: schema.products.sourceUrl,
         generatedTitle: schema.products.generatedTitle,
+        adRate: schema.products.adRate,
       }).from(schema.products).all();
 
       // Index: ebayListingId → DB-Produkt
@@ -643,6 +644,7 @@ const app = new Hono()
         images?: string[];
         buyPrice?: number | null;
         sellPrice?: number | null;
+        adRate?: number;
         sourceUrl?: string;
         specs?: Record<string, string>;
       };
@@ -669,6 +671,7 @@ const app = new Hono()
           images: body.images ? JSON.stringify(body.images) : undefined,
           buyPrice: body.buyPrice ?? undefined,
           sellPrice: body.sellPrice ?? undefined,
+          adRate: body.adRate ?? undefined,
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
           updatedAt: new Date().toISOString(),
         }).where(eq(schema.products.asin, body.asin));
@@ -689,6 +692,7 @@ const app = new Hono()
         images: body.images ? JSON.stringify(body.images) : '[]',
         buyPrice: body.buyPrice ?? null,
         sellPrice: body.sellPrice ?? null,
+        adRate: body.adRate ?? 5,
         specs: body.specs ? JSON.stringify(body.specs) : null,
         ebayStatus: 'none',
         aliexpressItemId: (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null,
@@ -838,6 +842,7 @@ const app = new Hono()
         variantGroups: variantGroups.length > 0 ? variantGroups : undefined,
         specs,
         mpn,
+        adRate: product.adRate ?? 5,
       });
 
       await db.update(schema.products).set({
@@ -996,6 +1001,26 @@ const app = new Hono()
   })
 
   // ─── Produkt aus DB löschen ──────────────────────────────────────────────────
+  // ─── Anzeigentarif (adRate) pro Produkt setzen ──────────────────────────────
+  .patch('/products/:id/adRate', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+    try {
+      const body = await c.req.json() as { adRate?: number };
+      const adRate = typeof body.adRate === 'number' ? body.adRate : parseFloat(String(body.adRate));
+      if (isNaN(adRate) || adRate < 0 || adRate > 20) return c.json({ error: 'Ungültiger Wert (0–20)' }, 400);
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      await db.update(schema.products).set({ adRate, updatedAt: new Date().toISOString() })
+        .where(eq(schema.products.id, id));
+      return c.json({ ok: true, adRate }, 200);
+    } catch (e) {
+      return c.json({ error: 'DB Fehler' }, 503);
+    }
+  })
+
   .delete('/products/:id', async (c) => {
     const id = parseInt(c.req.param('id'));
     if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);

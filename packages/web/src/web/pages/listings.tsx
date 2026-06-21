@@ -28,6 +28,7 @@ interface EbayListing {
     asin: string;
     sourceUrl: string | null;
     generatedTitle: string;
+    adRate: number | null;
   } | null;
 }
 
@@ -70,6 +71,39 @@ export default function Listings() {
 
   // Ending
   const [endingId, setEndingId] = useState<string | null>(null);
+
+  // adRate inline edit per listing (keyed by appProduct.id)
+  const [adRateValues, setAdRateValues] = useState<Record<number, number>>({});
+  const [adRateSaving, setAdRateSaving] = useState<number | null>(null);
+  const [adRateResult, setAdRateResult] = useState<Record<number, { ok?: boolean; err?: string }>>({});
+
+  const handleAdRateChange = async (productId: number, newRate: number) => {
+    setAdRateValues(prev => ({ ...prev, [productId]: newRate }));
+    setAdRateSaving(productId);
+    setAdRateResult(r => ({ ...r, [productId]: {} }));
+    try {
+      const res = await fetch(`/api/products/${productId}/adRate`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adRate: newRate }),
+      });
+      const data = await res.json() as { ok?: boolean; error?: string };
+      if (data.ok) {
+        setAdRateResult(r => ({ ...r, [productId]: { ok: true } }));
+        setListings(prev => prev.map(l =>
+          l.appProduct?.id === productId
+            ? { ...l, appProduct: { ...l.appProduct!, adRate: newRate } }
+            : l
+        ));
+      } else {
+        setAdRateResult(r => ({ ...r, [productId]: { err: data.error ?? "Fehler" } }));
+      }
+    } catch (e) {
+      setAdRateResult(r => ({ ...r, [productId]: { err: String(e) } }));
+    } finally {
+      setAdRateSaving(null);
+    }
+  };
 
   // Erweiterte Filter
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -457,6 +491,37 @@ export default function Listings() {
                         )}
                       </>
                     )}
+
+                    {/* adRate Badge — nur wenn verknüpft */}
+                    {isLinked && (() => {
+                      const prodId = listing.appProduct!.id;
+                      const currentRate = adRateValues[prodId] ?? listing.appProduct!.adRate ?? 5;
+                      const saving = adRateSaving === prodId;
+                      const res = adRateResult[prodId];
+                      return (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontSize: 10, color: "#64748B", fontWeight: 600 }}>Anzeige:</span>
+                          <select
+                            value={currentRate}
+                            disabled={saving}
+                            onChange={e => handleAdRateChange(prodId, parseFloat(e.target.value))}
+                            style={{
+                              fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6,
+                              border: "1.5px solid " + (res?.ok ? "#22C55E" : res?.err ? "#DC2626" : "#FFD700"),
+                              background: res?.ok ? "#F0FDF4" : res?.err ? "#FEF2F2" : "#FFF8DC",
+                              color: "#92400E", cursor: saving ? "not-allowed" : "pointer",
+                              fontFamily: "inherit", outline: "none",
+                            }}
+                          >
+                            {[2, 3, 5, 8, 10].map(r => (
+                              <option key={r} value={r}>{r}%</option>
+                            ))}
+                          </select>
+                          {saving && <Loader size={9} style={{ animation: "spin 1s linear infinite" }} color="#F59E0B" />}
+                          {res?.ok && <CheckCircle size={9} color="#22C55E" />}
+                        </span>
+                      );
+                    })()}
 
                     {/* Verkäufe */}
                     <span style={{
