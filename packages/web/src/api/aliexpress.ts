@@ -112,60 +112,110 @@ function extractPrice(html: string): string {
 
 // Holt ALLE Preise aus dem HTML und gibt den günstigsten zurück (Varianten-aware)
 function extractSteleData(html: string): { minPrice: string; variantPrices: VariantPrice[] } {
+  // ── Weg 1: JS-injiziertes data-stele-prices Attribut (ScrapingAnt + Snippet) ──
   const steelPricesMatch = html.match(/data-stele-prices="([^"]+)"/);
-  if (!steelPricesMatch) return { minPrice: '', variantPrices: [] };
-
-  try {
-    const decoded = steelPricesMatch[1].replace(/&quot;/g, '"');
-    const data = JSON.parse(decoded) as {
-      minAmount?: number;
-      maxAmount?: number;
-      minActivityAmount?: number;
-      maxActivityAmount?: number;
-      skuPrices?: string[];
-      variants?: Array<{ skuId: string; attrs: Record<string, string>; price: string; originalPrice?: string; stock?: number }>;
-    };
-
-    // Varianten mit Attributen
-    const variantPrices: VariantPrice[] = [];
-    if (data.variants && data.variants.length > 0) {
-      for (const v of data.variants) {
-        const price = parseFloat(v.price);
-        if (!isNaN(price) && price > 0.5) {
-          variantPrices.push({
-            skuId: String(v.skuId),
-            attrs: v.attrs ?? {},
-            price,
-            originalPrice: v.originalPrice ? parseFloat(v.originalPrice) : undefined,
-            stock: v.stock,
-          });
+  if (steelPricesMatch) {
+    try {
+      const decoded = steelPricesMatch[1].replace(/&quot;/g, '"');
+      const data = JSON.parse(decoded) as {
+        minAmount?: number;
+        maxAmount?: number;
+        minActivityAmount?: number;
+        maxActivityAmount?: number;
+        skuPrices?: string[];
+        variants?: Array<{ skuId: string; attrs: Record<string, string>; price: string; originalPrice?: string; stock?: number }>;
+      };
+      const variantPrices: VariantPrice[] = [];
+      if (data.variants && data.variants.length > 0) {
+        for (const v of data.variants) {
+          const price = parseFloat(v.price);
+          if (!isNaN(price) && price > 0.5) {
+            variantPrices.push({ skuId: String(v.skuId), attrs: v.attrs ?? {}, price, originalPrice: v.originalPrice ? parseFloat(v.originalPrice) : undefined, stock: v.stock });
+          }
         }
+        console.log(`[AliExpress] extractSteleData (snippet): ${variantPrices.length} Varianten`);
       }
-      console.log(`[AliExpress] extractSteleData: ${variantPrices.length} Varianten mit Preisen`);
-    }
-
-    // Günstigsten Preis bestimmen
-    const allPrices: number[] = variantPrices.map(v => v.price);
-    if (data.skuPrices && allPrices.length === 0) {
-      for (const p of data.skuPrices) {
-        const num = parseFloat(p);
-        if (!isNaN(num) && num > 0.5 && num < 10000) allPrices.push(num);
+      const allPrices: number[] = variantPrices.map(v => v.price);
+      if (data.skuPrices && allPrices.length === 0) {
+        for (const p of data.skuPrices) { const num = parseFloat(p); if (!isNaN(num) && num > 0.5 && num < 10000) allPrices.push(num); }
       }
+      if (allPrices.length === 0) { const fb = data.minActivityAmount ?? data.minAmount; if (fb && fb > 0.5) allPrices.push(fb); }
+      const minPrice = allPrices.length > 0 ? `${Math.min(...allPrices).toFixed(2)} €` : '';
+      if (variantPrices.length > 0 || minPrice) return { minPrice, variantPrices };
+    } catch (e) {
+      console.log('[AliExpress] data-stele-prices parse error:', e);
     }
-    if (allPrices.length === 0) {
-      const fallback = data.minActivityAmount ?? data.minAmount;
-      if (fallback && fallback > 0.5) allPrices.push(fallback);
-    }
-
-    const minPrice = allPrices.length > 0
-      ? `${Math.min(...allPrices).toFixed(2)} €`
-      : '';
-
-    return { minPrice, variantPrices };
-  } catch (e) {
-    console.log('[AliExpress] data-stele-prices parse error:', e);
-    return { minPrice: '', variantPrices: [] };
   }
+
+  // ── Weg 2: Direkt aus HTML-JSON — skuPriceList + productSKUPropertyList ──
+  // AliExpress bettet diese Daten in window.runParams oder __INIT_DATA__ ein
+  try {
+    // Suche nach skuPriceList im rohen HTML
+    const skuPriceListMatch = html.match(/"skuPriceList"\s*:\s*(\[[\s\S]{10,50000}?\])\s*[,}]/);
+    const propListMatch = html.match(/"productSKUPropertyList"\s*:\s*(\[[\s\S]{10,50000}?\])\s*[,}]/);
+
+    if (skuPriceListMatch) {
+      type SkuPrice = { skuId?: string; skuAttr?: string; skuVal?: { actSkuCalPrice?: string; skuCalPrice?: string; availQuantity?: number } };
+      type PropList = Array<{ skuPropertyId?: number; skuPropertyName?: string; skuPropertyValues?: Array<{ propertyValueId?: number; propertyValueDisplayName?: string; propertyValueName?: string }> }>;
+
+      const skuMap = JSON.parse(skuPriceListMatch[1]) as SkuPrice[];
+      const propList: PropList = propListMatch ? JSON.parse(propListMatch[1]) : [];
+
+      const variantPrices: VariantPrice[] = [];
+      for (const s of skuMap) {
+        const priceStr = s.skuVal?.actSkuCalPrice ?? s.skuVal?.skuCalPrice;
+        const price = parseFloat(priceStr ?? '0');
+        if (isNaN(price) || price <= 0.5) continue;
+
+        // Attribute aus skuAttr ("pid:vid;pid:vid")
+        const attrs: Record<string, string> = {};
+        if (s.skuAttr && propList.length > 0) {
+          const pairs = s.skuAttr.split(';');
+          for (const pair of pairs) {
+            const parts = pair.split(':');
+            const propId = parts[0]?.trim();
+            const valId = parts[1]?.split('#')[0]?.trim();
+            if (!propId || !valId) continue;
+            const prop = propList.find(p => String(p.skuPropertyId) === propId);
+            if (!prop) continue;
+            const val = (prop.skuPropertyValues ?? []).find(v => String(v.propertyValueId) === valId);
+            if (val) attrs[prop.skuPropertyName ?? propId] = val.propertyValueDisplayName ?? val.propertyValueName ?? valId;
+          }
+        }
+
+        variantPrices.push({
+          skuId: String(s.skuId ?? ''),
+          attrs,
+          price,
+          originalPrice: s.skuVal?.skuCalPrice ? parseFloat(s.skuVal.skuCalPrice) : undefined,
+          stock: s.skuVal?.availQuantity,
+        });
+      }
+
+      if (variantPrices.length > 0) {
+        const minPrice = `${Math.min(...variantPrices.map(v => v.price)).toFixed(2)} €`;
+        console.log(`[AliExpress] extractSteleData (html-regex): ${variantPrices.length} Varianten, min=${minPrice}`);
+        return { minPrice, variantPrices };
+      }
+    }
+  } catch (e) {
+    console.log('[AliExpress] html-regex skuPriceList parse error:', e);
+  }
+
+  // ── Weg 3: Nur günstigsten Preis aus actSkuCalPrice Werten ──
+  try {
+    const allPriceMatches = [...html.matchAll(/"actSkuCalPrice"\s*:\s*"([\d.]+)"/g)];
+    if (allPriceMatches.length > 0) {
+      const prices = allPriceMatches.map(m => parseFloat(m[1])).filter(p => !isNaN(p) && p > 0.5 && p < 10000);
+      if (prices.length > 0) {
+        const minPrice = `${Math.min(...prices).toFixed(2)} €`;
+        console.log(`[AliExpress] extractSteleData (actSkuCalPrice-only): ${prices.length} Preise, min=${minPrice}`);
+        return { minPrice, variantPrices: [] };
+      }
+    }
+  } catch { /* ignore */ }
+
+  return { minPrice: '', variantPrices: [] };
 }
 
 function extractMinPrice(html: string): string {
@@ -319,7 +369,7 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
     // JS-Snippet: liest window.runParams aus → alle Varianten + Preise + Attribute
     const jsSnippet = encodeURIComponent(`
       try {
-        var rp = window.runParams || window._dida_config_ || {};
+        var rp = window.runParams || window._dida_config_ || window.__INIT_DATA__ || window.__pc_config__ || {};
         var pm = (rp.data && rp.data.priceModule) || rp.priceModule || {};
         var skuModule = (rp.data && rp.data.skuModule) || {};
         var skuMap = skuModule.skuPriceList || [];
