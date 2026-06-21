@@ -40,6 +40,8 @@ export function getAliExpressOAuthUrl(redirectUri: string, state: string): strin
     client_id: APP_KEY,
     state,
     sp: 'ae',
+    view: 'web',
+    from: 'aliexpress',
   });
   return `${OAUTH_URL}?${params}`;
 }
