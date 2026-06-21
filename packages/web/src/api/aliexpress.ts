@@ -105,13 +105,49 @@ function extractPrice(html: string): string {
 function extractMinPrice(html: string): string {
   const allPrices: number[] = [];
 
-  // Alle Preismuster auf einmal — holt alle matches nicht nur ersten
+  // ── Priorität 1: JS-injiziertes data-stele-prices Attribut (via ScrapingAnt JS-Snippet) ──
+  const steelPricesMatch = html.match(/data-stele-prices="([^"]+)"/);
+  if (steelPricesMatch) {
+    try {
+      const decoded = steelPricesMatch[1].replace(/&quot;/g, '"');
+      const data = JSON.parse(decoded) as {
+        minAmount?: number;
+        maxAmount?: number;
+        minActivityAmount?: number;
+        maxActivityAmount?: number;
+        skuPrices?: string[];
+      };
+
+      // Alle SKU-Preise (Varianten)
+      if (data.skuPrices && data.skuPrices.length > 0) {
+        for (const p of data.skuPrices) {
+          const num = parseFloat(p);
+          if (!isNaN(num) && num > 0.5 && num < 10000) allPrices.push(num);
+        }
+      }
+
+      // Fallback auf minActivityAmount oder minAmount
+      if (allPrices.length === 0) {
+        const fallback = data.minActivityAmount ?? data.minAmount;
+        if (fallback && fallback > 0.5) allPrices.push(fallback);
+      }
+
+      if (allPrices.length > 0) {
+        const minPrice = Math.min(...allPrices);
+        console.log(`[AliExpress] extractMinPrice (JS-injected): ${allPrices.length} Varianten-Preise, günstigster: ${minPrice.toFixed(2)}€`);
+        return `${minPrice.toFixed(2)} €`;
+      }
+    } catch (e) {
+      console.log('[AliExpress] data-stele-prices parse error:', e);
+    }
+  }
+
+  // ── Priorität 2: Alle Preismuster aus HTML (Fallback) ──
   const patterns = [
     /"actPrice"\s*:\s*([\d.]+)/g,
     /"salePrice"\s*:\s*([\d.]+)/g,
     /"minPrice"\s*:\s*([\d.]+)/g,
     /"minActivityAmount"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/g,
-    /"skuVal"\s*:\s*\{[^}]*"actSkuCalPrice"\s*:\s*"([\d.]+)"/g,
     /"actSkuCalPrice"\s*:\s*"([\d.]+)"/g,
     /"skuAmount"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/g,
   ];
@@ -126,11 +162,11 @@ function extractMinPrice(html: string): string {
 
   if (allPrices.length > 0) {
     const minPrice = Math.min(...allPrices);
-    console.log(`[AliExpress] extractMinPrice: ${allPrices.length} Preise gefunden, günstigster: ${minPrice.toFixed(2)}€`);
+    console.log(`[AliExpress] extractMinPrice (HTML-patterns): ${allPrices.length} Preise, günstigster: ${minPrice.toFixed(2)}€`);
     return `${minPrice.toFixed(2)} €`;
   }
 
-  // Fallback auf normale extractPrice
+  // ── Priorität 3: Standard extractPrice ──
   return extractPrice(html);
 }
 
@@ -244,10 +280,28 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
 
   // Attempt 2: ScrapingAnt with browser=true (JS-rendered, residential DE proxy)
   if (SCRAPINGANT_API_KEY) {
-    // Two tries: first with wait_for_selector, then without (fallback)
+    // JS-Snippet: injiziert window.runParams als __STELE_DATA__ in die Seite
+    // Damit können wir ALLE Varianten-Preise mit 1 Scrape auslesen
+    const jsSnippet = encodeURIComponent(`
+      try {
+        var rp = window.runParams || window._dida_config_ || {};
+        var pm = (rp.data && rp.data.priceModule) || rp.priceModule || {};
+        var skuMap = (rp.data && rp.data.skuModule && rp.data.skuModule.skuPriceList) || [];
+        var result = {
+          minAmount: pm.minAmount && pm.minAmount.value,
+          maxAmount: pm.maxAmount && pm.maxAmount.value,
+          minActivityAmount: pm.minActivityAmount && pm.minActivityAmount.value,
+          maxActivityAmount: pm.maxActivityAmount && pm.maxActivityAmount.value,
+          skuPrices: skuMap.map(function(s){ return s.skuVal && s.skuVal.actSkuCalPrice; }).filter(Boolean)
+        };
+        document.body.setAttribute('data-stele-prices', JSON.stringify(result));
+      } catch(e) {}
+    `);
+
+    // Two tries: first with JS-snippet (runParams), then without (fallback)
     const attempts = [
+      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&js_snippet=${jsSnippet}&wait_for_selector=.sku-property`,
       `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&wait_for_selector=.sku-property`,
-      `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE&js_snippet=${encodeURIComponent('window._wait=2000')}`,
       `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(targetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_country=DE`,
     ];
     for (const antUrl of attempts) {

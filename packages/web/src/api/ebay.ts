@@ -812,3 +812,103 @@ export async function suggestCategory(title: string): Promise<string | null> {
 export async function getPoliciesInfo(): Promise<PolicyCache> {
   return getBusinessPolicies();
 }
+
+// ─── Alle aktiven eBay Listings abrufen (Trading API) ────────────────────────
+
+export interface EbaySellerListing {
+  itemId: string;
+  title: string;
+  currentPrice: number;
+  currency: string;
+  quantity: number;
+  quantitySold: number;
+  imageUrl: string | null;
+  viewItemUrl: string;
+  listingType: string;
+  startTime: string;
+  endTime: string;
+}
+
+export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
+  const token = await getAccessToken();
+  const results: EbaySellerListing[] = [];
+  let page = 1;
+  const pageSize = 200;
+
+  while (true) {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<GetSellerListRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <ActiveList>
+    <Include>true</Include>
+  </ActiveList>
+  <StartTimeFrom>2020-01-01T00:00:00.000Z</StartTimeFrom>
+  <StartTimeTo>${new Date().toISOString()}</StartTimeTo>
+  <Pagination>
+    <EntriesPerPage>${pageSize}</EntriesPerPage>
+    <PageNumber>${page}</PageNumber>
+  </Pagination>
+  <GranularityLevel>Fine</GranularityLevel>
+  <OutputSelector>ItemID</OutputSelector>
+  <OutputSelector>Title</OutputSelector>
+  <OutputSelector>SellingStatus</OutputSelector>
+  <OutputSelector>Quantity</OutputSelector>
+  <OutputSelector>QuantitySold</OutputSelector>
+  <OutputSelector>PictureDetails</OutputSelector>
+  <OutputSelector>ListingDetails</OutputSelector>
+  <OutputSelector>ListingType</OutputSelector>
+  <OutputSelector>TimeLeft</OutputSelector>
+</GetSellerListRequest>`;
+
+    const res = await fetch('https://api.ebay.com/ws/api.dll', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml',
+        'X-EBAY-API-SITEID': '77',
+        'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+        'X-EBAY-API-CALL-NAME': 'GetSellerList',
+        'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+      },
+      body: xml,
+    });
+
+    const text = await res.text();
+    console.log(`[eBay GetSellerList] Page ${page}, status:`, res.status, text.slice(0, 200));
+
+    // Items extrahieren
+    const itemMatches = text.matchAll(/<Item>([\s\S]*?)<\/Item>/g);
+    let count = 0;
+
+    for (const match of itemMatches) {
+      const item = match[1];
+      const get = (tag: string) => item.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`))?.[1]?.trim() ?? '';
+
+      const itemId = get('ItemID');
+      const title = get('Title');
+      const price = parseFloat(get('CurrentPrice') || get('StartPrice') || '0');
+      const currency = item.match(/currencyID="([^"]+)"/)?.[1] ?? 'EUR';
+      const quantity = parseInt(get('Quantity') || '0');
+      const quantitySold = parseInt(get('QuantitySold') || '0');
+      const imageUrl = get('GalleryURL') || get('PictureURL') || null;
+      const viewItemUrl = get('ViewItemURL') || `https://www.ebay.de/itm/${itemId}`;
+      const listingType = get('ListingType') || 'FixedPriceItem';
+      const startTime = get('StartTime') || '';
+      const endTime = get('EndTime') || '';
+
+      if (itemId) {
+        results.push({ itemId, title, currentPrice: price, currency, quantity, quantitySold, imageUrl, viewItemUrl, listingType, startTime, endTime });
+        count++;
+      }
+    }
+
+    // Pagination prüfen
+    const totalPages = parseInt(text.match(/<TotalNumberOfPages>(\d+)<\/TotalNumberOfPages>/)?.[1] ?? '1');
+    console.log(`[eBay GetSellerList] Page ${page}/${totalPages}, items this page: ${count}`);
+
+    if (page >= totalPages || count === 0) break;
+    page++;
+  }
+
+  console.log(`[eBay GetSellerList] Total items fetched: ${results.length}`);
+  return results;
+}

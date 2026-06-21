@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings } from './ebay';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -387,6 +387,136 @@ const app = new Hono()
       // In Produktion: refresh_token in DB/Env speichern
       console.log('eBay refresh token:', tokens.refresh_token);
       return c.json({ message: 'Erfolgreich! Refresh Token in Server-Logs.', expires_in: tokens.expires_in }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── eBay alle Listings abrufen ──────────────────────────────────────────────
+  .get('/ebay/listings', async (c) => {
+    try {
+      // eBay Listings von API holen
+      const ebayListings = await getAllSellerListings();
+
+      // App-DB Produkte laden (für Match)
+      const dbProducts = await db.select({
+        id: schema.products.id,
+        ebayListingId: schema.products.ebayListingId,
+        buyPrice: schema.products.buyPrice,
+        sellPrice: schema.products.sellPrice,
+        asin: schema.products.asin,
+        sourceUrl: schema.products.sourceUrl,
+        generatedTitle: schema.products.generatedTitle,
+      }).from(schema.products).all();
+
+      // Index: ebayListingId → DB-Produkt
+      const dbByListingId = new Map(
+        dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p])
+      );
+
+      // Match zusammenführen
+      const merged = ebayListings.map(listing => ({
+        ...listing,
+        appProduct: dbByListingId.get(listing.itemId) ?? null,
+      }));
+
+      return c.json({ listings: merged, total: merged.length }, 200);
+    } catch (e) {
+      console.error('[eBay listings]', e);
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── eBay Listing Preis aktualisieren ────────────────────────────────────────
+  .patch('/ebay/listings/:itemId/price', async (c) => {
+    const itemId = c.req.param('itemId');
+    const body = await c.req.json<{ price: number }>();
+    if (!body.price || body.price <= 0) return c.json({ error: 'Ungültiger Preis' }, 400);
+
+    try {
+      const token = await (await import('./ebay')).getAccessToken();
+      const xml = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <InventoryStatus>
+    <ItemID>${itemId}</ItemID>
+    <StartPrice>${body.price.toFixed(2)}</StartPrice>
+  </InventoryStatus>
+</ReviseInventoryStatusRequest>`;
+
+      const res = await fetch('https://api.ebay.com/ws/api.dll', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml',
+          'X-EBAY-API-SITEID': '77',
+          'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+          'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus',
+          'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
+        },
+        body: xml,
+      });
+
+      const text = await res.text();
+      const hasError = text.includes('<Ack>Failure</Ack>');
+      if (hasError) {
+        const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Unbekannter Fehler';
+        return c.json({ error: errMsg }, 400);
+      }
+
+      // Auch in DB aktualisieren wenn Produkt verknüpft
+      const dbProduct = await db.select().from(schema.products)
+        .where(eq(schema.products.ebayListingId, itemId)).get();
+      if (dbProduct) {
+        await db.update(schema.products).set({ sellPrice: body.price }).where(eq(schema.products.ebayListingId, itemId));
+      }
+
+      return c.json({ ok: true, newPrice: body.price }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── eBay Listing pausieren/beenden (via itemId direkt) ──────────────────────
+  .delete('/ebay/listings/:itemId', async (c) => {
+    const itemId = c.req.param('itemId');
+    try {
+      const token = await (await import('./ebay')).getAccessToken();
+      const xml = `<?xml version="1.0" encoding="utf-8"?>
+<EndItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <ItemID>${itemId}</ItemID>
+  <EndingReason>NotAvailable</EndingReason>
+</EndItemRequest>`;
+
+      const res = await fetch('https://api.ebay.com/ws/api.dll', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml',
+          'X-EBAY-API-SITEID': '77',
+          'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+          'X-EBAY-API-CALL-NAME': 'EndItem',
+          'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
+        },
+        body: xml,
+      });
+
+      const text = await res.text();
+      const hasError = text.includes('<Ack>Failure</Ack>');
+
+      // DB-Produkt auch updaten wenn verknüpft
+      const dbProduct = await db.select().from(schema.products)
+        .where(eq(schema.products.ebayListingId, itemId)).get();
+      if (dbProduct) {
+        await db.update(schema.products).set({
+          ebayListingId: null, ebayStatus: 'none', ebayError: null
+        }).where(eq(schema.products.ebayListingId, itemId));
+      }
+
+      if (hasError) {
+        const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
+        return c.json({ warning: errMsg }, 200);
+      }
+      return c.json({ ok: true }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }

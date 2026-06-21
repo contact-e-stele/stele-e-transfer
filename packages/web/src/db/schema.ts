@@ -7,6 +7,7 @@ export const products = sqliteTable('products', {
   asin: text('asin').notNull().unique(),       // intern: ali_<timestamp>
   sourceUrl: text('source_url'),               // AliExpress URL
   amazonUrl: text('amazon_url').notNull(),     // legacy (= sourceUrl)
+  aliexpressItemId: text('aliexpress_item_id'), // AliExpress Produkt-ID z.B. 1005012438990021
   title: text('title').notNull(),              // Original-Titel
   generatedTitle: text('generated_title').notNull(),
   generatedDescription: text('generated_description'), // fertige HTML-Beschreibung für eBay
