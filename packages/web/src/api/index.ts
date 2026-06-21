@@ -398,6 +398,12 @@ const app = new Hono()
       // eBay Listings von API holen
       const ebayListings = await getAllSellerListings();
 
+      // DB importieren
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
       // App-DB Produkte laden (für Match)
       const dbProducts = await db.select({
         id: schema.products.id,
