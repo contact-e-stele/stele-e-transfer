@@ -424,11 +424,25 @@ const app = new Hono()
     }
   })
 
-  // ─── eBay alle Listings abrufen ──────────────────────────────────────────────
+  // ─── eBay alle Listings abrufen (Server-Cache 10 Min) ───────────────────────
+  // In-Memory Cache damit der Browser nicht auf eBay API warten muss
   .get('/ebay/listings', async (c) => {
+    // Cache
+    const CACHE_TTL = 10 * 60 * 1000; // 10 Minuten
+    const cacheKey = 'ebay_listings';
+    const cached = (globalThis as Record<string, unknown>)[cacheKey] as { ts: number; data: unknown } | undefined;
+    const forceRefresh = c.req.query('refresh') === '1';
+
+    let ebayListings;
+    if (!forceRefresh && cached && (Date.now() - cached.ts) < CACHE_TTL) {
+      console.log('[eBay listings] Serving from cache');
+      ebayListings = cached.data;
+    } else {
+      ebayListings = await getAllSellerListings();
+      (globalThis as Record<string, unknown>)[cacheKey] = { ts: Date.now(), data: ebayListings };
+    }
+
     try {
-      // eBay Listings von API holen
-      const ebayListings = await getAllSellerListings();
 
       // DB importieren
       const { db, schema } = await import('../db/index').then(async m => {
@@ -452,13 +466,20 @@ const app = new Hono()
         dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p])
       );
 
-      // Match zusammenführen
-      const merged = ebayListings.map(listing => ({
+      // Match zusammenführen — Response schlank halten (nur 1 Bild pro Listing)
+      const listings = ebayListings as import('./ebay').EbaySellerListing[];
+      const merged = listings.map(listing => ({
         ...listing,
         appProduct: dbByListingId.get(listing.itemId) ?? null,
       }));
 
-      return c.json({ listings: merged, total: merged.length }, 200);
+      // Paginierung via Query-Param ?page=1&limit=100
+      const pageParam = parseInt(c.req.query('page') ?? '1');
+      const limitParam = Math.min(parseInt(c.req.query('limit') ?? '335'), 335);
+      const start = (pageParam - 1) * limitParam;
+      const paginated = merged.slice(start, start + limitParam);
+
+      return c.json({ listings: paginated, total: merged.length, page: pageParam, pages: Math.ceil(merged.length / limitParam) }, 200);
     } catch (e) {
       console.error('[eBay listings]', e);
       return c.json({ error: String(e) }, 500);

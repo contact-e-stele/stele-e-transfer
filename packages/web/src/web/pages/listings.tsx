@@ -84,15 +84,34 @@ export default function Listings() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/ebay/listings");
-      if (!res.ok) {
-        const data = await res.json() as { error?: string };
-        throw new Error(data.error ?? `Fehler ${res.status}`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000); // 2 Min Timeout
+      let res: Response;
+      try {
+        res = await fetch("/api/ebay/listings", { signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
       }
-      const data = await res.json() as { listings: EbayListing[]; total: number };
-      setListings(data.listings);
+      if (!res.ok) {
+        let errMsg = `Fehler ${res.status}`;
+        try { const d = await res.json() as { error?: string }; errMsg = d.error ?? errMsg; } catch { /* ignore */ }
+        throw new Error(errMsg);
+      }
+      let text = "";
+      try {
+        text = await res.text();
+        const data = JSON.parse(text) as { listings: EbayListing[]; total: number };
+        setListings(data.listings);
+      } catch {
+        console.error("JSON parse error, raw:", text.slice(0, 200));
+        throw new Error("Antwort konnte nicht gelesen werden — bitte nochmal laden");
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ladefehler");
+      if (e instanceof Error && e.name === "AbortError") {
+        setError("Timeout — eBay braucht zu lange, bitte nochmal versuchen");
+      } else {
+        setError(e instanceof Error ? e.message : "Ladefehler");
+      }
     } finally {
       setLoading(false);
     }
