@@ -7,7 +7,7 @@ import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
-  TrendingDown, Save, Eye, EyeOff, X,
+  TrendingDown, Save, Eye, EyeOff, X, Plus, Trash2,
 } from "lucide-react";
 
 interface VariantPrice {
@@ -835,221 +835,54 @@ export default function Lieferanten() {
               </button>
             </div>
 
-            {/* Varianten-Auswahl + Bearbeiten */}
-            {editedVariants.length > 0 && (
-              <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "#7C3AED", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Package size={18} color="#fff" />
-                  </div>
-                  <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Varianten</span>
-                  <span style={{ fontSize: 11, color: "#94A3B8", marginLeft: "auto" }}>
-                    {editedVariants.reduce((a, g) => a + (selectedVariants[g.name] ?? []).length, 0)} ausgewählt
-                  </span>
+            {/* Varianten-Auswahl + Manuell */}
+            <div style={{ background:'#fff', borderRadius:20, padding:24, boxShadow:'0 2px 16px rgba(0,0,0,0.07)', marginBottom:14 }}>
+              {/* Header */}
+              <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:16}}>
+                <div style={{width:36,height:36,borderRadius:10,background:'#7C3AED',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <Package size={18} color='#fff'/>
                 </div>
-
-                {editedVariants.map((group, gi) => (
-                  <div key={gi} style={{ marginBottom: 18, borderBottom: gi < editedVariants.length - 1 ? "1px solid #F1F5F9" : "none", paddingBottom: gi < editedVariants.length - 1 ? 14 : 0 }}>
-                    {/* Gruppenname editierbar */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                      {editingVariant[`__group__${gi}`] !== undefined ? (
-                        <input
-                          autoFocus
-                          value={editingVariant[`__group__${gi}`]}
-                          onChange={e => setEditingVariant(prev => ({ ...prev, [`__group__${gi}`]: e.target.value }))}
-                          onBlur={() => {
-                            const newName = (editingVariant[`__group__${gi}`] ?? "").trim();
-                            if (newName && newName !== group.name) {
-                              setEditedVariants(prev => prev.map((g, i) => i === gi ? { ...g, name: newName } : g));
-                              setSelectedVariants(prev => {
-                                const vals = prev[group.name] ?? [];
-                                const next = { ...prev };
-                                delete next[group.name];
-                                next[newName] = vals;
-                                return next;
-                              });
-                            }
-                            setEditingVariant(prev => { const n = { ...prev }; delete n[`__group__${gi}`]; return n; });
-                          }}
-                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                          style={{
-                            fontSize: 12, fontWeight: 700, color: "#7C3AED",
-                            border: "none", borderBottom: "2px solid #7C3AED",
-                            background: "transparent", outline: "none",
-                            textTransform: "uppercase", letterSpacing: 0.5, padding: "2px 4px",
-                          }}
-                        />
-                      ) : (
-                        <>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                            {group.name}
-                          </span>
-                          <button
-                            title="Gruppenname bearbeiten"
-                            onClick={() => setEditingVariant(prev => ({ ...prev, [`__group__${gi}`]: group.name }))}
-                            style={{ background: "none", border: "none", cursor: "pointer", padding: "1px 4px", color: "#94A3B8", display: "flex", alignItems: "center" }}
-                          >
-                            ✏️
-                          </button>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Werte */}
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {group.values.map((val, vi) => {
-                        const editKey = `${gi}||${vi}`;
-                        const isEditing = editingVariant[editKey] !== undefined;
-                        const isSelected = (selectedVariants[group.name] ?? []).includes(val);
-
-                        return (
-                          <div key={vi} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                            {isEditing ? (
-                              <input
-                                autoFocus
-                                value={editingVariant[editKey]}
-                                onChange={e => setEditingVariant(prev => ({ ...prev, [editKey]: e.target.value }))}
-                                onBlur={() => {
-                                  const newVal = (editingVariant[editKey] ?? "").trim();
-                                  if (newVal && newVal !== val) {
-                                    setEditedVariants(prev => prev.map((g, i) => {
-                                      if (i !== gi) return g;
-                                      const newVals = [...g.values];
-                                      newVals[vi] = newVal;
-                                      return { ...g, values: newVals };
-                                    }));
-                                    // Update selectedVariants wenn der alte Wert selektiert war
-                                    setSelectedVariants(prev => {
-                                      const current = prev[group.name] ?? [];
-                                      if (current.includes(val)) {
-                                        return { ...prev, [group.name]: current.map(v => v === val ? newVal : v) };
-                                      }
-                                      return prev;
-                                    });
-                                  }
-                                  setEditingVariant(prev => { const n = { ...prev }; delete n[editKey]; return n; });
-                                }}
-                                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setEditingVariant(prev => { const n = { ...prev }; delete n[editKey]; return n; }); } }}
-                                style={{
-                                  padding: "5px 10px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-                                  border: "2px solid #7C3AED", outline: "none",
-                                  background: "#F5F3FF", color: "#7C3AED",
-                                  width: Math.max(60, val.length * 9) + "px",
-                                }}
-                              />
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  setSelectedVariants(prev => {
-                                    const current = prev[group.name] ?? [];
-                                    const next = isSelected
-                                      ? current.filter(v => v !== val)
-                                      : [...current, val];
-                                    return { ...prev, [group.name]: next };
-                                  });
-                                }}
-                                style={{
-                                  padding: "6px 28px 6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-                                  cursor: "pointer", transition: "all 0.15s",
-                                  background: isSelected ? "#7C3AED" : "#F1F5F9",
-                                  color: isSelected ? "#fff" : "#475569",
-                                  border: isSelected ? "2px solid #7C3AED" : "2px solid #E2E8F0",
-                                  position: "relative",
-                                }}
-                              >
-                                {val}
-                                {/* Edit-Icon rechts im Button */}
-                                <span
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    setEditingVariant(prev => ({ ...prev, [editKey]: val }));
-                                  }}
-                                  title="Bearbeiten"
-                                  style={{
-                                    position: "absolute", right: 5, top: "50%", transform: "translateY(-50%)",
-                                    fontSize: 10, cursor: "pointer", opacity: 0.5,
-                                    lineHeight: 1,
-                                  }}
-                                >
-                                  ✏️
-                                </span>
-                              </button>
-                            )}
-                            {/* X zum Löschen */}
-                            {!isEditing && (
-                              <button
-                                onClick={() => {
-                                  setEditedVariants(prev => prev.map((g, i) => {
-                                    if (i !== gi) return g;
-                                    return { ...g, values: g.values.filter((_, j) => j !== vi) };
-                                  }));
-                                  setSelectedVariants(prev => ({
-                                    ...prev,
-                                    [group.name]: (prev[group.name] ?? []).filter(v => v !== val),
-                                  }));
-                                }}
-                                title="Löschen"
-                                style={{
-                                  position: "absolute", top: -6, right: -6,
-                                  width: 16, height: 16, borderRadius: "50%",
-                                  background: "#EF4444", border: "none",
-                                  display: "flex", alignItems: "center", justifyContent: "center",
-                                  cursor: "pointer", padding: 0, zIndex: 5, fontSize: 9, color: "#fff",
-                                }}
-                              >
-                                ×
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {/* + neuen Wert hinzufügen */}
-                      <button
-                        onClick={() => {
-                          const newVal = "Neu";
-                          setEditedVariants(prev => prev.map((g, i) => i === gi ? { ...g, values: [...g.values, newVal] } : g));
-                          // Neuen Wert automatisch selektieren
-                          setSelectedVariants(prev => ({ ...prev, [group.name]: [...group.values, newVal] }));
-                          // Sofort in Edit-Modus
-                          setTimeout(() => {
-                            const newVi = group.values.length;
-                            setEditingVariant(prev => ({ ...prev, [`${gi}||${newVi}`]: newVal }));
-                          }, 50);
-                        }}
-                        style={{
-                          padding: "6px 12px", borderRadius: 8, fontSize: 13, fontWeight: 700,
-                          cursor: "pointer", background: "#F5F3FF",
-                          color: "#7C3AED", border: "2px dashed #C4B5FD",
-                        }}
-                      >
-                        + Neu
-                      </button>
-                    </div>
-
-                    <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                      <button
-                        onClick={() => setSelectedVariants(prev => ({ ...prev, [group.name]: [...group.values] }))}
-                        style={{ fontSize: 11, color: "#7C3AED", background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}
-                      >
-                        Alle wählen
-                      </button>
-                      <span style={{ color: "#CBD5E1", fontSize: 11 }}>|</span>
-                      <button
-                        onClick={() => setSelectedVariants(prev => ({ ...prev, [group.name]: [] }))}
-                        style={{ fontSize: 11, color: "#94A3B8", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-                      >
-                        Alle abwählen
-                      </button>
-                    </div>
-                  </div>
-                ))}
-
-                <div style={{ marginTop: 12, padding: "10px 14px", background: "#F5F3FF", borderRadius: 10, fontSize: 12, color: "#6D28D9" }}>
-                  💡 ✏️ = Wert bearbeiten · × = löschen · + Neu = hinzufügen
-                </div>
+                <span style={{fontWeight:700,fontSize:15,color:'#0F172A'}}>Varianten</span>
+                <button onClick={() => {
+                  const name = 'Variante';
+                  setEditedVariants(prev => [...prev, {name, values:[]}]);
+                  setSelectedVariants(prev => ({...prev, [name]:[]}));
+                }} style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:8,border:'2px dashed #C4B5FD',background:'#F5F3FF',color:'#7C3AED',fontWeight:700,fontSize:12,cursor:'pointer'}}>
+                  <Plus size={13}/> Gruppe hinzufügen
+                </button>
               </div>
-            )}
+              {editedVariants.length === 0 && (
+                <p style={{textAlign:'center',color:'#94A3B8',fontSize:13,padding:'16px 0'}}>Keine Varianten — oben Gruppe hinzufügen</p>
+              )}
+              {editedVariants.map((group, gi) => (
+                <div key={gi} style={{marginBottom:16,background:'#F8FAFC',borderRadius:12,padding:14}}>
+                  {/* Gruppenname + Löschen */}
+                  <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
+                    <input value={group.name} onChange={e => setEditedVariants(prev => prev.map((g,i)=>i===gi?{...g,name:e.target.value}:g))}
+                      style={{flex:1,padding:'7px 10px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,fontWeight:700,color:'#7C3AED',background:'#fff',outline:'none'}}/>
+                    <button onClick={() => setEditedVariants(prev => prev.filter((_,i)=>i!==gi))}
+                      style={{padding:'7px 10px',borderRadius:8,border:'none',background:'#FEF2F2',color:'#DC2626',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                      <Trash2 size={14}/>
+                    </button>
+                  </div>
+                  {/* Werte */}
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:8}}>
+                    {group.values.map((val,vi) => (
+                      <div key={vi} style={{display:'flex',alignItems:'center',gap:4,background:'#fff',borderRadius:8,border:'1.5px solid #E2E8F0',padding:'4px 8px'}}>
+                        <input value={val} onChange={e => setEditedVariants(prev => prev.map((g,i)=>{if(i!==gi)return g;const v=[...g.values];v[vi]=e.target.value;return{...g,values:v};}))}
+                          style={{border:'none',outline:'none',fontSize:13,fontWeight:600,color:'#0F172A',background:'transparent',width:Math.max(40,val.length*9)+'px'}}/>
+                        <button onClick={() => setEditedVariants(prev => prev.map((g,i)=>{if(i!==gi)return g;return{...g,values:g.values.filter((_,j)=>j!==vi)};}))}
+                          style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8',padding:0,display:'flex',alignItems:'center'}}><X size={11}/></button>
+                      </div>
+                    ))}
+                    <button onClick={() => setEditedVariants(prev => prev.map((g,i)=>i===gi?{...g,values:[...g.values,'']}:g))}
+                      style={{padding:'4px 10px',borderRadius:8,border:'2px dashed #C4B5FD',background:'#F5F3FF',color:'#7C3AED',fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                      + Wert
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
 
             {/* In DB speichern */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
