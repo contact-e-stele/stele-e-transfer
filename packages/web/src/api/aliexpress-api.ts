@@ -1,15 +1,15 @@
 // AliExpress DS API — offizielle Produktdaten über IOP OAuth
-// Signing: HMAC-SHA256, method als Prefix
+// Signing: MD5 (secret + sorted_params + secret), method als eigenes Feld
+// aliexpress.ds.product.get → title, images, price, specs, shipsFrom, variantPrices
 
 import * as crypto from 'crypto';
+import type { VariantPrice } from './aliexpress';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
 const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
 const IOP_ENDPOINT = 'https://api-sg.aliexpress.com/sync';
 
-// OAuth
 const OAUTH_URL = 'https://oauth.aliexpress.com/authorize';
-const TOKEN_URL = 'https://oauth.aliexpress.com/token';
 
 export interface AliProductData {
   title: string;
@@ -20,11 +20,16 @@ export interface AliProductData {
   shipsFromDE: boolean;
   shipsFrom: string;
   productId: string;
+  variants: Array<{ name: string; values: string[] }>;
+  variantPrices: VariantPrice[];
+  seller?: string;
 }
 
-function iopSign(secret: string, method: string, params: Record<string, string>): string {
-  const sortedStr = method + Object.keys(params).sort().map(k => `${k}${params[k]}`).join('');
-  return crypto.createHmac('sha256', secret).update(sortedStr, 'utf8').digest('hex').toUpperCase();
+// IOP MD5 Signing: secret + sorted(key+value pairs) + secret → MD5 → uppercase
+// Docs: https://openapi.aliexpress.com/doc/global-product-api.htm
+function iopSign(secret: string, params: Record<string, string>): string {
+  const sorted = Object.keys(params).sort().map(k => `${k}${params[k]}`).join('');
+  return crypto.createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
 }
 
 export function getAliExpressOAuthUrl(redirectUri: string, state: string): string {
@@ -45,18 +50,18 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
   refresh_token_valid_time: number;
 } | null> {
   try {
+    const method = 'aliexpress.solution.oauth.token.create';
     const params: Record<string, string> = {
       app_key: APP_KEY,
+      method,
       timestamp: String(Date.now()),
       format: 'json',
-      sign_method: 'sha256',
+      sign_method: 'md5',
       v: '2.0',
       code,
       redirect_uri: redirectUri,
     };
-    const method = 'aliexpress.solution.oauth.token.create';
-    params.sign = iopSign(APP_SECRET, method, params);
-    params.method = method;
+    params.sign = iopSign(APP_SECRET, params);
 
     const res = await fetch(IOP_ENDPOINT, {
       method: 'POST',
@@ -83,17 +88,17 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
 
 export async function refreshAliToken(refreshToken: string): Promise<{ access_token: string; expires_in: number } | null> {
   try {
+    const method = 'aliexpress.solution.oauth.token.refresh';
     const params: Record<string, string> = {
       app_key: APP_KEY,
+      method,
       timestamp: String(Date.now()),
       format: 'json',
-      sign_method: 'sha256',
+      sign_method: 'md5',
       v: '2.0',
       refresh_token: refreshToken,
     };
-    const method = 'aliexpress.solution.oauth.token.refresh';
-    params.sign = iopSign(APP_SECRET, method, params);
-    params.method = method;
+    params.sign = iopSign(APP_SECRET, params);
 
     const res = await fetch(IOP_ENDPOINT, {
       method: 'POST',
@@ -112,22 +117,83 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
   }
 }
 
+// ── SKU / Varianten-Parser ─────────────────────────────────────────────────────
+// aliexpress.ds.product.get gibt ae_item_sku_info_dtos zurück mit Varianten + Preisen
+// Struktur: { sku_id, sku_price, sku_available_stock, ae_sku_property_dtos: { ae_sku_property: [{property_name, property_name_value}] } }
+
+interface RawSku {
+  sku_id?: string | number;
+  id?: string | number;
+  sku_price?: string;
+  offer_sale_price?: string;
+  sku_available_stock?: number;
+  ae_sku_property_dtos?: {
+    ae_sku_property?: Array<{
+      property_name?: string;
+      property_name_value?: string;
+      sku_property_name?: string;
+      sku_property_value?: string;
+    }>;
+  };
+}
+
+function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[]; variants: Array<{ name: string; values: string[] }> } {
+  const variantPrices: VariantPrice[] = [];
+  const variantGroups: Record<string, Set<string>> = {};
+
+  for (const sku of skuList) {
+    const skuId = String(sku.sku_id || sku.id || '');
+    const priceStr = sku.sku_price || sku.offer_sale_price || '0';
+    const price = parseFloat(priceStr.replace(/[^\d.]/g, ''));
+    if (!price || price <= 0) continue;
+
+    // Parse Attribute
+    const attrs: Record<string, string> = {};
+    const skuProps = sku.ae_sku_property_dtos?.ae_sku_property || [];
+    for (const prop of skuProps) {
+      const name = prop.property_name || prop.sku_property_name || '';
+      const value = prop.property_name_value || prop.sku_property_value || '';
+      if (name && value) {
+        attrs[name] = value;
+        if (!variantGroups[name]) variantGroups[name] = new Set();
+        variantGroups[name].add(value);
+      }
+    }
+
+    variantPrices.push({
+      skuId,
+      attrs,
+      price,
+      stock: sku.sku_available_stock,
+    });
+  }
+
+  const variants = Object.entries(variantGroups).map(([name, values]) => ({
+    name,
+    values: [...values],
+  }));
+
+  console.log(`[AliExpress API] ${variantPrices.length} Varianten gefunden, ${variants.length} Gruppen`);
+  return { variantPrices, variants };
+}
+
+// ── Hauptfunktion ──────────────────────────────────────────────────────────────
 export async function getAliProductByApi(productId: string, accessToken: string): Promise<AliProductData | null> {
   try {
+    const method = 'aliexpress.ds.product.get';
     const params: Record<string, string> = {
       app_key: APP_KEY,
+      method,
       timestamp: String(Date.now()),
       format: 'json',
-      sign_method: 'sha256',
+      sign_method: 'md5',
       v: '2.0',
       access_token: accessToken,
       product_id: productId,
       local_country: 'DE',
       local_language: 'de',
     };
-    const method = 'aliexpress.ds.product.get';
-    params.sign = iopSign(APP_SECRET, method, params);
-    params.method = method;
+    params.sign = iopSign(APP_SECRET, params);
 
     const res = await fetch(IOP_ENDPOINT, {
       method: 'POST',
@@ -136,62 +202,87 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       signal: AbortSignal.timeout(30000),
     });
     const data = await res.json() as Record<string, unknown>;
+
+    // Log raw response (truncated) for debugging
+    console.log('[AliExpress API] Raw response:', JSON.stringify(data).slice(0, 500));
+
     const resp = data['aliexpress_ds_product_get_response'] as Record<string, unknown> | undefined;
     if (!resp || resp.result_code !== '200') {
-      console.error('[AliExpress API] Error:', JSON.stringify(data).slice(0, 300));
+      console.error('[AliExpress API] Error:', JSON.stringify(data).slice(0, 400));
       return null;
     }
     const result = resp.result as Record<string, unknown>;
 
-    // Extract product info
-    const subject = result.subject as string || '';
-    const imageUrls = ((result.image_urls as string) || '').split(';').filter(Boolean);
-    const skuList = result.sku_list as { ae_sku_property_dtos?: unknown; sku_price?: string }[] | undefined;
-    
-    // Price: get lowest sku price
+    // ── Titel ──────────────────────────────────────────────────────────────────
+    const subject = (result.subject as string || '').trim();
+    if (!subject) { console.error('[AliExpress API] Kein Titel'); return null; }
+
+    // ── Bilder ─────────────────────────────────────────────────────────────────
+    const imageUrls = ((result.image_urls as string) || '').split(';').filter(Boolean).slice(0, 10);
+
+    // ── SKU / Varianten-Preise ─────────────────────────────────────────────────
+    // Mögliche Feldnamen je nach API-Version
+    const rawSkuContainer = (
+      (result.ae_item_sku_info_dtos as { ae_item_sku_info_d_t_o?: RawSku[] } | undefined)?.ae_item_sku_info_d_t_o ||
+      (result.sku_list as RawSku[] | undefined) ||
+      []
+    );
+
+    const { variantPrices, variants } = parseVariantPrices(rawSkuContainer);
+
+    // ── Preis (Minimum aller Varianten) ───────────────────────────────────────
     let price = '';
-    if (skuList && skuList.length > 0) {
-      const prices = skuList.map(s => parseFloat(s.sku_price || '0')).filter(p => p > 0);
-      if (prices.length > 0) {
-        const minPrice = Math.min(...prices);
-        price = `${minPrice.toFixed(2)} €`;
+    if (variantPrices.length > 0) {
+      const minPrice = Math.min(...variantPrices.map(v => v.price));
+      price = `${minPrice.toFixed(2)} €`;
+    } else {
+      // Fallback auf direktes Preisfeld
+      const minSkuPrice = result.min_sku_price as string || result.min_order_amount as string || '';
+      if (minSkuPrice) {
+        const p = parseFloat(minSkuPrice.replace(/[^\d.]/g, ''));
+        if (p > 0) price = `${p.toFixed(2)} €`;
       }
     }
-    if (!price) {
-      const priceModule = result.price_module as Record<string, unknown> | undefined;
-      const priceVal = priceModule?.formated_min_price as string || priceModule?.min_activity_amount?.toString() || '';
-      if (priceVal) price = priceVal.replace('US $', '').trim() + ' $';
-    }
 
-    // Ship from country
-    const logisticsModule = result.logistics_info_list as { ship_from_country?: string }[] | undefined;
-    const shipFrom = logisticsModule?.[0]?.ship_from_country || 'China';
-    const euCountries = ['germany', 'spain', 'france', 'italy', 'poland', 'netherlands', 'de', 'es', 'fr', 'it', 'pl', 'nl', 'czech', 'austria', 'belgium'];
-    const shipsFromDE = euCountries.some(c => shipFrom.toLowerCase().includes(c));
+    // ── Versandland ────────────────────────────────────────────────────────────
+    const logisticsList = result.logistics_info_list as { ae_logistics_info?: Array<{ ship_from_country?: string }> } | undefined;
+    const shipFrom = logisticsList?.ae_logistics_info?.[0]?.ship_from_country
+      || (result.ship_to_country as string)
+      || 'China';
+    const EU_COUNTRIES = ['germany', 'spain', 'france', 'italy', 'poland', 'netherlands', 'de', 'es', 'fr', 'it', 'pl', 'nl', 'czech', 'austria', 'belgium', 'luxembourg', 'sweden'];
+    const shipsFromDE = EU_COUNTRIES.some(c => shipFrom.toLowerCase().includes(c));
 
-    // Specs from properties
+    // ── Eigenschaften / Specs ─────────────────────────────────────────────────
     const specs: Record<string, string> = {};
-    const props = result.props as { name?: string; value?: string }[] | undefined;
-    if (props) {
-      for (const p of props.slice(0, 15)) {
-        if (p.name && p.value) specs[p.name] = p.value;
-      }
+    const propContainer = result.ae_item_properties as { ae_item_property?: Array<{ property_name?: string; property_value?: string }> } | undefined;
+    const props = propContainer?.ae_item_property || [];
+    for (const p of props.slice(0, 15)) {
+      if (p.property_name && p.property_value) specs[p.property_name] = p.property_value;
     }
 
+    // ── Beschreibung ───────────────────────────────────────────────────────────
     const desc = (result.detail_desc as string || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000);
+
+    // ── Seller ─────────────────────────────────────────────────────────────────
+    const seller = (result.store_info as { store_name?: string } | undefined)?.store_name || '';
+
+    console.log(`[AliExpress API] OK: "${subject.slice(0, 50)}" | Preis: ${price} | Varianten: ${variantPrices.length} | shipsFrom: ${shipFrom}`);
 
     return {
       title: subject,
-      images: imageUrls.slice(0, 10),
+      images: imageUrls,
       price,
       description: desc,
       specs,
       shipsFrom: shipFrom,
       shipsFromDE,
       productId,
+      variants,
+      variantPrices,
+      seller,
     };
   } catch (e) {
-    console.error('[AliExpress API] getAliProduct error:', e);
+    console.error('[AliExpress API] getAliProductByApi error:', e);
     return null;
   }
 }

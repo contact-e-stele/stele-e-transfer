@@ -44,3 +44,13 @@ export const priceHistory = sqliteTable('price_history', {
 });
 
 export type PriceHistory = typeof priceHistory.$inferSelect;
+
+// ─── App-Einstellungen (Key-Value Store) ──────────────────────────────────────
+// Wird u.a. für AliExpress OAuth Tokens genutzt
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+});
+
+export type AppSetting = typeof appSettings.$inferSelect;

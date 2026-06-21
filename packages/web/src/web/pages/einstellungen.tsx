@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 interface AliStatus {
   connected: boolean;
   appKey: string;
+  source?: string;
 }
 
 export default function Einstellungen() {
@@ -67,7 +68,9 @@ export default function Einstellungen() {
             ) : (
               <>
                 <span style={badge(aliStatus?.connected ?? false)}>
-                  {aliStatus?.connected ? "✅ Verbunden" : "❌ Nicht verbunden"}
+                  {aliStatus?.connected
+                    ? `✅ Verbunden${aliStatus.source === 'db' ? ' (DB-Token)' : aliStatus.source === 'env' ? ' (Env-Token)' : ''}`
+                    : "❌ Nicht verbunden"}
                 </span>
                 <button
                   onClick={handleAliConnect}
@@ -131,7 +134,7 @@ export default function Einstellungen() {
       <div style={{ ...card, background: "#F8FAFC" }}>
         <div style={{ fontSize: 13, color: "#64748B" }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v0.5</span>
+            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v0.6</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span>Shop</span><span style={{ fontWeight: 600, color: "#1E293B" }}>stele-e-transfer (eBay DE)</span>

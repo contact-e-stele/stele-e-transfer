@@ -32,6 +32,12 @@ const migrations = [
     source TEXT DEFAULT 'aliexpress',
     checked_at TEXT DEFAULT (datetime('now'))
   )`,
+  // App-Einstellungen (Key-Value) — für OAuth Tokens etc.
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`,
 ];
 
 export async function runMigrations() {

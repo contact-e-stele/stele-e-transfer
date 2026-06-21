@@ -7,6 +7,38 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 
+// ─── AliExpress Token Helper ──────────────────────────────────────────────────
+// Liest Token aus DB (app_settings) oder Env-Variable als Fallback
+async function getAliAccessToken(): Promise<string | null> {
+  // 1) Env-Variable (gesetzt in Render oder lokal)
+  if (process.env.ALIEXPRESS_ACCESS_TOKEN) return process.env.ALIEXPRESS_ACCESS_TOKEN;
+  // 2) DB (gespeichert nach OAuth-Login)
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_access_token')).get();
+    if (row?.value) return row.value;
+  } catch { /* DB nicht verfügbar */ }
+  return null;
+}
+
+async function saveAliTokens(accessToken: string, refreshToken: string, expiresAt: number): Promise<void> {
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const now = new Date().toISOString();
+    await db.insert(appSettings).values({ key: 'aliexpress_access_token', value: accessToken, updatedAt: now })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: accessToken, updatedAt: now } });
+    await db.insert(appSettings).values({ key: 'aliexpress_refresh_token', value: refreshToken, updatedAt: now })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: refreshToken, updatedAt: now } });
+    await db.insert(appSettings).values({ key: 'aliexpress_token_expires', value: String(expiresAt), updatedAt: now })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: String(expiresAt), updatedAt: now } });
+    console.log('[AliExpress OAuth] Tokens in DB gespeichert ✓');
+  } catch (e) {
+    console.error('[AliExpress OAuth] Token-Speicherung in DB fehlgeschlagen:', e);
+  }
+}
+
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(title: string, specs: Record<string, string>): string {
   const specsEntries = Object.entries(specs).slice(0, 5);
@@ -546,21 +578,26 @@ const app = new Hono()
     if (!tokens) return c.json({ error: 'Token-Exchange fehlgeschlagen' }, 500);
     console.log('[AliExpress OAuth] Access token obtained:', tokens.access_token.slice(0, 20) + '...');
     console.log('[AliExpress OAuth] Refresh token:', tokens.refresh_token.slice(0, 20) + '...');
-    // In Produktion: Tokens in DB/Env speichern
+    // Token automatisch in DB speichern
+    await saveAliTokens(tokens.access_token, tokens.refresh_token, tokens.expires_in);
     return c.html(`
-      <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff">
-        <h2 style="color:#C9A227">✅ AliExpress verbunden!</h2>
-        <p>Access Token erhalten. Bitte diese Werte in den Render-Umgebungsvariablen speichern:</p>
-        <p><b>ALIEXPRESS_ACCESS_TOKEN=</b><code style="color:#C9A227">${tokens.access_token}</code></p>
-        <p><b>ALIEXPRESS_REFRESH_TOKEN=</b><code style="color:#C9A227">${tokens.refresh_token}</code></p>
-        <p><small>Expires: ${tokens.expires_in}</small></p>
-        <p><a href="/" style="color:#C9A227">Zurück zur App</a></p>
+      <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff;font-family:Montserrat,sans-serif">
+        <h2 style="color:#C9A227">✅ AliExpress erfolgreich verbunden!</h2>
+        <p>Token wurde automatisch gespeichert. Die App nutzt ab sofort die offizielle AliExpress API für alle Produktdaten inkl. Varianten-Preise.</p>
+        <hr style="border-color:#333;margin:20px 0">
+        <p style="color:#888;font-size:12px">Falls nötig, kannst du den Token auch manuell in Render hinterlegen:</p>
+        <p style="font-size:11px"><b>ALIEXPRESS_ACCESS_TOKEN=</b><code style="color:#C9A227;word-break:break-all">${tokens.access_token}</code></p>
+        <p style="font-size:11px"><b>ALIEXPRESS_REFRESH_TOKEN=</b><code style="color:#C9A227;word-break:break-all">${tokens.refresh_token}</code></p>
+        <br>
+        <a href="/" style="color:#C9A227;font-weight:bold">→ Zurück zur App</a>
       </body></html>
     `);
   })
   .get('/aliexpress/status', async (c) => {
-    const hasToken = !!(process.env.ALIEXPRESS_ACCESS_TOKEN);
-    return c.json({ connected: hasToken, appKey: '535690' });
+    const token = await getAliAccessToken();
+    const hasToken = !!token;
+    const source = process.env.ALIEXPRESS_ACCESS_TOKEN ? 'env' : hasToken ? 'db' : 'none';
+    return c.json({ connected: hasToken, appKey: '535690', source });
   })
 
   // ─── Produkt speichern ───────────────────────────────────────────────────────
@@ -815,14 +852,27 @@ const app = new Hono()
     const productId = productIdMatch?.[1];
 
     // Try AliExpress DS API first (official, reliable) if access_token available
-    const accessToken = process.env.ALIEXPRESS_ACCESS_TOKEN;
+    const accessToken = await getAliAccessToken();
     if (accessToken && productId) {
       console.log(`[AliExpress] Using DS API for product ${productId}`);
       const apiData = await getAliProductByApi(productId, accessToken);
       if (apiData) {
         const aiDesc = await generateDescriptionWithGemini(apiData.title, apiData.specs ?? {}, apiData.description ?? '');
         if (aiDesc) apiData.description = aiDesc;
-        return c.json(apiData, 200);
+        // Rückgabe als ScrapedProduct-kompatibles Objekt (variantPrices + variants inkludiert)
+        return c.json({
+          title: apiData.title,
+          images: apiData.images,
+          price: apiData.price,
+          description: apiData.description,
+          specs: apiData.specs,
+          shipsFrom: apiData.shipsFrom,
+          shipsFromDE: apiData.shipsFromDE,
+          variants: apiData.variants ?? [],
+          variantPrices: apiData.variantPrices ?? [],
+          seller: apiData.seller ?? '',
+          _source: 'ds-api',
+        }, 200);
       }
       console.log('[AliExpress] DS API failed, falling back to scraper...');
     }
@@ -1221,7 +1271,7 @@ const app = new Hono()
         }
         try {
           // Try DS API first if token available
-          const accessToken = process.env.ALIEXPRESS_ACCESS_TOKEN;
+          const accessToken = await getAliAccessToken();
           const productIdMatch = url.match(/\/item\/(\d+)\.html/) || url.match(/[?&]id=(\d+)/);
           const productId = productIdMatch?.[1];
           let scraped = null;
