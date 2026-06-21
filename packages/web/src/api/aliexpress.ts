@@ -17,6 +17,14 @@ const DIRECT_HEADERS = {
   'Cookie': 'aep_usuc_f=site=glo&c_tp=EUR&region=DE&b_locale=de_DE',
 };
 
+export interface VariantPrice {
+  skuId: string;
+  attrs: Record<string, string>; // z.B. {Farbe: "Rot", Größe: "M"}
+  price: number;
+  originalPrice?: number;
+  stock?: number;
+}
+
 export interface ScrapedProduct {
   title: string;
   images: string[];
@@ -26,6 +34,7 @@ export interface ScrapedProduct {
   shipsFromDE: boolean;   // true wenn Versand aus DE/EU erkannt
   shipsFrom: string;      // z.B. "Germany", "Spain", "China"
   variants: Array<{ name: string; values: string[] }>; // z.B. [{name:"Farbe", values:["Schwarz","Blau"]}]
+  variantPrices: VariantPrice[]; // alle Varianten mit SKU-ID + Preis
   seller?: string;        // AliExpress Shopname für GPSR
 }
 
@@ -102,44 +111,71 @@ function extractPrice(html: string): string {
 }
 
 // Holt ALLE Preise aus dem HTML und gibt den günstigsten zurück (Varianten-aware)
+function extractSteleData(html: string): { minPrice: string; variantPrices: VariantPrice[] } {
+  const steelPricesMatch = html.match(/data-stele-prices="([^"]+)"/);
+  if (!steelPricesMatch) return { minPrice: '', variantPrices: [] };
+
+  try {
+    const decoded = steelPricesMatch[1].replace(/&quot;/g, '"');
+    const data = JSON.parse(decoded) as {
+      minAmount?: number;
+      maxAmount?: number;
+      minActivityAmount?: number;
+      maxActivityAmount?: number;
+      skuPrices?: string[];
+      variants?: Array<{ skuId: string; attrs: Record<string, string>; price: string; originalPrice?: string; stock?: number }>;
+    };
+
+    // Varianten mit Attributen
+    const variantPrices: VariantPrice[] = [];
+    if (data.variants && data.variants.length > 0) {
+      for (const v of data.variants) {
+        const price = parseFloat(v.price);
+        if (!isNaN(price) && price > 0.5) {
+          variantPrices.push({
+            skuId: String(v.skuId),
+            attrs: v.attrs ?? {},
+            price,
+            originalPrice: v.originalPrice ? parseFloat(v.originalPrice) : undefined,
+            stock: v.stock,
+          });
+        }
+      }
+      console.log(`[AliExpress] extractSteleData: ${variantPrices.length} Varianten mit Preisen`);
+    }
+
+    // Günstigsten Preis bestimmen
+    const allPrices: number[] = variantPrices.map(v => v.price);
+    if (data.skuPrices && allPrices.length === 0) {
+      for (const p of data.skuPrices) {
+        const num = parseFloat(p);
+        if (!isNaN(num) && num > 0.5 && num < 10000) allPrices.push(num);
+      }
+    }
+    if (allPrices.length === 0) {
+      const fallback = data.minActivityAmount ?? data.minAmount;
+      if (fallback && fallback > 0.5) allPrices.push(fallback);
+    }
+
+    const minPrice = allPrices.length > 0
+      ? `${Math.min(...allPrices).toFixed(2)} €`
+      : '';
+
+    return { minPrice, variantPrices };
+  } catch (e) {
+    console.log('[AliExpress] data-stele-prices parse error:', e);
+    return { minPrice: '', variantPrices: [] };
+  }
+}
+
 function extractMinPrice(html: string): string {
   const allPrices: number[] = [];
 
-  // ── Priorität 1: JS-injiziertes data-stele-prices Attribut (via ScrapingAnt JS-Snippet) ──
-  const steelPricesMatch = html.match(/data-stele-prices="([^"]+)"/);
-  if (steelPricesMatch) {
-    try {
-      const decoded = steelPricesMatch[1].replace(/&quot;/g, '"');
-      const data = JSON.parse(decoded) as {
-        minAmount?: number;
-        maxAmount?: number;
-        minActivityAmount?: number;
-        maxActivityAmount?: number;
-        skuPrices?: string[];
-      };
-
-      // Alle SKU-Preise (Varianten)
-      if (data.skuPrices && data.skuPrices.length > 0) {
-        for (const p of data.skuPrices) {
-          const num = parseFloat(p);
-          if (!isNaN(num) && num > 0.5 && num < 10000) allPrices.push(num);
-        }
-      }
-
-      // Fallback auf minActivityAmount oder minAmount
-      if (allPrices.length === 0) {
-        const fallback = data.minActivityAmount ?? data.minAmount;
-        if (fallback && fallback > 0.5) allPrices.push(fallback);
-      }
-
-      if (allPrices.length > 0) {
-        const minPrice = Math.min(...allPrices);
-        console.log(`[AliExpress] extractMinPrice (JS-injected): ${allPrices.length} Varianten-Preise, günstigster: ${minPrice.toFixed(2)}€`);
-        return `${minPrice.toFixed(2)} €`;
-      }
-    } catch (e) {
-      console.log('[AliExpress] data-stele-prices parse error:', e);
-    }
+  // ── Priorität 1: JS-injiziertes data-stele-prices Attribut ──
+  const { minPrice } = extractSteleData(html);
+  if (minPrice) {
+    console.log(`[AliExpress] extractMinPrice (JS-injected): ${minPrice}`);
+    return minPrice;
   }
 
   // ── Priorität 2: Alle Preismuster aus HTML (Fallback) ──
@@ -280,19 +316,50 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
 
   // Attempt 2: ScrapingAnt with browser=true (JS-rendered, residential DE proxy)
   if (SCRAPINGANT_API_KEY) {
-    // JS-Snippet: injiziert window.runParams als __STELE_DATA__ in die Seite
-    // Damit können wir ALLE Varianten-Preise mit 1 Scrape auslesen
+    // JS-Snippet: liest window.runParams aus → alle Varianten + Preise + Attribute
     const jsSnippet = encodeURIComponent(`
       try {
         var rp = window.runParams || window._dida_config_ || {};
         var pm = (rp.data && rp.data.priceModule) || rp.priceModule || {};
-        var skuMap = (rp.data && rp.data.skuModule && rp.data.skuModule.skuPriceList) || [];
+        var skuModule = (rp.data && rp.data.skuModule) || {};
+        var skuMap = skuModule.skuPriceList || [];
+        var propList = skuModule.productSKUPropertyList || [];
+
+        // Alle Varianten mit Attributen + Preis
+        var variants = skuMap.map(function(s) {
+          var attrs = {};
+          var propIds = (s.skuAttr || '').split(';');
+          propIds.forEach(function(pair) {
+            var parts = pair.split(':');
+            var propId = parts[0];
+            var valId = parts[1] ? parts[1].split('#')[0] : null;
+            if (!propId || !valId) return;
+            propList.forEach(function(prop) {
+              if (String(prop.skuPropertyId) === String(propId)) {
+                (prop.skuPropertyValues || []).forEach(function(val) {
+                  if (String(val.propertyValueId) === String(valId)) {
+                    attrs[prop.skuPropertyName] = val.propertyValueDisplayName || val.propertyValueName;
+                  }
+                });
+              }
+            });
+          });
+          return {
+            skuId: s.skuId,
+            attrs: attrs,
+            price: s.skuVal && s.skuVal.actSkuCalPrice,
+            originalPrice: s.skuVal && s.skuVal.skuCalPrice,
+            stock: s.skuVal && s.skuVal.availQuantity
+          };
+        }).filter(function(v) { return v.price; });
+
         var result = {
           minAmount: pm.minAmount && pm.minAmount.value,
           maxAmount: pm.maxAmount && pm.maxAmount.value,
           minActivityAmount: pm.minActivityAmount && pm.minActivityAmount.value,
           maxActivityAmount: pm.maxActivityAmount && pm.maxActivityAmount.value,
-          skuPrices: skuMap.map(function(s){ return s.skuVal && s.skuVal.actSkuCalPrice; }).filter(Boolean)
+          skuPrices: skuMap.map(function(s){ return s.skuVal && s.skuVal.actSkuCalPrice; }).filter(Boolean),
+          variants: variants
         };
         document.body.setAttribute('data-stele-prices', JSON.stringify(result));
       } catch(e) {}
@@ -518,8 +585,9 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   }
 
   const images = extractImages(html, jsonLdImages);
-  // extractMinPrice holt günstigsten Preis aus allen Varianten (1 Scrape reicht)
-  const price = jsonLdPrice || extractMinPrice(html);
+  // extractSteleData holt Preis + alle Varianten mit SKU-IDs aus JS-Snippet
+  const { minPrice: steleMinPrice, variantPrices } = extractSteleData(html);
+  const price = jsonLdPrice || steleMinPrice || extractMinPrice(html);
   const specs = extractSpecs(html);
   const { shipsFrom, shipsFromDE } = extractShipsFrom(html);
 
@@ -585,5 +653,9 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
 
   if (seller) console.log(`[AliExpress] seller="${seller}"`);
 
-  return { title, images, price, description, specs, shipsFrom, shipsFromDE, variants, seller };
+  if (variantPrices.length > 0) {
+    console.log(`[AliExpress] variantPrices: ${variantPrices.length} Varianten, z.B.: ${JSON.stringify(variantPrices[0])}`);
+  }
+
+  return { title, images, price, description, specs, shipsFrom, shipsFromDE, variants, variantPrices, seller };
 }

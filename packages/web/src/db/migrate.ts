@@ -23,6 +23,7 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN price_changed INTEGER DEFAULT 0`,
   `ALTER TABLE products ADD COLUMN specs TEXT`,
   `ALTER TABLE products ADD COLUMN aliexpress_item_id TEXT`,
+  `ALTER TABLE products ADD COLUMN variant_prices TEXT`,
   // Preis-Historie Tabelle
   `CREATE TABLE IF NOT EXISTS price_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -14,6 +14,14 @@ interface VariantGroup {
   values: string[];
 }
 
+interface VariantPrice {
+  skuId: string;
+  attrs: Record<string, string>;
+  price: number;
+  originalPrice?: number;
+  stock?: number;
+}
+
 interface Product {
   id: number;
   asin: string;
@@ -24,6 +32,7 @@ interface Product {
   htmlDescription: string;
   bullets: string[];
   variants: string[] | VariantGroup[];
+  variantPrices: string | null; // JSON
   images: string | null;
   buyPrice: number | null;
   sellPrice: number | null;
@@ -312,6 +321,7 @@ export default function Produkte() {
   const [titleInput, setTitleInput] = useState("");
   const [variantenModal, setVariantenModal] = useState<Product | null>(null);
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null);
+  const [expandedVariants, setExpandedVariants] = useState<Set<number>>(new Set());
 
   const load = async () => {
     setLoading(true);
@@ -738,6 +748,46 @@ export default function Produkte() {
                   <Trash2 size={11} /> Löschen
                 </button>
               </div>
+
+              {/* Varianten-Preise aufklappen */}
+              {(() => {
+                const vp: VariantPrice[] = (() => { try { return JSON.parse(product.variantPrices ?? '[]'); } catch { return []; } })();
+                if (vp.length === 0) return null;
+                const isOpen = expandedVariants.has(product.id);
+                const minP = Math.min(...vp.map(v => v.price));
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    <button onClick={() => setExpandedVariants(prev => { const s = new Set(prev); s.has(product.id) ? s.delete(product.id) : s.add(product.id); return s; })}
+                      style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"6px 10px", borderRadius:8, background:"#FFF8DC", color:"#92400E", fontSize:11, fontWeight:700, border:"1px solid #FDE68A", cursor:"pointer", fontFamily:"inherit" }}>
+                      <TrendingUp size={11} /> {vp.length} Varianten-Preise {isOpen ? "▲" : "▼"}
+                    </button>
+                    {isOpen && (
+                      <div style={{ marginTop:8, border:"1px solid #E2E8F0", borderRadius:10, overflow:"hidden" }}>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                          <thead>
+                            <tr style={{ background:"#F8FAFC" }}>
+                              {Object.keys(vp[0]?.attrs ?? {}).map(k => <th key={k} style={{ padding:"6px 10px", textAlign:"left", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>{k}</th>)}
+                              <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Preis</th>
+                              <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Lager</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {vp.map((v, i) => (
+                              <tr key={v.skuId} style={{ background: v.price === minP ? "#F0FDF4" : i%2===0 ? "#fff" : "#FAFAFA" }}>
+                                {Object.values(v.attrs).map((val, j) => <td key={j} style={{ padding:"6px 10px", color:"#0F172A", borderBottom:"1px solid #F1F5F9" }}>{String(val)}</td>)}
+                                <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color: v.price === minP ? "#16A34A" : "#1D4ED8", borderBottom:"1px solid #F1F5F9" }}>
+                                  {v.price.toFixed(2)} € {v.price === minP && <span style={{fontSize:9,color:"#16A34A"}}> ▼ günstigst</span>}
+                                </td>
+                                <td style={{ padding:"6px 10px", textAlign:"right", color:"#64748B", borderBottom:"1px solid #F1F5F9" }}>{v.stock ?? "–"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {listingResult?.id === product.id && (
                 <div style={{

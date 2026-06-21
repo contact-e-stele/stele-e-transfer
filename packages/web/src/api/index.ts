@@ -574,6 +574,7 @@ const app = new Hono()
         htmlDescription: string;
         bullets: string[];
         variants: string[];
+        variantPrices?: Array<{ skuId: string; attrs: Record<string, string>; price: number; originalPrice?: number; stock?: number }>;
         description?: string;
         images?: string[];
         buyPrice?: number | null;
@@ -600,6 +601,7 @@ const app = new Hono()
           htmlDescription: body.htmlDescription,
           bullets: JSON.stringify(body.bullets),
           variants: JSON.stringify(body.variants),
+          variantPrices: body.variantPrices ? JSON.stringify(body.variantPrices) : undefined,
           images: body.images ? JSON.stringify(body.images) : undefined,
           buyPrice: body.buyPrice ?? undefined,
           sellPrice: body.sellPrice ?? undefined,
@@ -618,6 +620,7 @@ const app = new Hono()
         htmlDescription: body.htmlDescription,
         bullets: JSON.stringify(body.bullets),
         variants: JSON.stringify(body.variants),
+        variantPrices: body.variantPrices ? JSON.stringify(body.variantPrices) : null,
         description: body.description ?? '',
         images: body.images ? JSON.stringify(body.images) : '[]',
         buyPrice: body.buyPrice ?? null,

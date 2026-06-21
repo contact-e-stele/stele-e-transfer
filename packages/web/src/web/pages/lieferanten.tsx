@@ -10,6 +10,14 @@ import {
   TrendingDown, Save, Eye, EyeOff, X,
 } from "lucide-react";
 
+interface VariantPrice {
+  skuId: string;
+  attrs: Record<string, string>;
+  price: number;
+  originalPrice?: number;
+  stock?: number;
+}
+
 interface ScrapedProduct {
   title: string;
   images: string[];
@@ -17,6 +25,7 @@ interface ScrapedProduct {
   description: string;
   specs: Record<string, string>;
   variants?: Array<{ name: string; values: string[] }>;
+  variantPrices?: VariantPrice[];
   shipsFrom?: string;
   shipsFromDE?: boolean;
 }
@@ -241,6 +250,7 @@ export default function Lieferanten() {
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: editedVariants
             .filter(g => g.values.length > 0),
+          variantPrices: product.variantPrices ?? [],
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,
