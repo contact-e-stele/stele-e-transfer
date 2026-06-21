@@ -134,7 +134,7 @@ export default function Einstellungen() {
       <div style={{ ...card, background: "#F8FAFC" }}>
         <div style={{ fontSize: 13, color: "#64748B" }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v0.6</span>
+            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v0.7</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span>Shop</span><span style={{ fontWeight: 600, color: "#1E293B" }}>stele-e-transfer (eBay DE)</span>

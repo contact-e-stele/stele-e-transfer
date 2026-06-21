@@ -76,7 +76,7 @@ function TabNav() {
         <span style={{
           fontSize: 9, fontWeight: 700, color: "#94A3B8", letterSpacing: 1,
           fontFamily: "monospace",
-        }}>v0.5</span>
+        }}>v0.7</span>
       </div>
     </div>
   );

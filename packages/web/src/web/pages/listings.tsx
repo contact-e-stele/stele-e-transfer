@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   ShoppingCart, RefreshCw, Loader, CheckCircle, XCircle,
   ExternalLink, Package, TrendingUp, StopCircle, Link2, Link2Off,
-  Search, Filter, Edit2, Check, X,
+  Search, Filter, Edit2, Check, X, Calendar, Clock, Tag,
 } from "lucide-react";
 
 interface EbayListing {
@@ -32,6 +32,28 @@ interface EbayListing {
 }
 
 type FilterMode = "all" | "linked" | "unlinked";
+
+// Datum formatieren: "12.06.2025"
+function fmtDate(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+// Verbleibende Tage bis Ablauf
+function daysLeft(iso: string): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return Math.max(0, Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
+
+function daysLeftColor(days: number): string {
+  if (days <= 3) return "#DC2626";
+  if (days <= 7) return "#F59E0B";
+  return "#16A34A";
+}
 
 export default function Listings() {
   const [listings, setListings] = useState<EbayListing[]>([]);
@@ -301,11 +323,12 @@ export default function Listings() {
                     )}
 
                     {/* Verkäufe */}
-                    {listing.quantitySold > 0 && (
-                      <span style={{ fontSize: 11, color: "#0EA5E9", fontWeight: 600 }}>
-                        {listing.quantitySold}× verkauft
-                      </span>
-                    )}
+                    <span style={{
+                      fontSize: 11, color: listing.quantitySold > 0 ? "#0EA5E9" : "#CBD5E1", fontWeight: 600,
+                      display: "inline-flex", alignItems: "center", gap: 3,
+                    }}>
+                      <Tag size={10} /> {listing.quantitySold}× verkauft
+                    </span>
 
                     {/* Verknüpfungs-Badge */}
                     <span style={{
@@ -317,6 +340,31 @@ export default function Listings() {
                       {isLinked ? <><Link2 size={9} /> In App</> : <><Link2Off size={9} /> Nicht verknüpft</>}
                     </span>
                   </div>
+
+                  {/* Datum-Info Zeile */}
+                  {(() => {
+                    const left = daysLeft(listing.endTime);
+                    return (
+                      <div style={{ display: "flex", gap: 12, marginTop: 6, flexWrap: "wrap" }}>
+                        {listing.startTime && (
+                          <span style={{ fontSize: 10, color: "#94A3B8", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                            <Calendar size={9} color="#94A3B8" />
+                            Eingestellt: {fmtDate(listing.startTime)}
+                          </span>
+                        )}
+                        {listing.endTime && left !== null && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: daysLeftColor(left), display: "inline-flex", alignItems: "center", gap: 3 }}>
+                            <Clock size={9} color={daysLeftColor(left)} />
+                            {left === 0
+                              ? "Läuft heute ab!"
+                              : left === 1
+                              ? "Läuft morgen ab"
+                              : `Läuft ab: ${fmtDate(listing.endTime)} (${left}T)`}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Item ID */}
                   <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 4 }}>ID: {listing.itemId}</div>
