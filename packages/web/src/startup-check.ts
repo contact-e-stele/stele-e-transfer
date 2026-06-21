@@ -46,6 +46,7 @@ export async function runStartupCheck(): Promise<void> {
     checkEnv('EBAY_APP_ID',               'eBay App ID'),
     checkEnv('EBAY_CLIENT_SECRET',        'eBay Secret'),
     checkEnv('SCRAPINGANT_API_KEY',       'ScrapingAnt'),
+    checkEnv('SCRAPERAPI_KEY',            'ScraperAPI'),
     checkEnv('RESEND_API_KEY',            'Resend'),
   ];
 
