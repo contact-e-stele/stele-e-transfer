@@ -2,7 +2,7 @@
  * Lieferanten-Tab — AliExpress URL scrapen → Produkt importieren
  * Ersetzt AutoDS komplett für den Import-Schritt
  */
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
@@ -115,7 +115,12 @@ function parsePrice(raw: string): number {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Lieferanten() {
-  const [urlInput, setUrlInput] = useState("");
+  const [urlInput, setUrlInput] = useState(() => {
+    // URL aus Suche-Tab übernehmen (sessionStorage)
+    const saved = sessionStorage.getItem("import_url") || "";
+    if (saved) sessionStorage.removeItem("import_url");
+    return saved;
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"url" | "manual">("url");

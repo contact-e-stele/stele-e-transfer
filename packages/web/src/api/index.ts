@@ -1333,6 +1333,115 @@ const app = new Hono()
     }
   });
 
+// ─── AliExpress DS Produkt-Suche ─────────────────────────────────────────────
+// aliexpress.ds.product.search — sucht Produkte mit EU/DE-Lager Filter
+app.get('/aliexpress/search', async (c) => {
+  const keyword = c.req.query('keyword') || '';
+  const page = parseInt(c.req.query('page') || '1');
+  const shipFrom = c.req.query('ship_from') || 'DE';
+  const sort = c.req.query('sort') || 'LAST_VOLUME_DESC';
+
+  if (!keyword.trim()) return c.json({ error: 'keyword fehlt' }, 400);
+
+  const accessToken = await getAliAccessToken();
+  if (!accessToken) {
+    return c.json({
+      status: 'no_token',
+      message: 'AliExpress OAuth noch nicht verbunden.',
+      results: [],
+      total: 0,
+    }, 200);
+  }
+
+  try {
+    const APP_KEY_VAL = process.env.ALIEXPRESS_APP_KEY || '535690';
+    const APP_SECRET_VAL = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
+    const IOP_EP = 'https://api-sg.aliexpress.com/sync';
+
+    const { createHash } = await import('node:crypto');
+    function signSearch(secret: string, params: Record<string, string>): string {
+      const sorted = Object.keys(params).sort().map(k => `${k}${params[k]}`).join('');
+      return createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
+    }
+
+    const params: Record<string, string> = {
+      app_key: APP_KEY_VAL,
+      method: 'aliexpress.ds.product.search',
+      timestamp: String(Date.now()),
+      format: 'json',
+      sign_method: 'md5',
+      v: '2.0',
+      access_token: accessToken,
+      keywords: keyword,
+      page_no: String(page),
+      page_size: '20',
+      ship_from_country: shipFrom,
+      target_currency: 'EUR',
+      target_language: 'DE',
+      sort,
+    };
+    params.sign = signSearch(APP_SECRET_VAL, params);
+
+    const res = await fetch(IOP_EP, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    console.log('[AliExpress Search] Raw:', JSON.stringify(data).slice(0, 400));
+
+    const resp = (data['aliexpress_ds_product_search_response'] as Record<string, unknown> | undefined);
+    if (!resp) {
+      return c.json({ status: 'api_error', message: JSON.stringify(data).slice(0, 200), results: [], total: 0 }, 200);
+    }
+
+    const searchResult = resp.result as Record<string, unknown> | undefined;
+    if (!searchResult) {
+      return c.json({ status: 'no_result', results: [], total: 0 }, 200);
+    }
+
+    const total = Number(searchResult.total_record_count || 0);
+    const items = (searchResult.products as { product?: unknown[] } | undefined)?.product || [];
+
+    const EU_COUNTRIES = ['germany','de','spain','es','france','fr','italy','it','poland','pl','netherlands','nl','czech','at','austria','be','belgium','lu','ch','switzerland'];
+
+    interface RawSearchProduct {
+      product_id?: string | number;
+      product_title?: string;
+      product_main_image_url?: string;
+      sale_price?: string;
+      target_sale_price?: string;
+      original_price?: string;
+      product_detail_url?: string;
+      evaluate_rate?: string | number;
+      product_small_image_urls?: { string?: string[] };
+      lastest_volume?: string | number;
+      ship_from_country?: string;
+    }
+
+    const results = (items as RawSearchProduct[]).map((p) => {
+      const id = String(p.product_id || '');
+      const title = (p.product_title || '').trim();
+      const image = p.product_main_image_url || (p.product_small_image_urls?.string?.[0]) || '';
+      const priceRaw = p.sale_price || p.target_sale_price || p.original_price || '0';
+      const price = parseFloat(priceRaw.replace(/[^\d.]/g, ''));
+      const shipFrom = p.ship_from_country || '';
+      const isEU = EU_COUNTRIES.some(c => shipFrom.toLowerCase().includes(c));
+      const rating = Number(p.evaluate_rate || 0);
+      const sold = Number(p.lastest_volume || 0);
+      const url = p.product_detail_url || `https://www.aliexpress.com/item/${id}.html`;
+      return { id, title, image, price, shipFrom, isEU, rating, sold, url };
+    });
+
+    return c.json({ status: 'ok', results, total, page, keyword }, 200);
+  } catch (e) {
+    console.error('[AliExpress Search] Fehler:', e);
+    return c.json({ status: 'error', message: String(e), results: [], total: 0 }, 500);
+  }
+});
+
+
 app.get('/backup/test', async (c) => {
   const { runBackup } = await import('./backup');
   const result = await runBackup();
