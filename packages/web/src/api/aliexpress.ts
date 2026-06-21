@@ -628,19 +628,33 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
   let browser;
   try {
     const { chromium: playwrightChromium } = await import('playwright-core');
-    const sparticuzChromium = (await import('@sparticuz/chromium')).default;
 
-    // setupLambdaEnvironment sets LD_LIBRARY_PATH etc. for headless Chrome
-    const { setupLambdaEnvironment } = await import('@sparticuz/chromium');
-    setupLambdaEnvironment();
+    // Prefer explicit path (e.g. system Chrome or playwright-installed chromium)
+    // PLAYWRIGHT_CHROMIUM_PATH env overrides all
+    let execPath: string | undefined = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined;
+    const launchArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
 
-    const execPath = await sparticuzChromium.executablePath();
-    console.log(`[Playwright] Using chromium: ${execPath}`);
+    if (!execPath) {
+      // Try @sparticuz/chromium (serverless-compatible, self-extracting)
+      try {
+        const sparticuzMod = await import('@sparticuz/chromium');
+        const { setupLambdaEnvironment } = sparticuzMod;
+        const sparticuzChromium = sparticuzMod.default;
+        setupLambdaEnvironment();
+        execPath = await sparticuzChromium.executablePath();
+        launchArgs.push(...sparticuzChromium.args);
+      } catch {
+        // sparticuz not available — use playwright's default (if installed)
+        execPath = undefined;
+      }
+    }
+
+    console.log(`[Playwright] Using chromium: ${execPath || 'playwright default'}`);
 
     browser = await playwrightChromium.launch({
       headless: true,
       executablePath: execPath,
-      args: [...sparticuzChromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      args: launchArgs,
     });
     const context = await browser.newContext({
       locale: 'de-DE',

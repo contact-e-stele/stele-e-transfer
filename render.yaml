@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: stele-e-transfer
+    env: node
+    plan: free
+    buildCommand: cd packages/web && bun install && bun run build
+    startCommand: cd packages/web && bun src/server.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
