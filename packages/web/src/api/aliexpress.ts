@@ -1,10 +1,11 @@
-// AliExpress URL Scraper — JSON-LD based, no API key needed
-// Uses ScrapingAnt (residential proxies) to bypass AliExpress bot-detection
-// Fallback: ScraperAPI (premium mode)
+// AliExpress URL Scraper — Playwright (mtop API intercept) + HTML fallbacks
+// Primary: Playwright intercepts mtop.aliexpress.pdp.pc.query → all variant prices
+// Fallback: ScrapingAnt → ScraperAPI → ZenRows (HTML-based, no variant prices)
 
 const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY || '';
 const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY || '';
 const ZENROWS_API_KEY = process.env.ZENROWS_API_KEY || '';
+const PLAYWRIGHT_AVAILABLE = process.env.PLAYWRIGHT_AVAILABLE === 'true';
 
 const DIRECT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -619,6 +620,152 @@ function extractVariants(html: string): Array<{ name: string; values: string[] }
   return variants;
 }
 
+// ── Playwright Scraper ────────────────────────────────────────────────────────
+// Intercepts mtop.aliexpress.pdp.pc.query to get all variant prices accurately
+// Uses @sparticuz/chromium for serverless-compatible headless Chrome
+async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null> {
+  if (!PLAYWRIGHT_AVAILABLE) return null;
+  let browser;
+  try {
+    const { chromium: playwrightChromium } = await import('playwright-core');
+    const sparticuzChromium = (await import('@sparticuz/chromium')).default;
+
+    // setupLambdaEnvironment sets LD_LIBRARY_PATH etc. for headless Chrome
+    const { setupLambdaEnvironment } = await import('@sparticuz/chromium');
+    setupLambdaEnvironment();
+
+    const execPath = await sparticuzChromium.executablePath();
+    console.log(`[Playwright] Using chromium: ${execPath}`);
+
+    browser = await playwrightChromium.launch({
+      headless: true,
+      executablePath: execPath,
+      args: [...sparticuzChromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+    const context = await browser.newContext({
+      locale: 'de-DE',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+    const page = await context.newPage();
+
+    let mtopResult: Record<string, unknown> | null = null;
+
+    page.on('response', async (response) => {
+      if (response.url().includes('mtop.aliexpress.pdp.pc.query') && !mtopResult) {
+        try {
+          const body = await response.body();
+          const text = body.toString('utf-8');
+          const m = text.match(/^[^(]+\(([\s\S]*)\)$/);
+          const raw = m ? m[1] : text;
+          const parsed = JSON.parse(raw) as { data?: { result?: Record<string, unknown> } };
+          const r = parsed?.data?.result;
+          if (r && Object.keys(r).length > 5) {
+            mtopResult = r;
+          }
+        } catch { /* ignore */ }
+      }
+    });
+
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+    await page.waitForTimeout(2000);
+
+    if (!mtopResult) {
+      console.log('[Playwright] No mtop data captured');
+      await browser.close();
+      return null;
+    }
+
+    const result = mtopResult;
+
+    // Title
+    const globalData = (result.GLOBAL_DATA as { globalData?: { subject?: string } } | undefined)?.globalData;
+    const rawTitle = globalData?.subject || '';
+    if (!rawTitle) { await browser.close(); return null; }
+    const title = cleanTitle(rawTitle);
+
+    // Images
+    const headerImg = result.HEADER_IMAGE_PC as { imgList?: string[]; imagePathList?: string[] } | undefined;
+    const images = (headerImg?.imgList || headerImg?.imagePathList || []).slice(0, 10);
+
+    // Variant prices via SKU + PRICE modules
+    const skuModule = result.SKU as { skuPaths?: Array<{ skuIdStr?: string; skuAttr?: string; skuStock?: number }> } | undefined;
+    const skuPaths = skuModule?.skuPaths || [];
+    const priceModule = result.PRICE as { skuIdStrPriceInfoMap?: Record<string, { salePriceString?: string; originalPrice?: { value?: number } }> } | undefined;
+    const priceMap = priceModule?.skuIdStrPriceInfoMap || {};
+
+    const variantPrices: VariantPrice[] = skuPaths.map(sku => {
+      const skuId = sku.skuIdStr || '';
+      const priceInfo = priceMap[skuId] || {};
+      const salePriceStr = priceInfo.salePriceString || '';
+      const priceMatch = salePriceStr.match(/[\d.]+/);
+      const priceUSD = priceMatch ? parseFloat(priceMatch[0]) : 0;
+      const priceEUR = Math.round(priceUSD * 0.92 * 100) / 100;
+
+      // Parse attrs: "14:691#100pcs;200007763:201336101"
+      const attrs: Record<string, string> = {};
+      (sku.skuAttr || '').split(';').forEach(part => {
+        const hashIdx = part.indexOf('#');
+        if (hashIdx >= 0) {
+          const propId = part.split(':')[0] || 'attr';
+          attrs[propId] = part.substring(hashIdx + 1);
+        }
+      });
+
+      return {
+        skuId,
+        attrs,
+        price: priceEUR,
+        originalPrice: priceInfo.originalPrice?.value,
+        stock: sku.skuStock,
+      };
+    }).filter(v => v.price > 0);
+
+    const minPriceEUR = variantPrices.length > 0 ? Math.min(...variantPrices.map(v => v.price)) : 0;
+    const price = minPriceEUR > 0 ? `${minPriceEUR.toFixed(2)} €` : '';
+
+    // Ships from
+    const shippingMod = result.SHIPPING as { deliveryLayoutInfo?: Array<{ bizData?: { shipFrom?: string } }> } | undefined;
+    let shipsFrom = 'China';
+    for (const d of shippingMod?.deliveryLayoutInfo || []) {
+      if (d.bizData?.shipFrom) { shipsFrom = d.bizData.shipFrom; break; }
+    }
+    const EU_COUNTRIES = ['germany', 'spain', 'france', 'italy', 'poland', 'netherlands', 'czech', 'austria', 'belgium', 'sweden', 'denmark'];
+    const shipsFromDE = EU_COUNTRIES.some(c => shipsFrom.toLowerCase().includes(c));
+
+    // Specs
+    const propMod = result.PRODUCT_PROP_PC as { showedProps?: Array<{ attrName: string; attrValue: string }> } | undefined;
+    const specs: Record<string, string> = {};
+    (propMod?.showedProps || []).slice(0, 15).forEach(p => { if (p.attrName && p.attrValue) specs[p.attrName] = p.attrValue; });
+
+    // Seller
+    const shopCard = result.SHOP_CARD_PC as { storeTitle?: string } | undefined;
+    const seller = shopCard?.storeTitle || '';
+
+    // Variants from skuPaths
+    const variantGroups: Record<string, Set<string>> = {};
+    for (const sku of skuPaths) {
+      (sku.skuAttr || '').split(';').forEach(part => {
+        const hashIdx = part.indexOf('#');
+        if (hashIdx >= 0) {
+          const propId = part.split(':')[0];
+          const val = part.substring(hashIdx + 1);
+          if (!variantGroups[propId]) variantGroups[propId] = new Set();
+          variantGroups[propId].add(val);
+        }
+      });
+    }
+    const variants = Object.entries(variantGroups).map(([name, values]) => ({ name, values: [...values] }));
+
+    await browser.close();
+    console.log(`[Playwright] OK: title="${title.slice(0, 50)}" variants=${variantPrices.length} shipsFrom="${shipsFrom}"`);
+    return { title, images, price, description: '', specs, shipsFrom, shipsFromDE, variants, variantPrices, seller };
+  } catch (e) {
+    console.error('[Playwright] Error:', e);
+    try { await browser?.close(); } catch { /* ignore */ }
+    return null;
+  }
+}
+
 export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
   // Normalize URL — always use de.aliexpress.com + clean URL (strip tracking params)
   let fetchUrl = url;
@@ -639,6 +786,18 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   } catch { /* keep original */ }
 
   console.log(`[AliExpress] Starting scrape: ${fetchUrl}`);
+
+  // ── Try Playwright first (intercepts mtop API → full variant prices) ────────
+  if (PLAYWRIGHT_AVAILABLE) {
+    console.log('[AliExpress] Trying Playwright scraper...');
+    const playwrightResult = await scrapeWithPlaywright(fetchUrl);
+    if (playwrightResult) {
+      // If description is empty, try to fill from HTML fallback
+      // But variantPrices are complete — return early
+      return playwrightResult;
+    }
+    console.log('[AliExpress] Playwright failed, falling back to HTML scrapers...');
+  }
 
   const html = await fetchWithFallbacks(fetchUrl);
   if (!html) {

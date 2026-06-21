@@ -15,13 +15,16 @@
     "db:push": "bun --env-file=../../.env drizzle-kit push",
     "db:studio": "bun --env-file=../../.env drizzle-kit studio",
     "start": "bun src/server.ts",
-    "backup:run": "bun src/api/backup-cron.ts"
+    "backup:run": "bun src/api/backup-cron.ts",
+    "install:playwright": "bunx playwright install chromium --with-deps",
+    "build:render": "bun install && bunx playwright install chromium --with-deps && bun run build"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@libsql/client": "^0.17.2",
     "@radix-ui/react-slot": "^1.2.4",
     "@runablehq/website-runtime": "^0.10.0",
+    "@sparticuz/chromium": "^149.0.0",
     "@tanstack/react-query": "^5.100.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -29,6 +32,7 @@
     "hono": "^4.12.10",
     "lucide-react": "^0.577.0",
     "nodemailer": "^8.0.10",
+    "playwright-core": "^1.61.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-hook-form": "^7.71.2",
