@@ -680,7 +680,12 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
       }
     });
 
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+    try {
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+    } catch (gotoErr) {
+      console.log(`[Playwright] goto error (non-fatal): ${gotoErr}`);
+      // Page may still have loaded enough — continue if mtopResult captured
+    }
     await page.waitForTimeout(2000);
 
     if (!mtopResult) {

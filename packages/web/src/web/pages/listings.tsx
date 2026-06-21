@@ -71,6 +71,15 @@ export default function Listings() {
   // Ending
   const [endingId, setEndingId] = useState<string | null>(null);
 
+  // Erweiterte Filter
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [minSold, setMinSold] = useState("");
+  const [maxSold, setMaxSold] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc">("default");
+  const [expiryFilter, setExpiryFilter] = useState<"all" | "3days" | "7days" | "30days">("all");
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -139,15 +148,39 @@ export default function Listings() {
   };
 
   // Filter + Suche
-  const filtered = listings.filter(l => {
-    if (filter === "linked" && !l.appProduct) return false;
-    if (filter === "unlinked" && l.appProduct) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return l.title.toLowerCase().includes(q) || l.itemId.includes(q);
-    }
-    return true;
-  });
+  const filtered = listings
+    .filter(l => {
+      if (filter === "linked" && !l.appProduct) return false;
+      if (filter === "unlinked" && l.appProduct) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        if (!l.title.toLowerCase().includes(q) && !l.itemId.includes(q)) return false;
+      }
+      if (minSold !== "" && l.quantitySold < parseInt(minSold)) return false;
+      if (maxSold !== "" && l.quantitySold > parseInt(maxSold)) return false;
+      if (minPrice !== "" && l.currentPrice < parseFloat(minPrice.replace(",", "."))) return false;
+      if (maxPrice !== "" && l.currentPrice > parseFloat(maxPrice.replace(",", "."))) return false;
+      if (expiryFilter !== "all" && l.endTime) {
+        const left = daysLeft(l.endTime);
+        if (left === null) return true;
+        if (expiryFilter === "3days" && left > 3) return false;
+        if (expiryFilter === "7days" && left > 7) return false;
+        if (expiryFilter === "30days" && left > 30) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === "sold_desc") return b.quantitySold - a.quantitySold;
+      if (sortBy === "sold_asc") return a.quantitySold - b.quantitySold;
+      if (sortBy === "price_desc") return b.currentPrice - a.currentPrice;
+      if (sortBy === "price_asc") return a.currentPrice - b.currentPrice;
+      if (sortBy === "end_asc") {
+        const da = a.endTime ? new Date(a.endTime).getTime() : Infinity;
+        const db_ = b.endTime ? new Date(b.endTime).getTime() : Infinity;
+        return da - db_;
+      }
+      return 0;
+    });
 
   const linked = listings.filter(l => l.appProduct).length;
   const unlinked = listings.filter(l => !l.appProduct).length;
@@ -195,7 +228,7 @@ export default function Listings() {
         </div>
 
         {/* Suche + Filter */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <div style={{ flex: 1, position: "relative" }}>
             <Search size={14} color="#94A3B8" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
             <input
@@ -221,8 +254,92 @@ export default function Listings() {
                 {f === "all" ? "Alle" : f === "linked" ? "Verknüpft" : "Ohne App"}
               </button>
             ))}
+            <button onClick={() => setShowAdvanced(v => !v)} style={{
+              padding: "8px 12px", borderRadius: 10, fontSize: 12, fontWeight: 600,
+              border: "1.5px solid " + (showAdvanced ? "#6366F1" : "#E2E8F0"),
+              background: showAdvanced ? "#EEF2FF" : "#fff",
+              color: showAdvanced ? "#4338CA" : "#64748B",
+              cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4,
+            }}>
+              <Filter size={12} /> Filter
+            </button>
           </div>
         </div>
+
+        {/* Erweiterte Filter Panel */}
+        {showAdvanced && (
+          <div style={{ background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              {/* Verkäufe */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Verkäufe</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="number" placeholder="Min" value={minSold} onChange={e => setMinSold(e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, outline: "none", fontFamily: "inherit" }} />
+                  <span style={{ color: "#CBD5E1", fontSize: 11 }}>–</span>
+                  <input type="number" placeholder="Max" value={maxSold} onChange={e => setMaxSold(e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, outline: "none", fontFamily: "inherit" }} />
+                </div>
+              </div>
+              {/* Preis */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Preis (€)</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="number" placeholder="Min" value={minPrice} onChange={e => setMinPrice(e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, outline: "none", fontFamily: "inherit" }} />
+                  <span style={{ color: "#CBD5E1", fontSize: 11 }}>–</span>
+                  <input type="number" placeholder="Max" value={maxPrice} onChange={e => setMaxPrice(e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, outline: "none", fontFamily: "inherit" }} />
+                </div>
+              </div>
+              {/* Ablauf */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Läuft ab in</div>
+                <select value={expiryFilter} onChange={e => setExpiryFilter(e.target.value as typeof expiryFilter)}
+                  style={{ width: "100%", padding: "7px 10px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0F172A" }}>
+                  <option value="all">Alle</option>
+                  <option value="3days">≤ 3 Tage</option>
+                  <option value="7days">≤ 7 Tage</option>
+                  <option value="30days">≤ 30 Tage</option>
+                </select>
+              </div>
+            </div>
+            {/* Sortierung */}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Sortierung</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {([
+                  ["default", "Standard"],
+                  ["sold_desc", "Meistverkauft"],
+                  ["sold_asc", "Wenigst verkauft"],
+                  ["price_desc", "Preis ↓"],
+                  ["price_asc", "Preis ↑"],
+                  ["end_asc", "Läuft bald ab"],
+                ] as [string, string][]).map(([val, label]) => (
+                  <button key={val} onClick={() => setSortBy(val as typeof sortBy)} style={{
+                    padding: "5px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600,
+                    border: "1.5px solid " + (sortBy === val ? "#FFD700" : "#E2E8F0"),
+                    background: sortBy === val ? "#FFF8DC" : "#F8FAFC",
+                    color: sortBy === val ? "#92400E" : "#64748B",
+                    cursor: "pointer", fontFamily: "inherit",
+                  }}>{label}</button>
+                ))}
+              </div>
+            </div>
+            {/* Reset */}
+            <button onClick={() => { setMinSold(""); setMaxSold(""); setMinPrice(""); setMaxPrice(""); setSortBy("default"); setExpiryFilter("all"); }}
+              style={{ marginTop: 10, fontSize: 11, color: "#DC2626", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>
+              ✕ Filter zurücksetzen
+            </button>
+          </div>
+        )}
+
+        {/* Ergebnisse Info */}
+        {filtered.length !== listings.length && (
+          <div style={{ fontSize: 12, color: "#64748B", marginBottom: 8 }}>
+            {filtered.length} von {listings.length} Listings
+          </div>
+        )}
 
         {error && (
           <div style={{ background: "#FEF2F2", borderRadius: 12, padding: "14px 18px", marginBottom: 16, color: "#DC2626", fontSize: 13, fontWeight: 600 }}>
