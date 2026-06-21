@@ -43,9 +43,16 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
     try {
       checked++;
-      const data = await scrapeAliExpressUrl(url);
+
+      // Retry-Logik: 2 Versuche bei Scrape-Fehler
+      let data = await scrapeAliExpressUrl(url);
       if (!data) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: Scrape fehlgeschlagen`);
+        console.log(`[PriceMonitor] Produkt ${product.id}: Scrape fehlgeschlagen — Retry in 5s...`);
+        await new Promise(r => setTimeout(r, 5000));
+        data = await scrapeAliExpressUrl(url);
+      }
+      if (!data) {
+        console.log(`[PriceMonitor] Produkt ${product.id}: Scrape nach Retry fehlgeschlagen — übersprungen`);
         errors++;
         continue;
       }

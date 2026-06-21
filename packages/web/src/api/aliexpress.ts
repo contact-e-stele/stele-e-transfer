@@ -101,6 +101,39 @@ function extractPrice(html: string): string {
   return '';
 }
 
+// Holt ALLE Preise aus dem HTML und gibt den günstigsten zurück (Varianten-aware)
+function extractMinPrice(html: string): string {
+  const allPrices: number[] = [];
+
+  // Alle Preismuster auf einmal — holt alle matches nicht nur ersten
+  const patterns = [
+    /"actPrice"\s*:\s*([\d.]+)/g,
+    /"salePrice"\s*:\s*([\d.]+)/g,
+    /"minPrice"\s*:\s*([\d.]+)/g,
+    /"minActivityAmount"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/g,
+    /"skuVal"\s*:\s*\{[^}]*"actSkuCalPrice"\s*:\s*"([\d.]+)"/g,
+    /"actSkuCalPrice"\s*:\s*"([\d.]+)"/g,
+    /"skuAmount"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/g,
+  ];
+
+  for (const pattern of patterns) {
+    const matches = [...html.matchAll(pattern)];
+    for (const m of matches) {
+      const num = parseFloat(m[1]);
+      if (!isNaN(num) && num > 0.5 && num < 10000) allPrices.push(num);
+    }
+  }
+
+  if (allPrices.length > 0) {
+    const minPrice = Math.min(...allPrices);
+    console.log(`[AliExpress] extractMinPrice: ${allPrices.length} Preise gefunden, günstigster: ${minPrice.toFixed(2)}€`);
+    return `${minPrice.toFixed(2)} €`;
+  }
+
+  // Fallback auf normale extractPrice
+  return extractPrice(html);
+}
+
 function extractShipsFrom(html: string): { shipsFrom: string; shipsFromDE: boolean } {
   // AliExpress speichert "shipFromCountry" oder "ship from" im HTML/JSON
   const patterns = [
@@ -431,7 +464,8 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   }
 
   const images = extractImages(html, jsonLdImages);
-  const price = jsonLdPrice || extractPrice(html);
+  // extractMinPrice holt günstigsten Preis aus allen Varianten (1 Scrape reicht)
+  const price = jsonLdPrice || extractMinPrice(html);
   const specs = extractSpecs(html);
   const { shipsFrom, shipsFromDE } = extractShipsFrom(html);
 
