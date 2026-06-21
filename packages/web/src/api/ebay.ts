@@ -170,6 +170,7 @@ export interface EbayListingInput {
   variantGroups?: VariantGroup[]; // für Variation Listings
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
+  adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
 }
 
 // Gender-Wert → eBay "Abteilung" normalisieren
@@ -474,6 +475,13 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
     },
+    // Promoted Listings Standard (Anzeigentarif)
+    ...(input.adRate && input.adRate > 0 ? {
+      promotedListingsBid: {
+        bidPercentage: String(input.adRate.toFixed(1)),
+        adRateStrategy: 'FIXED',
+      },
+    } : {}),
     // Artikelmerkmale direkt im Offer (eBay verlangt es beim publishOffer)
     itemSpecifics: {
       aspects: Object.fromEntries(Object.entries(aspects).map(([k, v]) => [k, v])),

@@ -15,6 +15,11 @@ async function checkDB(): Promise<CheckResult> {
   try {
     // DB erreichbar?
     await db.run(sql`SELECT 1`);
+    // Auto-Migration: ad_rate Spalte
+    try {
+      await db.run(sql`ALTER TABLE products ADD COLUMN ad_rate REAL DEFAULT 5`);
+      console.log('[Migration] ad_rate Spalte hinzugefügt');
+    } catch { /* existiert bereits */ }
     // specs Spalte vorhanden?
     const cols = await db.run(sql`PRAGMA table_info(products)`);
     const rows = (cols as { rows?: Array<[number, string, string]> }).rows ?? [];

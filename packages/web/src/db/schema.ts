@@ -24,6 +24,7 @@ export const products = sqliteTable('products', {
   priceChanged: integer('price_changed', { mode: 'boolean' }).default(false),
   // eBay
   specs: text('specs'),                        // JSON object — AliExpress Produktspezifikationen
+  adRate: real('ad_rate').default(5),            // Anzeigentarif % (Promoted Listings)
   ebayListingId: text('ebay_listing_id'),
   ebayStatus: text('ebay_status').default('none'), // none | listed | error
   ebayError: text('ebay_error'),
