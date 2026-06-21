@@ -4,6 +4,7 @@
 
 const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY || '';
 const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY || '';
+const ZENROWS_API_KEY = process.env.ZENROWS_API_KEY || '';
 
 const DIRECT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -484,6 +485,34 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
         }
       } catch (e) {
         console.log(`[AliExpress] ScraperAPI failed:`, e);
+      }
+    }
+  }
+
+  // Attempt 5: ZenRows (JS rendering + premium proxies)
+  if (ZENROWS_API_KEY) {
+    const zenAttempts = [
+      `https://api.zenrows.com/v1/?apikey=${ZENROWS_API_KEY}&url=${encodeURIComponent(targetUrl)}&js_render=true&premium_proxy=true&proxy_country=de`,
+      `https://api.zenrows.com/v1/?apikey=${ZENROWS_API_KEY}&url=${encodeURIComponent(targetUrl)}&js_render=true&proxy_country=de`,
+    ];
+    for (const zenUrl of zenAttempts) {
+      try {
+        console.log(`[AliExpress] ZenRows attempt...`);
+        const res = await fetch(zenUrl, { signal: AbortSignal.timeout(60000) });
+        if (res.ok) {
+          const html = await res.text();
+          const hasProduct = html.includes('application/ld+json') || html.includes('og:title') || html.includes('pdp-info-main') || html.includes('productTitle') || html.includes('product-title');
+          if (html.length > 10000 && hasProduct) {
+            console.log(`[AliExpress] ZenRows OK (${html.length} chars)`);
+            return html;
+          }
+          console.log(`[AliExpress] ZenRows insufficient (${html.length} chars, hasProduct=${hasProduct})`);
+        } else {
+          const err = await res.text().catch(() => '');
+          console.log(`[AliExpress] ZenRows HTTP ${res.status}: ${err.slice(0, 200)}`);
+        }
+      } catch (e) {
+        console.log(`[AliExpress] ZenRows failed:`, e);
       }
     }
   }
