@@ -494,6 +494,7 @@ const app = new Hono()
         sellPrice: body.sellPrice ?? null,
         specs: body.specs ? JSON.stringify(body.specs) : null,
         ebayStatus: 'none',
+        aliexpressItemId: (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null,
       }).returning({ id: schema.products.id });
       return c.json({ id: result[0].id, created: true }, 201);
     } catch (e) {
