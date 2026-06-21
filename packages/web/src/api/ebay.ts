@@ -842,8 +842,8 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   <ActiveList>
     <Include>true</Include>
   </ActiveList>
-  <StartTimeFrom>2020-01-01T00:00:00.000Z</StartTimeFrom>
-  <StartTimeTo>${new Date().toISOString()}</StartTimeTo>
+  <EndTimeFrom>${new Date().toISOString()}</EndTimeFrom>
+  <EndTimeTo>${new Date(Date.now() + 120 * 24 * 60 * 60 * 1000).toISOString()}</EndTimeTo>
   <Pagination>
     <EntriesPerPage>${pageSize}</EntriesPerPage>
     <PageNumber>${page}</PageNumber>
