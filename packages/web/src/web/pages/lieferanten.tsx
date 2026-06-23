@@ -772,7 +772,27 @@ export default function Lieferanten() {
                   }} />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Verkauf eBay (€)</label>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", textTransform: "uppercase" }}>Verkauf eBay (€)</label>
+                    {einkauf > 0 && (
+                      <button
+                        onClick={() => {
+                          // Empfohlener Mindestpreis: (einkauf + 1.60) / (1 - (13+adRate)/100*1.19) + 0.45*1.19/(1-(13+adRate)/100*1.19)
+                          // Vereinfacht: (einkauf + 1.60 + 0.45*1.19) / (1 - (13+adRate)/100*1.19)
+                          const feeRate = (13 + adRate) / 100 * 1.19;
+                          const recommended = Math.ceil(((einkauf + 1.60 + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                          setEbayPrice(recommended.toFixed(2));
+                        }}
+                        style={{
+                          fontSize: 10, fontWeight: 700, color: "#16A34A", background: "#F0FDF4",
+                          border: "1px solid #BBF7D0", borderRadius: 6, padding: "2px 8px", cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        ≥1,60€ Gewinn →
+                      </button>
+                    )}
+                  </div>
                   <input type="number" step="0.01" placeholder="0.00" value={ebayPrice} onChange={e => setEbayPrice(e.target.value)} style={{
                     width: "100%", padding: "10px 12px", fontSize: 14, fontWeight: 600,
                     border: "2px solid #E2E8F0", borderRadius: 10, outline: "none",
