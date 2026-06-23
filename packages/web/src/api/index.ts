@@ -925,6 +925,7 @@ const app = new Hono()
           variants: apiData.variants ?? [],
           variantPrices: apiData.variantPrices ?? [],
           seller: apiData.seller ?? '',
+          gpsr: apiData.gpsr ?? null,
           _source: 'ds-api',
         }, 200);
       }

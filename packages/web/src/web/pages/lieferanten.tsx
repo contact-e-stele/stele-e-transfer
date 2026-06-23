@@ -231,7 +231,17 @@ export default function Lieferanten() {
       setResult({ title: t, html: h });
       setEditableTitle(t);
       setEditableHtml(h);
-      // seller = nur AliExpress Shop-Name, kein GPSR-Text → nicht in gpsrHersteller setzen
+      // GPSR auto-fill: wenn AliExpress GPSR-Daten liefert, direkt ins Textfeld setzen
+      if (data.gpsr && (data.gpsr.name || data.gpsr.email)) {
+        const lines: string[] = [];
+        if (data.gpsr.name)      lines.push(`Name: ${data.gpsr.name}`);
+        if (data.gpsr.address)   lines.push(`Adresse: ${data.gpsr.address}`);
+        if (data.gpsr.email)     lines.push(`E-Mail: ${data.gpsr.email}`);
+        if (data.gpsr.phone)     lines.push(`Telefon: ${data.gpsr.phone}`);
+        if (data.gpsr.productId) lines.push(`Produktkennzeichnung: ${data.gpsr.productId}`);
+        setGpsrHersteller(lines.join('\n'));
+      }
+      // (seller = nur AliExpress Shop-Name, kein GPSR-Text)
 
       // EU-Filter: shipsFrom prüfen und anzeigen
       if (data.shipsFrom) {
@@ -750,7 +760,15 @@ export default function Lieferanten() {
                 <div style={{ marginTop: 10, border: "1px solid #C9A227", borderRadius: 6, overflow: "hidden" }}>
                   {/* Header */}
                   <div style={{ background: "#1a1a1a", padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ color: "#C9A227", fontSize: 11, fontWeight: 700 }}>GPSR — Produktsicherheit</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ color: "#C9A227", fontSize: 11, fontWeight: 700 }}>GPSR — Produktsicherheit</span>
+                      {product?.gpsr?.name && (
+                        <span style={{
+                          background: "#1a3a1a", color: "#4caf50", border: "1px solid #2d5a2d",
+                          padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700
+                        }}>✓ Auto-befüllt</span>
+                      )}
+                    </div>
                     <div style={{ display: "flex", gap: 6 }}>
                       {/* Link zur AliExpress Produktseite → Compliance-Tab */}
                       {urlInput && urlInput.includes("aliexpress") && (
@@ -789,10 +807,16 @@ export default function Lieferanten() {
                   </div>
                   {/* Anleitung */}
                   <div style={{ background: "#161616", padding: "6px 10px", borderTop: "1px solid #2a2a2a" }}>
-                    <span style={{ color: "#888", fontSize: 10, lineHeight: 1.5, display: "block" }}>
-                      1. AliExpress öffnen → ganz nach unten scrollen → <b style={{ color: "#aaa" }}>"Product Safety Information"</b> aufklappen<br/>
-                      2. Manufacturer, EU Responsible Person, Product Identifier — Text hier einfügen:<br/>
-                    </span>
+                    {product?.gpsr?.name ? (
+                      <span style={{ color: "#4caf50", fontSize: 10, lineHeight: 1.5, display: "block" }}>
+                        ✓ GPSR-Daten wurden automatisch von AliExpress geladen. Du kannst den Text unten noch bearbeiten.
+                      </span>
+                    ) : (
+                      <span style={{ color: "#888", fontSize: 10, lineHeight: 1.5, display: "block" }}>
+                        1. AliExpress öffnen → ganz nach unten scrollen → <b style={{ color: "#aaa" }}>"Product Safety Information"</b> aufklappen<br/>
+                        2. Manufacturer, EU Responsible Person, Product Identifier — Text hier einfügen:<br/>
+                      </span>
+                    )}
                     <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
                       <button
                         onClick={() => {

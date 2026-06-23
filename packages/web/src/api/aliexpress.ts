@@ -29,6 +29,14 @@ export interface VariantPrice {
   stock?: number;
 }
 
+export interface GpsrInfo {
+  name: string;       // Hersteller/EU-Verantwortlicher Name
+  address: string;    // Adresse
+  email: string;      // E-Mail
+  phone: string;      // Telefon
+  productId?: string; // Produktkennzeichnung (EAN/GTIN etc.)
+}
+
 export interface ScrapedProduct {
   title: string;
   images: string[];
@@ -40,6 +48,100 @@ export interface ScrapedProduct {
   variants: Array<{ name: string; values: string[] }>; // z.B. [{name:"Farbe", values:["Schwarz","Blau"]}]
   variantPrices: VariantPrice[]; // alle Varianten mit SKU-ID + Preis
   seller?: string;        // AliExpress Shopname für GPSR
+  gpsr?: GpsrInfo;        // GPSR-Daten von AliExpress (Hersteller/EU-Verantwortlicher)
+}
+
+// ── GPSR Extraktor ─────────────────────────────────────────────────────────────
+// Parst den "Informationen zur Produktkonformität" Block aus AliExpress HTML
+// Sowohl aus window.__INIT_DATA__ JSON als auch aus raw HTML-Text
+function extractGpsr(html: string): GpsrInfo | undefined {
+  // Versuch 1: JSON in window.__INIT_DATA__ oder window.runParams
+  const jsonPatterns = [
+    /window\.__INIT_DATA__\s*=\s*(\{[\s\S]*?\});\s*(?:window|<\/script>)/,
+    /window\.runParams\s*=\s*(\{[\s\S]*?\});\s*(?:window|<\/script>|var )/,
+  ];
+  for (const pat of jsonPatterns) {
+    const m = html.match(pat);
+    if (m) {
+      try {
+        const raw = m[1];
+        // GPSR keys suchen
+        const nameM = raw.match(/"(?:manufacturerName|euResponsiblePartyName|name)"\s*:\s*"([^"]{3,100})"/);
+        const addrM = raw.match(/"(?:manufacturerAddress|euResponsiblePartyAddress|address)"\s*:\s*"([^"]{5,200})"/);
+        const emailM = raw.match(/"(?:manufacturerEmail|euResponsiblePartyEmail|email)"\s*:\s*"([^"]{3,100})"/);
+        const phoneM = raw.match(/"(?:manufacturerPhone|euResponsiblePartyPhone|phone|telephone)"\s*:\s*"([^"]{5,30})"/);
+        const idM = raw.match(/"(?:productId|gtin|ean|productIdentification)"\s*:\s*"([^"]{5,50})"/);
+        if (nameM || addrM) {
+          return {
+            name: nameM?.[1]?.trim() || '',
+            address: addrM?.[1]?.trim() || '',
+            email: emailM?.[1]?.trim() || '',
+            phone: phoneM?.[1]?.trim() || '',
+            productId: idM?.[1]?.trim(),
+          };
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Versuch 2: Parst aus sichtbarem Text des HTML (wie im User-Beispiel)
+  // Sucht Block "Informationen zur Produktkonformität" oder "Informationen zum EU-Verantwortlichen"
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');
+
+  // Suche nach "Name:" Zeile nach GPSR-Heading
+  const gpsrSection = text.match(
+    /(?:Informationen (?:zur Produktkonformit|zum (?:Hersteller|EU-Verantwortlichen))[äÄ\w\s]*)([\s\S]{0,800}?)(?:Produktkennzeichnung|$)/i
+  );
+
+  if (gpsrSection) {
+    const section = gpsrSection[1];
+    const nameM    = section.match(/Name\s*:\s*([^\n\r]{3,100})/i);
+    const addrM    = section.match(/Adresse\s*:\s*([^\n\r]{5,200})/i);
+    const emailM   = section.match(/E-Mail(?:-Adresse)?\s*:\s*([^\n\r]{3,100})/i);
+    const phoneM   = section.match(/Telefon(?:nummer)?\s*:\s*([^\n\r]{5,30})/i);
+
+    // Produktkennzeichnung
+    const idSection = text.match(/Produktkennzeichnung[\s\S]{0,50}([\d\-]{8,30})/i);
+
+    if (nameM || addrM) {
+      return {
+        name:      nameM?.[1]?.trim() || '',
+        address:   addrM?.[1]?.trim() || '',
+        email:     emailM?.[1]?.trim() || '',
+        phone:     phoneM?.[1]?.trim() || '',
+        productId: idSection?.[1]?.trim(),
+      };
+    }
+  }
+
+  // Versuch 3: Direkte Regex ohne Abschnitts-Heading (robuster Fallback)
+  const nameM  = text.match(/(?:Hersteller|EU-Verantwortlichen|Verantwortlicher)\s*[\r\n]+\s*Name\s*:\s*([^\r\n]{3,100})/i)
+               || text.match(/Name\s*:\s*([\w\s\-\.&]{3,80} (?:GmbH|UG|AG|Ltd|KG|OHG|e\.K\.))/i);
+  const addrM  = text.match(/Adresse\s*:\s*([^\r\n]{5,200})/i);
+  const emailM = text.match(/E-Mail(?:-Adresse)?\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i);
+  const phoneM = text.match(/Telefon(?:nummer)?\s*:\s*([\d\s\+\-\/\(\)]{5,20})/i);
+
+  if (nameM || emailM) {
+    return {
+      name:    nameM?.[1]?.trim() || '',
+      address: addrM?.[1]?.trim() || '',
+      email:   emailM?.[1]?.trim() || '',
+      phone:   phoneM?.[1]?.trim() || '',
+    };
+  }
+
+  return undefined;
+}
+
+// Formatiert GpsrInfo als lesbaren Text für das GPSR-Textfeld
+export function formatGpsrText(gpsr: GpsrInfo): string {
+  const lines: string[] = [];
+  if (gpsr.name)      lines.push(`Name: ${gpsr.name}`);
+  if (gpsr.address)   lines.push(`Adresse: ${gpsr.address}`);
+  if (gpsr.email)     lines.push(`E-Mail: ${gpsr.email}`);
+  if (gpsr.phone)     lines.push(`Telefon: ${gpsr.phone}`);
+  if (gpsr.productId) lines.push(`Produktkennzeichnung: ${gpsr.productId}`);
+  return lines.join('\n');
 }
 
 // ── AliExpress DS API — product.get (schnellste Methode, keine Browser nötig) ──
@@ -211,6 +313,7 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
       variants,
       variantPrices,
       seller,
+      gpsr: undefined, // DS API liefert kein HTML — GPSR kommt aus HTML-Scraper falls DS API nicht reicht
     };
   } catch (e) {
     console.log(`[DS API] Fehler: ${e}`);
@@ -1010,7 +1113,8 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
 
     await browser.close();
     console.log(`[Playwright] OK: title="${title.slice(0, 50)}" variants=${variantPrices.length} shipsFrom="${shipsFrom}"`);
-    return { title, images, price, description: '', specs, shipsFrom, shipsFromDE, variants, variantPrices, seller };
+    // GPSR: Playwright hat keinen direkten HTML-Zugang hier — gpsr bleibt undefined (wird durch HTML-Fallback ergänzt)
+    return { title, images, price, description: '', specs, shipsFrom, shipsFromDE, variants, variantPrices, seller, gpsr: undefined };
   } catch (e) {
     console.error('[Playwright] Error:', e);
     try { await browser?.close(); } catch { /* ignore */ }
@@ -1187,5 +1291,10 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
     console.log(`[AliExpress] variantPrices: ${variantPrices.length} Varianten, z.B.: ${JSON.stringify(variantPrices[0])}`);
   }
 
-  return { title, images, price, description, specs, shipsFrom, shipsFromDE, variants, variantPrices, seller };
+  // GPSR extrahieren
+  const gpsr = extractGpsr(html);
+  if (gpsr?.name) console.log(`[AliExpress] GPSR gefunden: ${gpsr.name}`);
+  else console.log('[AliExpress] GPSR: kein Block gefunden');
+
+  return { title, images, price, description, specs, shipsFrom, shipsFromDE, variants, variantPrices, seller, gpsr };
 }
