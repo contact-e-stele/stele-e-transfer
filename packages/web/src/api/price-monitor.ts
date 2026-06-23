@@ -37,95 +37,59 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
   console.log(`[PriceMonitor] ${products.length} Produkte zu prüfen`);
 
-  for (const product of products) {
+  // Hilfsfunktion: ein Produkt prüfen
+  async function checkOne(product: typeof products[0]): Promise<void> {
     const url = product.sourceUrl;
-    if (!url || !url.includes('aliexpress')) continue;
+    if (!url || !url.includes('aliexpress')) return;
 
     try {
       checked++;
 
-      // Retry-Logik: 2 Versuche bei Scrape-Fehler
       let data = null;
-      try {
-        data = await scrapeAliExpressUrl(url);
-      } catch (scrapeErr) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: Scrape Exception — ${scrapeErr}`);
-      }
+      try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
       if (!data) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: Scrape fehlgeschlagen — Retry in 5s...`);
-        await new Promise(r => setTimeout(r, 5000));
-        try {
-          data = await scrapeAliExpressUrl(url);
-        } catch (scrapeErr2) {
-          console.log(`[PriceMonitor] Produkt ${product.id}: Retry Exception — ${scrapeErr2}`);
-        }
+        // Einmal retry ohne Delay (neues Playwright ist schneller)
+        try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
       }
-      if (!data) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: Scrape nach Retry fehlgeschlagen — übersprungen`);
-        errors++;
-        continue;
-      }
+      if (!data) { errors++; return; }
 
       // China-Versand überspringen — NUR wenn eindeutig China bestätigt
-      const isConfirmedChina = data.shipsFrom?.toLowerCase() === 'china';
-      if (isConfirmedChina) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: shipsFrom="${data.shipsFrom}" — übersprungen (China-Versand bestätigt)`);
-        continue;
+      if (data.shipsFrom?.toLowerCase() === 'china') {
+        console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — übersprungen`);
+        return;
       }
-      // Bei Unknown oder EU-Land: weitermachen
 
-      if (!data.price) {
-        console.log(`[PriceMonitor] Produkt ${product.id}: Kein Preis gescrapt (EU-Produkt, shipsFrom="${data.shipsFrom}")`);
-        errors++;
-        continue;
-      }
+      if (!data.price) { errors++; return; }
 
       const newBuyPrice = parsePrice(data.price);
-      if (!newBuyPrice || newBuyPrice <= 0) { errors++; continue; }
+      if (!newBuyPrice || newBuyPrice <= 0) { errors++; return; }
 
       const oldBuyPrice = product.buyPrice ?? 0;
       const priceDiff = Math.abs(newBuyPrice - oldBuyPrice);
       const priceChanged = priceDiff > 0.01;
 
-      // Preis-Historie immer speichern
-      await db.insert(schema.priceHistory).values({
-        productId: product.id,
-        price: newBuyPrice,
-        source: 'aliexpress',
-      });
+      await db.insert(schema.priceHistory).values({ productId: product.id, price: newBuyPrice, source: 'aliexpress' });
 
       if (priceChanged) {
         const newSellPrice = calcSellPrice(newBuyPrice);
         const isAlert = priceDiff >= ALERT_THRESHOLD;
-
-        console.log(`[PriceMonitor] Produkt ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}€ → ${newBuyPrice.toFixed(2)}€ (Verkauf: ${newSellPrice.toFixed(2)}€)${isAlert ? ' ⚠️ ALERT' : ''}`);
-
-        // Produkt aktualisieren
-        await db.update(schema.products).set({
-          buyPrice: newBuyPrice,
-          sellPrice: newSellPrice,
-          lastPriceCheck: new Date().toISOString(),
-          priceChanged: isAlert,
-          updatedAt: new Date().toISOString(),
-        }).where(eq(schema.products.id, product.id));
-
+        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}`);
+        await db.update(schema.products).set({ buyPrice: newBuyPrice, sellPrice: newSellPrice, lastPriceCheck: new Date().toISOString(), priceChanged: isAlert, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
         updated++;
       } else {
-        // Nur lastPriceCheck aktualisieren
-        await db.update(schema.products).set({
-          lastPriceCheck: new Date().toISOString(),
-          priceChanged: false,
-          updatedAt: new Date().toISOString(),
-        }).where(eq(schema.products.id, product.id));
+        await db.update(schema.products).set({ lastPriceCheck: new Date().toISOString(), priceChanged: false, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
       }
-
-      // Kurze Pause zwischen Requests (anti-block)
-      await new Promise(r => setTimeout(r, 2000));
-
     } catch (e) {
-      console.error(`[PriceMonitor] Fehler bei Produkt ${product.id}:`, e);
+      console.error(`[PriceMonitor] Fehler bei ${product.id}:`, e);
       errors++;
     }
+  }
+
+  // Parallel mit max 3 gleichzeitigen Scrapes (Render hat begrenzte Ressourcen)
+  const CONCURRENCY = 3;
+  for (let i = 0; i < products.length; i += CONCURRENCY) {
+    const batch = products.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(p => checkOne(p)));
   }
 
   console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, Fehler: ${errors}`);

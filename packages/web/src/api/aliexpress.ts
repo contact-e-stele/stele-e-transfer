@@ -714,12 +714,18 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
     });
 
     try {
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+      // domcontentloaded ist viel schneller als networkidle (AliExpress lädt permanent nach)
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     } catch (gotoErr) {
       console.log(`[Playwright] goto error (non-fatal): ${gotoErr}`);
-      // Page may still have loaded enough — continue if mtopResult captured
     }
-    await page.waitForTimeout(2000);
+    // Kurz warten damit mtop-Request ankommen kann, aber max 8s
+    const waited = await Promise.race([
+      new Promise<'mtop'>(resolve => {
+        const check = setInterval(() => { if (mtopResult) { clearInterval(check); resolve('mtop'); } }, 200);
+      }),
+      page.waitForTimeout(8000).then(() => 'timeout' as const),
+    ]);
 
     if (!mtopResult) {
       console.log('[Playwright] No mtop data captured');
