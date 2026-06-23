@@ -1,16 +1,33 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 interface AliStatus {
   connected: boolean;
   appKey: string;
   source?: string;
+  expiresAt?: number | null;
+  hasRefreshToken?: boolean;
+}
+
+function formatExpiry(ts: number | null | undefined): { label: string; urgent: boolean; expired: boolean } {
+  if (!ts) return { label: "Unbekannt", urgent: false, expired: false };
+  const now = Date.now();
+  const diff = ts - now;
+  if (diff <= 0) return { label: "Abgelaufen", urgent: true, expired: true };
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  if (days > 1) return { label: `Noch ${days} Tage`, urgent: days <= 3, expired: false };
+  if (hours > 0) return { label: `Noch ${hours} Stunden`, urgent: true, expired: false };
+  return { label: "Läuft bald ab", urgent: true, expired: false };
 }
 
 export default function Einstellungen() {
   const [aliStatus, setAliStatus] = useState<AliStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => {
+  const loadStatus = useCallback(() => {
+    setLoading(true);
     fetch("/api/aliexpress/status", { credentials: "include" })
       .then(r => r.json())
       .then(d => setAliStatus(d as AliStatus))
@@ -18,8 +35,29 @@ export default function Einstellungen() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
   const handleAliConnect = () => {
     window.location.href = "/api/aliexpress/auth";
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const r = await fetch("/api/aliexpress/refresh", { method: "POST", credentials: "include" });
+      const d = await r.json() as { ok?: boolean; error?: string; expiresAt?: number };
+      if (d.ok) {
+        setRefreshMsg({ ok: true, text: "Token erfolgreich erneuert ✓" });
+        loadStatus();
+      } else {
+        setRefreshMsg({ ok: false, text: d.error || "Refresh fehlgeschlagen" });
+      }
+    } catch {
+      setRefreshMsg({ ok: false, text: "Netzwerkfehler beim Refresh" });
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const card: React.CSSProperties = {
@@ -43,6 +81,8 @@ export default function Einstellungen() {
     color: ok ? "#166534" : "#991B1B",
   } as React.CSSProperties);
 
+  const expiry = formatExpiry(aliStatus?.expiresAt);
+
   return (
     <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px" }}>
       <h2 style={{ fontSize: 20, fontWeight: 700, color: "#1E293B", marginBottom: 20 }}>
@@ -51,57 +91,110 @@ export default function Einstellungen() {
 
       {/* AliExpress Verbindung */}
       <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <span style={{ fontSize: 22 }}>🛍️</span>
-              <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>AliExpress API</span>
-            </div>
-            <p style={{ fontSize: 13, color: "#64748B", margin: 0, maxWidth: 360 }}>
-              Offizielle Produktdaten: Titel, Preise, Bilder, Versandland — zuverlässig ohne Scraping.
-              App Key: <code style={{ background: "#F1F5F9", padding: "1px 6px", borderRadius: 4 }}>535690</code>
-            </p>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-            {loading ? (
-              <span style={{ fontSize: 13, color: "#94A3B8" }}>Prüfe...</span>
-            ) : (
-              <>
-                <span style={badge(aliStatus?.connected ?? false)}>
-                  {aliStatus?.connected
-                    ? `✅ Verbunden${aliStatus.source === 'db' ? ' (DB-Token)' : aliStatus.source === 'env' ? ' (Env-Token)' : ''}`
-                    : "❌ Nicht verbunden"}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <span style={{ fontSize: 22 }}>🛍️</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>AliExpress API</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 14px", maxWidth: 480 }}>
+          Offizielle Produktdaten: Titel, Preise, Bilder, Versandland — zuverlässig ohne Scraping.
+          App Key: <code style={{ background: "#F1F5F9", padding: "1px 6px", borderRadius: 4 }}>535690</code>
+        </p>
+
+        {loading ? (
+          <span style={{ fontSize: 13, color: "#94A3B8" }}>Prüfe...</span>
+        ) : (
+          <>
+            {/* Status-Zeile */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 10 }}>
+              <span style={badge(aliStatus?.connected ?? false)}>
+                {aliStatus?.connected
+                  ? `✅ Verbunden${aliStatus.source === 'db' ? ' (OAuth DB)' : aliStatus.source === 'env' ? ' (Env-Token)' : ''}`
+                  : "❌ Nicht verbunden"}
+              </span>
+
+              {/* Token-Ablauf Badge */}
+              {aliStatus?.connected && aliStatus?.expiresAt && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  padding: "4px 12px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                  background: expiry.expired ? "#FEF2F2" : expiry.urgent ? "#FFF7ED" : "#EFF6FF",
+                  color: expiry.expired ? "#991B1B" : expiry.urgent ? "#92400E" : "#1D4ED8",
+                }}>
+                  🕐 {expiry.label}
                 </span>
+              )}
+            </div>
+
+            {/* Refresh-Meldung */}
+            {refreshMsg && (
+              <div style={{
+                marginBottom: 10, padding: "8px 12px", borderRadius: 8, fontSize: 13,
+                background: refreshMsg.ok ? "#DCFCE7" : "#FEF2F2",
+                color: refreshMsg.ok ? "#166534" : "#991B1B",
+                border: `1px solid ${refreshMsg.ok ? "#BBF7D0" : "#FECACA"}`,
+              }}>
+                {refreshMsg.text}
+              </div>
+            )}
+
+            {/* Buttons */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button
+                onClick={handleAliConnect}
+                style={{
+                  background: aliStatus?.connected ? "#F1F5F9" : "#D97706",
+                  color: aliStatus?.connected ? "#64748B" : "#fff",
+                  border: "none", borderRadius: 8, padding: "8px 18px",
+                  fontSize: 13, fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                {aliStatus?.connected ? "Neu verbinden" : "Mit AliExpress verbinden"}
+              </button>
+
+              {/* Refresh-Button — nur wenn Refresh-Token vorhanden und Token env-basiert NICHT */}
+              {aliStatus?.connected && aliStatus?.hasRefreshToken && aliStatus?.source !== 'env' && (
                 <button
-                  onClick={handleAliConnect}
+                  onClick={handleRefresh}
+                  disabled={refreshing}
                   style={{
-                    background: aliStatus?.connected ? "#F1F5F9" : "#D97706",
-                    color: aliStatus?.connected ? "#64748B" : "#fff",
-                    border: "none",
-                    borderRadius: 8,
-                    padding: "8px 18px",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer",
+                    background: expiry.expired ? "#DC2626" : expiry.urgent ? "#D97706" : "#3B82F6",
+                    color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px",
+                    fontSize: 13, fontWeight: 600, cursor: refreshing ? "not-allowed" : "pointer",
+                    opacity: refreshing ? 0.7 : 1,
                   }}
                 >
-                  {aliStatus?.connected ? "Neu verbinden" : "Mit AliExpress verbinden"}
+                  {refreshing ? "Wird erneuert..." : "Token erneuern"}
                 </button>
-              </>
+              )}
+            </div>
+
+            {/* Warnung: Token abgelaufen */}
+            {aliStatus?.connected && expiry.expired && (
+              <div style={{
+                marginTop: 10, background: "#FEF2F2", border: "1px solid #FECACA",
+                borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#991B1B",
+              }}>
+                ⚠️ <strong>Token abgelaufen!</strong> API-Calls werden fehlschlagen. Bitte erneuern oder neu verbinden.
+              </div>
             )}
-          </div>
-        </div>
+            {aliStatus?.connected && expiry.urgent && !expiry.expired && (
+              <div style={{
+                marginTop: 10, background: "#FFF7ED", border: "1px solid #FED7AA",
+                borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#92400E",
+              }}>
+                ⏰ <strong>Token läuft bald ab!</strong> Jetzt erneuern, um Unterbrechungen zu vermeiden.
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Kein Token */}
         {!aliStatus?.connected && !loading && (
           <div style={{
-            marginTop: 14,
-            background: "#FFF7ED",
-            border: "1px solid #FED7AA",
-            borderRadius: 8,
-            padding: "10px 14px",
-            fontSize: 12,
-            color: "#92400E",
+            marginTop: 14, background: "#FFF7ED", border: "1px solid #FED7AA",
+            borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#92400E",
           }}>
-            ⚠️ <strong>Ohne Verbindung:</strong> Produktdaten werden per Scraping geladen (weniger zuverlässig, CAPTCHA-Probleme möglich). Verbindung empfohlen für Go-Live.
+            ⚠️ <strong>Ohne Verbindung:</strong> Produktdaten werden per Scraping geladen (weniger zuverlässig, CAPTCHA-Probleme möglich). Verbindung empfohlen.
           </div>
         )}
       </div>
@@ -113,7 +206,8 @@ export default function Einstellungen() {
           <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>eBay API</span>
         </div>
         <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
-          Für Listings, Preisupdate und Bestellungen. Client: <code style={{ background: "#F1F5F9", padding: "1px 6px", borderRadius: 4 }}>steleetr-SETDSAPP-PRD</code>
+          Für Listings, Preisupdate und Bestellungen. Client:{" "}
+          <code style={{ background: "#F1F5F9", padding: "1px 6px", borderRadius: 4 }}>steleetr-SETDSAPP-PRD</code>
         </p>
         <span style={badge(true)}>✅ Verbunden (Refresh Token gesetzt)</span>
       </div>
@@ -134,13 +228,13 @@ export default function Einstellungen() {
       <div style={{ ...card, background: "#F8FAFC" }}>
         <div style={{ fontSize: 13, color: "#64748B" }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v0.7</span>
+            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v0.8</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span>Shop</span><span style={{ fontWeight: 600, color: "#1E293B" }}>stele-e-transfer (eBay DE)</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Go-Live Ziel</span><span style={{ fontWeight: 600, color: "#D97706" }}>15.06.2026</span>
+            <span>Plattform</span><span style={{ fontWeight: 600, color: "#10B981" }}>Live ✓</span>
           </div>
         </div>
       </div>

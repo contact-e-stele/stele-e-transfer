@@ -330,6 +330,70 @@ export default function Lieferanten() {
     }
   };
 
+  // ─── Speichern + Direkt Listen (kombiniert) ───────────────────────────────
+  const [saveAndListLoading, setSaveAndListLoading] = useState(false);
+  const [saveAndListResult, setSaveAndListResult] = useState<{ listingId?: string; error?: string; step?: string } | null>(null);
+
+  const handleSaveAndList = async () => {
+    if (!result || !product) return;
+    if (!ebayPrice || parseFloat(ebayPrice.replace(",", ".")) <= 0) {
+      setSaveAndListResult({ error: "Bitte Verkaufspreis eingeben (Schritt 4 oben)" });
+      return;
+    }
+    setSaveAndListLoading(true);
+    setSaveAndListResult({ step: "Speichere in DB..." });
+    try {
+      // 1) Speichern
+      let productId = saveResult?.id;
+      if (!productId) {
+        const res = await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            asin: `ali_${Date.now()}`,
+            amazonUrl: urlInput || "manual",
+            sourceUrl: urlInput || "manual",
+            title: product.title,
+            generatedTitle: editableTitle,
+            htmlDescription: editableHtml,
+            bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
+            variants: editedVariants.filter(g => g.values.length > 0),
+            variantPrices: (product.variantPrices ?? []).map(v => ({
+              ...v,
+              ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
+            })),
+            description: product.description,
+            images: visibleImages,
+            buyPrice: einkauf || null,
+            sellPrice: verkauf || null,
+            adRate: adRate,
+          }),
+        });
+        const data = await res.json() as { id?: number; error?: string };
+        if (!data.id) {
+          setSaveAndListResult({ error: data.error || "Speichern fehlgeschlagen" });
+          return;
+        }
+        setSaveResult(data);
+        productId = data.id;
+      }
+      // 2) Listen
+      setSaveAndListResult({ step: "Liste auf eBay..." });
+      const listRes = await fetch("/api/ebay/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId }),
+      });
+      const listData = await listRes.json() as { listingId?: string; error?: string };
+      setEbayResult(listData);
+      setSaveAndListResult(listData);
+    } catch (e) {
+      setSaveAndListResult({ error: e instanceof Error ? e.message : "Fehler" });
+    } finally {
+      setSaveAndListLoading(false);
+    }
+  };
+
   const copy = (text: string, setCopied: (v: boolean) => void) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
@@ -1054,7 +1118,41 @@ export default function Lieferanten() {
               )}
             </div>
 
-            {/* eBay Listen */}
+            {/* ─── Speichern + Direkt Listen (Ein-Klick) ─── */}
+            <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%)", borderRadius: 20, padding: 24, boxShadow: "0 4px 20px rgba(15,23,42,0.25)", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#C9A227", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <ShoppingCart size={18} color="#0F172A" />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "#fff" }}>Speichern + Direkt Listen</span>
+                <span style={{ fontSize: 11, color: "#C9A227", fontWeight: 600, background: "rgba(201,162,39,0.15)", padding: "2px 8px", borderRadius: 20 }}>Ein Klick</span>
+              </div>
+              <button
+                onClick={handleSaveAndList}
+                disabled={saveAndListLoading || !!ebayResult?.listingId}
+                style={{
+                  width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
+                  background: ebayResult?.listingId ? "#166534" : saveAndListLoading ? "rgba(201,162,39,0.5)" : "#C9A227",
+                  color: ebayResult?.listingId ? "#fff" : "#0F172A",
+                  fontWeight: 800, fontSize: 15,
+                  cursor: (saveAndListLoading || !!ebayResult?.listingId) ? "not-allowed" : "pointer",
+                  fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  transition: "all 0.2s",
+                }}
+              >
+                {saveAndListLoading
+                  ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> {saveAndListResult?.step || "Wird verarbeitet..."}</>
+                  : ebayResult?.listingId
+                  ? <><ShoppingCart size={16} /> ✓ Gelistet! ID: {ebayResult.listingId}</>
+                  : <><ShoppingCart size={16} /> Speichern & auf eBay listen{ebayPrice ? ` (${ebayPrice} €)` : ""}</>
+                }
+              </button>
+              {saveAndListResult?.error && (
+                <p style={{ margin: "8px 0 0", color: "#FCA5A5", fontSize: 13, fontWeight: 600 }}>✗ {saveAndListResult.error}</p>
+              )}
+            </div>
+
+            {/* eBay Listen (separat, für bereits gespeicherte Produkte) */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
                 <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFD700", display: "flex", alignItems: "center", justifyContent: "center" }}>

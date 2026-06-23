@@ -619,7 +619,35 @@ const app = new Hono()
     const token = await getAliAccessToken();
     const hasToken = !!token;
     const source = process.env.ALIEXPRESS_ACCESS_TOKEN ? 'env' : hasToken ? 'db' : 'none';
-    return c.json({ connected: hasToken, appKey: '535690', source });
+    // Token-Ablauf aus DB lesen
+    let expiresAt: number | null = null;
+    let refreshToken: string | null = null;
+    try {
+      const { db: database } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const expRow = await database.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_token_expires')).get();
+      const refRow = await database.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_refresh_token')).get();
+      if (expRow?.value) expiresAt = Number(expRow.value);
+      if (refRow?.value) refreshToken = refRow.value;
+    } catch { /* ignore */ }
+    return c.json({ connected: hasToken, appKey: '535690', source, expiresAt, hasRefreshToken: !!refreshToken });
+  })
+
+  .post('/aliexpress/refresh', async (c) => {
+    // Refresh Token aus DB holen und neuen Access Token besorgen
+    try {
+      const { db: database } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const refRow = await database.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_refresh_token')).get();
+      if (!refRow?.value) return c.json({ error: 'Kein Refresh Token in DB — bitte neu verbinden' }, 400);
+      const tokens = await refreshAliToken(refRow.value);
+      if (!tokens) return c.json({ error: 'Refresh fehlgeschlagen — Token möglicherweise abgelaufen. Bitte neu verbinden.' }, 502);
+      const expiresAt = Date.now() + tokens.expires_in * 1000;
+      await saveAliTokens(tokens.access_token, tokens.refresh_token, expiresAt);
+      return c.json({ ok: true, expiresAt });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
   })
 
   // ─── Produkt speichern ───────────────────────────────────────────────────────
