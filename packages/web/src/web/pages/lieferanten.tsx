@@ -619,8 +619,9 @@ export default function Lieferanten() {
               <ChevronLeft size={16} /> Neue URL eingeben
             </button>
 
-            {/* 2-Spalten Grid für Desktop */}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
+            {/* 2-Spalten Grid für Desktop, 1 Spalte auf Handy */}
+            <style>{`@media(max-width:768px){.stele-grid{grid-template-columns:1fr!important;}}`}</style>
+            <div className="stele-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
             <div>
             {/* LINKE SPALTE — Bild, GPSR, Varianten-Preistabelle */}
 
