@@ -271,7 +271,10 @@ export default function Lieferanten() {
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: editedVariants
             .filter(g => g.values.length > 0),
-          variantPrices: product.variantPrices ?? [],
+          variantPrices: (product.variantPrices ?? []).map(v => ({
+            ...v,
+            ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
+          })),
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,
@@ -860,7 +863,7 @@ export default function Lieferanten() {
                     </div>
                     {vp.map((v, i) => {
                       const isCheapest = v.price === minP;
-                      const attrLabel = Object.values(v.attrs).join(" / ") || "–";
+                      const attrLabel = Object.values(v.attrs).join(" / ") || `Variante …${v.skuId.slice(-6)}`;
                       const varEbayRaw = variantEbayPrices[v.skuId] ?? "";
                       const varEbay = parseFloat(varEbayRaw.replace(",", ".")) || 0;
                       const varProfit = varEbay > 0
