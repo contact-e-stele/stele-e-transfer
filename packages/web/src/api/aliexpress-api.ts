@@ -195,6 +195,7 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       product_id: productId,
       local_country: 'DE',
       local_language: 'de',
+      ship_to_country: 'DE',
     };
     params.sign = iopSign(APP_SECRET, params);
 
