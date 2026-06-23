@@ -20,6 +20,8 @@ interface VariantPrice {
   price: number;
   originalPrice?: number;
   stock?: number;
+  imageUrl?: string;
+  ebayPrice?: number;
 }
 
 interface Product {
@@ -767,20 +769,32 @@ export default function Produkte() {
                           <thead>
                             <tr style={{ background:"#F8FAFC" }}>
                               {Object.keys(vp[0]?.attrs ?? {}).map(k => <th key={k} style={{ padding:"6px 10px", textAlign:"left", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>{k}</th>)}
-                              <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Preis</th>
+                              <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Einkauf</th>
+                              {vp.some(v => v.ebayPrice) && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>eBay</th>}
+                              {vp.some(v => v.ebayPrice) && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Gewinn</th>}
                               <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Lager</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {vp.map((v, i) => (
+                            {vp.map((v, i) => {
+                              const hasEbay = vp.some(x => x.ebayPrice);
+                              const ebayP = v.ebayPrice as number | undefined;
+                              const adR = product.adRate ?? 5;
+                              const profit = ebayP ? ebayP - ebayP*(13+adR)/100*1.19 - 0.45*1.19 - v.price : null;
+                              return (
                               <tr key={v.skuId} style={{ background: v.price === minP ? "#F0FDF4" : i%2===0 ? "#fff" : "#FAFAFA" }}>
                                 {Object.values(v.attrs).map((val, j) => <td key={j} style={{ padding:"6px 10px", color:"#0F172A", borderBottom:"1px solid #F1F5F9" }}>{String(val)}</td>)}
                                 <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color: v.price === minP ? "#16A34A" : "#1D4ED8", borderBottom:"1px solid #F1F5F9" }}>
-                                  {v.price.toFixed(2)} € {v.price === minP && <span style={{fontSize:9,color:"#16A34A"}}> ▼ günstigst</span>}
+                                  {v.price.toFixed(2)} €{v.price === minP && <span style={{fontSize:9,color:"#16A34A"}}> ▼</span>}
                                 </td>
+                                {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", color:"#0F172A", borderBottom:"1px solid #F1F5F9", fontWeight:600 }}>{ebayP ? `${ebayP.toFixed(2)} €` : "–"}</td>}
+                                {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", borderBottom:"1px solid #F1F5F9", fontWeight:700, color: profit === null ? "#94A3B8" : profit >= 1.6 ? "#16A34A" : profit >= 0 ? "#F59E0B" : "#DC2626" }}>
+                                  {profit !== null ? `${profit >= 0 ? "+" : ""}${profit.toFixed(2)} €` : "–"}
+                                </td>}
                                 <td style={{ padding:"6px 10px", textAlign:"right", color:"#64748B", borderBottom:"1px solid #F1F5F9" }}>{v.stock ?? "–"}</td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>

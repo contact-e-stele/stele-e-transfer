@@ -639,7 +639,7 @@ const app = new Hono()
         htmlDescription: string;
         bullets: string[];
         variants: string[];
-        variantPrices?: Array<{ skuId: string; attrs: Record<string, string>; price: number; originalPrice?: number; stock?: number }>;
+        variantPrices?: Array<{ skuId: string; attrs: Record<string, string>; price: number; originalPrice?: number; stock?: number; imageUrl?: string; ebayPrice?: number }>;
         description?: string;
         images?: string[];
         buyPrice?: number | null;
