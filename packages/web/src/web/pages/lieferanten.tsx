@@ -231,7 +231,7 @@ export default function Lieferanten() {
       setResult({ title: t, html: h });
       setEditableTitle(t);
       setEditableHtml(h);
-      if (data.seller) setGpsrHersteller(data.seller);
+      // seller = nur AliExpress Shop-Name, kein GPSR-Text → nicht in gpsrHersteller setzen
 
       // EU-Filter: shipsFrom prüfen und anzeigen
       if (data.shipsFrom) {
@@ -748,34 +748,87 @@ export default function Lieferanten() {
 
                 {/* GPSR Kopier-Box */}
                 <div style={{ marginTop: 10, border: "1px solid #C9A227", borderRadius: 6, overflow: "hidden" }}>
+                  {/* Header */}
                   <div style={{ background: "#1a1a1a", padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ color: "#C9A227", fontSize: 11, fontWeight: 700 }}>GPSR — kopierbar</span>
-                    <button
-                      onClick={() => {
-                        const gpsr = gpsrHersteller.trim();
-                        const text = gpsr
-                          ? `Produktsicherheit (GPSR)\n\n${gpsr}`
-                          : `Produktsicherheit (GPSR)\n\n[Compliance-Text von AliExpress einfügen]`;
-                        navigator.clipboard.writeText(text).catch(() => {});
-                      }}
-                      style={{
-                        background: "#C9A227", color: "#0f0f0f", border: "none",
-                        padding: "4px 12px", borderRadius: 4, fontSize: 11,
-                        fontWeight: 700, cursor: "pointer"
-                      }}
-                    >
-                      Kopieren
-                    </button>
+                    <span style={{ color: "#C9A227", fontSize: 11, fontWeight: 700 }}>GPSR — Produktsicherheit</span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {/* Link zur AliExpress Produktseite → Compliance-Tab */}
+                      {urlInput && urlInput.includes("aliexpress") && (
+                        <a
+                          href={urlInput}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            background: "#2a2a2a", color: "#C9A227", border: "1px solid #C9A227",
+                            padding: "4px 10px", borderRadius: 4, fontSize: 11,
+                            fontWeight: 700, cursor: "pointer", textDecoration: "none",
+                            display: "inline-flex", alignItems: "center", gap: 4
+                          }}
+                          title="AliExpress Produktseite öffnen → nach 'Product Safety Information' scrollen"
+                        >
+                          🔗 AliExpress öffnen
+                        </a>
+                      )}
+                      <button
+                        onClick={() => {
+                          const gpsr = gpsrHersteller.trim();
+                          const text = gpsr
+                            ? `Produktsicherheit (GPSR)\n\n${gpsr}`
+                            : `Produktsicherheit (GPSR)\n\n[Compliance-Text von AliExpress einfügen]`;
+                          navigator.clipboard.writeText(text).catch(() => {});
+                        }}
+                        style={{
+                          background: "#C9A227", color: "#0f0f0f", border: "none",
+                          padding: "4px 12px", borderRadius: 4, fontSize: 11,
+                          fontWeight: 700, cursor: "pointer"
+                        }}
+                      >
+                        Kopieren
+                      </button>
+                    </div>
                   </div>
-                  {/* AliExpress Compliance einfügen */}
-                  <div style={{ background: "#1a1a1a", padding: "6px 10px", borderTop: "1px solid #333" }}>
-                    <span style={{ color: "#aaa", fontSize: 10, display: "block", marginBottom: 4 }}>
-                      Compliance-Text von AliExpress einfügen (Manufacturer + EU responsible person + Product identifier):
+                  {/* Anleitung */}
+                  <div style={{ background: "#161616", padding: "6px 10px", borderTop: "1px solid #2a2a2a" }}>
+                    <span style={{ color: "#888", fontSize: 10, lineHeight: 1.5, display: "block" }}>
+                      1. AliExpress öffnen → ganz nach unten scrollen → <b style={{ color: "#aaa" }}>"Product Safety Information"</b> aufklappen<br/>
+                      2. Manufacturer, EU Responsible Person, Product Identifier — Text hier einfügen:<br/>
                     </span>
+                    <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
+                      <button
+                        onClick={() => {
+                          if (!gpsrHersteller.trim()) {
+                            setGpsrHersteller(
+                              "Manufacturer information\nName: [Name eintragen]\nAddress: [Adresse]\nEmail: [E-Mail]\nPhone: [Telefon]\n\nEU responsible person information\nName: [Name]\nAddress: [Adresse]\nEmail: [E-Mail]\n\nProduct identifier\n[Modellnummer / EAN]"
+                            );
+                          }
+                        }}
+                        style={{
+                          background: "#2a2a2a", color: "#aaa", border: "1px solid #444",
+                          padding: "3px 10px", borderRadius: 4, fontSize: 10,
+                          cursor: "pointer", whiteSpace: "nowrap"
+                        }}
+                      >
+                        Vorlage einfügen
+                      </button>
+                      {gpsrHersteller.trim() && (
+                        <button
+                          onClick={() => setGpsrHersteller("")}
+                          style={{
+                            background: "transparent", color: "#666", border: "1px solid #333",
+                            padding: "3px 8px", borderRadius: 4, fontSize: 10, cursor: "pointer"
+                          }}
+                        >
+                          Löschen
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {/* Textarea */}
+                  <div style={{ background: "#1a1a1a", padding: "6px 10px", borderTop: "1px solid #2a2a2a" }}>
                     <textarea
                       value={gpsrHersteller}
                       onChange={e => setGpsrHersteller(e.target.value)}
-                      placeholder={"Manufacturer information\nName:...\nAddress:...\nEmail:...\nPhone:...\n\nEU responsible person information\nName:...\n..."}
+                      placeholder={"Manufacturer information\nName:...\nAddress:...\nEmail:...\n\nEU responsible person information\nName:...\n..."}
                       rows={5}
                       style={{
                         width: "100%", background: "#111", color: "#fff", border: "1px solid #444",
@@ -784,11 +837,12 @@ export default function Lieferanten() {
                       }}
                     />
                   </div>
+                  {/* Vorschau */}
                   {gpsrHersteller.trim() && (
                     <div style={{
                       background: "#111", color: "#ccc", fontFamily: "monospace",
                       fontSize: 11, lineHeight: 1.6, padding: "10px 12px",
-                      whiteSpace: "pre-wrap", userSelect: "text"
+                      whiteSpace: "pre-wrap", userSelect: "text", borderTop: "1px solid #2a2a2a"
                     }}>
                       {`Produktsicherheit (GPSR)\n\n${gpsrHersteller.trim()}`}
                     </div>
