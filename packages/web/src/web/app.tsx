@@ -55,7 +55,7 @@ function TabNav() {
       borderBottom: "1px solid #E2E8F0",
     }}>
       <div style={{
-        maxWidth: 680, margin: "0 auto",
+        maxWidth: 1100, margin: "0 auto",
         display: "flex", gap: 4,
         background: "#E2E8F0",
         borderRadius: 14, padding: 4,

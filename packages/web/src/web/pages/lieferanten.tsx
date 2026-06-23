@@ -487,7 +487,7 @@ export default function Lieferanten() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F8FAFC", fontFamily: "'Poppins', sans-serif", padding: "24px 16px" }}>
-      <div style={{ maxWidth: 520, margin: "0 auto" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
 
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 28 }}>
@@ -618,6 +618,11 @@ export default function Lieferanten() {
             }}>
               <ChevronLeft size={16} /> Neue URL eingeben
             </button>
+
+            {/* 2-Spalten Grid für Desktop */}
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
+            <div>
+            {/* LINKE SPALTE — Bild, GPSR, Varianten-Preistabelle */}
 
             {/* EU-Lager Banner */}
             {shipsFromInfo && (
@@ -1178,6 +1183,10 @@ export default function Lieferanten() {
               );
             })()}
 
+            </div>{/* Ende linke Spalte */}
+            <div>
+            {/* RECHTE SPALTE — Titel, HTML, Preis, Varianten-Edit, Speichern, Listen */}
+
             {/* Neu scrapen */}
             <div style={{ marginBottom: 14 }}>
               <button onClick={handleScrape} disabled={!urlInput.trim() || loading} style={{
@@ -1344,6 +1353,8 @@ export default function Lieferanten() {
                 </div>
               )}
             </div>
+            </div>{/* Ende rechte Spalte */}
+            </div>{/* Ende 2-Spalten Grid */}
           </>
         )}
 
