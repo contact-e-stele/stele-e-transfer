@@ -117,6 +117,8 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
         ae_item_sku_info_d_t_o?: Array<{
           sku_id?: string;
           sku_price?: string;
+          offer_sale_price?: string;
+          offer_bulk_sale_price?: string;
           sku_available_stock?: number;
           id?: string;
           ae_sku_property_dtos?: {
@@ -154,7 +156,8 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
 
     for (const sku of skuDtos) {
       const skuId = String(sku.sku_id || sku.id || '');
-      const priceRaw = sku.sku_price || '';
+      // offer_sale_price = tatsächlicher Rabattpreis, sku_price = Originalpreis ohne Rabatt
+      const priceRaw = sku.offer_sale_price || sku.offer_bulk_sale_price || sku.sku_price || '';
       const priceNum = parseFloat(priceRaw.replace(/[^\d.]/g, ''));
       if (!priceNum || priceNum <= 0) continue;
 

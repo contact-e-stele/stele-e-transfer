@@ -146,7 +146,8 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
 
   for (const sku of skuList) {
     const skuId = String(sku.sku_id || sku.id || '');
-    const priceStr = sku.sku_price || sku.offer_sale_price || '0';
+    // offer_sale_price = tatsächlicher Rabattpreis, sku_price = Originalpreis ohne Rabatt
+    const priceStr = sku.offer_sale_price || sku.offer_bulk_sale_price || sku.sku_price || '0';
     const price = parseFloat(priceStr.replace(/[^\d.]/g, ''));
     if (!price || price <= 0) continue;
 
