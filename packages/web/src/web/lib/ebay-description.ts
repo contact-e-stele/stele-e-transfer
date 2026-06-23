@@ -142,57 +142,77 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     return key && val && !isGarbage(key) && !isGarbage(val);
   }).slice(0, 14);
 
-  // ── Bullet Points ─────────────────────────────────────────────────────────
-  let bulletsHtml = "";
+  // ── Beschreibung parsen: neues ###INTRO###/###BULLETS###/###OUTRO### Format ──
+  let introText = "";
+  let outroText = "";
   const bullets: string[] = [];
 
-  // Aus product.bullets (Amazon-Scraper liefert das)
-  if (product.bullets && product.bullets.length > 0) {
-    for (const b of product.bullets) {
-      const c = cleanText(b);
-      if (c.length > 15 && !isGarbage(c)) bullets.push(c);
-      if (bullets.length >= 8) break;
+  const desc = product.description ?? "";
+  const hasStructured = desc.includes("###INTRO###") || desc.includes("###BULLETS###");
+
+  if (hasStructured) {
+    // Neues strukturiertes Format von Gemini
+    const introM = desc.match(/###INTRO###\s*([\s\S]*?)(?:###BULLETS###|$)/);
+    const bulletsM = desc.match(/###BULLETS###\s*([\s\S]*?)(?:###OUTRO###|$)/);
+    const outroM = desc.match(/###OUTRO###\s*([\s\S]*?)$/);
+
+    introText = cleanText(introM?.[1]?.trim() ?? "");
+    outroText = cleanText(outroM?.[1]?.trim() ?? "");
+
+    if (bulletsM) {
+      const lines = bulletsM[1].split("\n").map(l => l.replace(/^[\-\*•]\s*/, "").trim()).filter(l => l.length > 10 && !isGarbage(l));
+      bullets.push(...lines.slice(0, 8));
+    }
+  } else {
+    // Legacy: product.bullets (Amazon-Scraper)
+    if (product.bullets && product.bullets.length > 0) {
+      for (const b of product.bullets) {
+        const c = cleanText(b);
+        if (c.length > 15 && !isGarbage(c)) bullets.push(c);
+        if (bullets.length >= 8) break;
+      }
+    }
+    // Legacy: description als Zeilen
+    if (bullets.length < 3 && desc.length > 30) {
+      const lines = desc.split(/[\n•\-\*]/).map(l => cleanText(l)).filter(l => l.length > 20 && !isGarbage(l));
+      for (const l of lines) {
+        if (!bullets.includes(l)) bullets.push(l);
+        if (bullets.length >= 8) break;
+      }
+    }
+    // Intro aus description extrahieren (erster Satz)
+    if (!introText && desc.length > 30) {
+      const firstSentence = cleanText(desc).split(/[.!?]\s+/)[0];
+      if (firstSentence && firstSentence.length > 20) introText = firstSentence;
     }
   }
 
-  // Aus description — Zeilenumbrüche als Bullets
-  if (bullets.length < 3 && product.description) {
-    const lines = product.description
-      .split(/[\n•\-\*]/)
-      .map(l => cleanText(l))
-      .filter(l => l.length > 20 && !isGarbage(l));
-    for (const l of lines) {
-      if (!bullets.includes(l)) bullets.push(l);
-      if (bullets.length >= 8) break;
-    }
+  // ── Intro-Absatz ──────────────────────────────────────────────────────────
+  let descParas = "";
+  if (introText) {
+    descParas = `<p style="color:#d4b86a;line-height:1.75;margin:0 0 14px 0;font-size:14px;font-weight:500;">${introText}</p>`;
   }
 
+  // ── Bullet Points ─────────────────────────────────────────────────────────
+  let bulletsHtml = "";
   if (bullets.length > 0) {
     bulletsHtml = `
     <ul style="margin:0 0 16px 0;padding:0;list-style:none;">
       ${bullets.map(b => `
-      <li style="display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px solid #1e1e0e;">
-        <span style="color:#C9A84C;font-size:16px;line-height:1;flex-shrink:0;">✓</span>
+      <li style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #1e1e0e;">
+        <span style="color:#C9A84C;font-size:15px;line-height:1.3;flex-shrink:0;margin-top:1px;">✓</span>
         <span style="color:#c8b878;line-height:1.6;font-size:13px;">${b}</span>
       </li>`).join("")}
     </ul>`;
   }
 
-  // ── Beschreibungstext ──────────────────────────────────────────────────────
-  let descParas = "";
-  if (product.description && product.description.length > 30) {
-    const cleaned = cleanText(product.description);
-    const parts = cleaned
-      .split(/[.!?]\s+/)
-      .map(p => p.trim())
-      .filter(p => p.length > 25 && !isGarbage(p))
-      .slice(0, 3);
-    if (parts.length > 0) {
-      descParas = parts.map(p => `<p style="color:#a89050;line-height:1.75;margin:8px 0;font-size:13px;">${p}.</p>`).join("\n");
-    }
+  // ── Outro ─────────────────────────────────────────────────────────────────
+  let outroHtml = "";
+  if (outroText) {
+    outroHtml = `<p style="color:#8a7040;line-height:1.7;margin:12px 0 0;font-size:12px;font-style:italic;">${outroText}</p>`;
   }
 
-  // Fallback-Beschreibung wenn nichts da ist
+  // Fallback wenn gar nichts da ist
   if (!descParas && !bulletsHtml) {
     descParas = `<p style="color:#a89050;line-height:1.75;margin:8px 0;font-size:13px;">${title} — hochwertige Qualität für anspruchsvolle Anwender.</p>`;
   }
@@ -227,8 +247,9 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
   const tab1 = `
     <h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:10px;letter-spacing:1px;margin:0 0 16px 0;font-size:15px;">${title}</h3>
-    ${bulletsHtml}
     ${descParas}
+    ${bulletsHtml}
+    ${outroHtml}
     ${specsHtml}
     ${variantsHtml}
     <hr style="margin:20px 0;border:none;border-top:1px solid #2a2a0a;" />
@@ -411,52 +432,67 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     return key && val && !isGarbage(key) && !isGarbage(val);
   }).slice(0, 14);
 
+  // ── Beschreibung parsen: ###INTRO###/###BULLETS###/###OUTRO### Format ────
+  let introText = "";
+  let outroText = "";
+  const bullets: string[] = [];
+  const desc = product.description ?? "";
+  const hasStructured = desc.includes("###INTRO###") || desc.includes("###BULLETS###");
+
+  if (hasStructured) {
+    const introM = desc.match(/###INTRO###\s*([\s\S]*?)(?:###BULLETS###|$)/);
+    const bulletsM = desc.match(/###BULLETS###\s*([\s\S]*?)(?:###OUTRO###|$)/);
+    const outroM = desc.match(/###OUTRO###\s*([\s\S]*?)$/);
+    introText = cleanText(introM?.[1]?.trim() ?? "");
+    outroText = cleanText(outroM?.[1]?.trim() ?? "");
+    if (bulletsM) {
+      const lines = bulletsM[1].split("\n").map(l => l.replace(/^[\-\*•]\s*/, "").trim()).filter(l => l.length > 10 && !isGarbage(l));
+      bullets.push(...lines.slice(0, 8));
+    }
+  } else {
+    if (product.bullets && product.bullets.length > 0) {
+      for (const b of product.bullets) {
+        const c = cleanText(b);
+        if (c.length > 15 && !isGarbage(c)) bullets.push(c);
+        if (bullets.length >= 8) break;
+      }
+    }
+    if (bullets.length < 3 && desc.length > 30) {
+      const lines = desc.split(/[\n•\-\*]/).map(l => cleanText(l)).filter(l => l.length > 20 && !isGarbage(l));
+      for (const l of lines) {
+        if (!bullets.includes(l)) bullets.push(l);
+        if (bullets.length >= 8) break;
+      }
+    }
+    if (!introText && desc.length > 30) {
+      const firstSentence = cleanText(desc).split(/[.!?]\s+/)[0];
+      if (firstSentence && firstSentence.length > 20) introText = firstSentence;
+    }
+  }
+
+  // ── Intro-Absatz ──────────────────────────────────────────────────────────
+  let descParas = "";
+  if (introText) {
+    descParas = `<p style="color:#333333;line-height:1.8;margin:0 0 14px 0;font-size:14px;font-weight:500;">${introText}</p>`;
+  }
+
   // ── Bullet Points ─────────────────────────────────────────────────────────
   let bulletsHtml = "";
-  const bullets: string[] = [];
-
-  if (product.bullets && product.bullets.length > 0) {
-    for (const b of product.bullets) {
-      const c = cleanText(b);
-      if (c.length > 15 && !isGarbage(c)) bullets.push(c);
-      if (bullets.length >= 8) break;
-    }
-  }
-
-  if (bullets.length < 3 && product.description) {
-    const lines = product.description
-      .split(/[\n•\-\*]/)
-      .map(l => cleanText(l))
-      .filter(l => l.length > 20 && !isGarbage(l));
-    for (const l of lines) {
-      if (!bullets.includes(l)) bullets.push(l);
-      if (bullets.length >= 8) break;
-    }
-  }
-
   if (bullets.length > 0) {
     bulletsHtml = `
     <ul style="margin:0 0 16px 0;padding:0;list-style:none;">
       ${bullets.map(b => `
       <li style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #e8e0d0;">
-        <span style="color:#B8860B;font-size:16px;line-height:1;flex-shrink:0;">✓</span>
+        <span style="color:#B8860B;font-size:15px;line-height:1.3;flex-shrink:0;margin-top:1px;">✓</span>
         <span style="color:#333333;line-height:1.7;font-size:14px;">${b}</span>
       </li>`).join("")}
     </ul>`;
   }
 
-  // ── Beschreibungstext ──────────────────────────────────────────────────────
-  let descParas = "";
-  if (product.description && product.description.length > 30) {
-    const cleaned = cleanText(product.description);
-    const parts = cleaned
-      .split(/[.!?]\s+/)
-      .map(p => p.trim())
-      .filter(p => p.length > 25 && !isGarbage(p))
-      .slice(0, 3);
-    if (parts.length > 0) {
-      descParas = parts.map(p => `<p style="color:#444444;line-height:1.8;margin:8px 0;font-size:14px;">${p}.</p>`).join("\n");
-    }
+  // ── Outro ─────────────────────────────────────────────────────────────────
+  let outroHtml = "";
+  if (outroText) {
+    outroHtml = `<p style="color:#666666;line-height:1.7;margin:12px 0 0;font-size:12px;font-style:italic;">${outroText}</p>`;
   }
 
   if (!descParas && !bulletsHtml) {
@@ -493,8 +529,9 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
   const tab1 = `
     <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:10px;letter-spacing:1px;margin:0 0 16px 0;font-size:16px;">${title}</h3>
-    ${bulletsHtml}
     ${descParas}
+    ${bulletsHtml}
+    ${outroHtml}
     ${specsHtml}
     ${variantsHtml}
     <hr style="margin:20px 0;border:none;border-top:1px solid #e8e0d0;" />

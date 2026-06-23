@@ -59,30 +59,37 @@ async function generateDescriptionWithGemini(title: string, specs: Record<string
     return generateFallbackDescription(title, specs);
   }
 
-  const prompt = `Du bist ein erfahrener eBay-Produkttexter für den deutschen Markt.
+  const specsText = Object.entries(specs).slice(0, 15).map(([k, v]) => `- ${k}: ${v}`).join('\n');
+  const prompt = `Du bist ein Top-eBay-Produkttexter für den deutschen Markt. Deine Beschreibungen sind sachlich, überzeugend und basieren NUR auf echten Produktdaten.
 
-PRODUKT: ${title}
-${Object.entries(specs).slice(0, 10).map(([k, v]) => `- ${k}: ${v}`).join('\n') ? `\nTECHNISCHE DATEN:\n${Object.entries(specs).slice(0, 10).map(([k, v]) => `- ${k}: ${v}`).join('\n')}` : ''}
-${description ? `\nHERSTELLERINFO: ${description.slice(0, 600)}` : ''}
+PRODUKTTITEL: ${title}
+${specsText ? `\nTECHNISCHE DATEN (alle verwenden!):\n${specsText}` : ''}
+${description ? `\nPRODUKTINFO VOM HERSTELLER:\n${description.slice(0, 1200)}` : ''}
 
-AUFGABE: Schreibe eine professionelle, verkaufsstarke Produktbeschreibung auf Deutsch.
+AUFGABE: Erstelle eine strukturierte eBay-Beschreibung auf Deutsch. Nutze ALLE verfügbaren Produktinfos oben.
 
-FORMAT - gib NUR folgendes zurück (kein Markdown, keine Überschriften, keine Formatierung):
-Zeile 1: Ein prägnanter Einleitungssatz der den Hauptnutzen beschreibt (max. 20 Wörter)
-Zeile 2: leer
-Zeile 3: Bullet "- " + konkreter Vorteil/Feature (aus technischen Daten)
-Zeile 4: Bullet "- " + konkreter Vorteil/Feature
-Zeile 5: Bullet "- " + konkreter Vorteil/Feature
-Zeile 6: Bullet "- " + konkreter Vorteil/Feature
-Zeile 7: leer
-Zeile 8: Abschlusssatz mit Qualitätsversprechen (max. 15 Wörter)
+FORMAT (exakt so zurückgeben, mit den Trennzeichen):
+###INTRO###
+[1 starker Einleitungssatz: Was ist das Produkt, für wen, welcher Hauptnutzen – max. 25 Wörter]
+###BULLETS###
+- [konkretes Feature/Vorteil mit echten Daten, z.B. Maße, Material, Funktion]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil, wenn möglich Anwendungsbereich]
+###OUTRO###
+[1 Abschlusssatz: Qualität + Einsatzbereich – max. 20 Wörter]
 
-REGELN:
-- Bullets aus echten Produktinfos (Maße, Material, Funktion) – KEIN generisches Marketing
-- Keine Emojis, keine Sonderzeichen
-- KEIN Erwähnen von AliExpress, China, Amazon, Hersteller-Namen
-- Deutsche Maßeinheiten (cm, ml, g) verwenden
-- Sachlicher aber überzeugender Ton`;
+REGELN (unbedingt einhalten):
+- Nur echte Infos aus den Produktdaten – KEIN generisches "hochwertig", "perfekt" ohne Beleg
+- Keine Emojis, kein Markdown (kein **, kein #)
+- NICHT erwähnen: AliExpress, China, Amazon, Händlername
+- EU-Maße: cm statt inch, ml statt oz, Komma als Dezimalzeichen
+- Wenn Setinhalte vorhanden: im passenden Bullet kurz auflisten (z.B. "Lieferumfang: 10x Klein, 10x Groß, Schraubendreher, EVA-Tasche")
+- Anwendungsbereich konkret nennen (Auto, Motorrad, LKW etc.) wenn aus Produktinfo ersichtlich
+- Sprache: sachlich, direkt, kein Marketingsprech`;
+
 
   // Versuche jedes Modell nacheinander (Fallback bei 503/Überlastung)
   for (const modelName of GEMINI_MODELS) {
