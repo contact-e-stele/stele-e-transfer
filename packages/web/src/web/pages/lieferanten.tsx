@@ -150,6 +150,7 @@ export default function Lieferanten() {
   const [htmlTheme, setHtmlTheme] = useState<"dark" | "light">("dark");
 
   const [ebayPrice, setEbayPrice] = useState("");
+  const [variantEbayPrices, setVariantEbayPrices] = useState<Record<string, string>>({});
   const [buyPrice, setBuyPrice] = useState("");
   const [adRate, setAdRate] = useState<number>(() => {
     const saved = localStorage.getItem("stele_ad_rate");
@@ -849,49 +850,60 @@ export default function Lieferanten() {
                     </div>
                     {vp.map((v, i) => {
                       const isCheapest = v.price === minP;
-                      const profit = ebay > 0 ? ebay - ebay * (13 + adRate) / 100 * 1.19 - 0.45 * 1.19 - v.price : null;
                       const attrLabel = Object.values(v.attrs).join(" / ") || "–";
-                      const skuShort = v.skuId.length > 20 ? v.skuId.substring(0, 20) + "…" : v.skuId;
+                      const varEbayRaw = variantEbayPrices[v.skuId] ?? "";
+                      const varEbay = parseFloat(varEbayRaw.replace(",", ".")) || 0;
+                      const varProfit = varEbay > 0
+                        ? varEbay - varEbay * (13 + adRate) / 100 * 1.19 - 0.45 * 1.19 - v.price
+                        : null;
                       return (
                         <div key={v.skuId} style={{
-                          display: "grid", gridTemplateColumns: "40px 1.8fr 120px 80px 80px 70px",
-                          gap: 8, padding: "10px 8px", alignItems: "center",
+                          display: "grid", gridTemplateColumns: "36px 1fr 90px 90px 80px 55px",
+                          gap: 6, padding: "8px 6px", alignItems: "center",
                           borderRadius: 10, border: `1.5px solid ${isCheapest ? "#BBF7D0" : "#F1F5F9"}`,
                           background: isCheapest ? "#F0FDF4" : i % 2 === 0 ? "#fff" : "#FAFAFA",
                         }}>
                           {/* Bild */}
-                          <div style={{ width: 36, height: 36, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                             {v.imageUrl
                               ? <img src={v.imageUrl} alt={attrLabel} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                              : <Package size={16} color="#CBD5E1" />
+                              : <Package size={14} color="#CBD5E1" />
                             }
                           </div>
                           {/* Name + SKU */}
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{attrLabel}</div>
-                            <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", cursor: "help", whiteSpace: "nowrap" }} title={`SKU: ${v.skuId}`}>
-                              {v.skuId ? `…${v.skuId.slice(-8)}` : "–"}
-                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={attrLabel}>{attrLabel}</div>
+                            <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", cursor: "help" }} title={`SKU: ${v.skuId}`}>…{v.skuId.slice(-8)}</div>
                           </div>
                           {/* Einkauf */}
                           <div style={{ textAlign: "right" }}>
-                            <span style={{ fontSize: 13, fontWeight: 800, color: isCheapest ? "#16A34A" : "#1D4ED8" }}>{v.price.toFixed(2)} €</span>
+                            <span style={{ fontSize: 12, fontWeight: 800, color: isCheapest ? "#16A34A" : "#1D4ED8" }}>{v.price.toFixed(2)} €</span>
                             {isCheapest && <div style={{ fontSize: 9, color: "#16A34A", fontWeight: 700 }}>günstigst</div>}
                           </div>
-                          {/* eBay */}
-                          <div style={{ textAlign: "right", fontSize: 12, color: "#64748B" }}>
-                            {ebay > 0 ? `${ebay.toFixed(2)} €` : "–"}
+                          {/* eBay Eingabe */}
+                          <div style={{ textAlign: "right" }}>
+                            <input
+                              type="number" step="0.01" min="0"
+                              placeholder={`min. ${(v.price * 1.19 * (1 + (13 + adRate) / 100) + 0.54 + 1.6).toFixed(2)}`}
+                              value={varEbayRaw}
+                              onChange={e => setVariantEbayPrices(prev => ({ ...prev, [v.skuId]: e.target.value }))}
+                              style={{
+                                width: "100%", textAlign: "right", fontSize: 12, fontWeight: 700,
+                                border: "1.5px solid #E2E8F0", borderRadius: 6, padding: "3px 5px",
+                                background: varEbay > 0 ? "#F0F9FF" : "#fff", color: "#0F172A", outline: "none",
+                              }}
+                            />
                           </div>
                           {/* Gewinn */}
                           <div style={{ textAlign: "right" }}>
-                            {profit !== null
-                              ? <span style={{ fontSize: 13, fontWeight: 800, color: profit >= 1.6 ? "#16A34A" : profit >= 0 ? "#F59E0B" : "#DC2626" }}>{profit >= 0 ? "+" : ""}{profit.toFixed(2)} €</span>
-                              : <span style={{ color: "#CBD5E1" }}>–</span>
+                            {varProfit !== null
+                              ? <span style={{ fontSize: 12, fontWeight: 800, color: varProfit >= 1.6 ? "#16A34A" : varProfit >= 0 ? "#F59E0B" : "#DC2626" }}>{varProfit >= 0 ? "+" : ""}{varProfit.toFixed(2)} €</span>
+                              : <span style={{ color: "#CBD5E1", fontSize: 11 }}>–</span>
                             }
                           </div>
                           {/* Lager */}
-                          <div style={{ textAlign: "right", fontSize: 12, color: v.stock === 0 ? "#DC2626" : "#64748B", fontWeight: v.stock === 0 ? 700 : 400 }}>
-                            {v.stock !== undefined ? (v.stock === 0 ? "❌ 0" : v.stock) : "–"}
+                          <div style={{ textAlign: "right", fontSize: 11, color: v.stock === 0 ? "#DC2626" : "#64748B", fontWeight: v.stock === 0 ? 700 : 400 }}>
+                            {v.stock !== undefined ? (v.stock === 0 ? "0 ❌" : v.stock) : "–"}
                           </div>
                         </div>
                       );
