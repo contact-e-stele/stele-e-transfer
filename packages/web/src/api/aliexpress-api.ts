@@ -138,6 +138,15 @@ interface RawSku {
       property_name_value?: string;
       sku_property_name?: string;
       sku_property_value?: string;
+      property_value_definition_name?: string;
+    }>;
+    ae_sku_property_d_t_o?: Array<{
+      property_name?: string;
+      property_name_value?: string;
+      sku_property_name?: string;
+      sku_property_value?: string;
+      property_value_definition_name?: string;
+      sku_image?: string;
     }>;
   };
 }
@@ -153,12 +162,14 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
     const price = parseFloat(priceStr.replace(/[^\d.]/g, ''));
     if (!price || price <= 0) continue;
 
-    // Parse Attribute
+    // Parse Attribute — API gibt ae_sku_property_d_t_o oder ae_sku_property zurück
     const attrs: Record<string, string> = {};
-    const skuProps = sku.ae_sku_property_dtos?.ae_sku_property || [];
+    let imageUrl = '';
+    const skuProps = sku.ae_sku_property_dtos?.ae_sku_property_d_t_o || sku.ae_sku_property_dtos?.ae_sku_property || [];
     for (const prop of skuProps) {
-      const name = prop.property_name || prop.sku_property_name || '';
-      const value = prop.property_name_value || prop.sku_property_value || '';
+      const name = prop.sku_property_name || prop.property_name || '';
+      const value = prop.property_value_definition_name || prop.property_name_value || prop.sku_property_value || '';
+      if (!imageUrl && (prop as Record<string, unknown>).sku_image) imageUrl = String((prop as Record<string, unknown>).sku_image);
       if (name && value) {
         attrs[name] = value;
         if (!variantGroups[name]) variantGroups[name] = new Set();
@@ -171,6 +182,7 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
       attrs,
       price,
       stock: sku.sku_available_stock,
+      imageUrl: imageUrl || undefined,
     });
   }
 
