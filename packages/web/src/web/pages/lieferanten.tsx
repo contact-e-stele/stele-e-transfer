@@ -142,7 +142,9 @@ export default function Lieferanten() {
   const [manualPrice, setManualPrice] = useState("");
 
   const [product, setProduct] = useState<ScrapedProduct | null>(null);
-  const [visibleImages, setVisibleImages] = useState<string[]>([]);
+  const [allImages, setAllImages] = useState<string[]>([]); // alle Bilder (inkl. ausgeblendete)
+  const [excludedImages, setExcludedImages] = useState<Set<number>>(new Set()); // ausgeblendete Indizes
+  const [visibleImages, setVisibleImages] = useState<string[]>([]); // nur sichtbare (= eingeschlossen)
   const [result, setResult] = useState<{ title: string; html: string } | null>(null);
   const [selectedImage, setSelectedImage] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
@@ -221,6 +223,8 @@ export default function Lieferanten() {
       const data = await res.json() as ScrapedProduct & { error?: string };
       if (!res.ok) throw new Error(data.error ?? `Fehler ${res.status}`);
       setProduct(data);
+      setAllImages(data.images ?? []);
+      setExcludedImages(new Set());
       setVisibleImages(data.images ?? []);
       const t = buildTitle(data.title);
       const h = buildHTML(data, htmlTheme);
@@ -454,11 +458,24 @@ export default function Lieferanten() {
     });
   }, []);
 
+  // Toggle-Bild-Ausblenden (für allImages aus Scrape)
+  const toggleImageExcluded = useCallback((idx: number) => {
+    setExcludedImages(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) { next.delete(idx); } else { next.add(idx); }
+      // visibleImages neu berechnen
+      const newVisible = allImages.filter((_, i) => !next.has(i));
+      setVisibleImages(newVisible);
+      setSelectedImage(si => Math.min(si, Math.max(0, newVisible.length - 1)));
+      return next;
+    });
+  }, [allImages]);
+
   const reset = () => {
     setProduct(null); setResult(null); setEbayResult(null); setGpsrHersteller("");
     setSaveResult(null); setUrlInput(""); setManualTitle(""); setShipsFromInfo(null);
     setManualDesc(""); setManualPrice(""); setBuyPrice(""); setEbayPrice("");
-    setShowPreview(false); setVisibleImages([]); setSelectedImage(0);
+    setShowPreview(false); setVisibleImages([]); setAllImages([]); setExcludedImages(new Set()); setSelectedImage(0);
   };
 
   return (
@@ -620,23 +637,82 @@ export default function Lieferanten() {
             )}
 
             {/* Produktbild */}
-            {visibleImages.length > 0 && (
+            {(allImages.length > 0 || visibleImages.length > 0) && (
               <div style={{ background: "#fff", borderRadius: 16, padding: 16, boxShadow: "0 2px 10px rgba(0,0,0,0.06)", marginBottom: 14 }}>
-                <img src={visibleImages[selectedImage]} alt="" style={{ width: "100%", maxHeight: 260, objectFit: "contain", borderRadius: 10, background: "#F8FAFC" }} />
+                {/* Hauptbild = aktuell ausgewähltes sichtbares Bild */}
+                {visibleImages.length > 0 ? (
+                  <img src={visibleImages[Math.min(selectedImage, visibleImages.length - 1)]} alt=""
+                    style={{ width: "100%", maxHeight: 260, objectFit: "contain", borderRadius: 10, background: "#F8FAFC" }} />
+                ) : (
+                  <div style={{ width: "100%", height: 160, borderRadius: 10, background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", color: "#94A3B8", fontSize: 13 }}>
+                    Alle Bilder ausgeblendet
+                  </div>
+                )}
+
+                {/* Thumbnail-Leiste: zeigt ALLE allImages, ausgeblendete grau + Auge */}
                 <div style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 4 }}>
-                  {visibleImages.map((img, i) => (
-                    <div key={i} style={{ position: "relative", flexShrink: 0 }}>
-                      <img src={img} alt="" onClick={() => setSelectedImage(i)} style={{
-                        width: 48, height: 48, borderRadius: 8, objectFit: "cover",
-                        cursor: "pointer", display: "block",
-                        border: i === selectedImage ? "2px solid #FF6B00" : "2px solid transparent",
-                        opacity: i === selectedImage ? 1 : 0.6,
-                      }} />
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeImage(i); }}
-                        title="Bild entfernen"
+                  {(allImages.length > 0 ? allImages : visibleImages).map((img, i) => {
+                    const isExcluded = allImages.length > 0 ? excludedImages.has(i) : false;
+                    // visibleIndex = wie dieses Bild in visibleImages steht
+                    const visIdx = visibleImages.indexOf(img);
+                    const isSelected = !isExcluded && visIdx === selectedImage;
+                    return (
+                      <div key={i} style={{ position: "relative", flexShrink: 0 }}>
+                        <img src={img} alt=""
+                          onClick={() => {
+                            if (!isExcluded) {
+                              if (visIdx >= 0) setSelectedImage(visIdx);
+                            } else {
+                              // Klick auf ausgeblendetes = wieder einblenden
+                              toggleImageExcluded(i);
+                            }
+                          }}
+                          title={isExcluded ? "Klick: Bild einblenden" : "Klick: Bild auswählen"}
+                          style={{
+                            width: 48, height: 48, borderRadius: 8, objectFit: "cover",
+                            cursor: "pointer", display: "block",
+                            border: isSelected ? "2px solid #FF6B00" : isExcluded ? "2px solid #CBD5E1" : "2px solid transparent",
+                            opacity: isExcluded ? 0.3 : isSelected ? 1 : 0.7,
+                            filter: isExcluded ? "grayscale(100%)" : "none",
+                            transition: "all 0.15s",
+                          }}
+                        />
+                        {/* Toggle-Button: Auge (ausblenden/einblenden) */}
+                        {allImages.length > 0 && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleImageExcluded(i); }}
+                            title={isExcluded ? "Bild einblenden" : "Bild ausblenden"}
+                            style={{
+                              position: "absolute", top: -6, right: -6,
+                              width: 18, height: 18, borderRadius: "50%",
+                              background: isExcluded ? "#94A3B8" : "#0F172A", border: "none",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              cursor: "pointer", padding: 0, zIndex: 10,
+                              fontSize: 9, color: "#fff",
+                            }}
+                          >
+                            {isExcluded ? "👁" : "✕"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {/* GPSR-Bilder (manuell hinzugefügt, nicht in allImages) */}
+                  {visibleImages.filter(img => !allImages.includes(img)).map((img, i) => (
+                    <div key={`gpsr-${i}`} style={{ position: "relative", flexShrink: 0 }}>
+                      <img src={img} alt="" onClick={() => setSelectedImage(visibleImages.indexOf(img))}
                         style={{
-                          position: "absolute", bottom: -6, right: -6,
+                          width: 48, height: 48, borderRadius: 8, objectFit: "cover",
+                          cursor: "pointer", display: "block",
+                          border: visibleImages.indexOf(img) === selectedImage ? "2px solid #C9A227" : "2px dashed #C9A227",
+                          opacity: 0.85,
+                        }}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeImage(visibleImages.indexOf(img)); }}
+                        title="GPSR-Bild entfernen"
+                        style={{
+                          position: "absolute", top: -6, right: -6,
                           width: 18, height: 18, borderRadius: "50%",
                           background: "#EF4444", border: "none",
                           display: "flex", alignItems: "center", justifyContent: "center",
@@ -650,7 +726,7 @@ export default function Lieferanten() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
                   <p style={{ margin: 0, fontSize: 11, color: "#94A3B8" }}>
-                    {visibleImages.length} Bild{visibleImages.length !== 1 ? "er" : ""} · X zum Entfernen
+                    {visibleImages.length}/{allImages.length || visibleImages.length} Bilder · ✕ ausblenden · 👁 einblenden
                   </p>
                   <button
                     onClick={() => gpsrInputRef.current?.click()}
