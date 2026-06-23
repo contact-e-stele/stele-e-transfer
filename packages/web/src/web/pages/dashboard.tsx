@@ -103,31 +103,59 @@ export default function Dashboard() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24 }}>
-          {(() => {
-            const listed = products.filter(p => p.ebayStatus === "listed");
-            const withProfit = listed.filter(p => p.sellPrice && p.buyPrice);
-            const totalProfit = withProfit.reduce((sum, p) => {
-              const adR = p.adRate ?? 5;
-              const profit = p.sellPrice! - p.sellPrice! * (13 + adR) / 100 * 1.19 - 0.45 * 1.19 - p.buyPrice!;
-              return sum + profit;
-            }, 0);
-            return [
-              { label: "Gesamt", value: products.length.toString(), color: "#8B5CF6" },
-              { label: "Auf eBay", value: listed.length.toString(), color: "#16A34A" },
-              { label: "Fehler", value: products.filter(p => p.ebayStatus === "error").length.toString(), color: "#DC2626" },
-              { label: "Ø Gewinn/Artikel", value: withProfit.length > 0 ? `${(totalProfit / withProfit.length).toFixed(2)} €` : "–", color: totalProfit > 0 ? "#16A34A" : "#94A3B8" },
-            ].map(s => (
-              <div key={s.label} style={{
-                background: "#fff", borderRadius: 14, padding: "16px",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.06)", textAlign: "center",
-              }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.value}</div>
-                <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
+        {(() => {
+          const listed = products.filter(p => p.ebayStatus === "listed");
+          const withProfit = listed.filter(p => p.sellPrice && p.buyPrice);
+          const totalProfit = withProfit.reduce((sum, p) => {
+            const adR = p.adRate ?? 5;
+            const profit = p.sellPrice! - p.sellPrice! * (13 + adR) / 100 * 1.19 - 0.45 * 1.19 - p.buyPrice!;
+            return sum + profit;
+          }, 0);
+          const avgProfit = withProfit.length > 0 ? totalProfit / withProfit.length : null;
+          const errors = products.filter(p => p.ebayStatus === "error").length;
+          return (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                {[
+                  { label: "Produkte gesamt", value: products.length.toString(), color: "#8B5CF6", bg: "#F5F3FF" },
+                  { label: "Auf eBay aktiv", value: listed.length.toString(), color: "#16A34A", bg: "#F0FDF4" },
+                  { label: "Fehler", value: errors.toString(), color: errors > 0 ? "#DC2626" : "#94A3B8", bg: errors > 0 ? "#FEF2F2" : "#F8FAFC" },
+                ].map(s => (
+                  <div key={s.label} style={{
+                    background: s.bg, borderRadius: 14, padding: "14px 12px",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.06)", textAlign: "center",
+                  }}>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
+                  </div>
+                ))}
               </div>
-            ));
-          })()}
-        </div>
+              {/* Gewinn-Karten */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={{
+                  background: totalProfit > 0 ? "#F0FDF4" : "#F8FAFC", borderRadius: 14, padding: "14px 12px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)", textAlign: "center",
+                  border: totalProfit > 0 ? "1.5px solid #BBF7D0" : "1.5px solid #E2E8F0",
+                }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: totalProfit > 0 ? "#16A34A" : "#94A3B8" }}>
+                    {withProfit.length > 0 ? `${totalProfit >= 0 ? "+" : ""}${totalProfit.toFixed(2)} €` : "–"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>Gesamtgewinn ({withProfit.length} Artikel)</div>
+                </div>
+                <div style={{
+                  background: avgProfit !== null && avgProfit >= 1.60 ? "#F0FDF4" : "#F8FAFC", borderRadius: 14, padding: "14px 12px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)", textAlign: "center",
+                  border: avgProfit !== null && avgProfit >= 1.60 ? "1.5px solid #BBF7D0" : "1.5px solid #E2E8F0",
+                }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: avgProfit !== null && avgProfit >= 1.60 ? "#16A34A" : avgProfit !== null && avgProfit >= 0 ? "#F59E0B" : "#94A3B8" }}>
+                    {avgProfit !== null ? `${avgProfit >= 0 ? "+" : ""}${avgProfit.toFixed(2)} €` : "–"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>Ø Gewinn / Artikel</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Error */}
         {error && (
