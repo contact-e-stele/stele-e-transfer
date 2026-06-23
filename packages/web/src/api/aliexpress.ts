@@ -1,6 +1,5 @@
-// AliExpress URL Scraper — Playwright (mtop API intercept) + HTML fallbacks
-// Primary: Playwright intercepts mtop.aliexpress.pdp.pc.query → all variant prices
-// Fallback: ScrapingAnt → ScraperAPI → ZenRows (HTML-based, no variant prices)
+// AliExpress URL Scraper — DS API (primary, instant) + Playwright fallback + HTML fallbacks
+// Priority: 1) AliExpress DS API (aliexpress.ds.product.get) → 2) Playwright → 3) HTML
 
 const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY || '';
 const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY || '';
@@ -41,6 +40,178 @@ export interface ScrapedProduct {
   variants: Array<{ name: string; values: string[] }>; // z.B. [{name:"Farbe", values:["Schwarz","Blau"]}]
   variantPrices: VariantPrice[]; // alle Varianten mit SKU-ID + Preis
   seller?: string;        // AliExpress Shopname für GPSR
+}
+
+// ── AliExpress DS API — product.get (schnellste Methode, keine Browser nötig) ──
+async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null> {
+  const { createHash } = await import('node:crypto');
+  const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
+  const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
+  const IOP_EP = 'https://api-sg.aliexpress.com/sync';
+
+  // Access Token aus DB/ENV holen
+  let accessToken = process.env.ALIEXPRESS_ACCESS_TOKEN || '';
+  if (!accessToken) {
+    try {
+      const { db } = await import('../db/index');
+      const { settings } = await import('../db/schema');
+      const { eq } = await import('drizzle-orm');
+      const row = await db.select().from(settings).where(eq(settings.key, 'aliexpress_access_token')).limit(1);
+      accessToken = row[0]?.value || '';
+    } catch { /* ignore */ }
+  }
+  if (!accessToken) {
+    console.log('[DS API] Kein Access Token — übersprungen');
+    return null;
+  }
+
+  function sign(secret: string, params: Record<string, string>): string {
+    const sorted = Object.keys(params).sort().map(k => `${k}${params[k]}`).join('');
+    return createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
+  }
+
+  try {
+    const params: Record<string, string> = {
+      app_key: APP_KEY,
+      method: 'aliexpress.ds.product.get',
+      timestamp: String(Date.now()),
+      format: 'json',
+      sign_method: 'md5',
+      v: '2.0',
+      access_token: accessToken,
+      product_id: productId,
+      ship_from_country: 'DE',
+      target_currency: 'EUR',
+      target_language: 'DE',
+    };
+    params.sign = sign(APP_SECRET, params);
+
+    console.log(`[DS API] Rufe product.get für ${productId} auf...`);
+    const res = await fetch(IOP_EP, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(15000),
+    });
+    const raw = await res.json() as Record<string, unknown>;
+    console.log('[DS API] Response:', JSON.stringify(raw).slice(0, 300));
+
+    // Response-Struktur: aliexpress_ds_product_get_response.result
+    const resp = raw['aliexpress_ds_product_get_response'] as Record<string, unknown> | undefined;
+    if (!resp) { console.log('[DS API] Kein aliexpress_ds_product_get_response'); return null; }
+    const result = resp['result'] as Record<string, unknown> | undefined;
+    if (!result) { console.log('[DS API] Kein result'); return null; }
+
+    const detail = result as {
+      subject?: string;
+      product_id?: string | number;
+      image_urls?: string[];
+      ae_item_base_info_dto?: {
+        subject?: string;
+        evaluation_count?: number;
+        avg_evaluation_rating?: string;
+      };
+      ae_multimedia_info_dto?: { image_urls?: string[] };
+      ae_item_sku_info_dtos?: {
+        ae_item_sku_info_d_t_o?: Array<{
+          sku_id?: string;
+          sku_price?: string;
+          sku_available_stock?: number;
+          id?: string;
+          ae_sku_property_dtos?: {
+            ae_sku_property_d_t_o?: Array<{
+              sku_property_name?: string;
+              property_value_definition_name?: string;
+              sku_image?: string;
+            }>;
+          };
+        }>;
+      };
+      ae_store_info?: { store_name?: string };
+      logistics_info_list?: {
+        ae_item_logistics_info?: Array<{ ship_from_country?: string }>;
+      };
+    };
+
+    // Titel
+    const title = cleanTitle(detail.ae_item_base_info_dto?.subject || (result['subject'] as string) || '');
+    if (!title) { console.log('[DS API] Kein Titel'); return null; }
+
+    // Bilder
+    const images: string[] = [];
+    const rawImgs = detail.ae_multimedia_info_dto?.image_urls || (result['image_urls'] as string[]) || [];
+    if (typeof rawImgs === 'string') {
+      images.push(...(rawImgs as string).split(';').filter(Boolean).map((u: string) => u.startsWith('http') ? u : 'https:' + u));
+    } else if (Array.isArray(rawImgs)) {
+      images.push(...rawImgs.map((u: string) => u.startsWith('http') ? u : 'https:' + u));
+    }
+
+    // Varianten
+    const skuDtos = detail.ae_item_sku_info_dtos?.ae_item_sku_info_d_t_o || [];
+    const variantPrices: VariantPrice[] = [];
+    const variantGroupMap: Record<string, Set<string>> = {};
+
+    for (const sku of skuDtos) {
+      const skuId = String(sku.sku_id || sku.id || '');
+      const priceRaw = sku.sku_price || '';
+      const priceNum = parseFloat(priceRaw.replace(/[^\d.]/g, ''));
+      if (!priceNum || priceNum <= 0) continue;
+
+      const attrs: Record<string, string> = {};
+      let imageUrl = '';
+      const props = sku.ae_sku_property_dtos?.ae_sku_property_d_t_o || [];
+      for (const prop of props) {
+        const name = prop.sku_property_name || '';
+        const val = prop.property_value_definition_name || '';
+        if (name && val) {
+          attrs[name] = val;
+          if (!variantGroupMap[name]) variantGroupMap[name] = new Set();
+          variantGroupMap[name].add(val);
+        }
+        if (prop.sku_image && !imageUrl) {
+          imageUrl = prop.sku_image.startsWith('http') ? prop.sku_image : 'https:' + prop.sku_image;
+        }
+      }
+
+      variantPrices.push({ skuId, attrs, imageUrl: imageUrl || undefined, price: priceNum, stock: sku.sku_available_stock });
+    }
+
+    const variants = Object.entries(variantGroupMap).map(([name, vals]) => ({ name, values: [...vals] }));
+
+    // Mindestpreis
+    const allPrices = variantPrices.map(v => v.price);
+    const minP = allPrices.length > 0 ? Math.min(...allPrices) : 0;
+    const price = minP > 0 ? `${minP.toFixed(2)} €` : '';
+
+    // Versandland
+    const logisticsList = detail.logistics_info_list?.ae_item_logistics_info || [];
+    let shipsFrom = '';
+    for (const l of logisticsList) {
+      if (l.ship_from_country) { shipsFrom = l.ship_from_country; break; }
+    }
+    const EU_COUNTRIES = ['germany', 'de', 'spain', 'france', 'italy', 'poland', 'netherlands', 'czech', 'austria', 'belgium', 'sweden'];
+    const shipsFromDE = EU_COUNTRIES.some(c => shipsFrom.toLowerCase().includes(c));
+
+    const seller = detail.ae_store_info?.store_name || '';
+
+    console.log(`[DS API] Erfolg: "${title.slice(0, 40)}" | ${variantPrices.length} Varianten | ${price} | shipsFrom=${shipsFrom}`);
+
+    return {
+      title,
+      images: images.slice(0, 10),
+      price,
+      description: '',
+      specs: {},
+      shipsFromDE,
+      shipsFrom,
+      variants,
+      variantPrices,
+      seller,
+    };
+  } catch (e) {
+    console.log(`[DS API] Fehler: ${e}`);
+    return null;
+  }
 }
 
 function cleanTitle(raw: string): string {
@@ -864,13 +1035,23 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
 
   console.log(`[AliExpress] Starting scrape: ${fetchUrl}`);
 
-  // ── Try Playwright first (intercepts mtop API → full variant prices) ────────
+  // ── Weg 1: DS API (schnellste Methode — direkte API, keine Browser nötig) ──
+  const itemIdMatch = fetchUrl.match(/\/item\/(\d+)\.html/);
+  const productId = itemIdMatch ? itemIdMatch[1] : '';
+  if (productId) {
+    const dsResult = await scrapeWithDsApi(productId);
+    if (dsResult && dsResult.title) {
+      console.log('[AliExpress] DS API erfolgreich — überspringe Playwright/HTML');
+      return dsResult;
+    }
+    console.log('[AliExpress] DS API fehlgeschlagen, versuche Playwright...');
+  }
+
+  // ── Weg 2: Playwright (intercepts mtop API → full variant prices) ────────
   if (PLAYWRIGHT_AVAILABLE) {
     console.log('[AliExpress] Trying Playwright scraper...');
     const playwrightResult = await scrapeWithPlaywright(fetchUrl);
     if (playwrightResult) {
-      // If description is empty, try to fill from HTML fallback
-      // But variantPrices are complete — return early
       return playwrightResult;
     }
     console.log('[AliExpress] Playwright failed, falling back to HTML scrapers...');
