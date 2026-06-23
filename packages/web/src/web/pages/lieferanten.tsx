@@ -867,9 +867,9 @@ export default function Lieferanten() {
                             }
                           </div>
                           {/* Name + SKU */}
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", wordBreak: "break-word" }}>{attrLabel}</div>
-                            <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", wordBreak: "break-all", marginTop: 2 }} title={v.skuId}>{v.skuId}</div>
+                          <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", whiteSpace: "nowrap" }}>{attrLabel}</div>
+                            <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={v.skuId}>{v.skuId}</div>
                           </div>
                           {/* Einkauf */}
                           <div style={{ textAlign: "right" }}>
