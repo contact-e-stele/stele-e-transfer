@@ -870,7 +870,7 @@ export default function Lieferanten() {
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{attrLabel}</div>
                             <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", cursor: "help", whiteSpace: "nowrap" }} title={`SKU: ${v.skuId}`}>
-                              {v.skuId ? `${v.skuId.substring(0, 8)}…` : "–"}
+                              {v.skuId ? `…${v.skuId.slice(-8)}` : "–"}
                             </div>
                           </div>
                           {/* Einkauf */}
