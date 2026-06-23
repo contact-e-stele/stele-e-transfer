@@ -1000,13 +1000,13 @@ export default function Lieferanten() {
                 onClick={handleSave}
                 disabled={saveLoading || !!saveResult?.id}
                 style={{
-                  width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
+                  width: "100%", padding: "13px 0", borderRadius: 12,
+                  border: saveResult?.id ? "1.5px solid #BBF7D0" : "1.5px solid transparent",
                   background: saveResult?.id ? "#F0FDF4" : saveLoading ? "#E2E8F0" : "#0F172A",
                   color: saveResult?.id ? "#15803D" : saveLoading ? "#94A3B8" : "#C9A227",
                   fontWeight: 700, fontSize: 14,
                   cursor: (saveLoading || !!saveResult?.id) ? "not-allowed" : "pointer",
                   fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  border: saveResult?.id ? "1.5px solid #BBF7D0" : "none",
                 }}
               >
                 {saveLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={16} />}
