@@ -223,11 +223,18 @@ export async function getAliProductByApi(productId: string, accessToken: string)
     const result = (resp.result as Record<string, unknown>) || resp;
 
     // ── Titel ──────────────────────────────────────────────────────────────────
-    const subject = (result.subject as string || '').trim();
-    if (!subject) { console.error('[AliExpress API] Kein Titel'); return null; }
+    const baseInfo = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
+    const subject = (
+      (baseInfo?.subject as string) ||
+      (result.subject as string) ||
+      ''
+    ).trim();
+    if (!subject) { console.error('[AliExpress API] Kein Titel — result keys:', Object.keys(result).join(',')); return null; }
 
     // ── Bilder ─────────────────────────────────────────────────────────────────
-    const imageUrls = ((result.image_urls as string) || '').split(';').filter(Boolean).slice(0, 10);
+    const multimediaInfo = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
+    const imageRaw = (multimediaInfo?.image_urls as string) || (result.image_urls as string) || '';
+    const imageUrls = imageRaw.split(';').filter(Boolean).slice(0, 10);
 
     // ── SKU / Varianten-Preise ─────────────────────────────────────────────────
     // Mögliche Feldnamen je nach API-Version
