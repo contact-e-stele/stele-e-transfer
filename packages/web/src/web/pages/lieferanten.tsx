@@ -16,6 +16,7 @@ interface VariantPrice {
   price: number;
   originalPrice?: number;
   stock?: number;
+  imageUrl?: string;
 }
 
 interface ScrapedProduct {
@@ -103,7 +104,16 @@ function isCleanLine(line: string): boolean {
 }
 
 function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "dark"): string {
-  return theme === "light" ? buildEbayHTMLLight(product) : buildEbayHTML(product);
+  // SKU-Varianten für HTML-Template aufbereiten
+  const skuVariants = (product.variantPrices ?? []).length > 0
+    ? product.variantPrices!.map(v => ({
+        name: Object.values(v.attrs).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
+        price: v.price,
+        imageUrl: (v as any).imageUrl as string | undefined,
+      }))
+    : undefined;
+  const enriched = { ...product, skuVariants };
+  return theme === "light" ? buildEbayHTMLLight(enriched) : buildEbayHTML(enriched);
 }
 
 function parsePrice(raw: string): number {

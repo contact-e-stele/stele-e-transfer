@@ -10,6 +10,7 @@ export interface ScrapedProduct {
   description?: string;
   specs?: Record<string, string>;
   variants?: Array<{ name: string; values: string[] }>;
+  skuVariants?: Array<{ name: string; price: number; imageUrl?: string }>;
   bullets?: string[];
 }
 
@@ -37,6 +38,76 @@ function cleanText(text: string): string {
     .replace(/\b200\d{6,}\b/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+// ─── Varianten-HTML ────────────────────────────────────────────────────────
+function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): string {
+  // SKU-Varianten (mit Preisen) haben Vorrang
+  const hasSku = product.skuVariants && product.skuVariants.length > 0;
+  const hasGroups = product.variants && product.variants.length > 0;
+  if (!hasSku && !hasGroups) return "";
+
+  const isDark = theme === "dark";
+  const gold = isDark ? "#C9A84C" : "#B8860B";
+  const bg = isDark ? "#0f0f07" : "#fdf9f0";
+  const border = isDark ? "#2a2a0a" : "#e8d8a0";
+  const textColor = isDark ? "#e0d0a0" : "#333333";
+  const subColor = isDark ? "#8a7040" : "#666666";
+  const hdrBg = isDark ? "#1a1a08" : "#f0ebe0";
+  const rowAlt = isDark ? "#141408" : "#ffffff";
+  const rowEven = isDark ? "#0f0f07" : "#fdf9f0";
+
+  let html = `
+<div style="margin:20px 0;">
+  <table style="width:100%;border-collapse:collapse;border:1px solid ${border};border-radius:6px;overflow:hidden;font-size:13px;">
+    <thead>
+      <tr style="background:${gold};">
+        <th colspan="3" style="padding:10px 14px;text-align:left;color:#ffffff;font-size:12px;letter-spacing:1.5px;font-weight:bold;">VERF&Uuml;GBARE VARIANTEN</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  if (hasSku) {
+    // SKU-Varianten: Bild | Name | Preis
+    html += `
+      <tr style="background:${hdrBg};">
+        <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;width:40px;"></td>
+        <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;">VARIANTE</td>
+        <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;text-align:right;">PREIS (EINKAUF)</td>
+      </tr>`;
+    product.skuVariants!.forEach((v, i) => {
+      const rowBg = i % 2 === 0 ? rowEven : rowAlt;
+      const imgHtml = v.imageUrl
+        ? `<img src="${v.imageUrl}" alt="${v.name}" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid ${border};" />`
+        : `<div style="width:34px;height:34px;background:${hdrBg};border-radius:4px;border:1px solid ${border};"></div>`;
+      html += `
+      <tr style="background:${rowBg};border-top:1px solid ${border};">
+        <td style="padding:8px 10px;">${imgHtml}</td>
+        <td style="padding:8px 10px;color:${textColor};font-weight:600;">${v.name}</td>
+        <td style="padding:8px 10px;color:${subColor};text-align:right;font-weight:700;">${v.price.toFixed(2).replace(".", ",")} €</td>
+      </tr>`;
+    });
+  } else {
+    // Gruppen-Varianten: Name | Werte
+    product.variants!.forEach((grp, gi) => {
+      const rowBg = gi % 2 === 0 ? rowEven : rowAlt;
+      const tags = grp.values.map(val =>
+        `<span style="display:inline-block;padding:3px 9px;margin:2px 3px;border-radius:12px;background:${hdrBg};color:${textColor};border:1px solid ${border};font-size:12px;">${val}</span>`
+      ).join("");
+      html += `
+      <tr style="background:${rowBg};border-top:1px solid ${border};">
+        <td style="padding:10px 14px;font-weight:700;color:${gold};white-space:nowrap;width:30%;">${grp.name}</td>
+        <td colspan="2" style="padding:8px 10px;line-height:1.8;">${tags}</td>
+      </tr>`;
+    });
+  }
+
+  html += `
+    </tbody>
+  </table>
+  <p style="font-size:11px;color:${subColor};margin:6px 0 0;text-align:center;">Bitte die gew&uuml;nschte Variante beim Kauf ausw&auml;hlen.</p>
+</div>`;
+  return html;
 }
 
 function isGarbage(text: string): boolean {
@@ -150,12 +221,16 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     </table>`;
   }
 
+  // ── Varianten-Sektion ──────────────────────────────────────────────────────
+  const variantsHtml = buildVariantsHtml(product, "dark");
+
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
   const tab1 = `
     <h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:10px;letter-spacing:1px;margin:0 0 16px 0;font-size:15px;">${title}</h3>
     ${bulletsHtml}
     ${descParas}
     ${specsHtml}
+    ${variantsHtml}
     <hr style="margin:20px 0;border:none;border-top:1px solid #2a2a0a;" />
     <p style="font-size:11px;color:#5a4a20;margin:0;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
   `.trim();
@@ -412,12 +487,16 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     </table>`;
   }
 
+  // ── Varianten-Sektion ──────────────────────────────────────────────────────
+  const variantsHtml = buildVariantsHtml(product, "light");
+
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
   const tab1 = `
     <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:10px;letter-spacing:1px;margin:0 0 16px 0;font-size:16px;">${title}</h3>
     ${bulletsHtml}
     ${descParas}
     ${specsHtml}
+    ${variantsHtml}
     <hr style="margin:20px 0;border:none;border-top:1px solid #e8e0d0;" />
     <p style="font-size:11px;color:#888888;margin:0;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
   `.trim();
