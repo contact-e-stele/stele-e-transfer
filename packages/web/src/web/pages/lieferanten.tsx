@@ -854,7 +854,7 @@ export default function Lieferanten() {
                       const skuShort = v.skuId.length > 20 ? v.skuId.substring(0, 20) + "…" : v.skuId;
                       return (
                         <div key={v.skuId} style={{
-                          display: "grid", gridTemplateColumns: "40px 1fr 120px 80px 80px 70px",
+                          display: "grid", gridTemplateColumns: "40px 1.8fr 120px 80px 80px 70px",
                           gap: 8, padding: "10px 8px", alignItems: "center",
                           borderRadius: 10, border: `1.5px solid ${isCheapest ? "#BBF7D0" : "#F1F5F9"}`,
                           background: isCheapest ? "#F0FDF4" : i % 2 === 0 ? "#fff" : "#FAFAFA",
@@ -868,8 +868,8 @@ export default function Lieferanten() {
                           </div>
                           {/* Name + SKU */}
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{attrLabel}</div>
-                            <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }} title={v.skuId}>{skuShort}</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", wordBreak: "break-word" }}>{attrLabel}</div>
+                            <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", wordBreak: "break-all", marginTop: 2 }} title={v.skuId}>{v.skuId}</div>
                           </div>
                           {/* Einkauf */}
                           <div style={{ textAlign: "right" }}>

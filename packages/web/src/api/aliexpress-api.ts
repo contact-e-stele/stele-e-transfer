@@ -129,6 +129,8 @@ interface RawSku {
   id?: string | number;
   sku_price?: string;
   offer_sale_price?: string;
+  offer_bulk_sale_price?: string;
+  currency_code?: string;
   sku_available_stock?: number;
   ae_sku_property_dtos?: {
     ae_sku_property?: Array<{
@@ -197,6 +199,7 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       local_country: 'DE',
       local_language: 'de',
       ship_to_country: 'DE',
+      target_currency: 'EUR',
     };
     params.sign = iopSign(APP_SECRET, params);
 
