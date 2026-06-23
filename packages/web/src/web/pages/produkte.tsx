@@ -325,6 +325,13 @@ export default function Produkte() {
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null);
   const [expandedVariants, setExpandedVariants] = useState<Set<number>>(new Set());
 
+  // Alle-Preise-prüfen Job
+  const [priceJob, setPriceJob] = useState<{
+    jobId: string; status: string; total: number; done: number;
+    changed?: number; ebayUpdated?: number;
+  } | null>(null);
+  const [priceJobError, setPriceJobError] = useState("");
+
   const load = async () => {
     setLoading(true);
     setError("");
@@ -400,6 +407,40 @@ export default function Produkte() {
     if (!confirm(`"${product.generatedTitle.slice(0, 50)}…" aus DB löschen?`)) return;
     await fetch(`/api/products/${product.id}`, { method: "DELETE" });
     load();
+  };
+
+  const startAllPriceCheck = async () => {
+    setPriceJobError("");
+    try {
+      const res = await fetch("/api/products/check-all-prices", { method: "POST" });
+      const data = await res.json() as { jobId?: string; total?: number; error?: string };
+      if (!res.ok || !data.jobId) {
+        setPriceJobError(data.error ?? "Fehler beim Starten");
+        return;
+      }
+      setPriceJob({ jobId: data.jobId, status: "running", total: data.total ?? 0, done: 0 });
+
+      // Polling alle 2s bis fertig
+      const poll = async () => {
+        try {
+          const r = await fetch(`/api/products/price-job/${data.jobId}`);
+          const j = await r.json() as {
+            status: string; total: number; done: number;
+            changed?: number; results?: Array<{ status: string; ebayUpdated?: boolean }>;
+          };
+          const ebayUpdated = (j.results ?? []).filter(r => r.ebayUpdated).length;
+          setPriceJob({ jobId: data.jobId!, status: j.status, total: j.total, done: j.done, changed: j.changed, ebayUpdated });
+          if (j.status !== "done") {
+            setTimeout(poll, 2000);
+          } else {
+            load(); // Produkte neu laden nach fertigem Job
+          }
+        } catch { /* ignore polling errors */ }
+      };
+      setTimeout(poll, 2000);
+    } catch {
+      setPriceJobError("Netzwerkfehler");
+    }
   };
 
   const endEbayListing = async (product: Product) => {
@@ -520,6 +561,57 @@ export default function Produkte() {
           </button>
         </div>
         {locationMsg && <div style={{ marginBottom: 12, padding: "8px 14px", borderRadius: 8, background: "#F0FDF4", color: "#15803D", fontSize: 13, fontWeight: 600 }}>{locationMsg}</div>}
+
+        {/* Alle Preise prüfen — Job Panel */}
+        {priceJob ? (
+          <div style={{ marginBottom: 16, background: "#fff", borderRadius: 14, padding: "14px 18px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: "1.5px solid #E2E8F0" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 13, color: "#0F172A" }}>
+                {priceJob.status === "done" ? "✅ Preischeck abgeschlossen" : "🔄 Preischeck läuft…"}
+              </span>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {priceJob.status === "done" && priceJob.changed !== undefined && (
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#F59E0B", background: "#FFFBEB", padding: "2px 8px", borderRadius: 6 }}>
+                    {priceJob.changed} geändert
+                  </span>
+                )}
+                {priceJob.status === "done" && (priceJob.ebayUpdated ?? 0) > 0 && (
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#16A34A", background: "#F0FDF4", padding: "2px 8px", borderRadius: 6 }}>
+                    {priceJob.ebayUpdated} eBay-Updates
+                  </span>
+                )}
+                <button onClick={() => setPriceJob(null)} style={{ background: "none", border: "none", color: "#94A3B8", cursor: "pointer", fontSize: 16 }}>✕</button>
+              </div>
+            </div>
+            <div style={{ background: "#F1F5F9", borderRadius: 6, height: 8, overflow: "hidden" }}>
+              <div style={{
+                height: "100%", borderRadius: 6,
+                background: priceJob.status === "done" ? "#16A34A" : "#F59E0B",
+                width: `${Math.round((priceJob.done / (priceJob.total || 1)) * 100)}%`,
+                transition: "width 0.5s ease",
+              }} />
+            </div>
+            <div style={{ marginTop: 6, fontSize: 11, color: "#64748B" }}>
+              {priceJob.done} / {priceJob.total} Produkte geprüft
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 16, display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={startAllPriceCheck}
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                background: "#FFF8DC", border: "1.5px solid #FCD34D", borderRadius: 10,
+                padding: "9px 16px", fontSize: 13, fontWeight: 700, color: "#92400E",
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              <RefreshCw size={14} />
+              Alle Preise prüfen + eBay updaten
+            </button>
+            {priceJobError && <span style={{ fontSize: 12, color: "#DC2626" }}>{priceJobError}</span>}
+          </div>
+        )}
 
         {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
