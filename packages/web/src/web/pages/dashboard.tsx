@@ -13,6 +13,9 @@ interface Product {
   ebayListingId: string | null;
   ebayStatus: string;
   ebayError: string | null;
+  buyPrice: number | null;
+  sellPrice: number | null;
+  adRate: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,20 +103,30 @@ export default function Dashboard() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 24 }}>
-          {[
-            { label: "Gesamt", value: products.length, color: "#8B5CF6" },
-            { label: "Auf eBay", value: products.filter(p => p.ebayStatus === "listed").length, color: "#16A34A" },
-            { label: "Fehler", value: products.filter(p => p.ebayStatus === "error").length, color: "#DC2626" },
-          ].map(s => (
-            <div key={s.label} style={{
-              background: "#fff", borderRadius: 14, padding: "16px",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.06)", textAlign: "center",
-            }}>
-              <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div>
-              <div style={{ fontSize: 12, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
-            </div>
-          ))}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24 }}>
+          {(() => {
+            const listed = products.filter(p => p.ebayStatus === "listed");
+            const withProfit = listed.filter(p => p.sellPrice && p.buyPrice);
+            const totalProfit = withProfit.reduce((sum, p) => {
+              const adR = p.adRate ?? 5;
+              const profit = p.sellPrice! - p.sellPrice! * (13 + adR) / 100 * 1.19 - 0.45 * 1.19 - p.buyPrice!;
+              return sum + profit;
+            }, 0);
+            return [
+              { label: "Gesamt", value: products.length.toString(), color: "#8B5CF6" },
+              { label: "Auf eBay", value: listed.length.toString(), color: "#16A34A" },
+              { label: "Fehler", value: products.filter(p => p.ebayStatus === "error").length.toString(), color: "#DC2626" },
+              { label: "Ø Gewinn/Artikel", value: withProfit.length > 0 ? `${(totalProfit / withProfit.length).toFixed(2)} €` : "–", color: totalProfit > 0 ? "#16A34A" : "#94A3B8" },
+            ].map(s => (
+              <div key={s.label} style={{
+                background: "#fff", borderRadius: 14, padding: "16px",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.06)", textAlign: "center",
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.value}</div>
+                <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
+              </div>
+            ));
+          })()}
         </div>
 
         {/* Error */}
