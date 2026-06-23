@@ -24,6 +24,7 @@ const DIRECT_HEADERS = {
 export interface VariantPrice {
   skuId: string;
   attrs: Record<string, string>; // z.B. {Farbe: "Rot", Größe: "M"}
+  imageUrl?: string;             // Variantenbild (z.B. Farbswatch)
   price: number;
   originalPrice?: number;
   stock?: number;
@@ -127,14 +128,14 @@ function extractSteleData(html: string): { minPrice: string; variantPrices: Vari
         minActivityAmount?: number;
         maxActivityAmount?: number;
         skuPrices?: string[];
-        variants?: Array<{ skuId: string; attrs: Record<string, string>; price: string; originalPrice?: string; stock?: number }>;
+        variants?: Array<{ skuId: string; attrs: Record<string, string>; imageUrl?: string; price: string; originalPrice?: string; stock?: number }>;
       };
       const variantPrices: VariantPrice[] = [];
       if (data.variants && data.variants.length > 0) {
         for (const v of data.variants) {
           const price = parseFloat(v.price);
           if (!isNaN(price) && price > 0.5) {
-            variantPrices.push({ skuId: String(v.skuId), attrs: v.attrs ?? {}, price, originalPrice: v.originalPrice ? parseFloat(v.originalPrice) : undefined, stock: v.stock });
+            variantPrices.push({ skuId: String(v.skuId), attrs: v.attrs ?? {}, imageUrl: v.imageUrl || undefined, price, originalPrice: v.originalPrice ? parseFloat(v.originalPrice) : undefined, stock: v.stock });
           }
         }
         console.log(`[AliExpress] extractSteleData (snippet): ${variantPrices.length} Varianten`);
@@ -160,10 +161,22 @@ function extractSteleData(html: string): { minPrice: string; variantPrices: Vari
 
     if (skuPriceListMatch) {
       type SkuPrice = { skuId?: string; skuAttr?: string; skuVal?: { actSkuCalPrice?: string; skuCalPrice?: string; availQuantity?: number } };
-      type PropList = Array<{ skuPropertyId?: number; skuPropertyName?: string; skuPropertyValues?: Array<{ propertyValueId?: number; propertyValueDisplayName?: string; propertyValueName?: string }> }>;
+      type PropList = Array<{ skuPropertyId?: number; skuPropertyName?: string; skuPropertyValues?: Array<{ propertyValueId?: number; propertyValueDisplayName?: string; propertyValueName?: string; skuPropertyImagePath?: string; skuPropertyImagePathRetina?: string }> }>;
 
       const skuMap = JSON.parse(skuPriceListMatch[1]) as SkuPrice[];
       const propList: PropList = propListMatch ? JSON.parse(propListMatch[1]) : [];
+
+      // Bild-Map: propId:valId -> imageUrl
+      const imgMap: Record<string, string> = {};
+      for (const prop of propList) {
+        for (const val of (prop.skuPropertyValues ?? [])) {
+          const img = val.skuPropertyImagePath || val.skuPropertyImagePathRetina || '';
+          if (img) {
+            const k = String(prop.skuPropertyId) + ':' + String(val.propertyValueId);
+            imgMap[k] = img.startsWith('http') ? img : 'https:' + img;
+          }
+        }
+      }
 
       const variantPrices: VariantPrice[] = [];
       for (const s of skuMap) {
@@ -171,8 +184,9 @@ function extractSteleData(html: string): { minPrice: string; variantPrices: Vari
         const price = parseFloat(priceStr ?? '0');
         if (isNaN(price) || price <= 0.5) continue;
 
-        // Attribute aus skuAttr ("pid:vid;pid:vid")
+        // Attribute + Bild aus skuAttr ("pid:vid;pid:vid")
         const attrs: Record<string, string> = {};
+        let imageUrl = '';
         if (s.skuAttr && propList.length > 0) {
           const pairs = s.skuAttr.split(';');
           for (const pair of pairs) {
@@ -180,6 +194,8 @@ function extractSteleData(html: string): { minPrice: string; variantPrices: Vari
             const propId = parts[0]?.trim();
             const valId = parts[1]?.split('#')[0]?.trim();
             if (!propId || !valId) continue;
+            const imgKey = propId + ':' + valId;
+            if (imgMap[imgKey] && !imageUrl) imageUrl = imgMap[imgKey];
             const prop = propList.find(p => String(p.skuPropertyId) === propId);
             if (!prop) continue;
             const val = (prop.skuPropertyValues ?? []).find(v => String(v.propertyValueId) === valId);
@@ -190,6 +206,7 @@ function extractSteleData(html: string): { minPrice: string; variantPrices: Vari
         variantPrices.push({
           skuId: String(s.skuId ?? ''),
           attrs,
+          imageUrl: imageUrl || undefined,
           price,
           originalPrice: s.skuVal?.skuCalPrice ? parseFloat(s.skuVal.skuCalPrice) : undefined,
           stock: s.skuVal?.availQuantity,
@@ -379,15 +396,30 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
         var skuMap = skuModule.skuPriceList || [];
         var propList = skuModule.productSKUPropertyList || [];
 
-        // Alle Varianten mit Attributen + Preis
+        // Alle Varianten mit Attributen + Preis + Bild
+        // Bild-Map: propId:valId -> imageUrl
+        var imgMap = {};
+        propList.forEach(function(prop) {
+          (prop.skuPropertyValues || []).forEach(function(val) {
+            var img = val.skuPropertyImagePath || val.skuPropertyImagePathRetina || '';
+            if (img) {
+              var k = String(prop.skuPropertyId) + ':' + String(val.propertyValueId);
+              imgMap[k] = img.startsWith('http') ? img : 'https:' + img;
+            }
+          });
+        });
+
         var variants = skuMap.map(function(s) {
           var attrs = {};
+          var imageUrl = '';
           var propIds = (s.skuAttr || '').split(';');
           propIds.forEach(function(pair) {
             var parts = pair.split(':');
             var propId = parts[0];
             var valId = parts[1] ? parts[1].split('#')[0] : null;
             if (!propId || !valId) return;
+            var imgKey = propId + ':' + valId;
+            if (imgMap[imgKey] && !imageUrl) imageUrl = imgMap[imgKey];
             propList.forEach(function(prop) {
               if (String(prop.skuPropertyId) === String(propId)) {
                 (prop.skuPropertyValues || []).forEach(function(val) {
@@ -401,6 +433,7 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
           return {
             skuId: s.skuId,
             attrs: attrs,
+            imageUrl: imageUrl,
             price: s.skuVal && s.skuVal.actSkuCalPrice,
             originalPrice: s.skuVal && s.skuVal.skuCalPrice,
             stock: s.skuVal && s.skuVal.availQuantity
@@ -707,10 +740,23 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
     const images = (headerImg?.imgList || headerImg?.imagePathList || []).slice(0, 10);
 
     // Variant prices via SKU + PRICE modules
-    const skuModule = result.SKU as { skuPaths?: Array<{ skuIdStr?: string; skuAttr?: string; skuStock?: number }> } | undefined;
+    const skuModule = result.SKU as { skuPaths?: Array<{ skuIdStr?: string; skuAttr?: string; skuStock?: number }>; productSKUPropertyList?: Array<{ skuPropertyId?: number; skuPropertyName?: string; skuPropertyValues?: Array<{ propertyValueId?: number; propertyValueDisplayName?: string; propertyValueName?: string; skuPropertyImagePath?: string; skuPropertyImagePathRetina?: string }> }> } | undefined;
     const skuPaths = skuModule?.skuPaths || [];
+    const propListPW = skuModule?.productSKUPropertyList || [];
     const priceModule = result.PRICE as { skuIdStrPriceInfoMap?: Record<string, { salePriceString?: string; originalPrice?: { value?: number } }> } | undefined;
     const priceMap = priceModule?.skuIdStrPriceInfoMap || {};
+
+    // Bild-Map: propId:valId -> imageUrl
+    const imgMapPW: Record<string, string> = {};
+    for (const prop of propListPW) {
+      for (const val of (prop.skuPropertyValues ?? [])) {
+        const img = val.skuPropertyImagePath || val.skuPropertyImagePathRetina || '';
+        if (img) {
+          const k = String(prop.skuPropertyId) + ':' + String(val.propertyValueId);
+          imgMapPW[k] = img.startsWith('http') ? img : 'https:' + img;
+        }
+      }
+    }
 
     const variantPrices: VariantPrice[] = skuPaths.map(sku => {
       const skuId = sku.skuIdStr || '';
@@ -720,19 +766,25 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
       const priceUSD = priceMatch ? parseFloat(priceMatch[0]) : 0;
       const priceEUR = Math.round(priceUSD * 0.92 * 100) / 100;
 
-      // Parse attrs: "14:691#100pcs;200007763:201336101"
+      // Parse attrs + Bild aus skuAttr: "14:691#100pcs;200007763:201336101"
       const attrs: Record<string, string> = {};
+      let imageUrl = '';
       (sku.skuAttr || '').split(';').forEach(part => {
         const hashIdx = part.indexOf('#');
+        const colonIdx = part.indexOf(':');
+        const propId = part.substring(0, colonIdx);
+        const valId = colonIdx >= 0 ? part.substring(colonIdx + 1).split('#')[0] : '';
+        const imgKey = propId + ':' + valId;
+        if (imgMapPW[imgKey] && !imageUrl) imageUrl = imgMapPW[imgKey];
         if (hashIdx >= 0) {
-          const propId = part.split(':')[0] || 'attr';
-          attrs[propId] = part.substring(hashIdx + 1);
+          attrs[propId || 'attr'] = part.substring(hashIdx + 1);
         }
       });
 
       return {
         skuId,
         attrs,
+        imageUrl: imageUrl || undefined,
         price: priceEUR,
         originalPrice: priceInfo.originalPrice?.value,
         stock: sku.skuStock,

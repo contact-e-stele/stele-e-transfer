@@ -1301,61 +1301,88 @@ const app = new Hono()
   })
 
   .post('/products/check-all-prices', async (c) => {
+    // Sofort antworten — Job läuft async im Hintergrund (kein Render-Timeout)
     try {
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
       const all = await db.select().from(schema.products);
-      const results: { id: number; title: string; status: string; oldPrice?: number | null; newPrice?: number }[] = [];
+      const jobId = Date.now().toString();
 
-      for (const product of all) {
-        const url = product.sourceUrl || product.amazonUrl;
-        if (!url || url === 'manual' || !url.includes('aliexpress')) {
-          results.push({ id: product.id, title: product.generatedTitle, status: 'skipped' });
-          continue;
-        }
-        try {
-          // Try DS API first if token available
-          const accessToken = await getAliAccessToken();
-          const productIdMatch = url.match(/\/item\/(\d+)\.html/) || url.match(/[?&]id=(\d+)/);
-          const productId = productIdMatch?.[1];
-          let scraped = null;
-          if (accessToken && productId) {
-            scraped = await getAliProductByApi(productId, accessToken);
-          }
-          if (!scraped) {
-            scraped = await scrapeAliExpressUrl(url);
-          }
-          if (!scraped?.price) {
-            results.push({ id: product.id, title: product.generatedTitle, status: 'no_price' });
+      // Globaler Job-Status (in-memory, reicht für Single-Instance Render)
+      const g = globalThis as Record<string, unknown>;
+      g.__priceJobs = g.__priceJobs || {};
+      (g.__priceJobs as Record<string, unknown>)[jobId] = { status: 'running', total: all.length, done: 0, results: [] };
+
+      // Background-Funktion — läuft weiter nach dem Response
+      (async () => {
+        const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
+        for (const product of all) {
+          const url = product.sourceUrl || product.amazonUrl;
+          if (!url || url === 'manual' || !url.includes('aliexpress')) {
+            job.results.push({ id: product.id, title: product.generatedTitle, status: 'skipped' });
+            job.done++;
             continue;
           }
-          const newPrice = parseFloat(scraped.price.replace(/[^0-9.]/g, ''));
-          if (isNaN(newPrice) || newPrice <= 0) {
-            results.push({ id: product.id, title: product.generatedTitle, status: 'parse_error' });
-            continue;
+          try {
+            const accessToken = await getAliAccessToken();
+            const productIdMatch = url.match(/\/item\/(\d+)\.html/) || url.match(/[?&]id=(\d+)/);
+            const productId = productIdMatch?.[1];
+            let scraped = null;
+            if (accessToken && productId) scraped = await getAliProductByApi(productId, accessToken);
+            if (!scraped) scraped = await scrapeAliExpressUrl(url);
+            if (!scraped?.price) {
+              job.results.push({ id: product.id, title: product.generatedTitle, status: 'no_price' });
+              job.done++;
+              continue;
+            }
+            const newPrice = parseFloat(scraped.price.replace(/[^0-9.]/g, ''));
+            if (isNaN(newPrice) || newPrice <= 0) {
+              job.results.push({ id: product.id, title: product.generatedTitle, status: 'parse_error' });
+              job.done++;
+              continue;
+            }
+            const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
+            await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
+            await db.update(schema.products).set({
+              buyPrice: newPrice,
+              lastPriceCheck: new Date().toISOString(),
+              priceChanged,
+              updatedAt: new Date().toISOString(),
+            }).where(eq(schema.products.id, product.id));
+            job.results.push({ id: product.id, title: product.generatedTitle, status: priceChanged ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice });
+          } catch {
+            job.results.push({ id: product.id, title: product.generatedTitle, status: 'error' });
           }
-          const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
-          await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
-          await db.update(schema.products).set({
-            buyPrice: newPrice,
-            lastPriceCheck: new Date().toISOString(),
-            priceChanged,
-            updatedAt: new Date().toISOString(),
-          }).where(eq(schema.products.id, product.id));
-          results.push({ id: product.id, title: product.generatedTitle, status: priceChanged ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice });
-        } catch {
-          results.push({ id: product.id, title: product.generatedTitle, status: 'error' });
+          job.done++;
+          await new Promise(r => setTimeout(r, 1200));
         }
-        // Kurze Pause um AliExpress nicht zu spammen
-        await new Promise(r => setTimeout(r, 1500));
-      }
+        job.status = 'done';
+      })();
 
-      return c.json({ checked: results.length, results }, 200);
+      return c.json({ jobId, total: all.length, message: 'Preischeck gestartet — Status per /api/products/price-job/:jobId abrufen' }, 202);
     } catch (e) {
       return c.json({ error: 'DB Fehler' }, 503);
     }
+  })
+
+  // Job-Status abrufen
+  .get('/products/price-job/:jobId', (c) => {
+    const jobId = c.req.param('jobId');
+    const g = globalThis as Record<string, unknown>;
+    const jobs = g.__priceJobs as Record<string, { status: string; total: number; done: number; results: unknown[] }> | undefined;
+    const job = jobs?.[jobId];
+    if (!job) return c.json({ error: 'Job nicht gefunden' }, 404);
+    return c.json({
+      jobId,
+      status: job.status,
+      total: job.total,
+      done: job.done,
+      progress: Math.round((job.done / (job.total || 1)) * 100),
+      results: job.status === 'done' ? job.results : undefined,
+      changed: (job.results as Array<{ status: string }>).filter(r => r.status === 'changed').length,
+    });
   });
 
 // ─── AliExpress DS Produkt-Suche ─────────────────────────────────────────────

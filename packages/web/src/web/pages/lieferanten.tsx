@@ -820,64 +820,80 @@ export default function Lieferanten() {
               )}
             </div>
 
-            {/* Varianten-Preistabelle (wie AutoDS) */}
+            {/* Varianten-Preistabelle — AutoDS-Style: Bild + Name + SKU + Preis */}
             {product && (product.variantPrices ?? []).length > 0 && (() => {
               const vp = product.variantPrices!;
               const minP = Math.min(...vp.map(v => v.price));
-              const attrKeys = Object.keys(vp[0]?.attrs ?? {});
+              const ebay = parseFloat(ebayPrice) || 0;
+              const totalFeeRate = (13 + adRate) / 100 * 1.19 + 0.0045 * 1.19 / (ebay || 1);
               return (
                 <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
                     <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFF8DC", display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <TrendingDown size={18} color="#92400E" />
                     </div>
-                    <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Varianten-Preise</span>
+                    <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Varianten</span>
                     <span style={{ fontSize: 11, background: "#FEF9C3", color: "#92400E", padding: "2px 8px", borderRadius: 20, fontWeight: 700, marginLeft: "auto" }}>
                       {vp.length} Varianten · ab {minP.toFixed(2)} €
                     </span>
                   </div>
-                  <div style={{ overflowX: "auto", borderRadius: 10, border: "1px solid #E2E8F0" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead>
-                        <tr style={{ background: "#F8FAFC" }}>
-                          {attrKeys.map(k => (
-                            <th key={k} style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#64748B", borderBottom: "1px solid #E2E8F0", whiteSpace: "nowrap" }}>{k}</th>
-                          ))}
-                          <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#64748B", borderBottom: "1px solid #E2E8F0" }}>Einkauf</th>
-                          <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#64748B", borderBottom: "1px solid #E2E8F0" }}>eBay Preis</th>
-                          <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#64748B", borderBottom: "1px solid #E2E8F0" }}>Gewinn</th>
-                          <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#64748B", borderBottom: "1px solid #E2E8F0" }}>Lager</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vp.map((v, i) => {
-                          const isCheapest = v.price === minP;
-                          const ebay = parseFloat(ebayPrice) || 0;
-                          const fee = ebay * 0.18;
-                          const profit = ebay > 0 ? ebay - fee - v.price : null;
-                          return (
-                            <tr key={v.skuId} style={{ background: isCheapest ? "#F0FDF4" : i % 2 === 0 ? "#fff" : "#FAFAFA" }}>
-                              {attrKeys.map(k => (
-                                <td key={k} style={{ padding: "7px 12px", color: "#0F172A", borderBottom: "1px solid #F1F5F9", whiteSpace: "nowrap" }}>{v.attrs[k] ?? "–"}</td>
-                              ))}
-                              <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 700, color: isCheapest ? "#16A34A" : "#1D4ED8", borderBottom: "1px solid #F1F5F9", whiteSpace: "nowrap" }}>
-                                {v.price.toFixed(2)} € {isCheapest && <span style={{ fontSize: 9, color: "#16A34A" }}>▼günstigst</span>}
-                              </td>
-                              <td style={{ padding: "7px 12px", textAlign: "right", color: "#64748B", borderBottom: "1px solid #F1F5F9" }}>
-                                {ebay > 0 ? `${ebay.toFixed(2)} €` : "–"}
-                              </td>
-                              <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 700, borderBottom: "1px solid #F1F5F9", whiteSpace: "nowrap",
-                                color: profit === null ? "#94A3B8" : profit >= 1.6 ? "#16A34A" : profit >= 0 ? "#F59E0B" : "#DC2626" }}>
-                                {profit !== null ? `${profit >= 0 ? "+" : ""}${profit.toFixed(2)} €` : "–"}
-                              </td>
-                              <td style={{ padding: "7px 12px", textAlign: "right", color: "#64748B", borderBottom: "1px solid #F1F5F9" }}>
-                                {v.stock ?? "–"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {/* Header */}
+                    <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 120px 80px 80px 70px", gap: 8, padding: "0 8px", alignItems: "center" }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase" }}></div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase" }}>Name / SKU</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", textAlign: "right" }}>Einkauf</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", textAlign: "right" }}>eBay</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", textAlign: "right" }}>Gewinn</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", textAlign: "right" }}>Lager</div>
+                    </div>
+                    {vp.map((v, i) => {
+                      const isCheapest = v.price === minP;
+                      const profit = ebay > 0 ? ebay - ebay * (13 + adRate) / 100 * 1.19 - 0.45 * 1.19 - v.price : null;
+                      const attrLabel = Object.values(v.attrs).join(" / ") || "–";
+                      const skuShort = v.skuId.length > 20 ? v.skuId.substring(0, 20) + "…" : v.skuId;
+                      return (
+                        <div key={v.skuId} style={{
+                          display: "grid", gridTemplateColumns: "40px 1fr 120px 80px 80px 70px",
+                          gap: 8, padding: "10px 8px", alignItems: "center",
+                          borderRadius: 10, border: `1.5px solid ${isCheapest ? "#BBF7D0" : "#F1F5F9"}`,
+                          background: isCheapest ? "#F0FDF4" : i % 2 === 0 ? "#fff" : "#FAFAFA",
+                        }}>
+                          {/* Bild */}
+                          <div style={{ width: 36, height: 36, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {v.imageUrl
+                              ? <img src={v.imageUrl} alt={attrLabel} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                              : <Package size={16} color="#CBD5E1" />
+                            }
+                          </div>
+                          {/* Name + SKU */}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{attrLabel}</div>
+                            <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }} title={v.skuId}>{skuShort}</div>
+                          </div>
+                          {/* Einkauf */}
+                          <div style={{ textAlign: "right" }}>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: isCheapest ? "#16A34A" : "#1D4ED8" }}>{v.price.toFixed(2)} €</span>
+                            {isCheapest && <div style={{ fontSize: 9, color: "#16A34A", fontWeight: 700 }}>günstigst</div>}
+                          </div>
+                          {/* eBay */}
+                          <div style={{ textAlign: "right", fontSize: 12, color: "#64748B" }}>
+                            {ebay > 0 ? `${ebay.toFixed(2)} €` : "–"}
+                          </div>
+                          {/* Gewinn */}
+                          <div style={{ textAlign: "right" }}>
+                            {profit !== null
+                              ? <span style={{ fontSize: 13, fontWeight: 800, color: profit >= 1.6 ? "#16A34A" : profit >= 0 ? "#F59E0B" : "#DC2626" }}>{profit >= 0 ? "+" : ""}{profit.toFixed(2)} €</span>
+                              : <span style={{ color: "#CBD5E1" }}>–</span>
+                            }
+                          </div>
+                          {/* Lager */}
+                          <div style={{ textAlign: "right", fontSize: 12, color: v.stock === 0 ? "#DC2626" : "#64748B", fontWeight: v.stock === 0 ? 700 : 400 }}>
+                            {v.stock !== undefined ? (v.stock === 0 ? "❌ 0" : v.stock) : "–"}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );

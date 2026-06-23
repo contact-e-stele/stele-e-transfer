@@ -87,26 +87,42 @@ export default function Index() {
   const [verlustVorlageIndex, setVerlustVorlageIndex] = useState(0);
   const [nullVorlageIndex, setNullVorlageIndex] = useState(0);
 
-  // Preisüberwachung
+  // Preisüberwachung — Background-Job mit Polling
   const [priceChecking, setPriceChecking] = useState(false);
   const [priceCheckResult, setPriceCheckResult] = useState<{
-    checked: number;
+    checked?: number;
     results: { id: number; title: string; status: string; oldPrice?: number | null; newPrice?: number }[];
   } | null>(null);
   const [priceCheckError, setPriceCheckError] = useState("");
+  const [priceProgress, setPriceProgress] = useState<{ done: number; total: number; changed: number } | null>(null);
 
   const handleCheckAllPrices = async () => {
     setPriceChecking(true);
     setPriceCheckResult(null);
     setPriceCheckError("");
+    setPriceProgress(null);
     try {
+      // Job starten — antwortet sofort mit jobId
       const res = await fetch("/api/products/check-all-prices", { method: "POST" });
       if (!res.ok) throw new Error(`Fehler ${res.status}`);
-      const data = await res.json() as typeof priceCheckResult;
-      setPriceCheckResult(data);
+      const { jobId, total } = await res.json() as { jobId: string; total: number };
+      setPriceProgress({ done: 0, total, changed: 0 });
+
+      // Polling alle 3s bis fertig
+      const poll = async (): Promise<void> => {
+        const r = await fetch(`/api/products/price-job/${jobId}`);
+        const job = await r.json() as { status: string; done: number; total: number; changed: number; results?: typeof priceCheckResult extends null ? never : NonNullable<typeof priceCheckResult>["results"] };
+        setPriceProgress({ done: job.done, total: job.total, changed: job.changed });
+        if (job.status === 'done') {
+          setPriceCheckResult({ checked: job.total, results: job.results ?? [] });
+          setPriceChecking(false);
+        } else {
+          setTimeout(poll, 3000);
+        }
+      };
+      setTimeout(poll, 3000);
     } catch (e) {
       setPriceCheckError(e instanceof Error ? e.message : "Fehler");
-    } finally {
       setPriceChecking(false);
     }
   };
@@ -501,6 +517,24 @@ export default function Index() {
               {priceChecking ? "Prüfe..." : "Jetzt prüfen"}
             </button>
           </div>
+
+          {/* Fortschrittsbalken */}
+          {priceChecking && priceProgress && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#64748B", marginBottom: 6 }}>
+                <span>{priceProgress.done} / {priceProgress.total} geprüft</span>
+                <span style={{ color: "#F59E0B", fontWeight: 700 }}>{priceProgress.changed} geändert</span>
+              </div>
+              <div style={{ background: "#E2E8F0", borderRadius: 99, height: 8, overflow: "hidden" }}>
+                <div style={{
+                  background: "linear-gradient(90deg, #8B5CF6, #A78BFA)",
+                  height: "100%", borderRadius: 99,
+                  width: `${Math.round((priceProgress.done / (priceProgress.total || 1)) * 100)}%`,
+                  transition: "width 0.5s ease",
+                }} />
+              </div>
+            </div>
+          )}
 
           {priceCheckError && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#FEF2F2", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "#DC2626", fontWeight: 600 }}>
