@@ -109,10 +109,13 @@ export default function Suche() {
   };
 
   const handleImport = (result: SearchResult) => {
-    // URL in SessionStorage speichern → Lieferanten-Tab liest es aus
+    // Alle Produktdaten direkt übergeben → Lieferanten-Tab liest aus und startet Scrape
     sessionStorage.setItem("import_url", result.url);
     sessionStorage.setItem("import_title", result.title);
     sessionStorage.setItem("import_image", result.image);
+    if (result.price > 0) sessionStorage.setItem("import_price", result.price.toFixed(2));
+    if (result.shipFrom) sessionStorage.setItem("import_shipFrom", result.shipFrom);
+    sessionStorage.setItem("import_autostart", "1");
     setLocation("/lieferanten");
   };
 

@@ -132,6 +132,7 @@ export default function Lieferanten() {
     return saved;
   });
   const [loading, setLoading] = useState(false);
+  const autoStartRef = useRef(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"url" | "manual">("url");
 
@@ -161,7 +162,11 @@ export default function Lieferanten() {
 
   const [ebayPrice, setEbayPrice] = useState("");
   const [variantEbayPrices, setVariantEbayPrices] = useState<Record<string, string>>({});
-  const [buyPrice, setBuyPrice] = useState("");
+  const [buyPrice, setBuyPrice] = useState(() => {
+    const saved = sessionStorage.getItem("import_price") || "";
+    if (saved) sessionStorage.removeItem("import_price");
+    return saved;
+  });
   const [adRate, setAdRate] = useState<number>(() => {
     const saved = localStorage.getItem("stele_ad_rate");
     return saved ? parseFloat(saved) : 5;
@@ -183,6 +188,18 @@ export default function Lieferanten() {
   const ebayFee = verkauf * totalFeePercent * 1.19 + FIXBETRAG;
   const gewinn = verkauf - einkauf - ebayFee;
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
+
+  // ─── Auto-Start from Suche-Tab ────────────────────────────────────────────
+  useEffect(() => {
+    const autostart = sessionStorage.getItem("import_autostart");
+    if (autostart && !autoStartRef.current && urlInput.trim()) {
+      sessionStorage.removeItem("import_autostart");
+      autoStartRef.current = true;
+      // slight delay so component fully mounts
+      setTimeout(() => handleScrape(), 300);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── Scrape ───────────────────────────────────────────────────────────────
   const handleScrape = async () => {
