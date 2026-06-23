@@ -211,11 +211,12 @@ export async function getAliProductByApi(productId: string, accessToken: string)
     console.log('[AliExpress API] Raw response:', JSON.stringify(data).slice(0, 500));
 
     const resp = data['aliexpress_ds_product_get_response'] as Record<string, unknown> | undefined;
-    if (!resp || resp.result_code !== '200') {
+    if (!resp) {
       console.error('[AliExpress API] Error:', JSON.stringify(data).slice(0, 400));
       return null;
     }
-    const result = resp.result as Record<string, unknown>;
+    // result_code ist manchmal nicht vorhanden — prüfe ob result existiert
+    const result = (resp.result as Record<string, unknown>) || resp;
 
     // ── Titel ──────────────────────────────────────────────────────────────────
     const subject = (result.subject as string || '').trim();

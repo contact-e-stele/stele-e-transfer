@@ -81,6 +81,7 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
       access_token: accessToken,
       product_id: productId,
       ship_from_country: 'DE',
+      ship_to_country: 'DE',
       target_currency: 'EUR',
       target_language: 'DE',
     };
