@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Package, ExternalLink, RefreshCw, ShoppingCart, Clock, CheckCircle, XCircle, Loader } from "lucide-react";
+import { safeJson } from "../lib/safeFetch";
 
 interface Product {
   id: number;
@@ -57,12 +58,7 @@ export default function Dashboard() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/products");
-      if (!res.ok) {
-        const data = await res.json() as { error?: string };
-        throw new Error(data.error ?? `Fehler ${res.status}`);
-      }
-      const data = await res.json() as Product[];
+      const data = await safeJson<Product[]>("/api/products");
       setProducts(data.reverse()); // Neueste zuerst
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ladefehler");

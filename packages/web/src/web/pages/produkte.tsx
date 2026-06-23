@@ -8,6 +8,7 @@ import {
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
   TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye,
 } from "lucide-react";
+import { safeJson } from "../lib/safeFetch";
 
 interface VariantGroup {
   name: string;
@@ -336,9 +337,7 @@ export default function Produkte() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/products");
-      if (!res.ok) throw new Error(`Fehler ${res.status}`);
-      const data = await res.json() as Product[];
+      const data = await safeJson<Product[]>("/api/products");
       setProducts(data.reverse());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ladefehler");
@@ -412,9 +411,8 @@ export default function Produkte() {
   const startAllPriceCheck = async () => {
     setPriceJobError("");
     try {
-      const res = await fetch("/api/products/check-all-prices", { method: "POST" });
-      const data = await res.json() as { jobId?: string; total?: number; error?: string };
-      if (!res.ok || !data.jobId) {
+      const data = await safeJson<{ jobId?: string; total?: number; error?: string }>("/api/products/check-all-prices", { method: "POST" });
+      if (!data.jobId) {
         setPriceJobError(data.error ?? "Fehler beim Starten");
         return;
       }
@@ -423,11 +421,10 @@ export default function Produkte() {
       // Polling alle 2s bis fertig
       const poll = async () => {
         try {
-          const r = await fetch(`/api/products/price-job/${data.jobId}`);
-          const j = await r.json() as {
+          const j = await safeJson<{
             status: string; total: number; done: number;
             changed?: number; results?: Array<{ status: string; ebayUpdated?: boolean }>;
-          };
+          }>(`/api/products/price-job/${data.jobId}`);
           const ebayUpdated = (j.results ?? []).filter(r => r.ebayUpdated).length;
           setPriceJob({ jobId: data.jobId!, status: j.status, total: j.total, done: j.done, changed: j.changed, ebayUpdated });
           if (j.status !== "done") {
@@ -548,8 +545,7 @@ export default function Produkte() {
           </button>
           <button onClick={async () => {
             setLocationMsg("...");
-            const res = await fetch("/api/ebay/setup-location", { method: "POST" });
-            const d = await res.json() as { ok?: boolean; status?: string; error?: string };
+            const d = await safeJson<{ ok?: boolean; status?: string; error?: string }>("/api/ebay/setup-location", { method: "POST" });
             setLocationMsg(d.error ?? (d.status === "already_exists" ? "✓ Location existiert bereits" : "✓ Location angelegt"));
             setTimeout(() => setLocationMsg(""), 4000);
           }} style={{

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
+import { safeJson } from "../lib/safeFetch";
 
 function formatEuro(val: number) {
   return val.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -103,15 +104,12 @@ export default function Index() {
     setPriceProgress(null);
     try {
       // Job starten — antwortet sofort mit jobId
-      const res = await fetch("/api/products/check-all-prices", { method: "POST" });
-      if (!res.ok) throw new Error(`Fehler ${res.status}`);
-      const { jobId, total } = await res.json() as { jobId: string; total: number };
+      const { jobId, total } = await safeJson<{ jobId: string; total: number }>("/api/products/check-all-prices", { method: "POST" });
       setPriceProgress({ done: 0, total, changed: 0 });
 
       // Polling alle 3s bis fertig
       const poll = async (): Promise<void> => {
-        const r = await fetch(`/api/products/price-job/${jobId}`);
-        const job = await r.json() as { status: string; done: number; total: number; changed: number; results?: typeof priceCheckResult extends null ? never : NonNullable<typeof priceCheckResult>["results"] };
+        const job = await safeJson<{ status: string; done: number; total: number; changed: number; results?: typeof priceCheckResult extends null ? never : NonNullable<typeof priceCheckResult>["results"] }>(`/api/products/price-job/${jobId}`);
         setPriceProgress({ done: job.done, total: job.total, changed: job.changed });
         if (job.status === 'done') {
           setPriceCheckResult({ checked: job.total, results: job.results ?? [] });

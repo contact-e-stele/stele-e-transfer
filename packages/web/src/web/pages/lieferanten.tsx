@@ -4,6 +4,7 @@
  */
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
+import { safeJson } from "../lib/safeFetch";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
@@ -215,13 +216,12 @@ export default function Lieferanten() {
     setSaveResult(null);
     setSelectedImage(0);
     try {
-      const res = await fetch("/api/aliexpress/scrape", {
+      const data = await safeJson<ScrapedProduct & { error?: string }>("/api/aliexpress/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
       });
-      const data = await res.json() as ScrapedProduct & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? `Fehler ${res.status}`);
+      if (data.error) throw new Error(data.error);
       setProduct(data);
       setAllImages(data.images ?? []);
       setExcludedImages(new Set());
@@ -279,7 +279,7 @@ export default function Lieferanten() {
     setSaveLoading(true);
     setSaveResult(null);
     try {
-      const res = await fetch("/api/products", {
+      const data = await safeJson<{ id?: number; error?: string }>("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -303,7 +303,6 @@ export default function Lieferanten() {
           adRate: adRate,
         }),
       });
-      const data = await res.json() as { id?: number; error?: string };
       setSaveResult(data);
     } catch (e) {
       setSaveResult({ error: e instanceof Error ? e.message : "Fehler" });
@@ -320,12 +319,11 @@ export default function Lieferanten() {
     setEbayLoading(true);
     setEbayResult(null);
     try {
-      const listRes = await fetch("/api/ebay/list", {
+      const data = await safeJson<{ listingId?: string; error?: string }>("/api/ebay/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId: saveResult.id }),
       });
-      const data = await listRes.json() as { listingId?: string; error?: string };
       setEbayResult(data);
     } catch (e) {
       setEbayResult({ error: e instanceof Error ? e.message : "Fehler" });
@@ -425,12 +423,11 @@ export default function Lieferanten() {
       if (!dataUrl) return;
       try {
         // Bild auf Server hochladen → öffentliche URL (eBay akzeptiert kein base64)
-        const res = await fetch('/api/upload-image', {
+        const data = await safeJson<{ url?: string; error?: string }>('/api/upload-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dataUrl, filename: `gpsr-${Date.now()}` }),
         });
-        const data = await res.json() as { url?: string; error?: string };
         if (data.url) {
           setVisibleImages(prev => [...prev, data.url!]);
         } else {
