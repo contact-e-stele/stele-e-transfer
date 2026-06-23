@@ -1,50 +1,33 @@
-# STELE APP - Task Board (14.06.2026)
+# Stele App — Overnight Improvements
 
-## PROBLEM: AliExpress Produktdaten holen
+## Status: IN PROGRESS
+Last git: 63b986d
 
-### Was nicht funktioniert:
-- DS API (`aliexpress.ds.product.get`) → braucht access_token (OAuth blockiert, AppKey nicht aktiviert)
-- Affiliate API → InsufficientPermission (App nicht freigeschaltet)
-- ScrapingAnt → gibt nur 74KB Bot-Seite zurück
-- Playwright direkt → CAPTCHA sofort
-- Direktes Scraping → Bot-Block
+## TODO
 
-### Was funktioniert (ScrapingAnt früher):
-- Titel ✅
-- Preis ✅  
-- Bilder ✅
-- Beschreibung ✅
-- Versandland ✅
-- Varianten ❌ (kommen nicht weil JS nicht vollständig rendert)
+### DONE ✅
+- Varianten-Tabelle in HTML (Dark+Light)
+- attrLabel Fallback 
+- eBay-Preise beim Save mitschicken
+- Gewinn-Spalte in Produkte-Tab
+- Duplicate border key fix
+- Dashboard Gewinn-Karte
+- Suche→Lieferanten Auto-Import
 
-## LÖSUNG - Plan B: Zenrows oder ScraperAPI
+### IN PROGRESS 🔄
+1. Price Monitor: eBay-Preis nach Preisänderung automatisch über API updaten
+2. Lieferanten-Tab: Verbesserungen (shipsFrom Badge, GPSR auto-populate)
+3. Produkte-Tab: "eBay Listing öffnen" Button + bessere Übersicht
+4. Dashboard: Gesamtgewinn aller gelisteten Produkte
 
-**Zenrows** ist besser als ScrapingAnt für JS-heavy Sites:
-- Premium residential proxies
-- Bessere JS-Rendering
-- Kostenpflichtiger aber zuverlässiger
+## KEY FILES
+- /home/user/stele-app/packages/web/src/api/price-monitor.ts
+- /home/user/stele-app/packages/web/src/web/pages/lieferanten.tsx
+- /home/user/stele-app/packages/web/src/web/pages/produkte.tsx
+- /home/user/stele-app/packages/web/src/web/pages/dashboard.tsx
+- /home/user/stele-app/packages/web/src/api/index.ts
 
-**ScraperAPI** mit `render=true`:
-- Hat auch gute AliExpress-Unterstützung
-
-**ODER: Manuelle Varianten-Eingabe (pragmatisch für Go-Live)**
-- Produkt scrapen → Titel/Preis/Bilder kommen schon
-- Varianten: User tippt sie manuell ein (bereits gebaut in lieferanten.tsx!)
-- Das reicht für Go-Live 15.06!
-
-## ENTSCHEIDUNG FÜR GO-LIVE 15.06:
-1. Scraping mit ScrapingAnt wie bisher (Titel/Preis/Bilder funktionieren)
-2. Varianten manuell eingeben (UI bereits fertig)
-3. eBay Listen funktioniert bereits
-4. Preisüberwachung via Scraping (nur Preis, kein Variant-Bedarf)
-
-## NÄCHSTE SCHRITTE:
-1. Prüfe ob ScrapingAnt aktuell noch Produktseiten zurückgibt (war vorher 282KB)
-2. Wenn ja: Varianten manuell lassen, live gehen
-3. Beschreibung verbessern (Gemini AI nutzen)
-4. Preisüberwachung Cron testen
-
-## OFFEN:
-- AutoDS Import CSV hochladen
-- eBay Vorlage in AutoDS 
-- Ecomsniper gekündigt ✅
+## DECISIONS
+- eBay API: ReviseInventoryStatus (Trading API) für Preisupdate
+- adRate: aus localStorage gespeichert (5% default)
+- Gewinn-Formel: eBay - eBay*(13+adRate)%*1.19 - 0.45*1.19 - buyPrice

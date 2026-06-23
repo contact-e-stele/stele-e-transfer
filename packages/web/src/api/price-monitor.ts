@@ -4,6 +4,7 @@
 import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl } from './aliexpress';
+import { getAccessToken } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 
 const EBAY_FEE = 0.18;       // 18% eBay Gebühren
@@ -23,10 +24,48 @@ function parsePrice(raw: string): number {
   return parseFloat(`${m[1]}.${m[2]}`);
 }
 
-export async function runPriceCheck(): Promise<{ checked: number; updated: number; errors: number }> {
+// eBay Listing-Preis über Trading API aktualisieren
+async function updateEbayPrice(itemId: string, newPrice: number): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <InventoryStatus>
+    <ItemID>${itemId}</ItemID>
+    <StartPrice>${newPrice.toFixed(2)}</StartPrice>
+  </InventoryStatus>
+</ReviseInventoryStatusRequest>`;
+
+    const res = await fetch('https://api.ebay.com/ws/api.dll', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml',
+        'X-EBAY-API-SITEID': '77',
+        'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+        'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus',
+        'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
+      },
+      body: xml,
+    });
+
+    const text = await res.text();
+    if (text.includes('<Ack>Failure</Ack>')) {
+      const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Unbekannter Fehler';
+      console.warn(`[PriceMonitor] eBay API Fehler für ${itemId}: ${errMsg}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn(`[PriceMonitor] eBay Update fehlgeschlagen für ${itemId}:`, e);
+    return false;
+  }
+}
+
+export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number }> {
   console.log('[PriceMonitor] Starte Preisüberwachung...');
 
-  let checked = 0, updated = 0, errors = 0;
+  let checked = 0, updated = 0, ebayUpdated = 0, errors = 0;
 
   // Alle Produkte mit AliExpress-URL und buyPrice holen
   const products = await db.select().from(schema.products)
@@ -48,7 +87,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       let data = null;
       try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
       if (!data) {
-        // Einmal retry ohne Delay (neues Playwright ist schneller)
+        // Einmal retry
         try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
       }
       if (!data) { errors++; return; }
@@ -74,10 +113,32 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         const newSellPrice = calcSellPrice(newBuyPrice);
         const isAlert = priceDiff >= ALERT_THRESHOLD;
         console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}`);
-        await db.update(schema.products).set({ buyPrice: newBuyPrice, sellPrice: newSellPrice, lastPriceCheck: new Date().toISOString(), priceChanged: isAlert, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+
+        // DB aktualisieren
+        await db.update(schema.products).set({
+          buyPrice: newBuyPrice,
+          sellPrice: newSellPrice,
+          lastPriceCheck: new Date().toISOString(),
+          priceChanged: isAlert,
+          updatedAt: new Date().toISOString()
+        }).where(eq(schema.products.id, product.id));
         updated++;
+
+        // eBay Listing Preis automatisch aktualisieren (falls verknüpft)
+        if (product.ebayListingId && product.ebayStatus === 'listed') {
+          console.log(`[PriceMonitor] ${product.id}: eBay Listing ${product.ebayListingId} — aktualisiere auf ${newSellPrice.toFixed(2)}€`);
+          const ok = await updateEbayPrice(product.ebayListingId, newSellPrice);
+          if (ok) {
+            ebayUpdated++;
+            console.log(`[PriceMonitor] ✅ eBay ${product.ebayListingId}: ${newSellPrice.toFixed(2)}€`);
+          }
+        }
       } else {
-        await db.update(schema.products).set({ lastPriceCheck: new Date().toISOString(), priceChanged: false, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+        await db.update(schema.products).set({
+          lastPriceCheck: new Date().toISOString(),
+          priceChanged: false,
+          updatedAt: new Date().toISOString()
+        }).where(eq(schema.products.id, product.id));
       }
     } catch (e) {
       console.error(`[PriceMonitor] Fehler bei ${product.id}:`, e);
@@ -92,8 +153,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
     await Promise.all(batch.map(p => checkOne(p)));
   }
 
-  console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, Fehler: ${errors}`);
-  return { checked, updated, errors };
+  console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, eBay-Updates: ${ebayUpdated}, Fehler: ${errors}`);
+  return { checked, updated, ebayUpdated, errors };
 }
 
 export function startPriceMonitor() {

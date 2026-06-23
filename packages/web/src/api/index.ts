@@ -1344,14 +1344,35 @@ const app = new Hono()
               continue;
             }
             const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
+            // Neuen VK-Preis berechnen: (buyPrice + 1.60€ Mindestgewinn) / (1 - 0.18 eBay-Fee)
+            const newSellPrice = Math.ceil(((newPrice + 1.60) / (1 - 0.18)) * 100) / 100;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             await db.update(schema.products).set({
               buyPrice: newPrice,
+              sellPrice: priceChanged ? newSellPrice : product.sellPrice,
               lastPriceCheck: new Date().toISOString(),
               priceChanged,
               updatedAt: new Date().toISOString(),
             }).where(eq(schema.products.id, product.id));
-            job.results.push({ id: product.id, title: product.generatedTitle, status: priceChanged ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice });
+
+            // eBay Listing Preis automatisch aktualisieren wenn Preis gestiegen/gesunken
+            let ebayUpdated = false;
+            if (priceChanged && product.ebayListingId && product.ebayStatus === 'listed') {
+              try {
+                const { getAccessToken } = await import('./ebay');
+                const ebayToken = await getAccessToken();
+                const reviseXml = `<?xml version="1.0" encoding="utf-8"?><ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${ebayToken}</eBayAuthToken></RequesterCredentials><InventoryStatus><ItemID>${product.ebayListingId}</ItemID><StartPrice>${newSellPrice.toFixed(2)}</StartPrice></InventoryStatus></ReviseInventoryStatusRequest>`;
+                const ebayRes = await fetch('https://api.ebay.com/ws/api.dll', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'text/xml', 'X-EBAY-API-SITEID': '77', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus', 'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '' },
+                  body: reviseXml,
+                });
+                const ebayText = await ebayRes.text();
+                ebayUpdated = !ebayText.includes('<Ack>Failure</Ack>');
+              } catch { /* eBay Update fehlgeschlagen, nicht kritisch */ }
+            }
+
+            job.results.push({ id: product.id, title: product.generatedTitle, status: priceChanged ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice, newSellPrice: priceChanged ? newSellPrice : undefined, ebayUpdated });
           } catch {
             job.results.push({ id: product.id, title: product.generatedTitle, status: 'error' });
           }
