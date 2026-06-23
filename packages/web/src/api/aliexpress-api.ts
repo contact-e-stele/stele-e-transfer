@@ -9,7 +9,7 @@ const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
 const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
 const IOP_ENDPOINT = 'https://api-sg.aliexpress.com/sync';
 
-const OAUTH_URL = 'https://oauth.aliexpress.com/authorize';
+const OAUTH_URL = 'https://auth.aliexpress.com/oauth/authorize';
 
 export interface AliProductData {
   title: string;
