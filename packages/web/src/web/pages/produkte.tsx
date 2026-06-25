@@ -36,6 +36,9 @@ interface Product {
   bullets: string[];
   variants: string[] | VariantGroup[];
   variantPrices: string | null; // JSON
+  variantContents: Record<string, string> | null;
+  gpsrRaw: string | null;
+  gpsrHtml: string | null;
   images: string | null;
   buyPrice: number | null;
   sellPrice: number | null;
@@ -517,6 +520,23 @@ export default function Produkte() {
             <div style={{ padding: 20 }}>
               <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 12 }}>So wird die Beschreibung im eBay Listing angezeigt:</div>
               <div dangerouslySetInnerHTML={{ __html: previewProduct.htmlDescription }} />
+              {previewProduct.variantContents && Object.keys(previewProduct.variantContents).length > 0 && (
+                <div style={{ marginTop: 20, borderTop: "1px solid #E2E8F0", paddingTop: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", marginBottom: 10 }}>Varianten-Inhalte</div>
+                  {Object.entries(previewProduct.variantContents).map(([key, val]) => (
+                    <div key={key} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4 }}>{key}</div>
+                      <div style={{ fontSize: 12, color: "#0F172A", whiteSpace: "pre-wrap", background: "#F8FAFC", padding: "8px 10px", borderRadius: 6 }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {previewProduct.gpsrRaw && (
+                <div style={{ marginTop: 20, borderTop: "1px solid #E2E8F0", paddingTop: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", marginBottom: 8 }}>Produktsicherheit (GPSR)</div>
+                  <div style={{ fontSize: 12, color: "#374151", whiteSpace: "pre-wrap", background: "#F8FAFC", padding: "8px 10px", borderRadius: 6, fontFamily: "monospace" }}>{previewProduct.gpsrRaw}</div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -856,7 +876,7 @@ export default function Produkte() {
                         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                           <thead>
                             <tr style={{ background:"#F8FAFC" }}>
-                              {Object.keys(vp[0]?.attrs ?? {}).map(k => <th key={k} style={{ padding:"6px 10px", textAlign:"left", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>{k}</th>)}
+                              {Object.keys(vp[0]?.attrs ?? {}).filter(k => k.toLowerCase() !== 'ships from' && k.toLowerCase() !== 'ships_from' && k.toLowerCase() !== 'versandland').map(k => <th key={k} style={{ padding:"6px 10px", textAlign:"left", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>{k}</th>)}
                               <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Einkauf</th>
                               {vp.some(v => v.ebayPrice) && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>eBay</th>}
                               {vp.some(v => v.ebayPrice) && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Gewinn</th>}
@@ -871,7 +891,7 @@ export default function Produkte() {
                               const profit = ebayP ? ebayP - ebayP*(13+adR)/100*1.19 - 0.45*1.19 - v.price : null;
                               return (
                               <tr key={v.skuId} style={{ background: v.price === minP ? "#F0FDF4" : i%2===0 ? "#fff" : "#FAFAFA" }}>
-                                {Object.values(v.attrs).map((val, j) => <td key={j} style={{ padding:"6px 10px", color:"#0F172A", borderBottom:"1px solid #F1F5F9" }}>{String(val)}</td>)}
+                                {Object.entries(v.attrs).filter(([k]) => k.toLowerCase() !== 'ships from' && k.toLowerCase() !== 'ships_from' && k.toLowerCase() !== 'versandland').map(([k, val]) => <td key={k} style={{ padding:"6px 10px", color:"#0F172A", borderBottom:"1px solid #F1F5F9" }}>{String(val)}</td>)}
                                 <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color: v.price === minP ? "#16A34A" : "#1D4ED8", borderBottom:"1px solid #F1F5F9" }}>
                                   {v.price.toFixed(2)} €{v.price === minP && <span style={{fontSize:9,color:"#16A34A"}}> ▼</span>}
                                 </td>

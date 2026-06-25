@@ -28,6 +28,9 @@ export const products = sqliteTable('products', {
   ebayListingId: text('ebay_listing_id'),
   ebayStatus: text('ebay_status').default('none'), // none | listed | error
   ebayError: text('ebay_error'),
+  variantContents: text('variant_contents'), // JSON: {"SET1":"10 kleine + 10 große","SET2":"..."}
+  gpsrRaw: text('gpsr_raw'),                 // Rohtext aus Import-Feld
+  gpsrHtml: text('gpsr_html'),               // fertiger HTML-Block für eBay
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

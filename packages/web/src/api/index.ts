@@ -690,6 +690,8 @@ const app = new Hono()
         sourceUrl?: string;
         specs?: Record<string, string>;
         variantContents?: Record<string, string>;
+        gpsrRaw?: string;
+        gpsrHtml?: string;
       };
 
       // Titel + Beschreibung parallel generieren (schneller)
@@ -711,11 +713,14 @@ const app = new Hono()
           bullets: JSON.stringify(body.bullets),
           variants: JSON.stringify(body.variants),
           variantPrices: body.variantPrices ? JSON.stringify(body.variantPrices) : undefined,
+          variantContents: body.variantContents ? JSON.stringify(body.variantContents) : undefined,
           images: body.images ? JSON.stringify(body.images) : undefined,
           buyPrice: body.buyPrice ?? undefined,
           sellPrice: body.sellPrice ?? undefined,
           adRate: body.adRate ?? undefined,
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
+          gpsrRaw: body.gpsrRaw ?? undefined,
+          gpsrHtml: body.gpsrHtml ?? undefined,
           updatedAt: new Date().toISOString(),
         }).where(eq(schema.products.asin, body.asin));
         return c.json({ id: existing[0].id, updated: true }, 200);
@@ -737,6 +742,9 @@ const app = new Hono()
         sellPrice: body.sellPrice ?? null,
         adRate: body.adRate ?? 5,
         specs: body.specs ? JSON.stringify(body.specs) : null,
+        variantContents: body.variantContents ? JSON.stringify(body.variantContents) : null,
+        gpsrRaw: body.gpsrRaw ?? null,
+        gpsrHtml: body.gpsrHtml ?? null,
         ebayStatus: 'none',
         aliexpressItemId: (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null,
       }).returning({ id: schema.products.id });
@@ -758,6 +766,7 @@ const app = new Hono()
         ...p,
         bullets: JSON.parse(p.bullets),
         variants: JSON.parse(p.variants),
+        variantContents: p.variantContents ? JSON.parse(p.variantContents) : null,
       })), 200);
     } catch (e) {
       return c.json({ error: 'DB nicht verfügbar' }, 503);
