@@ -156,6 +156,8 @@ export default function Lieferanten() {
   const [editingVariant, setEditingVariant] = useState<Record<string, string>>({}); // key = "group||oldVal", value = currentEditText
   // Varianten-Werte (editierbar, Kopie von product.variants)
   const [editedVariants, setEditedVariants] = useState<Array<{ name: string; values: string[] }>>([]);
+  // Lieferumfang je SET-Wert: { "SET1": "10 kleine + 10 große + Bohrer", ... }
+  const [variantContents, setVariantContents] = useState<Record<string, string>>({});
 
   const [copiedTitle, setCopiedTitle] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
@@ -306,6 +308,7 @@ export default function Lieferanten() {
             ...v,
             ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
           })),
+          variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,
@@ -374,6 +377,7 @@ export default function Lieferanten() {
               ...v,
               ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
             })),
+            variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
             description: product.description,
             images: visibleImages,
             buyPrice: einkauf || null,
@@ -483,6 +487,7 @@ export default function Lieferanten() {
     setSaveResult(null); setUrlInput(""); setManualTitle(""); setShipsFromInfo(null);
     setManualDesc(""); setManualPrice(""); setBuyPrice(""); setEbayPrice("");
     setShowPreview(false); setVisibleImages([]); setAllImages([]); setExcludedImages(new Set()); setSelectedImage(0);
+    setVariantContents({});
   };
 
   return (
@@ -1216,10 +1221,10 @@ export default function Lieferanten() {
                   <Plus size={13}/> Gruppe hinzufügen
                 </button>
               </div>
-              {editedVariants.length === 0 && (
+              {editedVariants.filter(g => g.name.toLowerCase() !== 'ships from').length === 0 && (
                 <p style={{textAlign:'center',color:'#94A3B8',fontSize:13,padding:'16px 0'}}>Keine Varianten — oben Gruppe hinzufügen</p>
               )}
-              {editedVariants.map((group, gi) => (
+              {editedVariants.filter(g => g.name.toLowerCase() !== 'ships from').map((group, gi) => (
                 <div key={gi} style={{marginBottom:16,background:'#F8FAFC',borderRadius:12,padding:14}}>
                   {/* Gruppenname + Löschen */}
                   <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
@@ -1232,14 +1237,35 @@ export default function Lieferanten() {
                   </div>
                   {/* Werte */}
                   <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:8}}>
-                    {group.values.map((val,vi) => (
-                      <div key={vi} style={{display:'flex',alignItems:'center',gap:4,background:'#fff',borderRadius:8,border:'1.5px solid #E2E8F0',padding:'4px 8px'}}>
-                        <input value={val} onChange={e => setEditedVariants(prev => prev.map((g,i)=>{if(i!==gi)return g;const v=[...g.values];v[vi]=e.target.value;return{...g,values:v};}))}
-                          style={{border:'none',outline:'none',fontSize:13,fontWeight:600,color:'#0F172A',background:'transparent',width:Math.max(40,val.length*9)+'px'}}/>
-                        <button onClick={() => setEditedVariants(prev => prev.map((g,i)=>{if(i!==gi)return g;return{...g,values:g.values.filter((_,j)=>j!==vi)};}))}
-                          style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8',padding:0,display:'flex',alignItems:'center'}}><X size={11}/></button>
-                      </div>
-                    ))}
+                    {group.values.map((val,vi) => {
+                      const isSetVal = /^set\s*\d+$/i.test(val.trim());
+                      const setKey = val.toUpperCase().replace(/\s+/g, '');
+                      return (
+                        <div key={vi} style={{width: isSetVal ? '100%' : 'auto'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:4,background:'#fff',borderRadius:8,border:'1.5px solid #E2E8F0',padding:'4px 8px'}}>
+                            <input value={val} onChange={e => setEditedVariants(prev => prev.map((g,i)=>{if(i!==gi)return g;const v=[...g.values];v[vi]=e.target.value;return{...g,values:v};}))}
+                              style={{border:'none',outline:'none',fontSize:13,fontWeight:600,color:'#0F172A',background:'transparent',width:Math.max(40,val.length*9)+'px'}}/>
+                            <button onClick={() => setEditedVariants(prev => prev.map((g,i)=>{if(i!==gi)return g;return{...g,values:g.values.filter((_,j)=>j!==vi)};}))}
+                              style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8',padding:0,display:'flex',alignItems:'center'}}><X size={11}/></button>
+                          </div>
+                          {/* Lieferumfang-Input unter SET-Werten */}
+                          {isSetVal && (
+                            <input
+                              type="text"
+                              placeholder={`Lieferumfang ${val} (z.B. 10 kleine + 5 große)`}
+                              value={variantContents[setKey] ?? ""}
+                              onChange={e => setVariantContents(prev => ({ ...prev, [setKey]: e.target.value }))}
+                              style={{
+                                marginTop:4, width:'100%', padding:'6px 10px', fontSize:12,
+                                border:'1.5px solid #C4B5FD', borderRadius:8,
+                                background:'#F5F3FF', color:'#4C1D95',
+                                fontFamily:'inherit', boxSizing:'border-box', outline:'none',
+                              }}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
                     <button onClick={() => setEditedVariants(prev => prev.map((g,i)=>i===gi?{...g,values:[...g.values,'']}:g))}
                       style={{padding:'4px 10px',borderRadius:8,border:'2px dashed #C4B5FD',background:'#F5F3FF',color:'#7C3AED',fontSize:12,fontWeight:700,cursor:'pointer'}}>
                       + Wert
