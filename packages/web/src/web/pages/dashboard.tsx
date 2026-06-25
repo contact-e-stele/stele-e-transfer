@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Package, ExternalLink, RefreshCw, ShoppingCart, Clock, CheckCircle, XCircle, Loader } from "lucide-react";
+import { Package, ExternalLink, RefreshCw, ShoppingCart, Clock, CheckCircle, XCircle, Loader, TrendingUp, AlertTriangle } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 
 interface Product {
@@ -17,6 +17,8 @@ interface Product {
   buyPrice: number | null;
   sellPrice: number | null;
   adRate: number | null;
+  priceChanged: boolean;
+  lastPriceCheck: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,6 +56,8 @@ export default function Dashboard() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [priceCheckLoading, setPriceCheckLoading] = useState(false);
+  const [priceCheckResult, setPriceCheckResult] = useState<{ jobId?: string; message?: string; error?: string } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -64,6 +68,22 @@ export default function Dashboard() {
       setError(e instanceof Error ? e.message : "Ladefehler");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const triggerPriceCheck = async () => {
+    setPriceCheckLoading(true);
+    setPriceCheckResult(null);
+    try {
+      const res = await fetch("/api/products/check-all-prices", { method: "POST" });
+      const data = await res.json() as { jobId?: string; message?: string; error?: string };
+      setPriceCheckResult(data);
+      // Nach 10 Sek Produkte neu laden (Preise könnten sich geändert haben)
+      setTimeout(() => load(), 10000);
+    } catch {
+      setPriceCheckResult({ error: "Preischeck fehlgeschlagen" });
+    } finally {
+      setPriceCheckLoading(false);
     }
   };
 
@@ -87,15 +107,26 @@ export default function Dashboard() {
               <p style={{ fontSize: 12, color: "#64748B", margin: 0 }}>{products.length} gespeicherte Produkte</p>
             </div>
           </div>
-          <button onClick={load} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 10,
-            padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#475569",
-            cursor: "pointer", fontFamily: "inherit",
-          }}>
-            <RefreshCw size={14} style={loading ? { animation: "spin 1s linear infinite" } : {}} />
-            Aktualisieren
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={triggerPriceCheck} disabled={priceCheckLoading} style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: priceCheckLoading ? "#FEF9C3" : "#FFFBEB", border: "1.5px solid #FCD34D", borderRadius: 10,
+              padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#92400E",
+              cursor: priceCheckLoading ? "not-allowed" : "pointer", fontFamily: "inherit",
+            }}>
+              <TrendingUp size={14} style={priceCheckLoading ? { animation: "spin 1s linear infinite" } : {}} />
+              {priceCheckLoading ? "Prüft..." : "Preise prüfen"}
+            </button>
+            <button onClick={load} style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 10,
+              padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#475569",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+              <RefreshCw size={14} style={loading ? { animation: "spin 1s linear infinite" } : {}} />
+              Neu laden
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -109,20 +140,35 @@ export default function Dashboard() {
           }, 0);
           const avgProfit = withProfit.length > 0 ? totalProfit / withProfit.length : null;
           const errors = products.filter(p => p.ebayStatus === "error").length;
+          const priceAlerts = products.filter(p => p.priceChanged).length;
           return (
             <div style={{ marginBottom: 24 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+              {/* Preis-Check Ergebnis */}
+              {priceCheckResult && (
+                <div style={{
+                  background: priceCheckResult.error ? "#FEF2F2" : "#FFFBEB",
+                  border: `1.5px solid ${priceCheckResult.error ? "#FECACA" : "#FCD34D"}`,
+                  borderRadius: 10, padding: "10px 14px", marginBottom: 12,
+                  fontSize: 12, color: priceCheckResult.error ? "#DC2626" : "#92400E", fontWeight: 600,
+                  display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <TrendingUp size={14} />
+                  {priceCheckResult.error ?? priceCheckResult.message ?? "Preischeck gestartet — Produkte werden aktualisiert"}
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
                 {[
                   { label: "Produkte gesamt", value: products.length.toString(), color: "#8B5CF6", bg: "#F5F3FF" },
                   { label: "Auf eBay aktiv", value: listed.length.toString(), color: "#16A34A", bg: "#F0FDF4" },
+                  { label: "Preis-Alerts", value: priceAlerts.toString(), color: priceAlerts > 0 ? "#D97706" : "#94A3B8", bg: priceAlerts > 0 ? "#FFFBEB" : "#F8FAFC" },
                   { label: "Fehler", value: errors.toString(), color: errors > 0 ? "#DC2626" : "#94A3B8", bg: errors > 0 ? "#FEF2F2" : "#F8FAFC" },
                 ].map(s => (
                   <div key={s.label} style={{
-                    background: s.bg, borderRadius: 14, padding: "14px 12px",
+                    background: s.bg, borderRadius: 14, padding: "12px 8px",
                     boxShadow: "0 2px 8px rgba(0,0,0,0.06)", textAlign: "center",
                   }}>
-                    <div style={{ fontSize: 26, fontWeight: 800, color: s.color }}>{s.value}</div>
-                    <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: 10, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
                   </div>
                 ))}
               </div>
@@ -242,14 +288,29 @@ export default function Dashboard() {
               </div>
             )}
 
+            {/* Preis-Alert */}
+            {product.priceChanged && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 6,
+                fontSize: 11, color: "#92400E", background: "#FFFBEB",
+                border: "1px solid #FCD34D", padding: "6px 10px", borderRadius: 6, marginTop: 6, fontWeight: 600,
+              }}>
+                <AlertTriangle size={12} />
+                Preisänderung erkannt — EK: {product.buyPrice?.toFixed(2)}€ → VK: {product.sellPrice?.toFixed(2)}€
+              </div>
+            )}
+
             {product.ebayError && (
               <div style={{ fontSize: 11, color: "#DC2626", background: "#FEF2F2", padding: "6px 10px", borderRadius: 6, marginTop: 6 }}>
                 {product.ebayError.slice(0, 120)}
               </div>
             )}
 
-            <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 8 }}>
-              Erstellt: {new Date(product.createdAt).toLocaleString("de-DE")}
+            <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 8, display: "flex", gap: 12, flexWrap: "wrap" as const }}>
+              <span>Erstellt: {new Date(product.createdAt).toLocaleString("de-DE")}</span>
+              {product.lastPriceCheck && (
+                <span>Preis geprüft: {new Date(product.lastPriceCheck).toLocaleString("de-DE")}</span>
+              )}
             </div>
           </div>
         ))}

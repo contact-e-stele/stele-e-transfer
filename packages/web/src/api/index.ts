@@ -823,6 +823,24 @@ const app = new Hono()
       specsTableHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">${rows}</table>`;
     }
 
+    // variantContents aus DB (Lieferumfang je SET/Menge-Variante)
+    const variantContentsDb: Record<string, string> = (() => {
+      try { return product.variantContents ? JSON.parse(product.variantContents) : {}; } catch { return {}; }
+    })();
+    const hasVariantContents = Object.keys(variantContentsDb).length > 0;
+    const variantContentsHtml = hasVariantContents
+      ? `<div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #C9A84C">
+<b style="color:#C9A84C;display:block;margin-bottom:8px;">Lieferumfang je Variante:</b>
+<table style="width:100%;border-collapse:collapse">${Object.entries(variantContentsDb).map(([k, v]) =>
+  `<tr><td style="padding:5px 10px;color:#C9A84C;font-weight:bold;width:35%;border-bottom:1px solid #2a1a0a">${k}</td><td style="padding:5px 10px;color:#a89050;border-bottom:1px solid #2a1a0a">${v}</td></tr>`
+).join('')}</table></div>`
+      : '';
+
+    // GPSR aus DB bevorzugen, sonst Standard-Fallback
+    const gpsrSection = product.gpsrHtml
+      ? `<div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #3a2a0a">${product.gpsrHtml}</div>`
+      : `<div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">GPSR:</b> Stele-E-Transfer | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | contact@stele-e-transfer.com | +49 159 04826737</div>`;
+
     // Beschreibung: generatedDescription aus DB bevorzugen (beim Import generiert, kein Gemini-Call hier)
     const rawHtml = product.htmlDescription ?? '';
     const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && rawHtml.includes('stet-tabs');
@@ -851,8 +869,9 @@ const app = new Hono()
 <td width="34%" style="padding:12px;text-align:center"><b style="color:#C9A84C;font-size:12px">KUNDENSERVICE</b><br><small style="color:#8a7040">contact@stele-e-transfer.com</small></td>
 </tr></table>
 <div style="padding:18px;background:#0f0f07;color:#a89050;border-top:1px solid #C9A84C"><h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:6px;margin-top:0">${productTitle}</h3>${specsTableHtml}${productContent}<p style="font-size:11px;color:#5a4a20"><b>&sect;19 UStG:</b> Keine MwSt. als Kleinunternehmer.</p></div>
+${variantContentsHtml}
 <div style="padding:14px;background:#0a0a0a;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">Versand:</b> Kostenlos &middot; 3-10 Werktage &middot; DHL/Deutsche Post &middot; 30 Tage R&uuml;ckgabe</div>
-<div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">GPSR:</b> Stele-E-Transfer | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | contact@stele-e-transfer.com | +49 159 04826737</div>
+${gpsrSection}
 <div style="padding:14px;background:#0a0a0a;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">Impressum:</b> STELE-E-TRANSFER | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | &sect;19 UStG: Keine MwSt.</div>
 <div style="background:#111;padding:10px;text-align:center;border-top:2px solid #C9A84C"><span style="color:#C9A84C;font-size:11px;letter-spacing:4px;font-weight:bold">STELE-E-TRANSFER</span> <span style="color:#5a4a20;font-size:10px">WIESBADEN &middot; DEUTSCHLAND</span></div>
 </div>`;
@@ -1409,19 +1428,51 @@ const app = new Hono()
             }).where(eq(schema.products.id, product.id));
 
             // eBay Listing Preis automatisch aktualisieren wenn Preis gestiegen/gesunken
+            // Inventory API (neue Listings) zuerst, dann Trading API Fallback
             let ebayUpdated = false;
             if (priceChanged && product.ebayListingId && product.ebayStatus === 'listed') {
               try {
                 const { getAccessToken } = await import('./ebay');
                 const ebayToken = await getAccessToken();
-                const reviseXml = `<?xml version="1.0" encoding="utf-8"?><ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${ebayToken}</eBayAuthToken></RequesterCredentials><InventoryStatus><ItemID>${product.ebayListingId}</ItemID><StartPrice>${newSellPrice.toFixed(2)}</StartPrice></InventoryStatus></ReviseInventoryStatusRequest>`;
-                const ebayRes = await fetch('https://api.ebay.com/ws/api.dll', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'text/xml', 'X-EBAY-API-SITEID': '77', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus', 'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '' },
-                  body: reviseXml,
-                });
-                const ebayText = await ebayRes.text();
-                ebayUpdated = !ebayText.includes('<Ack>Failure</Ack>');
+
+                // 1. Inventory API: Offer per SKU suchen + updaten
+                const invSku = `stele-${product.id}`;
+                const skusToTry = [invSku, `${invSku}-GROUP`];
+                let invOk = false;
+                for (const trySku of skusToTry) {
+                  const offerRes = await fetch(
+                    `https://api.ebay.com/sell/inventory/v1/offer?sku=${encodeURIComponent(trySku)}&marketplace_id=EBAY_DE`,
+                    { headers: { 'Authorization': `Bearer ${ebayToken}` } }
+                  );
+                  if (!offerRes.ok) continue;
+                  const offerData = await offerRes.json() as { offers?: Array<{ offerId: string; sku: string }> };
+                  const offers = offerData.offers ?? [];
+                  if (offers.length > 0) {
+                    for (const offer of offers) {
+                      await fetch(`https://api.ebay.com/sell/inventory/v1/offer/${offer.offerId}`, {
+                        method: 'PUT',
+                        headers: { 'Authorization': `Bearer ${ebayToken}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+                        body: JSON.stringify({ sku: offer.sku, marketplaceId: 'EBAY_DE', pricingSummary: { price: { value: newSellPrice.toFixed(2), currency: 'EUR' } } }),
+                      });
+                    }
+                    invOk = true;
+                    break;
+                  }
+                }
+
+                if (invOk) {
+                  ebayUpdated = true;
+                } else {
+                  // 2. Fallback: Trading API (alte Listings)
+                  const reviseXml = `<?xml version="1.0" encoding="utf-8"?><ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${ebayToken}</eBayAuthToken></RequesterCredentials><InventoryStatus><ItemID>${product.ebayListingId}</ItemID><StartPrice>${newSellPrice.toFixed(2)}</StartPrice></InventoryStatus></ReviseInventoryStatusRequest>`;
+                  const ebayRes = await fetch('https://api.ebay.com/ws/api.dll', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/xml', 'X-EBAY-API-SITEID': '77', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus', 'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '' },
+                    body: reviseXml,
+                  });
+                  const ebayText = await ebayRes.text();
+                  ebayUpdated = !ebayText.includes('<Ack>Failure</Ack>');
+                }
               } catch { /* eBay Update fehlgeschlagen, nicht kritisch */ }
             }
 

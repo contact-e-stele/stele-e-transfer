@@ -24,8 +24,103 @@ function parsePrice(raw: string): number {
   return parseFloat(`${m[1]}.${m[2]}`);
 }
 
-// eBay Listing-Preis über Trading API aktualisieren
-async function updateEbayPrice(itemId: string, newPrice: number): Promise<boolean> {
+const EBAY_API_BASE = 'https://api.ebay.com';
+
+// eBay Preis über Inventory API updaten (für neue Listings die über Inventory API erstellt wurden)
+// Sucht Offer per SKU und updated pricingSummary
+async function updateEbayPriceInventory(productId: number, newPrice: number): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    const sku = `stele-${productId}`;
+
+    // Varianten-SKU Pattern: stele-{id}-{suffix}
+    // Zuerst einfachen SKU probieren, dann mit Varianten-Prefix suchen
+    const skusToTry = [sku, `${sku}-GROUP`];
+
+    for (const trysku of skusToTry) {
+      const res = await fetch(
+        `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(trysku)}&marketplace_id=EBAY_DE`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (!res.ok) continue;
+
+      const data = await res.json() as { offers?: Array<{ offerId: string; sku: string }> };
+      const offers = data.offers ?? [];
+
+      if (offers.length > 0) {
+        // Update alle gefundenen Offers (bei Varianten gibt es mehrere)
+        let anyOk = false;
+        for (const offer of offers) {
+          const patchRes = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Content-Language': 'de-DE',
+            },
+            body: JSON.stringify({
+              sku: offer.sku,
+              marketplaceId: 'EBAY_DE',
+              pricingSummary: {
+                price: { value: newPrice.toFixed(2), currency: 'EUR' },
+              },
+            }),
+          });
+          if (patchRes.ok || patchRes.status === 204) anyOk = true;
+        }
+
+        // Publish ist bei bereits aktiven Listings nicht nötig — Preis-Update ist sofort aktiv
+        if (anyOk) {
+          console.log(`[PriceMonitor] ✅ Inventory API: ${sku} → ${newPrice.toFixed(2)}€ (${offers.length} Offers)`);
+          return true;
+        }
+      }
+    }
+
+    // Varianten: SKU-Pattern stele-{id}-* per Prefix suchen
+    const varRes = await fetch(
+      `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku + '-')}&marketplace_id=EBAY_DE&limit=50`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (varRes.ok) {
+      const varData = await varRes.json() as { offers?: Array<{ offerId: string; sku: string }> };
+      const varOffers = (varData.offers ?? []).filter(o => o.sku.startsWith(sku + '-'));
+      if (varOffers.length > 0) {
+        let anyOk = false;
+        for (const offer of varOffers) {
+          const patchRes = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Content-Language': 'de-DE',
+            },
+            body: JSON.stringify({
+              sku: offer.sku,
+              marketplaceId: 'EBAY_DE',
+              pricingSummary: {
+                price: { value: newPrice.toFixed(2), currency: 'EUR' },
+              },
+            }),
+          });
+          if (patchRes.ok || patchRes.status === 204) anyOk = true;
+        }
+        if (anyOk) {
+          console.log(`[PriceMonitor] ✅ Inventory API (Varianten): ${sku}-* → ${newPrice.toFixed(2)}€`);
+          return true;
+        }
+      }
+    }
+
+    return false;
+  } catch (e) {
+    console.warn(`[PriceMonitor] Inventory API Update fehlgeschlagen für stele-${productId}:`, e);
+    return false;
+  }
+}
+
+// eBay Listing-Preis über Trading API aktualisieren (Fallback für ältere Listings)
+async function updateEbayPriceTrading(itemId: string, newPrice: number): Promise<boolean> {
   try {
     const token = await getAccessToken();
     const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -52,12 +147,12 @@ async function updateEbayPrice(itemId: string, newPrice: number): Promise<boolea
     const text = await res.text();
     if (text.includes('<Ack>Failure</Ack>')) {
       const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Unbekannter Fehler';
-      console.warn(`[PriceMonitor] eBay API Fehler für ${itemId}: ${errMsg}`);
+      console.warn(`[PriceMonitor] Trading API Fehler für ${itemId}: ${errMsg}`);
       return false;
     }
     return true;
   } catch (e) {
-    console.warn(`[PriceMonitor] eBay Update fehlgeschlagen für ${itemId}:`, e);
+    console.warn(`[PriceMonitor] Trading API fehlgeschlagen für ${itemId}:`, e);
     return false;
   }
 }
@@ -127,7 +222,12 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // eBay Listing Preis automatisch aktualisieren (falls verknüpft)
         if (product.ebayListingId && product.ebayStatus === 'listed') {
           console.log(`[PriceMonitor] ${product.id}: eBay Listing ${product.ebayListingId} — aktualisiere auf ${newSellPrice.toFixed(2)}€`);
-          const ok = await updateEbayPrice(product.ebayListingId, newSellPrice);
+          // Erst Inventory API versuchen (neue Listings), dann Trading API als Fallback
+          let ok = await updateEbayPriceInventory(product.id, newSellPrice);
+          if (!ok) {
+            console.log(`[PriceMonitor] ${product.id}: Inventory API fehlgeschlagen, versuche Trading API...`);
+            ok = await updateEbayPriceTrading(product.ebayListingId, newSellPrice);
+          }
           if (ok) {
             ebayUpdated++;
             console.log(`[PriceMonitor] ✅ eBay ${product.ebayListingId}: ${newSellPrice.toFixed(2)}€`);
