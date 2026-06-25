@@ -104,7 +104,7 @@ function isCleanLine(line: string): boolean {
   return true;
 }
 
-function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "dark"): string {
+function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "dark", overrideTitle?: string, setContents?: Record<string, string>): string {
   // SKU-Varianten für HTML-Template aufbereiten
   const skuVariants = (product.variantPrices ?? []).length > 0
     ? product.variantPrices!.map(v => ({
@@ -113,7 +113,12 @@ function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "dark"): s
         imageUrl: (v as any).imageUrl as string | undefined,
       }))
     : undefined;
-  const enriched = { ...product, skuVariants };
+  const enriched = {
+    ...product,
+    ...(overrideTitle ? { title: overrideTitle } : {}),
+    skuVariants,
+    setContents,
+  };
   return theme === "light" ? buildEbayHTMLLight(enriched) : buildEbayHTML(enriched);
 }
 
@@ -229,7 +234,7 @@ export default function Lieferanten() {
       setExcludedImages(new Set());
       setVisibleImages(data.images ?? []);
       const t = buildTitle(data.title);
-      const h = buildHTML(data, htmlTheme);
+      const h = buildHTML(data, htmlTheme, t);
       setResult({ title: t, html: h });
       setEditableTitle(t);
       setEditableHtml(h);
@@ -925,7 +930,7 @@ export default function Lieferanten() {
                   <div style={{ display: "flex", background: "#F1F5F9", borderRadius: 8, overflow: "hidden", border: "1px solid #E2E8F0" }}>
                     <button onClick={() => {
                       setHtmlTheme("dark");
-                      if (product) setEditableHtml(buildHTML(product, "dark"));
+                      if (product) setEditableHtml(buildHTML(product, "dark", editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined));
                     }} style={{
                       padding: "5px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
                       background: htmlTheme === "dark" ? "#0F172A" : "transparent",
@@ -934,7 +939,7 @@ export default function Lieferanten() {
                     }}>🌑 Dunkel</button>
                     <button onClick={() => {
                       setHtmlTheme("light");
-                      if (product) setEditableHtml(buildHTML(product, "light"));
+                      if (product) setEditableHtml(buildHTML(product, "light", editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined));
                     }} style={{
                       padding: "5px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
                       background: htmlTheme === "light" ? "#B8860B" : "transparent",

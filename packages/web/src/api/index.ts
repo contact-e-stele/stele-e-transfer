@@ -52,7 +52,7 @@ function generateFallbackDescription(title: string, specs: Record<string, string
 // Modelle in Reihenfolge: primary zuerst, dann Fallback-Modelle bei 503
 const GEMINI_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'];
 
-async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string, retries = 3): Promise<string> {
+async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string, retries = 3, setContents?: Record<string, string>): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     console.log('[Gemini] Kein API Key – nutze Fallback-Beschreibung');
@@ -60,10 +60,17 @@ async function generateDescriptionWithGemini(title: string, specs: Record<string
   }
 
   const specsText = Object.entries(specs).slice(0, 15).map(([k, v]) => `- ${k}: ${v}`).join('\n');
+  
+  // SET-Inhalte formatieren falls vorhanden
+  const setContentsText = setContents && Object.keys(setContents).length > 0
+    ? '\nLIEFERUMFANG JE SET:\n' + Object.entries(setContents).map(([k, v]) => `- ${k}: ${v}`).join('\n')
+    : '';
+
   const prompt = `Du bist ein Top-eBay-Produkttexter für den deutschen Markt. Deine Beschreibungen sind sachlich, überzeugend und basieren NUR auf echten Produktdaten.
 
 PRODUKTTITEL: ${title}
 ${specsText ? `\nTECHNISCHE DATEN (alle verwenden!):\n${specsText}` : ''}
+${setContentsText}
 ${description ? `\nPRODUKTINFO VOM HERSTELLER:\n${description.slice(0, 1200)}` : ''}
 
 AUFGABE: Erstelle eine strukturierte eBay-Beschreibung auf Deutsch. Nutze ALLE verfügbaren Produktinfos oben.
@@ -76,7 +83,7 @@ FORMAT (exakt so zurückgeben, mit den Trennzeichen):
 - [konkretes Feature/Vorteil]
 - [konkretes Feature/Vorteil]
 - [konkretes Feature/Vorteil]
-- [konkretes Feature/Vorteil]
+${setContentsText ? '- Lieferumfang je Set: [alle Set-Inhalte aus LIEFERUMFANG JE SET oben aufführen, z.B. "SET1: 10 kleine + 10 große + Schraubendreher + Gummistreifen"]' : '- [konkretes Feature/Vorteil]'}
 - [konkretes Feature/Vorteil, wenn möglich Anwendungsbereich]
 ###OUTRO###
 [1 Abschlusssatz: Qualität + Einsatzbereich – max. 20 Wörter]
@@ -86,7 +93,7 @@ REGELN (unbedingt einhalten):
 - Keine Emojis, kein Markdown (kein **, kein #)
 - NICHT erwähnen: AliExpress, China, Amazon, Händlername
 - EU-Maße: cm statt inch, ml statt oz, Komma als Dezimalzeichen
-- Wenn Setinhalte vorhanden: im passenden Bullet kurz auflisten (z.B. "Lieferumfang: 10x Klein, 10x Groß, Schraubendreher, EVA-Tasche")
+- Wenn LIEFERUMFANG JE SET vorhanden: ALLE Sets mit ihren Inhalten im Bullet aufführen
 - Anwendungsbereich konkret nennen (Auto, Motorrad, LKW etc.) wenn aus Produktinfo ersichtlich
 - Sprache: sachlich, direkt, kein Marketingsprech`;
 
@@ -682,6 +689,7 @@ const app = new Hono()
         adRate?: number;
         sourceUrl?: string;
         specs?: Record<string, string>;
+        variantContents?: Record<string, string>;
       };
 
       // Titel + Beschreibung parallel generieren (schneller)
@@ -690,7 +698,7 @@ const app = new Hono()
 
       const [germanTitle, generatedDescription] = await Promise.all([
         generateGermanTitle(rawTitle, specs),
-        generateDescriptionWithGemini(rawTitle, specs, body.description ?? ''),
+        generateDescriptionWithGemini(rawTitle, specs, body.description ?? '', 3, body.variantContents),
       ]);
       console.log(`[Import] Titel: "${germanTitle}" | Beschreibung generiert`);
 

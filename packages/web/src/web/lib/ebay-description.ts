@@ -12,6 +12,7 @@ export interface ScrapedProduct {
   variants?: Array<{ name: string; values: string[] }>;
   skuVariants?: Array<{ name: string; price: number; imageUrl?: string }>;
   bullets?: string[];
+  setContents?: Record<string, string>; // z.B. { "SET1": "10 kleine + 10 große + Schraubendreher" }
 }
 
 function decodeEntities(str: string): string {
@@ -89,11 +90,20 @@ function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): st
     });
   } else {
     // Gruppen-Varianten: Name | Werte
-    product.variants!.forEach((grp, gi) => {
+    // Ships From ausblenden
+    const filteredGroups = product.variants!.filter(g => g.name.toLowerCase() !== 'ships from');
+    filteredGroups.forEach((grp, gi) => {
       const rowBg = gi % 2 === 0 ? rowEven : rowAlt;
-      const tags = grp.values.map(val =>
-        `<span style="display:inline-block;padding:3px 9px;margin:2px 3px;border-radius:12px;background:${hdrBg};color:${textColor};border:1px solid ${border};font-size:12px;">${val}</span>`
-      ).join("");
+      const setContents = product.setContents ?? {};
+      const tags = grp.values.map(val => {
+        const setKey = val.toUpperCase().replace(/\s+/g, '');
+        const content = setContents[setKey];
+        const tag = `<span style="display:inline-block;padding:3px 9px;margin:2px 3px;border-radius:12px;background:${hdrBg};color:${textColor};border:1px solid ${border};font-size:12px;">${val}</span>`;
+        if (content) {
+          return tag + `<span style="display:inline-block;font-size:11px;color:${subColor};margin:2px 6px;">${content}</span>`;
+        }
+        return tag;
+      }).join("");
       html += `
       <tr style="background:${rowBg};border-top:1px solid ${border};">
         <td style="padding:10px 14px;font-weight:700;color:${gold};white-space:nowrap;width:30%;">${grp.name}</td>
