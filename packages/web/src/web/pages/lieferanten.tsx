@@ -966,7 +966,12 @@ export default function Lieferanten() {
                 </div>
               </div>
               {showPreview ? (
-                <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.8, marginBottom: 10 }} dangerouslySetInnerHTML={{ __html: editableHtml }} />
+                <iframe
+                  srcDoc={editableHtml}
+                  style={{ width: "100%", minHeight: 500, border: "none", borderRadius: 12, marginBottom: 10 }}
+                  sandbox="allow-same-origin"
+                  title="Beschreibung Vorschau"
+                />
               ) : (
                 <textarea
                   value={editableHtml}
