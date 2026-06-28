@@ -104,7 +104,7 @@ function isCleanLine(line: string): boolean {
   return true;
 }
 
-function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "dark", overrideTitle?: string, setContents?: Record<string, string>): string {
+function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", overrideTitle?: string, setContents?: Record<string, string>): string {
   // SKU-Varianten für HTML-Template aufbereiten
   const skuVariants = (product.variantPrices ?? []).length > 0
     ? product.variantPrices!.map(v => ({
@@ -168,7 +168,7 @@ export default function Lieferanten() {
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [editableTitle, setEditableTitle] = useState("");
   const [editableHtml, setEditableHtml] = useState("");
-  const [htmlTheme, setHtmlTheme] = useState<"dark" | "light">("dark");
+  const [htmlTheme, setHtmlTheme] = useState<"dark" | "light">("light");
 
   const [ebayPrice, setEbayPrice] = useState("");
   const [variantEbayPrices, setVariantEbayPrices] = useState<Record<string, string>>({});
@@ -933,27 +933,6 @@ export default function Lieferanten() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>HTML Beschreibung</span>
                 <div style={{ display: "flex", gap: 6 }}>
-                  {/* Theme Toggle */}
-                  <div style={{ display: "flex", background: "#F1F5F9", borderRadius: 8, overflow: "hidden", border: "1px solid #E2E8F0" }}>
-                    <button onClick={() => {
-                      setHtmlTheme("dark");
-                      if (product) setEditableHtml(buildHTML(product, "dark", editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined));
-                    }} style={{
-                      padding: "5px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
-                      background: htmlTheme === "dark" ? "#0F172A" : "transparent",
-                      color: htmlTheme === "dark" ? "#C9A84C" : "#64748B",
-                      fontFamily: "inherit",
-                    }}>🌑 Dunkel</button>
-                    <button onClick={() => {
-                      setHtmlTheme("light");
-                      if (product) setEditableHtml(buildHTML(product, "light", editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined));
-                    }} style={{
-                      padding: "5px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
-                      background: htmlTheme === "light" ? "#B8860B" : "transparent",
-                      color: htmlTheme === "light" ? "#ffffff" : "#64748B",
-                      fontFamily: "inherit",
-                    }}>☀️ Hell</button>
-                  </div>
                   <button onClick={() => setShowPreview(v => !v)} style={{
                     display: "flex", alignItems: "center", gap: 5,
                     background: "#F1F5F9", border: "none", borderRadius: 8,
