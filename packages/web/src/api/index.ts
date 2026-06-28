@@ -50,7 +50,7 @@ function generateFallbackDescription(title: string, specs: Record<string, string
 }
 
 // Modelle in Reihenfolge: primary zuerst, dann Fallback-Modelle bei 503
-const GEMINI_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash-lite'];
 
 async function generateDescriptionWithGemini(title: string, specs: Record<string, string>, description: string, retries = 3, setContents?: Record<string, string>): Promise<string> {
   const key = process.env.GEMINI_API_KEY;

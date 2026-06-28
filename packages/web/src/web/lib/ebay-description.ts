@@ -69,12 +69,11 @@ function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): st
     <tbody>`;
 
   if (hasSku) {
-    // SKU-Varianten: Bild | Name | Preis
+    // SKU-Varianten: Bild | Name (kein Preis)
     html += `
       <tr style="background:${hdrBg};">
         <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;width:40px;"></td>
         <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;">VARIANTE</td>
-        <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;text-align:right;">PREIS (EINKAUF)</td>
       </tr>`;
     product.skuVariants!.forEach((v, i) => {
       const rowBg = i % 2 === 0 ? rowEven : rowAlt;
@@ -85,7 +84,6 @@ function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): st
       <tr style="background:${rowBg};border-top:1px solid ${border};">
         <td style="padding:8px 10px;">${imgHtml}</td>
         <td style="padding:8px 10px;color:${textColor};font-weight:600;">${v.name}</td>
-        <td style="padding:8px 10px;color:${subColor};text-align:right;font-weight:700;">${v.price.toFixed(2).replace(".", ",")} €</td>
       </tr>`;
     });
   } else {
