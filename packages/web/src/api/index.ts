@@ -857,42 +857,6 @@ const app = new Hono()
       return c.json({ error: 'Keine Bilder gespeichert — bitte Produkt neu importieren' }, 400);
     }
 
-    // Versandinfo aus sourceUrl prüfen (shipsFrom aus gespeichertem Produkt)
-    // Wir prüfen ob die sourceUrl eine EU-Versandinfo enthält
-    const isEU = product.sourceUrl?.includes('ship_from=DE') ||
-                 product.sourceUrl?.includes('ship_from=ES') ||
-                 product.sourceUrl?.includes('ship_from=FR') ||
-                 false;
-
-    // Produktinhalt für die Vorlage
-    const productTitle = (product.generatedTitle ?? product.title).slice(0, 80);
-
-    // Specs als HTML-Tabelle aufbauen (aus product.specs JSON)
-    const specsObj: Record<string, string> = (() => {
-      try { return JSON.parse(product.specs ?? '{}') as Record<string, string>; } catch { return {}; }
-    })();
-    const specEntries = Object.entries(specsObj).slice(0, 12);
-    let specsTableHtml = '';
-    if (specEntries.length > 0) {
-      const rows = specEntries.map(([k, v]) =>
-        `<tr><td style="padding:6px 10px;color:#C9A84C;font-weight:bold;width:40%;border-bottom:1px solid #2a1a0a;">${k}</td><td style="padding:6px 10px;color:#a89050;border-bottom:1px solid #2a1a0a;">${v}</td></tr>`
-      ).join('');
-      specsTableHtml = `<table style="width:100%;border-collapse:collapse;margin:12px 0;">${rows}</table>`;
-    }
-
-    // variantContents aus DB (Lieferumfang je SET/Menge-Variante)
-    const variantContentsDb: Record<string, string> = (() => {
-      try { return product.variantContents ? JSON.parse(product.variantContents) : {}; } catch { return {}; }
-    })();
-    const hasVariantContents = Object.keys(variantContentsDb).length > 0;
-    const variantContentsHtml = hasVariantContents
-      ? `<div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #C9A84C">
-<b style="color:#C9A84C;display:block;margin-bottom:8px;">Lieferumfang je Variante:</b>
-<table style="width:100%;border-collapse:collapse">${Object.entries(variantContentsDb).map(([k, v]) =>
-  `<tr><td style="padding:5px 10px;color:#C9A84C;font-weight:bold;width:35%;border-bottom:1px solid #2a1a0a">${k}</td><td style="padding:5px 10px;color:#a89050;border-bottom:1px solid #2a1a0a">${v}</td></tr>`
-).join('')}</table></div>`
-      : '';
-
     // Beschreibung: htmlDescription aus DB bevorzugen (bereits vollständige Vorlage)
     const rawHtml = product.htmlDescription ?? '';
     const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
@@ -1269,6 +1233,27 @@ const app = new Hono()
       return c.json({ url: `${baseUrl}/uploads/${name}` }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Produkt-Felder patchen (ebayCategory etc.) ──────────────────────────────
+  .patch('/products/:id', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+    try {
+      const body = await c.req.json() as Record<string, unknown>;
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const allowed: Partial<typeof schema.products.$inferInsert> = {};
+      if ('ebayCategory' in body) allowed.ebayCategory = body.ebayCategory as string | null;
+      if (Object.keys(allowed).length === 0) return c.json({ error: 'Keine bekannten Felder' }, 400);
+      allowed.updatedAt = new Date().toISOString();
+      await db.update(schema.products).set(allowed).where(eq(schema.products.id, id));
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ error: 'DB Fehler' }, 503);
     }
   })
 

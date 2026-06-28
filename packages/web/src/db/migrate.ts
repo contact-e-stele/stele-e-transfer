@@ -27,6 +27,7 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN variant_contents TEXT`,
   `ALTER TABLE products ADD COLUMN gpsr_raw TEXT`,
   `ALTER TABLE products ADD COLUMN gpsr_html TEXT`,
+  `ALTER TABLE products ADD COLUMN ebay_category TEXT`,
   // Preis-Historie Tabelle
   `CREATE TABLE IF NOT EXISTS price_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

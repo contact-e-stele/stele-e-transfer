@@ -47,6 +47,7 @@ interface Product {
   ebayListingId: string | null;
   ebayStatus: string;
   ebayError: string | null;
+  ebayCategory: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -920,6 +921,33 @@ export default function Produkte() {
                   {listingResult.msg}
                 </div>
               )}
+              {/* eBay Kategorie manuell setzen */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <span style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap" }}>eBay Kat-ID:</span>
+                <input
+                  defaultValue={product.ebayCategory ?? ''}
+                  placeholder="z.B. 179247"
+                  onBlur={async (e) => {
+                    const val = e.currentTarget.value.trim();
+                    if (val === (product.ebayCategory ?? '')) return;
+                    await fetch(`/api/products/${product.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ ebayCategory: val || null }),
+                    });
+                    setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayCategory: val || null } : p));
+                  }}
+                  style={{
+                    fontSize: 11, padding: "4px 8px", borderRadius: 6,
+                    border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A",
+                    width: 110, fontFamily: "inherit",
+                  }}
+                />
+                {product.ebayCategory && (
+                  <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓ Manuell</span>
+                )}
+              </div>
+
               {product.ebayError && !listingResult && (
                 <div style={{ fontSize: 11, color: "#DC2626", background: "#FEF2F2", padding: "6px 10px", borderRadius: 6, marginTop: 8 }}>
                   {product.ebayError.slice(0, 120)}

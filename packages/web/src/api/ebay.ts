@@ -182,17 +182,27 @@ function normalizeAbteilung(val: string): string {
 }
 
 // Bekannte Standardwerte für häufige Pflichtfelder
+// Universelle Minimal-Defaults — werden für ALLE Kategorien gesetzt
 const ASPECT_DEFAULTS: Record<string, string> = {
-  'Abteilung': 'Unisex',
   'Marke': 'Markenlos',
   'Herstellernummer': 'Nicht zutreffend',
-  'Produktart': 'Unbekannt',
-  'Artikelzustand': 'Neu',
+};
+
+// Kategorie-spezifische Defaults — nur wenn categoryId zu dieser Gruppe gehört
+const ASPECT_DEFAULTS_GLASSES: Record<string, string> = {
+  'Abteilung': 'Unisex',
+  'Rahmenmaterial': 'Kunststoff',
+  'Linsenfarbe': 'Schwarz',
+  'Rahmenfarbe': 'Schwarz',
+  'Rahmenform': 'Unbekannt',
+  'Linsenmaterial': 'Kunststoff',
+  'Schutzfaktor': 'UV400',
+};
+
+const ASPECT_DEFAULTS_CLOTHING: Record<string, string> = {
+  'Abteilung': 'Unisex',
   'Stil': 'Unbekannt',
   'Anlass': 'Unbekannt',
-  'Thema': 'Unbekannt',
-  'Besonderheiten': 'Ohne',
-  'Verschluss': 'Unbekannt',
   'Muster': 'Einfarbig',
   'Passform': 'Normal',
   'Pflegehinweis': 'Keine Angabe',
@@ -203,18 +213,20 @@ const ASPECT_DEFAULTS: Record<string, string> = {
   'Ärmelstil': 'Unbekannt',
   'Ausschnitt': 'Unbekannt',
   'Schnittform': 'Unbekannt',
-  'Produktlinie': 'Unbekannt',
-  'Rahmenmaterial': 'Kunststoff',
-  'Linsenfarbe': 'Schwarz',
-  'Rahmenfarbe': 'Schwarz',
-  'Rahmenform': 'Unbekannt',
-  'Linsenmaterial': 'Kunststoff',
-  'Schutzfaktor': 'UV400',
-  'Farbe': 'Schwarz',
-  'Außenfarbe': 'Schwarz',
-  'Innenfarbe': 'Schwarz',
-  'Hauptfarbe': 'Schwarz',
 };
+
+// eBay Brillen-Kategorien (DE): 179247, 2635, 4250, 178893, 13580
+const GLASSES_CATEGORY_IDS = new Set(['179247', '2635', '4250', '178893', '13580', '131088']);
+// eBay Bekleidungs-Kategorien (DE): 11450, 15724, 1059 etc.
+const CLOTHING_CATEGORY_IDS = new Set(['11450', '15724', '1059', '11483', '57988', '63862', '11461', '11462']);
+
+function getAspectDefaultsForCategory(categoryId?: string): Record<string, string> {
+  const base = { ...ASPECT_DEFAULTS };
+  if (!categoryId) return base;
+  if (GLASSES_CATEGORY_IDS.has(categoryId)) return { ...base, ...ASPECT_DEFAULTS_GLASSES };
+  if (CLOTHING_CATEGORY_IDS.has(categoryId)) return { ...base, ...ASPECT_DEFAULTS_CLOTHING };
+  return base;
+}
 
 // Cache: categoryId → Pflichtaspekte (Name → erster erlaubter Wert oder null)
 const aspectCache = new Map<string, Record<string, string | null>>();
@@ -296,20 +308,20 @@ async function buildAspects(
     for (const [name, firstAllowed] of Object.entries(required)) {
       if (!aspects[name]) {
         // Priorität: 1. erster erlaubter Wert der API, 2. bekannter Default, 3. "Nicht angegeben"
-        const fallback = firstAllowed ?? ASPECT_DEFAULTS[name] ?? 'Nicht angegeben';
+        const catDefaults = getAspectDefaultsForCategory(categoryId);
+        const fallback = firstAllowed ?? catDefaults[name] ?? 'Nicht angegeben';
         aspects[name] = [fallback];
         console.log(`[eBay] Auto-filled required aspect "${name}" = "${fallback}"`);
       }
     }
   }
 
-  // Immer: Marke + Abteilung als Minimum
+  // Immer: Marke als Minimum
   if (!aspects['Marke']) aspects['Marke'] = ['Markenlos'];
-  if (!aspects['Abteilung']) aspects['Abteilung'] = ['Unisex'];
 
-  // Alle ASPECT_DEFAULTS als Fallback einfügen falls noch nicht gesetzt
-  // (eBay meldet manche Pflichtfelder nicht über die API, verlangt sie aber beim Publish)
-  for (const [name, val] of Object.entries(ASPECT_DEFAULTS)) {
+  // Kategorie-spezifische Defaults als Fallback (nur was fehlt, nichts überschreiben)
+  const catDefaults = getAspectDefaultsForCategory(categoryId);
+  for (const [name, val] of Object.entries(catDefaults)) {
     if (!aspects[name]) {
       aspects[name] = [val];
     }
@@ -589,10 +601,8 @@ function slugify(s: string): string {
 // Varianten-Gruppen-Name → eBay Aspekt-Name mappen
 // Damit funktioniert es egal wie der User die Gruppe benennt
 const VARIANT_GROUP_MAP: Record<string, string> = {
-  // Farbe
-  'farbe': 'Rahmenfarbe',
-  'color': 'Rahmenfarbe',
-  'colour': 'Rahmenfarbe',
+  // Farbe (explizit deutsch/Rahmen)
+  'farbe': 'Farbe',
   'rahmenfarbe': 'Rahmenfarbe',
   'frame color': 'Rahmenfarbe',
   'linsenfarbe': 'Linsenfarbe',
@@ -612,7 +622,8 @@ const VARIANT_GROUP_MAP: Record<string, string> = {
   'anzahl': 'Menge',
   'set': 'Menge',
   'quantity': 'Menge',
-  // Variante (AliExpress sendet oft "Color" auch für Set-Produkte)
+  // Variante — AliExpress "Color"/"Colour" ist oft kein echtes Farb-Attribut
+  // sondern ein Set/Varianten-Name → deshalb → 'Variante'
   'color': 'Variante',
   'colour': 'Variante',
   'color/size': 'Variante',
