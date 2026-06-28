@@ -40,13 +40,59 @@ async function saveAliTokens(accessToken: string, refreshToken: string, expiresA
 }
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
-function generateFallbackDescription(title: string, specs: Record<string, string>): string {
-  const specsEntries = Object.entries(specs).slice(0, 5);
-  const specsText = specsEntries.map(([k, v]) => `${k}: ${v}`).join(' | ');
-  let desc = `${title} – hochwertige Qualität für anspruchsvolle Anwendungen.`;
-  if (specsText) desc += ` Technische Details: ${specsText}.`;
-  desc += ' Schnelle Lieferung aus dem EU-Lager. Einfache Rückgabe innerhalb von 30 Tagen.';
-  return desc;
+function generateFallbackDescription(
+  title: string,
+  specs: Record<string, string>,
+  rawDescription?: string,
+  setContents?: Record<string, string>
+): string {
+  // Intro: Produkttitel sauber formulieren
+  const cleanTitle = title.replace(/\(.*?\)/g, '').trim();
+  const intro = `${cleanTitle} – solide Verarbeitungsqualität für den täglichen Einsatz.`;
+
+  // Bullets: aus Specs + Set-Inhalte
+  const bullets: string[] = [];
+
+  // Bis zu 6 Specs als Bullets
+  for (const [k, v] of Object.entries(specs).slice(0, 6)) {
+    bullets.push(`${k}: ${v}`);
+  }
+
+  // Fehlende Bullets mit rawDescription-Sätzen auffüllen (falls vorhanden)
+  if (rawDescription && bullets.length < 4) {
+    const sentences = rawDescription
+      .replace(/<[^>]*>/g, ' ')
+      .split(/[.;]\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 20 && s.length < 120 && !/aliexpress|amazon|china/i.test(s));
+    for (const s of sentences.slice(0, 4 - bullets.length)) {
+      bullets.push(s);
+    }
+  }
+
+  // Set-Inhalte als eigenen Bullet
+  if (setContents && Object.keys(setContents).length > 0) {
+    const setLine = Object.entries(setContents).map(([k, v]) => `${k}: ${v}`).join(' | ');
+    bullets.push(`Lieferumfang je Variante: ${setLine}`);
+  }
+
+  // Immer mindestens 3 Bullets — Filler wenn nötig
+  if (bullets.length < 3) {
+    bullets.push('Schnelle Lieferung aus dem EU-Lager');
+    bullets.push('30 Tage Rückgabe über eBay Käuferschutz');
+  }
+
+  // Outro
+  const outro = 'Für zuverlässigen Einsatz im Alltag – einfache Handhabung und schnelle Lieferung.';
+
+  return [
+    '###INTRO###',
+    intro,
+    '###BULLETS###',
+    ...bullets.map(b => `- ${b}`),
+    '###OUTRO###',
+    outro,
+  ].join('\n');
 }
 
 // Modelle in Reihenfolge: primary zuerst, dann Fallback-Modelle bei 503
@@ -56,7 +102,7 @@ async function generateDescriptionWithGemini(title: string, specs: Record<string
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     console.log('[Gemini] Kein API Key – nutze Fallback-Beschreibung');
-    return generateFallbackDescription(title, specs);
+    return generateFallbackDescription(title, specs, description, setContents);
   }
 
   const specsText = Object.entries(specs).slice(0, 15).map(([k, v]) => `- ${k}: ${v}`).join('\n');
@@ -129,7 +175,7 @@ REGELN (unbedingt einhalten):
   }
 
   console.log('[Gemini] Alle Modelle fehlgeschlagen – nutze Fallback');
-  return generateFallbackDescription(title, specs);
+  return generateFallbackDescription(title, specs, description, setContents);
 }
 
 function stripTags(html: string): string {
@@ -1634,6 +1680,50 @@ app.get('/backup/run', async (c) => {
   return c.json({ success: true, message: `Backup gesendet — ${result.productCount} Produkte` }, 200);
 });
 
+// ─── Fallback: Beschreibung aus Rohtext ohne KI generieren ───────────────────
+function generateFallbackFromRawText(rawText: string, title?: string): string {
+  const cleanText = rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const productTitle = (title ?? '').trim();
+
+  // Intro
+  const intro = productTitle
+    ? `${productTitle} – praktisches Produkt für den täglichen Einsatz.`
+    : 'Hochwertiges Produkt – schnelle Lieferung aus dem EU-Lager.';
+
+  // Sätze/Zeilen aus Rohtext extrahieren
+  const lines = cleanText
+    .split(/[\n;.]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 15 && s.length < 130)
+    .filter(s => !/aliexpress|amazon|china|free ship|click|buy|order|seller|store|shop|feedback|rating/i.test(s))
+    .slice(0, 6);
+
+  const bullets = lines.length > 0
+    ? lines
+    : [
+        'Schnelle Lieferung aus dem EU-Lager',
+        '30 Tage Rückgabe über eBay Käuferschutz',
+        'Zuverlässige Qualität für den Alltag',
+      ];
+
+  // Sicherstellen: mindestens 3 Bullets
+  if (bullets.length < 3) {
+    bullets.push('Schnelle Lieferung aus dem EU-Lager');
+    bullets.push('30 Tage Rückgabe über eBay Käuferschutz');
+  }
+
+  const outro = 'Solide Verarbeitung und einfache Handhabung – geeignet für den täglichen Einsatz.';
+
+  return [
+    '###INTRO###',
+    intro,
+    '###BULLETS###',
+    ...bullets.map(b => `- ${b}`),
+    '###OUTRO###',
+    outro,
+  ].join('\n');
+}
+
 // ─── KI-Beschreibung aus Rohtext generieren ───────────────────────────────────
 app.post('/generate-description-from-raw', async (c) => {
   try {
@@ -1643,9 +1733,15 @@ app.post('/generate-description-from-raw', async (c) => {
     }
 
     const key = process.env.GEMINI_API_KEY;
-    if (!key) return c.json({ error: 'Kein Gemini API Key konfiguriert' }, 500);
-
     const productTitle = title?.trim() || '';
+
+    // Ohne Key direkt Fallback
+    if (!key) {
+      console.log('[RawDesc] Kein API Key – nutze Text-Fallback');
+      const fallback = generateFallbackFromRawText(rawText, productTitle);
+      return c.json({ description: fallback, _fallback: true });
+    }
+
     const prompt = `Du bist ein Top-eBay-Produkttexter für den deutschen Markt. Deine Aufgabe: Aus dem folgenden rohen AliExpress-Produkttext eine strukturierte, überzeugende eBay-Beschreibung auf Deutsch erstellen.
 
 ${productTitle ? `PRODUKTTITEL: ${productTitle}\n` : ''}
@@ -1693,7 +1789,11 @@ REGELN:
         }
       }
     }
-    return c.json({ error: 'Gemini nicht verfügbar, bitte später nochmal versuchen' }, 503);
+
+    // Alle Modelle fehlgeschlagen → Text-Fallback statt 503
+    console.log('[RawDesc] Gemini nicht verfügbar – nutze Text-Fallback');
+    const fallback = generateFallbackFromRawText(rawText, productTitle);
+    return c.json({ description: fallback, _fallback: true });
   } catch (e) {
     return c.json({ error: String(e) }, 500);
   }
