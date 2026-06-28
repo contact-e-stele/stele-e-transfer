@@ -1019,12 +1019,13 @@ export default function Lieferanten() {
                     const data = await res.json() as { description?: string; error?: string };
                     if (!res.ok || data.error) {
                       setRawGenError(data.error || 'Fehler beim Generieren');
-                    } else if (data.description && product) {
-                      // Beschreibung parsen und HTML-Vorlage neu bauen
-                      const enriched = { ...product, description: data.description };
-                      const newHtml = buildHTML(enriched as typeof product, htmlTheme, editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined);
+                    } else if (data.description) {
+                      // Beschreibung direkt in editableHtml setzen — buildHTML mit aktuellem product ODER leerem Dummy
+                      const base = product ?? { title: editableTitle || '', images: [], price: '', description: '', specs: {} };
+                      const enriched = { ...base, description: data.description };
+                      const newHtml = buildHTML(enriched as typeof base, "light", editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined);
                       setEditableHtml(newHtml);
-                      setRawAliText(""); // Textfeld leeren nach Erfolg
+                      // Text NICHT löschen — User soll sehen was er eingegeben hat
                     }
                   } catch (e) {
                     setRawGenError('Netzwerkfehler: ' + String(e));
