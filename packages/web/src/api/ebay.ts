@@ -677,9 +677,10 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     title: input.title,
     description: plainDesc,
     imageUrls: input.imageUrls,
+    // WICHTIG: Varianten-Aspekte NICHT in aspects der Gruppe — nur in variesBy.specifications
+    // sonst: eBay Fehler 25013 "Variantenmerkmale müssen sich von Artikelmerkmalen unterscheiden"
     aspects: {
       ...Object.fromEntries(Object.entries(baseAspectsFiltered).map(([k, v]) => [k, Array.isArray(v) ? v : [v]])),
-      ...Object.fromEntries(groups.map(g => [mapVariantGroupName(g.name), g.values])),
     },
     variantSKUs: variantSkus,
     variesBy: {
