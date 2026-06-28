@@ -835,7 +835,17 @@ const app = new Hono()
 
     const [product] = await db.select().from(schema.products).where(eq(schema.products.id, body.productId));
     if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
-    if (!product.sellPrice) return c.json({ error: 'Kein Verkaufspreis gesetzt — bitte VK Preis eintragen' }, 400);
+
+    // sellPrice Fallback: wenn nicht gesetzt, niedrigsten Varianten-Preis nehmen
+    let effectiveSellPrice = product.sellPrice;
+    if (!effectiveSellPrice) {
+      try {
+        const varPrices = JSON.parse(product.variantPrices ?? '[]') as Array<{ ebayPrice?: number; price?: number }>;
+        const prices = varPrices.map(v => v.ebayPrice ?? v.price ?? 0).filter(p => p > 0);
+        if (prices.length > 0) effectiveSellPrice = Math.min(...prices);
+      } catch { /* ignore */ }
+    }
+    if (!effectiveSellPrice) return c.json({ error: 'Kein Verkaufspreis gesetzt — bitte VK Preis eintragen' }, 400);
 
     // Alten Fehler-Status zurücksetzen
     await db.update(schema.products).set({ ebayStatus: 'none', ebayError: null }).where(eq(schema.products.id, body.productId));
@@ -951,7 +961,7 @@ ${gpsrSection}
         sku: `stele-${product.id}`,
         title: (product.generatedTitle ?? product.title).slice(0, 80),
         description: fullDescription,
-        price: product.sellPrice,
+        price: effectiveSellPrice,
         quantity: 3,
         condition: 'NEW',
         imageUrls: images.filter(u => u.startsWith('http')).slice(0, 8),

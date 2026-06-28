@@ -593,6 +593,10 @@ const VARIANT_GROUP_MAP: Record<string, string> = {
   'anzahl': 'Menge',
   'set': 'Menge',
   'quantity': 'Menge',
+  // Variante (AliExpress sendet oft "Color" auch für Set-Produkte)
+  'color': 'Variante',
+  'colour': 'Variante',
+  'color/size': 'Variante',
   // Modell
   'modell': 'Modell',
   'model': 'Modell',
