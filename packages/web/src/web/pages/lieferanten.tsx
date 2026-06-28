@@ -237,10 +237,10 @@ export default function Lieferanten() {
       setExcludedImages(new Set());
       setVisibleImages(data.images ?? []);
       const t = buildTitle(data.title);
-      const h = buildHTML(data, htmlTheme, t);
+      const h = buildHTML(data, "light", t);
       setResult({ title: t, html: h });
       setEditableTitle(t);
-      setEditableHtml(h);
+      setEditableHtml(""); // Leer lassen — User generiert Beschreibung manuell per KI
       // GPSR auto-fill: wenn AliExpress GPSR-Daten liefert, direkt ins Textfeld setzen
       if (data.gpsr && (data.gpsr.name || data.gpsr.email)) {
         const lines: string[] = [];
@@ -285,10 +285,10 @@ export default function Lieferanten() {
     setProduct(fp);
     setVisibleImages([]);
     const t2 = buildTitle(fp.title);
-    const h2 = buildHTML(fp, htmlTheme);
+    const h2 = buildHTML(fp, "light");
     setResult({ title: t2, html: h2 });
     setEditableTitle(t2);
-    setEditableHtml(h2);
+    setEditableHtml(""); // Leer lassen — User generiert Beschreibung manuell per KI
     const p = parsePrice(fp.price);
     if (p > 0) setBuyPrice(p.toFixed(2));
   };
@@ -945,12 +945,19 @@ export default function Lieferanten() {
                 </div>
               </div>
               {/* Live-Vorschau immer sichtbar */}
-              <iframe
-                srcDoc={editableHtml}
-                style={{ width: "100%", minHeight: 480, border: "1px solid #E2E8F0", borderRadius: 12, marginBottom: 10 }}
-                sandbox="allow-same-origin"
-                title="Beschreibung Vorschau"
-              />
+              {editableHtml ? (
+                <iframe
+                  srcDoc={editableHtml}
+                  style={{ width: "100%", minHeight: 480, border: "1px solid #E2E8F0", borderRadius: 12, marginBottom: 10 }}
+                  sandbox="allow-same-origin"
+                  title="Beschreibung Vorschau"
+                />
+              ) : (
+                <div style={{ minHeight: 120, border: "2px dashed #E2E8F0", borderRadius: 12, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
+                  <span style={{ fontSize: 28 }}>⬇️</span>
+                  <span style={{ fontSize: 13, color: "#94A3B8", fontWeight: 600 }}>AliExpress Text unten reinkopieren → KI-Beschreibung generieren</span>
+                </div>
+              )}
               {/* Code-Editor nur wenn showPreview aktiv */}
               {showPreview && (
                 <textarea
