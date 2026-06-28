@@ -153,7 +153,7 @@ export default function Lieferanten() {
   const [visibleImages, setVisibleImages] = useState<string[]>([]); // nur sichtbare (= eingeschlossen)
   const [result, setResult] = useState<{ title: string; html: string } | null>(null);
   const [selectedImage, setSelectedImage] = useState(0);
-  const [showPreview, setShowPreview] = useState(false);
+  const [showPreview, setShowPreview] = useState(false); // false = Vorschau sichtbar, true = Code sichtbar
 
   // Varianten-Auswahl: { "Farbe": ["Schwarz", "Blau"], "Größe": ["M"] }
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string[]>>({});
@@ -935,23 +935,24 @@ export default function Lieferanten() {
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={() => setShowPreview(v => !v)} style={{
                     display: "flex", alignItems: "center", gap: 5,
-                    background: "#F1F5F9", border: "none", borderRadius: 8,
+                    background: showPreview ? "#0F172A" : "#F1F5F9", border: "none", borderRadius: 8,
                     padding: "5px 10px", fontSize: 11, fontWeight: 600,
-                    color: "#475569", cursor: "pointer", fontFamily: "inherit",
+                    color: showPreview ? "#fff" : "#475569", cursor: "pointer", fontFamily: "inherit",
                   }}>
                     {showPreview ? <EyeOff size={12} /> : <Eye size={12} />}
-                    {showPreview ? "Code" : "Vorschau"}
+                    {showPreview ? "Code anzeigen" : "Code anzeigen"}
                   </button>
                 </div>
               </div>
-              {showPreview ? (
-                <iframe
-                  srcDoc={editableHtml}
-                  style={{ width: "100%", minHeight: 500, border: "none", borderRadius: 12, marginBottom: 10 }}
-                  sandbox="allow-same-origin"
-                  title="Beschreibung Vorschau"
-                />
-              ) : (
+              {/* Live-Vorschau immer sichtbar */}
+              <iframe
+                srcDoc={editableHtml}
+                style={{ width: "100%", minHeight: 480, border: "1px solid #E2E8F0", borderRadius: 12, marginBottom: 10 }}
+                sandbox="allow-same-origin"
+                title="Beschreibung Vorschau"
+              />
+              {/* Code-Editor nur wenn showPreview aktiv */}
+              {showPreview && (
                 <textarea
                   value={editableHtml}
                   onChange={e => setEditableHtml(e.target.value)}
