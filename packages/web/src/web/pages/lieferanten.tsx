@@ -186,6 +186,9 @@ export default function Lieferanten() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
   const [saveResult, setSaveResult] = useState<{ id?: number; error?: string } | null>(null);
+  const [rawAliText, setRawAliText] = useState("");
+  const [rawGenLoading, setRawGenLoading] = useState(false);
+  const [rawGenError, setRawGenError] = useState("");
   const [shipsFromInfo, setShipsFromInfo] = useState<{ country: string; isEU: boolean } | null>(null);
 
   // ─── Marge berechnen ──────────────────────────────────────────────────────
@@ -986,6 +989,75 @@ export default function Lieferanten() {
               }}>
                 {copiedHtml ? <Check size={16} /> : <Copy size={16} />}
                 {copiedHtml ? "Kopiert!" : "HTML kopieren"}
+              </button>
+            </div>
+
+            {/* KI-Beschreibung aus AliExpress Rohtext */}
+            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFF7ED", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
+                  🤖
+                </div>
+                <div>
+                  <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>KI-Beschreibung aus AliExpress Text</span>
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748B", marginTop: 2 }}>AliExpress Produktbeschreibung hier reinkopieren → KI erstellt saubere eBay-Beschreibung</p>
+                </div>
+              </div>
+              <textarea
+                value={rawAliText}
+                onChange={e => setRawAliText(e.target.value)}
+                placeholder="AliExpress Beschreibung hier reinkopieren (Titel, Features, Spezifikationen, alles was du hast)..."
+                rows={6}
+                style={{
+                  width: "100%", padding: "12px 14px", fontSize: 13, color: "#334155",
+                  border: "2px solid #E2E8F0", borderRadius: 12, outline: "none",
+                  fontFamily: "inherit", boxSizing: "border-box", resize: "vertical",
+                  lineHeight: 1.6, marginBottom: 10,
+                }}
+              />
+              {rawGenError && (
+                <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 13, color: "#DC2626" }}>
+                  {rawGenError}
+                </div>
+              )}
+              <button
+                onClick={async () => {
+                  if (!rawAliText.trim() || rawGenLoading) return;
+                  setRawGenLoading(true);
+                  setRawGenError("");
+                  try {
+                    const res = await fetch('/api/generate-description-from-raw', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ rawText: rawAliText, title: editableTitle || product?.title || '' }),
+                    });
+                    const data = await res.json() as { description?: string; error?: string };
+                    if (!res.ok || data.error) {
+                      setRawGenError(data.error || 'Fehler beim Generieren');
+                    } else if (data.description && product) {
+                      // Beschreibung parsen und HTML-Vorlage neu bauen
+                      const enriched = { ...product, description: data.description };
+                      const newHtml = buildHTML(enriched as typeof product, htmlTheme, editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined);
+                      setEditableHtml(newHtml);
+                      setRawAliText(""); // Textfeld leeren nach Erfolg
+                    }
+                  } catch (e) {
+                    setRawGenError('Netzwerkfehler: ' + String(e));
+                  } finally {
+                    setRawGenLoading(false);
+                  }
+                }}
+                disabled={rawGenLoading || !rawAliText.trim()}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+                  gap: 8, padding: "12px 0", borderRadius: 10, border: "none",
+                  background: rawGenLoading || !rawAliText.trim() ? "#E2E8F0" : "#FF6B00",
+                  color: rawGenLoading || !rawAliText.trim() ? "#94A3B8" : "#fff",
+                  fontWeight: 700, fontSize: 14, cursor: rawGenLoading || !rawAliText.trim() ? "not-allowed" : "pointer",
+                  fontFamily: "inherit", transition: "all 0.2s",
+                }}
+              >
+                {rawGenLoading ? "⏳ KI generiert Beschreibung..." : "🤖 KI-Beschreibung generieren"}
               </button>
             </div>
 

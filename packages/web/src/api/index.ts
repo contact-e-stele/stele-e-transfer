@@ -1634,5 +1634,70 @@ app.get('/backup/run', async (c) => {
   return c.json({ success: true, message: `Backup gesendet — ${result.productCount} Produkte` }, 200);
 });
 
+// ─── KI-Beschreibung aus Rohtext generieren ───────────────────────────────────
+app.post('/generate-description-from-raw', async (c) => {
+  try {
+    const { rawText, title } = await c.req.json<{ rawText: string; title?: string }>();
+    if (!rawText || rawText.trim().length < 10) {
+      return c.json({ error: 'Kein Rohtext übergeben' }, 400);
+    }
+
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) return c.json({ error: 'Kein Gemini API Key konfiguriert' }, 500);
+
+    const productTitle = title?.trim() || '';
+    const prompt = `Du bist ein Top-eBay-Produkttexter für den deutschen Markt. Deine Aufgabe: Aus dem folgenden rohen AliExpress-Produkttext eine strukturierte, überzeugende eBay-Beschreibung auf Deutsch erstellen.
+
+${productTitle ? `PRODUKTTITEL: ${productTitle}\n` : ''}
+ROHER PRODUKTTEXT VON ALIEXPRESS:
+${rawText.slice(0, 3000)}
+
+AUFGABE: Erstelle eine strukturierte eBay-Beschreibung auf Deutsch. Nutze NUR Infos aus dem Text oben — keine erfundenen Angaben.
+
+FORMAT (exakt so zurückgeben, mit den Trennzeichen):
+###INTRO###
+[1 starker Einleitungssatz: Was ist das Produkt, für wen, welcher Hauptnutzen – max. 25 Wörter]
+###BULLETS###
+- [konkretes Feature/Vorteil mit echten Daten, z.B. Maße, Material, Funktion]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil]
+- [konkretes Feature/Vorteil, Anwendungsbereich wenn bekannt]
+###OUTRO###
+[1 Abschlusssatz: Qualität + Einsatzbereich – max. 20 Wörter]
+
+REGELN:
+- Nur echte Infos aus dem Rohtext – KEIN generisches "hochwertig", "perfekt" ohne Beleg
+- Keine Emojis, kein Markdown (kein **, kein #)
+- NICHT erwähnen: AliExpress, China, Amazon, Händlername
+- EU-Maße: cm statt inch, ml statt oz, Komma als Dezimalzeichen (z.B. 2,5 cm)
+- Sprache: sachlich, direkt, kein Marketingsprech`;
+
+    for (const modelName of GEMINI_MODELS) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const genAI = new GoogleGenerativeAI(key);
+          const model = genAI.getGenerativeModel({ model: modelName });
+          const result = await model.generateContent(prompt);
+          const text = result.response.text().trim();
+          console.log(`[Gemini/RawDesc] Beschreibung generiert (${modelName})`);
+          return c.json({ description: text });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const is503 = msg.includes('503') || msg.includes('overloaded');
+          const isQuota = msg.includes('429') || msg.includes('quota');
+          console.error(`[Gemini/RawDesc] ${modelName} Versuch ${attempt} fehlgeschlagen:`, msg.slice(0, 100));
+          if (attempt < 3) await new Promise(r => setTimeout(r, (is503 || isQuota) ? 5000 * attempt : 2000 * attempt));
+          else if (is503 || isQuota) break;
+        }
+      }
+    }
+    return c.json({ error: 'Gemini nicht verfügbar, bitte später nochmal versuchen' }, 503);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 export type AppType = typeof app;
 export default app;
