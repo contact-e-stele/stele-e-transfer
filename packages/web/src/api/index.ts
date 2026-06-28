@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings } from './ebay';
+import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -892,45 +893,56 @@ const app = new Hono()
 ).join('')}</table></div>`
       : '';
 
-    // GPSR aus DB bevorzugen, sonst Standard-Fallback
-    const gpsrSection = product.gpsrHtml
-      ? `<div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #3a2a0a">${product.gpsrHtml}</div>`
-      : `<div style="padding:14px;background:#0f0f07;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">GPSR:</b> Stele-E-Transfer | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | contact@stele-e-transfer.com | +49 159 04826737</div>`;
-
-    // Beschreibung: generatedDescription aus DB bevorzugen (beim Import generiert, kein Gemini-Call hier)
+    // Beschreibung: htmlDescription aus DB bevorzugen (bereits vollständige Vorlage)
     const rawHtml = product.htmlDescription ?? '';
-    const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && rawHtml.includes('stet-tabs');
+    const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
 
     let fullDescription: string;
     if (isFullTemplate) {
+      // Bereits fertige Vorlage aus DB — direkt verwenden
       fullDescription = rawHtml;
     } else {
-      // generatedDescription aus DB nehmen (Gemini beim Import), sonst Fallback
-      const aiText = product.generatedDescription ?? product.description ?? '';
-      const aiHtml = aiText
-        ? aiText.split('\n').map((line: string) => line.startsWith('- ')
-          ? `<li style="margin:4px 0;color:#a89050">${line.slice(2)}</li>`
-          : `<p style="margin:6px 0;color:#a89050">${line}</p>`
-        ).join('')
-        : '';
-      const productContent = aiHtml ? `<ul style="padding-left:20px;margin:8px 0">${aiHtml}</ul>` : `<p>${productTitle}</p>`;
-      const shippingNote = isEU
-        ? 'Lieferzeit 3-10 Werktage<br />Versand per DHL / Deutsche Post'
-        : 'Lieferzeit 10-25 Werktage<br />Versand per Direktversand';
-      fullDescription = `<div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#e8d5a0;background:#0a0a0a;border:1px solid #C9A84C;border-radius:8px">
-<div style="background:#111;padding:14px;text-align:center;border-bottom:2px solid #C9A84C"><div style="color:#C9A84C;font-size:20px;font-weight:bold;letter-spacing:4px">STELE-E-TRANSFER</div><div style="color:#8a7040;font-size:11px;margin-top:4px">PREMIUM QUALITAET &middot; SCHNELLE LIEFERUNG</div></div>
-<table width="100%" style="background:#111;border-collapse:collapse"><tr>
-<td width="33%" style="padding:12px;text-align:center;border-right:1px solid #C9A84C"><b style="color:#C9A84C;font-size:12px">KOSTENLOSER VERSAND</b><br><small style="color:#8a7040">${shippingNote}</small></td>
-<td width="33%" style="padding:12px;text-align:center;border-right:1px solid #C9A84C"><b style="color:#C9A84C;font-size:12px">30 TAGE R&Uuml;CKGABE</b><br><small style="color:#8a7040">K&auml;uferschutz &uuml;ber eBay</small></td>
-<td width="34%" style="padding:12px;text-align:center"><b style="color:#C9A84C;font-size:12px">KUNDENSERVICE</b><br><small style="color:#8a7040">contact@stele-e-transfer.com</small></td>
-</tr></table>
-<div style="padding:18px;background:#0f0f07;color:#a89050;border-top:1px solid #C9A84C"><h3 style="color:#C9A84C;border-bottom:1px solid #3a2a0a;padding-bottom:6px;margin-top:0">${productTitle}</h3>${specsTableHtml}${productContent}<p style="font-size:11px;color:#5a4a20"><b>&sect;19 UStG:</b> Keine MwSt. als Kleinunternehmer.</p></div>
-${variantContentsHtml}
-<div style="padding:14px;background:#0a0a0a;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">Versand:</b> Kostenlos &middot; 3-10 Werktage &middot; DHL/Deutsche Post &middot; 30 Tage R&uuml;ckgabe</div>
-${gpsrSection}
-<div style="padding:14px;background:#0a0a0a;color:#a89050;border-top:1px solid #3a2a0a"><b style="color:#C9A84C">Impressum:</b> STELE-E-TRANSFER | Evgenij Stele | Am Hochfeld 47, 65205 Wiesbaden | &sect;19 UStG: Keine MwSt.</div>
-<div style="background:#111;padding:10px;text-align:center;border-top:2px solid #C9A84C"><span style="color:#C9A84C;font-size:11px;letter-spacing:4px;font-weight:bold">STELE-E-TRANSFER</span> <span style="color:#5a4a20;font-size:10px">WIESBADEN &middot; DEUTSCHLAND</span></div>
-</div>`;
+      // Varianten + SetContents für Template aufbereiten
+      const variantGroupsParsed: Array<{ name: string; values: string[] }> = (() => {
+        try {
+          const parsed = JSON.parse(product.variants ?? '[]');
+          if (Array.isArray(parsed) && parsed.length > 0 && 'name' in parsed[0]) return parsed;
+        } catch { /* ignore */ }
+        return [];
+      })();
+      const setContentsParsed: Record<string, string> = (() => {
+        try { return JSON.parse(product.variantContents ?? '{}') as Record<string, string>; } catch { return {}; }
+      })();
+      const skuVariantsParsed: Array<{ name: string; price: number; imageUrl?: string }> = (() => {
+        try {
+          const parsed = JSON.parse(product.variantPrices ?? '[]');
+          if (Array.isArray(parsed)) return parsed.map((v: { sku?: string; name?: string; ebayPrice?: number; price?: number; imageUrl?: string }) => ({
+            name: v.sku ?? v.name ?? '',
+            price: v.ebayPrice ?? v.price ?? 0,
+            imageUrl: v.imageUrl,
+          }));
+        } catch { /* ignore */ }
+        return [];
+      })();
+      const specsParsed: Record<string, string> = (() => {
+        try { return JSON.parse(product.specs ?? '{}') as Record<string, string>; } catch { return {}; }
+      })();
+      const bulletsParsed: string[] = (() => {
+        try { return JSON.parse(product.bullets ?? '[]') as string[]; } catch { return []; }
+      })();
+
+      // buildEbayHTMLLight aufrufen — helle Vorlage (lesbar auf eBay)
+      const templateProduct: EbayScrapedProduct = {
+        title: product.generatedTitle ?? product.title,
+        description: product.generatedDescription ?? product.description ?? '',
+        specs: specsParsed,
+        variants: variantGroupsParsed,
+        skuVariants: skuVariantsParsed.length > 0 ? skuVariantsParsed : undefined,
+        setContents: Object.keys(setContentsParsed).length > 0 ? setContentsParsed : undefined,
+        bullets: bulletsParsed.length > 0 ? bulletsParsed : undefined,
+        images: images.filter(u => u.startsWith('http')).slice(0, 3),
+      };
+      fullDescription = buildEbayHTMLLight(templateProduct);
     }
 
     try {

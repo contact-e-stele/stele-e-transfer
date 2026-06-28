@@ -860,8 +860,28 @@ export async function suggestCategory(title: string): Promise<string | null> {
   const data = await res.json() as {
     categorySuggestions?: Array<{ category: { categoryId: string; categoryName: string } }>;
   };
-  const categoryId = data.categorySuggestions?.[0]?.category?.categoryId ?? null;
-  const categoryName = data.categorySuggestions?.[0]?.category?.categoryName ?? null;
+
+  // Plausibilitäts-Check: offensichtlich falsche Kategorien ablehnen
+  const JUNK_CATEGORY_NAMES = [
+    'sonnenbrille', 'brille', 'kleidung', 'schuhe', 'schmuck', 'uhren',
+    'handtasche', 'mode', 'damenmode', 'herrenmode', 'kinderkleidung',
+    'spielzeug', 'lebensmittel', 'kosmetik',
+  ];
+
+  const suggestions = data.categorySuggestions ?? [];
+  let picked: { categoryId: string; categoryName: string } | null = null;
+  for (const s of suggestions) {
+    const name = (s.category.categoryName ?? '').toLowerCase();
+    const isJunk = JUNK_CATEGORY_NAMES.some(j => name.includes(j));
+    if (!isJunk) {
+      picked = s.category;
+      break;
+    }
+    console.log(`[eBay] suggestCategory skipped junk: ${s.category.categoryId} ${s.category.categoryName}`);
+  }
+
+  const categoryId = picked?.categoryId ?? null;
+  const categoryName = picked?.categoryName ?? null;
   console.log('[eBay] suggestCategory result:', categoryId, categoryName);
   return categoryId;
 }
