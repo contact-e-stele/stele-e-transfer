@@ -516,8 +516,27 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`createOffer failed: ${res.status} ${text}`);
+    const errorData = await res.json() as { errors?: { errorId: number; parameters?: { name: string; value: string }[] }[] };
+    const existing = errorData.errors?.find(e => e.errorId === 25002);
+    const existingOfferId = existing?.parameters?.find(p => p.name === 'offerId')?.value;
+    if (existingOfferId) {
+      console.log(`[eBay] Offer für ${input.sku} existiert (${existingOfferId}) — update via PUT`);
+      const putRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${existingOfferId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Language': 'de-DE',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!putRes.ok) {
+        const putText = await putRes.text();
+        throw new Error(`updateOffer failed: ${putRes.status} ${putText}`);
+      }
+      return existingOfferId;
+    }
+    throw new Error(`createOffer failed: ${res.status} ${JSON.stringify(errorData)}`);
   }
 
   const data = await res.json() as { offerId: string };
@@ -756,13 +775,40 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       },
       body: JSON.stringify(offerBody),
     });
+
+    let finalOfferId: string;
+
     if (!offerRes.ok) {
-      const text = await offerRes.text();
-      throw new Error(`createOffer (variant ${varSku}) failed: ${offerRes.status} ${text}`);
+      const errorData = await offerRes.json() as { errors?: { errorId: number; parameters?: { name: string; value: string }[] }[] };
+      // Error 25002 = Offer existiert bereits — offerId aus Response extrahieren und PUT
+      const existing = errorData.errors?.find(e => e.errorId === 25002);
+      const existingOfferId = existing?.parameters?.find(p => p.name === 'offerId')?.value;
+      if (existingOfferId) {
+        console.log(`[eBay] Offer für ${varSku} existiert (${existingOfferId}) — update via PUT`);
+        const putRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${existingOfferId}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Content-Language': 'de-DE',
+          },
+          body: JSON.stringify(offerBody),
+        });
+        if (!putRes.ok) {
+          const putText = await putRes.text();
+          throw new Error(`updateOffer (variant ${varSku}) failed: ${putRes.status} ${putText}`);
+        }
+        finalOfferId = existingOfferId;
+      } else {
+        throw new Error(`createOffer (variant ${varSku}) failed: ${offerRes.status} ${JSON.stringify(errorData)}`);
+      }
+    } else {
+      const offerData = await offerRes.json() as { offerId: string };
+      finalOfferId = offerData.offerId;
     }
-    const offerData = await offerRes.json() as { offerId: string };
-    offerIds.push(offerData.offerId);
-    console.log(`[eBay] Offer created for ${varSku}: ${offerData.offerId}`);
+
+    offerIds.push(finalOfferId);
+    console.log(`[eBay] Offer ready for ${varSku}: ${finalOfferId}`);
   }
 
   // 4. Ersten Offer publishen — eBay publisht automatisch alle Varianten zusammen
