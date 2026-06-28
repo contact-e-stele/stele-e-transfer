@@ -1018,21 +1018,45 @@ export default function Lieferanten() {
                   setRawGenLoading(true);
                   setRawGenError("");
                   try {
+                    // ─── Auto-Parse Set-Inhalte aus Rohtext ──────────────────
+                    // Erkennt Muster wie: "Set 1: ...", "SET1: ...", "Set 1 : ..."
+                    const autoSets: Record<string, string> = {};
+                    const setRegex = /(?:^|\n)\s*[Ss]et\s*(\d+)\s*:?\s*(.+?)(?=\n\s*[Ss]et\s*\d|\n\s*Menge\s*:|$)/gs;
+                    let m: RegExpExecArray | null;
+                    while ((m = setRegex.exec(rawAliText)) !== null) {
+                      const num = m[1];
+                      const content = m[2].replace(/\n/g, ' ').trim();
+                      if (content.length > 2) {
+                        autoSets[`SET${num}`] = content;
+                      }
+                    }
+                    // Wenn Sets gefunden: variantContents automatisch befüllen (nur leere Felder überschreiben)
+                    if (Object.keys(autoSets).length > 0) {
+                      setVariantContents(prev => {
+                        const merged = { ...prev };
+                        for (const [k, v] of Object.entries(autoSets)) {
+                          if (!merged[k]) merged[k] = v;
+                        }
+                        return merged;
+                      });
+                    }
+                    const mergedContents = { ...variantContents, ...Object.fromEntries(Object.entries(autoSets).filter(([k]) => !variantContents[k])) };
+                    // ─────────────────────────────────────────────────────────
+
                     const res = await fetch('/api/generate-description-from-raw', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ rawText: rawAliText, title: editableTitle || product?.title || '' }),
                     });
-                    const data = await res.json() as { description?: string; error?: string };
+                    const data = await res.json() as { description?: string; error?: string; _fallback?: boolean };
                     if (!res.ok || data.error) {
                       setRawGenError(data.error || 'Fehler beim Generieren');
                     } else if (data.description) {
-                      // Beschreibung direkt in editableHtml setzen — buildHTML mit aktuellem product ODER leerem Dummy
                       const base = product ?? { title: editableTitle || '', images: [], price: '', description: '', specs: {} };
                       const enriched = { ...base, description: data.description };
-                      const newHtml = buildHTML(enriched as typeof base, "light", editableTitle || undefined, Object.keys(variantContents).length > 0 ? variantContents : undefined);
+                      const usedContents = Object.keys(mergedContents).length > 0 ? mergedContents : (Object.keys(variantContents).length > 0 ? variantContents : undefined);
+                      const newHtml = buildHTML(enriched as typeof base, "light", editableTitle || undefined, usedContents);
                       setEditableHtml(newHtml);
-                      // Text NICHT löschen — User soll sehen was er eingegeben hat
                     }
                   } catch (e) {
                     setRawGenError('Netzwerkfehler: ' + String(e));
