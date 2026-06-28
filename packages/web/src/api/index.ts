@@ -1724,6 +1724,18 @@ function generateFallbackFromRawText(rawText: string, title?: string): string {
   ].join('\n');
 }
 
+// ─── Deutschen eBay-Titel generieren (Endpoint für Frontend) ─────────────────
+app.post('/generate-german-title', async (c) => {
+  try {
+    const { title, specs } = await c.req.json<{ title: string; specs?: Record<string, string> }>();
+    if (!title?.trim()) return c.json({ error: 'Kein Titel übergeben' }, 400);
+    const germanTitle = await generateGermanTitle(title, specs ?? {});
+    return c.json({ title: germanTitle });
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // ─── KI-Beschreibung aus Rohtext generieren ───────────────────────────────────
 app.post('/generate-description-from-raw', async (c) => {
   try {

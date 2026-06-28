@@ -69,21 +69,28 @@ function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): st
     <tbody>`;
 
   if (hasSku) {
-    // SKU-Varianten: Bild | Name (kein Preis)
+    // SKU-Varianten: Bild | Name | Lieferumfang (wenn vorhanden)
+    const setContents = product.setContents ?? {};
+    const hasContents = Object.keys(setContents).length > 0;
     html += `
       <tr style="background:${hdrBg};">
         <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;width:40px;"></td>
         <td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;">VARIANTE</td>
+        ${hasContents ? `<td style="padding:7px 10px;font-weight:700;color:${gold};font-size:11px;letter-spacing:1px;">LIEFERUMFANG</td>` : ''}
       </tr>`;
     product.skuVariants!.forEach((v, i) => {
       const rowBg = i % 2 === 0 ? rowEven : rowAlt;
       const imgHtml = v.imageUrl
         ? `<img src="${v.imageUrl}" alt="${v.name}" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid ${border};" />`
         : `<div style="width:34px;height:34px;background:${hdrBg};border-radius:4px;border:1px solid ${border};"></div>`;
+      // Lieferumfang: normalisierter Key z.B. "SET1", "SET2"
+      const setKey = v.name.toUpperCase().replace(/\s+/g, '').replace(/[^A-Z0-9]/g, '');
+      const content = setContents[setKey] ?? setContents[v.name] ?? '';
       html += `
       <tr style="background:${rowBg};border-top:1px solid ${border};">
         <td style="padding:8px 10px;">${imgHtml}</td>
         <td style="padding:8px 10px;color:${textColor};font-weight:600;">${v.name}</td>
+        ${hasContents ? `<td style="padding:8px 10px;color:${subColor};font-size:12px;line-height:1.5;">${content}</td>` : ''}
       </tr>`;
     });
   } else {

@@ -1043,19 +1043,35 @@ export default function Lieferanten() {
                     const mergedContents = { ...variantContents, ...Object.fromEntries(Object.entries(autoSets).filter(([k]) => !variantContents[k])) };
                     // ─────────────────────────────────────────────────────────
 
-                    const res = await fetch('/api/generate-description-from-raw', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ rawText: rawAliText, title: editableTitle || product?.title || '' }),
-                    });
+                    // Titel + Beschreibung parallel generieren
+                    const rawTitle = editableTitle || product?.title || '';
+                    const [res, titleRes] = await Promise.all([
+                      fetch('/api/generate-description-from-raw', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rawText: rawAliText, title: rawTitle }),
+                      }),
+                      // Nur übersetzen wenn Titel noch englisch (enthält keine deutschen Sonderzeichen und kommt aus AliExpress)
+                      rawTitle ? fetch('/api/generate-german-title', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: rawTitle, specs: product?.specs ?? {} }),
+                      }) : Promise.resolve(null),
+                    ]);
                     const data = await res.json() as { description?: string; error?: string; _fallback?: boolean };
+                    const titleData = titleRes ? await titleRes.json() as { title?: string; error?: string } : null;
+                    // Deutschen Titel setzen falls generiert
+                    const finalTitle = titleData?.title?.trim() || editableTitle;
+                    if (titleData?.title?.trim()) {
+                      setEditableTitle(titleData.title.trim());
+                    }
                     if (!res.ok || data.error) {
                       setRawGenError(data.error || 'Fehler beim Generieren');
                     } else if (data.description) {
-                      const base = product ?? { title: editableTitle || '', images: [], price: '', description: '', specs: {} };
+                      const base = product ?? { title: finalTitle || '', images: [], price: '', description: '', specs: {} };
                       const enriched = { ...base, description: data.description };
                       const usedContents = Object.keys(mergedContents).length > 0 ? mergedContents : (Object.keys(variantContents).length > 0 ? variantContents : undefined);
-                      const newHtml = buildHTML(enriched as typeof base, "light", editableTitle || undefined, usedContents);
+                      const newHtml = buildHTML(enriched as typeof base, "light", finalTitle || undefined, usedContents);
                       setEditableHtml(newHtml);
                     }
                   } catch (e) {
