@@ -108,7 +108,7 @@ function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", o
   // SKU-Varianten für HTML-Template aufbereiten
   const skuVariants = (product.variantPrices ?? []).length > 0
     ? product.variantPrices!.map(v => ({
-        name: Object.values(v.attrs).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
+        name: Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([,val]) => val).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
         price: v.price,
         imageUrl: (v as any).imageUrl as string | undefined,
       }))
@@ -1200,7 +1200,7 @@ export default function Lieferanten() {
                     </div>
                     {vp.map((v, i) => {
                       const isCheapest = v.price === minP;
-                      const attrLabel = Object.values(v.attrs).join(" / ") || `Variante …${v.skuId.slice(-6)}`;
+                      const attrLabel = Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([,val]) => val).join(" / ") || `Variante …${v.skuId.slice(-6)}`;
                       const varEbayRaw = variantEbayPrices[v.skuId] ?? "";
                       const varEbay = parseFloat(varEbayRaw.replace(",", ".")) || 0;
                       const varProfit = varEbay > 0
