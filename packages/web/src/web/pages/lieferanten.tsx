@@ -219,6 +219,23 @@ export default function Lieferanten() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ─── GPSR-Änderung → Vorschau automatisch neu rendern ────────────────────
+  useEffect(() => {
+    if (!product || !editableHtml) return; // nur wenn schon eine Vorschau vorhanden
+    const base = product;
+    const skuVariants = (base.variantPrices ?? []).length > 0
+      ? base.variantPrices!.map(v => ({
+          name: Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([,val]) => val).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
+          price: v.price,
+          imageUrl: (v as any).imageUrl as string | undefined,
+        }))
+      : undefined;
+    const enriched = { ...base, skuVariants, gpsrRaw: gpsrHersteller.trim() || null };
+    const updated = buildEbayHTMLLight(enriched);
+    setEditableHtml(updated);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gpsrHersteller]);
+
   // ─── Scrape ───────────────────────────────────────────────────────────────
   const handleScrape = async () => {
     const url = urlInput.trim();
