@@ -195,6 +195,7 @@ export default function Lieferanten() {
   const [rawGenLoading, setRawGenLoading] = useState(false);
   const [rawGenError, setRawGenError] = useState("");
   const [shipsFromInfo, setShipsFromInfo] = useState<{ country: string; isEU: boolean } | null>(null);
+  const [generatedDescription, setGeneratedDescription] = useState("");
 
   // ─── Marge berechnen ──────────────────────────────────────────────────────
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
@@ -221,7 +222,7 @@ export default function Lieferanten() {
 
   // ─── GPSR-Änderung → Vorschau automatisch neu rendern ────────────────────
   useEffect(() => {
-    if (!product || !editableHtml) return; // nur wenn schon eine Vorschau vorhanden
+    if (!product) return; // nur wenn Produkt geladen
     const base = product;
     const skuVariants = (base.variantPrices ?? []).length > 0
       ? base.variantPrices!.map(v => ({
@@ -230,11 +231,12 @@ export default function Lieferanten() {
           imageUrl: (v as any).imageUrl as string | undefined,
         }))
       : undefined;
-    const enriched = { ...base, skuVariants, gpsrRaw: gpsrHersteller.trim() || null };
+    const descToUse = generatedDescription || base.description || "";
+    const enriched = { ...base, description: descToUse, skuVariants, gpsrRaw: gpsrHersteller.trim() || null };
     const updated = buildEbayHTMLLight(enriched);
     setEditableHtml(updated);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpsrHersteller]);
+  }, [gpsrHersteller, generatedDescription]);
 
   // ─── Scrape ───────────────────────────────────────────────────────────────
   const handleScrape = async () => {
@@ -1090,6 +1092,7 @@ export default function Lieferanten() {
                     if (!res.ok || data.error) {
                       setRawGenError(data.error || 'Fehler beim Generieren');
                     } else if (data.description) {
+                      setGeneratedDescription(data.description);
                       const base = product ?? { title: finalTitle || '', images: [], price: '', description: '', specs: {} };
                       const enriched = { ...base, description: data.description };
                       const usedContents = Object.keys(mergedContents).length > 0 ? mergedContents : (Object.keys(variantContents).length > 0 ? variantContents : undefined);
