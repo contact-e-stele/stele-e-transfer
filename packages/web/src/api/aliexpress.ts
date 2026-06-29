@@ -1,6 +1,12 @@
 // AliExpress URL Scraper — DS API (primary, instant) + Playwright fallback + HTML fallbacks
 // Priority: 1) AliExpress DS API (aliexpress.ds.product.get) → 2) Playwright → 3) HTML
 
+// Attribut-Namen die NICHT als Varianten-Gruppe gespeichert werden sollen
+const VARIANT_ATTR_BLACKLIST = new Set([
+  'Ships From', 'ships from', 'Ship From', 'Versandort', 'Herstellungsland',
+  'Country/Region of Manufacture', 'ship_from', 'ShipFrom',
+]);
+
 const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY || '';
 const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY || '';
 const ZENROWS_API_KEY = process.env.ZENROWS_API_KEY || '';
@@ -269,7 +275,7 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
       for (const prop of props) {
         const name = prop.sku_property_name || '';
         const val = prop.property_value_definition_name || '';
-        if (name && val) {
+        if (name && val && !VARIANT_ATTR_BLACKLIST.has(name)) {
           attrs[name] = val;
           if (!variantGroupMap[name]) variantGroupMap[name] = new Set();
           variantGroupMap[name].add(val);
@@ -477,7 +483,10 @@ function extractSteleData(html: string): { minPrice: string; variantPrices: Vari
             const prop = propList.find(p => String(p.skuPropertyId) === propId);
             if (!prop) continue;
             const val = (prop.skuPropertyValues ?? []).find(v => String(v.propertyValueId) === valId);
-            if (val) attrs[prop.skuPropertyName ?? propId] = val.propertyValueDisplayName ?? val.propertyValueName ?? valId;
+            if (val) {
+              const attrName = prop.skuPropertyName ?? propId;
+              if (!VARIANT_ATTR_BLACKLIST.has(attrName)) attrs[attrName] = val.propertyValueDisplayName ?? val.propertyValueName ?? valId;
+            }
           }
         }
 
@@ -702,7 +711,7 @@ async function fetchWithFallbacks(targetUrl: string): Promise<string | null> {
               if (String(prop.skuPropertyId) === String(propId)) {
                 (prop.skuPropertyValues || []).forEach(function(val) {
                   if (String(val.propertyValueId) === String(valId)) {
-                    attrs[prop.skuPropertyName] = val.propertyValueDisplayName || val.propertyValueName;
+                    if (!VARIANT_ATTR_BLACKLIST.has(prop.skuPropertyName)) attrs[prop.skuPropertyName] = val.propertyValueDisplayName || val.propertyValueName;
                   }
                 });
               }
@@ -1061,7 +1070,8 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
         const imgKey = propId + ':' + valId;
         if (imgMapPW[imgKey] && !imageUrl) imageUrl = imgMapPW[imgKey];
         if (hashIdx >= 0) {
-          attrs[propId || 'attr'] = part.substring(hashIdx + 1);
+          const attrKey = propId || 'attr';
+          if (!VARIANT_ATTR_BLACKLIST.has(attrKey)) attrs[attrKey] = part.substring(hashIdx + 1);
         }
       });
 
