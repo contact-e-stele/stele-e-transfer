@@ -232,6 +232,40 @@ function getAspectDefaultsForCategory(categoryId?: string): Record<string, strin
 // Cache: categoryId → Pflichtaspekte (Name → erster erlaubter Wert oder null)
 const aspectCache = new Map<string, Record<string, string | null>>();
 
+// Cache: categoryId → VariationsEnabled
+const variationsEnabledCache = new Map<string, boolean>();
+
+// Prüft ob eine Kategorie Variations-Listings unterstützt (Trading API GetCategoryFeatures)
+async function checkVariationsEnabled(categoryId: string, token: string): Promise<boolean> {
+  if (variationsEnabledCache.has(categoryId)) return variationsEnabledCache.get(categoryId)!;
+  try {
+    const res = await fetch(
+      `${BASE_URL}/sell/metadata/v1/marketplace/EBAY_DE/get_listing_policies?category_id=${categoryId}`,
+      { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    if (!res.ok) { variationsEnabledCache.set(categoryId, false); return false; }
+    const data = await res.json() as { listingPolicies?: { variations?: boolean } };
+    const enabled = data?.listingPolicies?.variations === true;
+    variationsEnabledCache.set(categoryId, enabled);
+    return enabled;
+  } catch {
+    variationsEnabledCache.set(categoryId, false);
+    return false;
+  }
+}
+
+// Bekannte eBay DE Kategorien mit VariationsEnabled=true (Fallback-Liste)
+// Quelle: manuell geprüft via eBay
+const KNOWN_VARIATION_CATEGORIES: Record<string, string> = {
+  // Kfz / Motorrad
+  'motorrad_reifen_reparatur': '83595',   // Kfz-Werkzeuge
+  'kfz_werkzeug': '83595',
+  // Elektronik
+  'usb': '183454',                         // USB-Hubs
+  // Haushalt / Diverses
+  'default': '260,',                       // Gemischte Waren
+};
+
 // Pflichtfelder für eine Kategorie per eBay API abrufen
 async function getRequiredAspects(categoryId: string, token: string): Promise<Record<string, string | null>> {
   if (aspectCache.has(categoryId)) return aspectCache.get(categoryId)!;
@@ -930,7 +964,55 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // WICHTIG: NICHT publishOffer(einzeln) verwenden — das veröffentlicht nur 1 Variante
   if (offerIds.length === 0) throw new Error('Keine Offers erstellt');
   console.log(`[eBay] Publishing variant group ${groupSku} with ${offerIds.length} offers...`);
-  return publishOfferByInventoryItemGroup(groupSku);
+
+  // Versuche publish — bei Fehler 25005 (Kategorie unterstützt keine Varianten) → Fallback-Kategorien
+  const VARIATION_CATEGORY_FALLBACKS = ['83595', '66471', '179779', '26395'];
+  try {
+    return await publishOfferByInventoryItemGroup(groupSku);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('25005')) throw err;
+
+    console.log(`[eBay] Kategorie ${input.categoryId} unterstützt keine Varianten → probiere Fallback-Kategorien...`);
+
+    for (const fallbackCat of VARIATION_CATEGORY_FALLBACKS) {
+      if (fallbackCat === input.categoryId) continue;
+      console.log(`[eBay] Versuche Fallback-Kategorie ${fallbackCat}...`);
+      // Alle Offers mit neuer Kategorie updaten
+      for (const offerId of offerIds) {
+        await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+          body: JSON.stringify({ categoryId: fallbackCat }),
+        }).catch(() => {});
+      }
+      // Auch Inventory Items Kategorie updaten via Offer PUT
+      for (const offerId of offerIds) {
+        const getRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (getRes.ok) {
+          const offerData = await getRes.json() as Record<string, unknown>;
+          offerData.categoryId = fallbackCat;
+          await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+            body: JSON.stringify(offerData),
+          }).catch(() => {});
+        }
+      }
+      try {
+        const listingId = await publishOfferByInventoryItemGroup(groupSku);
+        console.log(`[eBay] Erfolgreich mit Fallback-Kategorie ${fallbackCat}: listingId=${listingId}`);
+        return listingId;
+      } catch (e2: unknown) {
+        const m2 = e2 instanceof Error ? e2.message : String(e2);
+        if (!m2.includes('25005')) throw e2;
+        console.log(`[eBay] Fallback ${fallbackCat} auch kein Varianten-Support`);
+      }
+    }
+    throw new Error(`Keine Kategorie mit Varianten-Support gefunden. Ursprüngliche Kategorie: ${input.categoryId}. Bitte manuell eine eBay Kat-ID eintragen die Varianten unterstützt.`);
+  }
 }
 
 // ─── Alles in einem ───────────────────────────────────────────────────────────
