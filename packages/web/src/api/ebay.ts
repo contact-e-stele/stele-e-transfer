@@ -502,7 +502,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
     itemSpecifics: {
       aspects: Object.fromEntries(Object.entries(aspects).map(([k, v]) => [k, v])),
     },
-    // GPSR Responsible Person
+    // GPSR Responsible Person + Hersteller (Pflicht DE)
     productSafety: {
       responsiblePersons: [
         {
@@ -515,9 +515,20 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
           },
           email: GPSR_RESPONSIBLE_PERSON.email,
           phone: GPSR_RESPONSIBLE_PERSON.phone,
-          types: ['RESPONSIBLE_PERSON_EU_RESP_PERSON'],
+          types: ['EU_RESPONSIBLE_PERSON'],
         },
       ],
+      manufacturer: {
+        companyName: 'Markenlos',
+        address: {
+          addressLine1: GPSR_RESPONSIBLE_PERSON.addressLine1,
+          city: GPSR_RESPONSIBLE_PERSON.city,
+          postalCode: GPSR_RESPONSIBLE_PERSON.postalCode,
+          country: GPSR_RESPONSIBLE_PERSON.country,
+        },
+        email: GPSR_RESPONSIBLE_PERSON.email,
+        phone: GPSR_RESPONSIBLE_PERSON.phone,
+      },
     },
   };
 
@@ -708,9 +719,12 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler
   const variantAspectNames = new Set(groups.map(g => mapVariantGroupName(g.name)));
 
-  // baseAspects ohne Varianten-Aspekte (für Items und Gruppe)
+  // Aspekte die grundsätzlich nicht im Listing erscheinen sollen
+  const ITEM_ASPECT_BLACKLIST = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
+
+  // baseAspects ohne Varianten-Aspekte und ohne Blacklist (für Items und Gruppe)
   const baseAspectsFiltered = Object.fromEntries(
-    Object.entries(baseAspects).filter(([k]) => !variantAspectNames.has(k))
+    Object.entries(baseAspects).filter(([k]) => !variantAspectNames.has(k) && !ITEM_ASPECT_BLACKLIST.has(k))
   );
 
   // 1. Pro Kombination: Inventory Item anlegen
@@ -728,13 +742,24 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [mapVariantGroupName(k), [v]])),
     };
 
+    // Varianten-Foto: aus variantPrices das passende Bild für diese Kombination suchen
+    const comboValsLower = Object.values(combo).map(v => v.toLowerCase());
+    const matchedVP = input.variantPrices?.find(vp => {
+      if (!vp || typeof vp !== 'object') return false;
+      const attrsVal = Object.values((vp as { attrs?: Record<string, string> }).attrs ?? {}).map(v => v.toLowerCase());
+      return comboValsLower.every(cv => attrsVal.some(av => av.includes(cv) || cv.includes(av)));
+    });
+    const varImageUrls = (matchedVP as { imageUrl?: string } | undefined)?.imageUrl
+      ? [(matchedVP as { imageUrl: string }).imageUrl, ...input.imageUrls.slice(0, 7)]
+      : input.imageUrls;
+
     const varBody = {
       availability: { shipToLocationAvailability: { quantity: input.quantity } },
       condition: input.condition,
       product: {
         title: input.title,
         description: plainDesc,
-        imageUrls: input.imageUrls,
+        imageUrls: varImageUrls.filter(u => u.startsWith('http')).slice(0, 8),
         aspects: variantAspects,
       },
     };
@@ -797,6 +822,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const policies = await getBusinessPolicies();
 
   const gpsr = {
+    // EU verantwortliche Person (Pflicht seit Dez 2024 für EU-Marktplätze)
     responsiblePersons: [{
       companyName: 'Stele-E-Transfer',
       address: {
@@ -807,8 +833,20 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       },
       email: 'contact@stele-e-transfer.com',
       phone: '+4915904826737',
-      types: ['RESPONSIBLE_PERSON_EU_RESP_PERSON'],
+      types: ['EU_RESPONSIBLE_PERSON'],
     }],
+    // Hersteller (eBay DE Pflichtfeld)
+    manufacturer: {
+      companyName: 'Markenlos',
+      address: {
+        addressLine1: 'Am Hochfeld 47',
+        city: 'Wiesbaden',
+        postalCode: '65205',
+        country: 'DE',
+      },
+      email: 'contact@stele-e-transfer.com',
+      phone: '+4915904826737',
+    },
   };
 
   const offerIds: string[] = [];
