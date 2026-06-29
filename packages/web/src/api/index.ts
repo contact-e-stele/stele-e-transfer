@@ -938,6 +938,15 @@ const app = new Hono()
         ? (product.sourceUrl.match(/\/item\/(\d+)\.html/)?.[1] ?? product.sourceUrl.match(/productId=(\d+)/)?.[1] ?? undefined)
         : undefined;
 
+      // variantPrices für pro-Variante Preise
+      const variantPricesForListing: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }> = (() => {
+        try {
+          const parsed = JSON.parse(product.variantPrices ?? '[]');
+          if (Array.isArray(parsed)) return parsed;
+        } catch { /* ignore */ }
+        return [];
+      })();
+
       const listingId = await listOnEbay({
         sku: `stele-${product.id}`,
         title: (product.generatedTitle ?? product.title).slice(0, 80),
@@ -948,6 +957,7 @@ const app = new Hono()
         imageUrls: images.filter(u => u.startsWith('http')).slice(0, 8),
         categoryId: categoryId ?? undefined,
         variantGroups: variantGroups.length > 0 ? variantGroups : undefined,
+        variantPrices: variantPricesForListing.length > 0 ? variantPricesForListing : undefined,
         specs,
         mpn,
         adRate: product.adRate ?? 5,

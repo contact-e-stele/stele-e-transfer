@@ -168,6 +168,7 @@ export interface EbayListingInput {
   imageUrls: string[];
   categoryId?: string;
   variantGroups?: VariantGroup[]; // für Variation Listings
+  variantPrices?: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }>; // pro-Variante Preise
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
   adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
@@ -711,10 +712,12 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 
   // 1. Pro Kombination: Inventory Item anlegen
   const variantSkus: string[] = [];
+  const variantSkuCombos: Array<{ sku: string; combo: Record<string, string> }> = [];
   for (const combo of combos) {
     const suffix = Object.values(combo).map(slugify).join('-');
     const varSku = `${input.sku}-${suffix}`;
     variantSkus.push(varSku);
+    variantSkuCombos.push({ sku: varSku, combo });
 
     // Varianten-Aspekte: gefilterte Basis-Aspekte + spezifischer Kombo-Wert (1 Wert pro Variante)
     const variantAspects = {
@@ -754,7 +757,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const groupBody = {
     inventoryItemGroupKey: groupSku,
     title: input.title,
-    description: plainDesc,
+    description: input.description,
     imageUrls: input.imageUrls,
     // WICHTIG: Varianten-Aspekte NICHT in aspects der Gruppe — nur in variesBy.specifications
     // sonst: eBay Fehler 25013 "Variantenmerkmale müssen sich von Artikelmerkmalen unterscheiden"
@@ -806,7 +809,18 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   };
 
   const offerIds: string[] = [];
-  for (const varSku of variantSkus) {
+  for (const { sku: varSku, combo: varCombo } of variantSkuCombos) {
+    // Pro-Variante Preis: attrs-Werte aus combo mit variantPrices.attrs matchen
+    const comboValues = Object.values(varCombo).map(v => v.toLowerCase());
+    const varPriceEntry = input.variantPrices?.find(vp => {
+      if (!vp || typeof vp !== 'object') return false;
+      const attrsVal = Object.values((vp as { attrs?: Record<string, string> }).attrs ?? {}).map(v => v.toLowerCase());
+      // Match wenn alle combo-Werte in attrs vorkommen
+      return comboValues.every(cv => attrsVal.some(av => av.includes(cv) || cv.includes(av)));
+    });
+    const varPrice = varPriceEntry ? (varPriceEntry.ebayPrice ?? varPriceEntry.price ?? input.price) : input.price;
+    console.log(`[eBay] ${varSku} → combo=${JSON.stringify(varCombo)} priceEntry=${JSON.stringify(varPriceEntry)} → price=${varPrice}`);
+
     const offerBody = {
       sku: varSku,
       marketplaceId: 'EBAY_DE',
@@ -815,7 +829,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       categoryId: input.categoryId ?? '79720',
       listingDescription: input.description,
       pricingSummary: {
-        price: { value: input.price.toFixed(2), currency: 'EUR' },
+        price: { value: varPrice.toFixed(2), currency: 'EUR' },
       },
       merchantLocationKey: 'default',
       listingPolicies: {
