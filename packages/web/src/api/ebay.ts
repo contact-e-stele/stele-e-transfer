@@ -664,11 +664,35 @@ function mapVariantGroupName(name: string): string {
   return VARIANT_GROUP_MAP[name.toLowerCase().trim()] ?? name;
 }
 
+export async function deleteInventoryItemGroup(groupKey: string): Promise<void> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
+    {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    }
+  );
+  console.log(`[eBay] DELETE item_group ${groupKey}: ${res.status}`);
+}
+
 export async function listOnEbayWithVariants(input: EbayListingInput): Promise<string> {
   const token = await getAccessToken();
   const groups = input.variantGroups ?? [];
   const combos = buildCombinations(groups);
   const groupSku = `${input.sku}-GROUP`;
+
+  // Cleanup: alte Item Group + alte Offers löschen vor Re-Listing
+  await deleteInventoryItemGroup(groupSku).catch(() => {});
+  for (const oldSku of [
+    `${input.sku}-SET1`, `${input.sku}-SET2`,
+    `${input.sku}-SET3`, `${input.sku}-SET4`,
+    `${input.sku}-MENGE1`, `${input.sku}-MENGE2`,
+    `${input.sku}-MENGE3`, `${input.sku}-MENGE4`,
+  ]) {
+    await deleteExistingOffers(oldSku).catch(() => {});
+  }
+
 
   // Plain-Text Beschreibung für Inventory Items (max 4000 Zeichen)
   const plainDesc = (input.shortDescription ?? input.description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 4000);
