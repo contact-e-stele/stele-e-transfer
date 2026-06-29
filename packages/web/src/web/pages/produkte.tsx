@@ -89,11 +89,15 @@ function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) 
   );
 }
 
+// Gruppen die KEINE echten Produktvarianten sind (z.B. "Ships From")
+const SKIP_VARIANT_GROUPS_P = ['ships from', 'ships_from', 'ship from', 'versandland', 'versand von', 'country of origin', 'herstellungsland'];
+const isSkipGroup = (name: string) => SKIP_VARIANT_GROUPS_P.includes(name.toLowerCase().trim());
+
 // Hilfsfunktion: Varianten aus DB-Format lesen (entweder alt: string[] oder neu: VariantGroup[])
 function parseVariants(raw: string[] | VariantGroup[]): VariantGroup[] {
   if (!raw || raw.length === 0) return [];
   if (typeof raw[0] === "object" && "name" in raw[0]) {
-    return raw as VariantGroup[];
+    return (raw as VariantGroup[]).filter(g => !isSkipGroup(g.name));
   }
   return [];
 }

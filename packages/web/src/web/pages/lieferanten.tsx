@@ -11,6 +11,10 @@ import {
   TrendingDown, Save, Eye, EyeOff, X, Plus, Trash2,
 } from "lucide-react";
 
+// Gruppen-Namen die KEINE echten Produktvarianten sind → aus eBay-Listing herausfiltern
+const SKIP_VARIANT_GROUPS = ['ships from', 'ships_from', 'ship from', 'versandland', 'versand von', 'country of origin', 'herstellungsland'];
+const isSkipVariantGroup = (name: string) => SKIP_VARIANT_GROUPS.includes(name.toLowerCase().trim());
+
 interface VariantPrice {
   skuId: string;
   attrs: Record<string, string>;
@@ -267,7 +271,7 @@ export default function Lieferanten() {
         initVariants[g.name] = [...g.values];
       }
       setSelectedVariants(initVariants);
-      setEditedVariants(data.variants ? data.variants.map(g => ({ name: g.name, values: [...g.values] })) : []);
+      setEditedVariants(data.variants ? data.variants.filter(g => !isSkipVariantGroup(g.name)).map(g => ({ name: g.name, values: [...g.values] })) : []);
       setEditingVariant({});
       // Preis vorausfüllen
       const p = parsePrice(data.price);
@@ -311,7 +315,7 @@ export default function Lieferanten() {
           htmlDescription: editableHtml,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: editedVariants
-            .filter(g => g.values.length > 0),
+            .filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
           variantPrices: (product.variantPrices ?? []).map(v => ({
             ...v,
             ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
@@ -382,7 +386,7 @@ export default function Lieferanten() {
             generatedTitle: editableTitle,
             htmlDescription: editableHtml,
             bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
-            variants: editedVariants.filter(g => g.values.length > 0),
+            variants: editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
             variantPrices: (product.variantPrices ?? []).map(v => ({
               ...v,
               ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
