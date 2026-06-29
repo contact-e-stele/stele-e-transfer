@@ -1045,7 +1045,7 @@ export default function Lieferanten() {
                     // ─── Auto-Parse Set-Inhalte aus Rohtext ──────────────────
                     // Erkennt Muster wie: "Set 1: ...", "SET1: ...", "Set 1 : ..."
                     const autoSets: Record<string, string> = {};
-                    const setRegex = /(?:^|\n)\s*[Ss]et\s*(\d+)\s*:?\s*(.+?)(?=\n\s*[Ss]et\s*\d|\n\s*Menge\s*:|$)/gs;
+                    const setRegex = /(?:^|\n|:)\s*[Ss]et\s*(\d+)\s*:?\s*(.+?)(?=\n\s*[Ss]et\s*\d|\n\s*Menge\s*:|$)/gs;
                     let m: RegExpExecArray | null;
                     while ((m = setRegex.exec(rawAliText)) !== null) {
                       const num = m[1];
