@@ -194,6 +194,7 @@ function normalizeAbteilung(val: string): string {
 const ASPECT_DEFAULTS: Record<string, string> = {
   'Marke': 'Markenlos',
   'Herstellernummer': 'Nicht zutreffend',
+  'Abteilung': 'Unisex',
 };
 
 // Kategorie-spezifische Defaults — nur wenn categoryId zu dieser Gruppe gehört
