@@ -13,6 +13,7 @@ export interface ScrapedProduct {
   skuVariants?: Array<{ name: string; price: number; imageUrl?: string }>;
   bullets?: string[];
   setContents?: Record<string, string>; // z.B. { "SET1": "10 kleine + 10 große + Schraubendreher" }
+  gpsrRaw?: string | null;              // GPSR Freitext (manuell oder auto-befüllt)
 }
 
 function decodeEntities(str: string): string {
@@ -328,6 +329,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   #stet-t2:checked~.stet-contents #stet-c2,
   #stet-t3:checked~.stet-contents #stet-c3,
   #stet-t4:checked~.stet-contents #stet-c4{display:block;}
+  #stet-t5:checked~.stet-contents #stet-c5{display:block;}
 </style>
 
 <div class="stet-tabs">
@@ -335,11 +337,13 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   <input id="stet-t2" name="stet-tab" type="radio"/>
   <input id="stet-t3" name="stet-tab" type="radio"/>
   <input id="stet-t4" name="stet-tab" type="radio"/>
+  ${product.gpsrRaw ? `<input id="stet-t5" name="stet-tab" type="radio"/>` : ""}
   <div class="stet-tab-labels">
     <label for="stet-t1">Beschreibung</label>
     <label for="stet-t2">Versand &amp; Retouren</label>
     <label for="stet-t3">Impressum</label>
     <label for="stet-t4">AGB</label>
+    ${product.gpsrRaw ? `<label for="stet-t5">Produktsicherheit</label>` : ""}
   </div>
   <div class="stet-contents">
 
@@ -420,6 +424,13 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       Es gilt deutsches Recht. Gerichtsstand: Wiesbaden.<br/>
       <em>Stand: Juni 2026</em></p>
     </div>
+
+    ${product.gpsrRaw ? `<!-- TAB 5: Produktsicherheit (GPSR) -->
+    <div class="stet-content" id="stet-c5">
+      <h3>Produktsicherheit (GPSR)</h3>
+      <p style="font-size:12px;color:#8a7040;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
+      <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#c8b878;line-height:1.8;background:#111108;padding:14px;border-radius:4px;border:1px solid #3a2a0a;">${product.gpsrRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
+    </div>` : ""}
 
   </div>
 </div>
@@ -607,6 +618,8 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
   #stet-l2:checked~.stet-l-contents #stet-lc2,
   #stet-l3:checked~.stet-l-contents #stet-lc3,
   #stet-l4:checked~.stet-l-contents #stet-lc4{display:block;}
+  #stet-l5:checked~.stet-l-tab-labels label[for="stet-l5"]{background:#B8860B;color:#ffffff;border-color:#B8860B;}
+  #stet-l5:checked~.stet-l-contents #stet-lc5{display:block;}
 </style>
 
 <div class="stet-l-tabs">
@@ -614,11 +627,13 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
   <input id="stet-l2" name="stet-l-tab" type="radio"/>
   <input id="stet-l3" name="stet-l-tab" type="radio"/>
   <input id="stet-l4" name="stet-l-tab" type="radio"/>
+  ${product.gpsrRaw ? `<input id="stet-l5" name="stet-l-tab" type="radio"/>` : ""}
   <div class="stet-l-tab-labels">
     <label for="stet-l1">Beschreibung</label>
     <label for="stet-l2">Versand &amp; Retouren</label>
     <label for="stet-l3">Impressum</label>
     <label for="stet-l4">AGB</label>
+    ${product.gpsrRaw ? `<label for="stet-l5">Produktsicherheit</label>` : ""}
   </div>
   <div class="stet-l-contents">
 
@@ -684,6 +699,13 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
       EU-Streitschlichtung: <a href="https://ec.europa.eu/consumers/odr" style="color:#B8860B;">https://ec.europa.eu/consumers/odr</a></p>
       <p><em>Stand: Juni 2026</em></p>
     </div>
+
+    ${product.gpsrRaw ? `<!-- TAB 5: Produktsicherheit (GPSR) -->
+    <div class="stet-l-content" id="stet-lc5">
+      <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:8px;">Produktsicherheit (GPSR)</h3>
+      <p style="font-size:12px;color:#666;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
+      <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.8;background:#f9f6f0;padding:14px;border-radius:4px;border:1px solid #e5d9c0;">${product.gpsrRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
+    </div>` : ""}
 
   </div>
 </div>

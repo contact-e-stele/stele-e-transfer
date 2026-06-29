@@ -108,7 +108,7 @@ function isCleanLine(line: string): boolean {
   return true;
 }
 
-function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", overrideTitle?: string, setContents?: Record<string, string>): string {
+function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", overrideTitle?: string, setContents?: Record<string, string>, gpsrRaw?: string): string {
   // SKU-Varianten für HTML-Template aufbereiten
   const skuVariants = (product.variantPrices ?? []).length > 0
     ? product.variantPrices!.map(v => ({
@@ -122,6 +122,7 @@ function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", o
     ...(overrideTitle ? { title: overrideTitle } : {}),
     skuVariants,
     setContents,
+    gpsrRaw: gpsrRaw ?? product.gpsrRaw ?? null,
   };
   return theme === "light" ? buildEbayHTMLLight(enriched) : buildEbayHTML(enriched);
 }
@@ -1075,7 +1076,7 @@ export default function Lieferanten() {
                       const base = product ?? { title: finalTitle || '', images: [], price: '', description: '', specs: {} };
                       const enriched = { ...base, description: data.description };
                       const usedContents = Object.keys(mergedContents).length > 0 ? mergedContents : (Object.keys(variantContents).length > 0 ? variantContents : undefined);
-                      const newHtml = buildHTML(enriched as typeof base, "light", finalTitle || undefined, usedContents);
+                      const newHtml = buildHTML(enriched as typeof base, "light", finalTitle || undefined, usedContents, gpsrHersteller.trim() || undefined);
                       setEditableHtml(newHtml);
                     }
                   } catch (e) {
