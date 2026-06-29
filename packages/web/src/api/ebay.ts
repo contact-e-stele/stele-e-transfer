@@ -577,6 +577,31 @@ export async function publishOffer(offerId: string): Promise<string> {
   return data.listingId;
 }
 
+// ─── Varianten-Gruppe publishen (ALLE Varianten auf einmal) ──────────────────
+// Pflicht für Variation Listings — publishOffer(einzeln) veröffentlicht nur 1 Variante
+
+export async function publishOfferByInventoryItemGroup(inventoryItemGroupKey: string, marketplaceId = 'EBAY_DE'): Promise<string> {
+  const token = await getAccessToken();
+
+  const res = await fetch(`${BASE_URL}/sell/inventory/v1/offer/publish_by_inventory_item_group`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ inventoryItemGroupKey, marketplaceId }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`publishOfferByInventoryItemGroup failed: ${res.status} ${text}`);
+  }
+
+  const data = await res.json() as { listingId: string };
+  console.log(`[eBay] Published group ${inventoryItemGroupKey} → listingId: ${data.listingId}`);
+  return data.listingId;
+}
+
 // ─── Inventory Item Group (Variation Listing) erstellen ──────────────────────
 
 function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
@@ -822,9 +847,11 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     console.log(`[eBay] Offer ready for ${varSku}: ${finalOfferId}`);
   }
 
-  // 4. Ersten Offer publishen — eBay publisht automatisch alle Varianten zusammen
+  // 4. Gruppe publishen — publisht ALLE Varianten gleichzeitig
+  // WICHTIG: NICHT publishOffer(einzeln) verwenden — das veröffentlicht nur 1 Variante
   if (offerIds.length === 0) throw new Error('Keine Offers erstellt');
-  return publishOffer(offerIds[0]);
+  console.log(`[eBay] Publishing variant group ${groupSku} with ${offerIds.length} offers...`);
+  return publishOfferByInventoryItemGroup(groupSku);
 }
 
 // ─── Alles in einem ───────────────────────────────────────────────────────────
