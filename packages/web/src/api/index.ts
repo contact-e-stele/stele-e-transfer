@@ -837,6 +837,11 @@ const app = new Hono()
     const [product] = await db.select().from(schema.products).where(eq(schema.products.id, body.productId));
     if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
 
+    // Duplikat-Schutz: Nicht doppelt listen wenn bereits aktiv auf eBay
+    if (product.ebayStatus === 'listed' && product.ebayListingId) {
+      return c.json({ error: `Artikel ist bereits auf eBay gelistet (Listing-ID: ${product.ebayListingId}). Zuerst beenden oder Status zurücksetzen.` }, 409);
+    }
+
     // sellPrice Fallback: wenn nicht gesetzt, niedrigsten Varianten-Preis nehmen
     let effectiveSellPrice = product.sellPrice;
     if (!effectiveSellPrice) {
