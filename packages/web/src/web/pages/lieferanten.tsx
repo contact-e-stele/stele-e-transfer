@@ -232,11 +232,11 @@ export default function Lieferanten() {
         }))
       : undefined;
     const descToUse = generatedDescription || base.description || "";
-    const enriched = { ...base, description: descToUse, skuVariants, gpsrRaw: gpsrHersteller.trim() || null };
+    const enriched = { ...base, description: descToUse, skuVariants, gpsrRaw: gpsrHersteller.trim() || null, setContents: Object.keys(variantContents).length > 0 ? variantContents : undefined };
     const updated = buildEbayHTMLLight(enriched);
     setEditableHtml(updated);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpsrHersteller, generatedDescription]);
+  }, [gpsrHersteller, generatedDescription, variantContents]);
 
   // ─── Scrape ───────────────────────────────────────────────────────────────
   const handleScrape = async () => {
