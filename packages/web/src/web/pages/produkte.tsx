@@ -528,6 +528,7 @@ export default function Produkte() {
   const [variantenModal, setVariantenModal] = useState<Product | null>(null);
   const [gpsrModal, setGpsrModal] = useState<Product | null>(null);
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null);
+  const [katHelpId, setKatHelpId] = useState<number | null>(null);
   const [expandedVariants, setExpandedVariants] = useState<Set<number>>(new Set());
 
   // Alle-Preise-prüfen Job
@@ -1143,29 +1144,64 @@ export default function Produkte() {
                 </div>
               )}
               {/* eBay Kategorie manuell setzen */}
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                <span style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap" }}>eBay Kat-ID:</span>
-                <input
-                  defaultValue={product.ebayCategory ?? ''}
-                  placeholder="z.B. 179247"
-                  onBlur={async (e) => {
-                    const val = e.currentTarget.value.trim();
-                    if (val === (product.ebayCategory ?? '')) return;
-                    await fetch(`/api/products/${product.id}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ ebayCategory: val || null }),
-                    });
-                    setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayCategory: val || null } : p));
-                  }}
-                  style={{
-                    fontSize: 11, padding: "4px 8px", borderRadius: 6,
-                    border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A",
-                    width: 110, fontFamily: "inherit",
-                  }}
-                />
-                {product.ebayCategory && (
-                  <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓ Manuell</span>
+              <div style={{ position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                  <span
+                    onClick={() => setKatHelpId(katHelpId === product.id ? null : product.id)}
+                    style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline dotted", userSelect: "none" }}
+                    title="Klicken für Anleitung"
+                  >eBay Kat-ID ❓</span>
+                  <input
+                    defaultValue={product.ebayCategory ?? ''}
+                    placeholder="z.B. 179247"
+                    onBlur={async (e) => {
+                      const val = e.currentTarget.value.trim();
+                      if (val === (product.ebayCategory ?? '')) return;
+                      await fetch(`/api/products/${product.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ebayCategory: val || null }),
+                      });
+                      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayCategory: val || null } : p));
+                    }}
+                    style={{
+                      fontSize: 11, padding: "4px 8px", borderRadius: 6,
+                      border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A",
+                      width: 110, fontFamily: "inherit",
+                    }}
+                  />
+                  {product.ebayCategory && (
+                    <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓ Manuell</span>
+                  )}
+                </div>
+                {/* Kategorie-Hilfe Popup */}
+                {katHelpId === product.id && (
+                  <div style={{
+                    position: "absolute", top: "100%", left: 0, zIndex: 999,
+                    background: "#fff", border: "1.5px solid #C9A227", borderRadius: 10,
+                    boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "16px 18px",
+                    width: 320, marginTop: 6,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <span style={{ fontWeight: 800, fontSize: 13, color: "#0F172A" }}>📂 Wie finde ich die Kat-ID?</span>
+                      <span onClick={() => setKatHelpId(null)} style={{ cursor: "pointer", fontSize: 16, color: "#94A3B8", lineHeight: 1 }}>✕</span>
+                    </div>
+                    <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#334155", lineHeight: 2 }}>
+                      <li>Gehe auf <strong>ebay.de</strong> und suche nach einem ähnlichen Produkt</li>
+                      <li>Klicke auf ein passendes Angebot</li>
+                      <li>Schau in die <strong>URL</strong> — dort steht <code style={{ background: "#F1F5F9", padding: "1px 5px", borderRadius: 4 }}>_sacat=XXXXX</code></li>
+                      <li>Die Zahl nach <code style={{ background: "#F1F5F9", padding: "1px 5px", borderRadius: 4 }}>_sacat=</code> ist die <strong>Kategorie-ID</strong></li>
+                      <li>Diese Zahl hier eintragen und speichern</li>
+                    </ol>
+                    <div style={{ marginTop: 10, background: "#FFF8E7", borderRadius: 6, padding: "8px 10px", fontSize: 11, color: "#92400E" }}>
+                      <strong>Beispiel URL:</strong><br/>
+                      <span style={{ fontFamily: "monospace", wordBreak: "break-all" }}>ebay.de/sch/i.html?_sacat=<strong>179466</strong></span><br/>
+                      <span style={{ marginTop: 4, display: "block" }}>→ Kat-ID = <strong>179466</strong></span>
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 11, color: "#64748B" }}>
+                      💡 Richtige Kategorie verhindert Fehler beim Einstellen
+                    </div>
+                  </div>
                 )}
               </div>
 
