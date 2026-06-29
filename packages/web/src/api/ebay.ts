@@ -254,9 +254,12 @@ async function getRequiredAspects(categoryId: string, token: string): Promise<Re
       }>;
     };
 
+    // Aspekte die wir bewusst NICHT setzen — würden als störende Dropdown-Variante erscheinen
+    const ASPECT_BLACKLIST = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
+
     const required: Record<string, string | null> = {};
     for (const aspect of data.aspects ?? []) {
-      if (aspect.aspectConstraint?.aspectRequired) {
+      if (aspect.aspectConstraint?.aspectRequired && !ASPECT_BLACKLIST.has(aspect.localizedAspectName)) {
         // Ersten erlaubten Wert nehmen oder null
         required[aspect.localizedAspectName] = aspect.aspectValues?.[0]?.localizedValue ?? null;
       }
@@ -512,7 +515,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
           },
           email: GPSR_RESPONSIBLE_PERSON.email,
           phone: GPSR_RESPONSIBLE_PERSON.phone,
-          type: 'RESPONSIBLE_PERSON',
+          types: ['RESPONSIBLE_PERSON_EU_RESP_PERSON'],
         },
       ],
     },
@@ -804,7 +807,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       },
       email: 'contact@stele-e-transfer.com',
       phone: '+4915904826737',
-      type: 'RESPONSIBLE_PERSON',
+      types: ['RESPONSIBLE_PERSON_EU_RESP_PERSON'],
     }],
   };
 
