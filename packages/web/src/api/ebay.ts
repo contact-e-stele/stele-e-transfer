@@ -172,6 +172,13 @@ export interface EbayListingInput {
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
   adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
+  gpsr?: {         // EU Produktsicherheit — aus DB; wenn undefined → Stele-Fallback
+    name: string;
+    address: string;
+    city: string;
+    email: string;
+    phone: string;
+  };
 }
 
 // Gender-Wert → eBay "Abteilung" normalisieren
@@ -496,15 +503,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
-  const GPSR_RESPONSIBLE_PERSON = {
-    companyName: 'Stele-E-Transfer',
-    addressLine1: 'Am Hochfeld 47',
-    city: 'Wiesbaden',
-    postalCode: '65205',
-    country: 'DE',
-    email: 'contact@stele-e-transfer.com',
-    phone: '+4915904826737',
-  };
+  const gpsrBlock = buildGpsrBlock(input.gpsr);
 
   const body = {
     sku: input.sku,
@@ -537,33 +536,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
       aspects: Object.fromEntries(Object.entries(aspects).map(([k, v]) => [k, v])),
     },
     // GPSR Responsible Person + Hersteller (Pflicht DE)
-    productSafety: {
-      responsiblePersons: [
-        {
-          companyName: GPSR_RESPONSIBLE_PERSON.companyName,
-          address: {
-            addressLine1: GPSR_RESPONSIBLE_PERSON.addressLine1,
-            city: GPSR_RESPONSIBLE_PERSON.city,
-            postalCode: GPSR_RESPONSIBLE_PERSON.postalCode,
-            country: GPSR_RESPONSIBLE_PERSON.country,
-          },
-          email: GPSR_RESPONSIBLE_PERSON.email,
-          phone: GPSR_RESPONSIBLE_PERSON.phone,
-          types: ['EU_RESPONSIBLE_PERSON'],
-        },
-      ],
-      manufacturer: {
-        companyName: 'Markenlos',
-        address: {
-          addressLine1: GPSR_RESPONSIBLE_PERSON.addressLine1,
-          city: GPSR_RESPONSIBLE_PERSON.city,
-          postalCode: GPSR_RESPONSIBLE_PERSON.postalCode,
-          country: GPSR_RESPONSIBLE_PERSON.country,
-        },
-        email: GPSR_RESPONSIBLE_PERSON.email,
-        phone: GPSR_RESPONSIBLE_PERSON.phone,
-      },
-    },
+    productSafety: gpsrBlock,
   };
 
   const res = await fetch(`${BASE_URL}/sell/inventory/v1/offer`, {
@@ -652,6 +625,42 @@ export async function publishOfferByInventoryItemGroup(inventoryItemGroupKey: st
 }
 
 // ─── Inventory Item Group (Variation Listing) erstellen ──────────────────────
+
+// ─── GPSR Helper ─────────────────────────────────────────────────────────────
+// Baut das productSafety-Objekt für eBay aus strukturierten GPSR-Feldern.
+// Wenn gpsr=undefined → Stele-E-Transfer als Fallback (EU Verantwortlicher).
+
+interface GpsrData { name: string; address: string; city: string; email: string; phone: string; }
+
+function buildGpsrBlock(gpsr?: GpsrData) {
+  const g: GpsrData = gpsr ?? {
+    name:    'Stele-E-Transfer',
+    address: 'Am Hochfeld 47',
+    city:    '65205 Wiesbaden',
+    email:   'contact@stele-e-transfer.com',
+    phone:   '+4915904826737',
+  };
+  // city kann "65205 Wiesbaden" oder nur "Wiesbaden" sein
+  const cityParts = g.city.match(/^(\d{5})\s+(.+)$/);
+  const postalCode  = cityParts ? cityParts[1] : '65205';
+  const cityName    = cityParts ? cityParts[2] : g.city;
+  const addr = { addressLine1: g.address, city: cityName, postalCode, country: 'DE' };
+  return {
+    responsiblePersons: [{
+      companyName: g.name,
+      address: addr,
+      email: g.email,
+      phone: g.phone,
+      types: ['EU_RESPONSIBLE_PERSON'],
+    }],
+    manufacturer: {
+      companyName: 'Markenlos',
+      address: addr,
+      email: g.email,
+      phone: g.phone,
+    },
+  };
+}
 
 function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
   // Kartesisches Produkt aller Varianten-Gruppen
@@ -855,33 +864,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // eBay verknüpft automatisch alle Offers mit der Group beim publish
   const policies = await getBusinessPolicies();
 
-  const gpsr = {
-    // EU verantwortliche Person (Pflicht seit Dez 2024 für EU-Marktplätze)
-    responsiblePersons: [{
-      companyName: 'Stele-E-Transfer',
-      address: {
-        addressLine1: 'Am Hochfeld 47',
-        city: 'Wiesbaden',
-        postalCode: '65205',
-        country: 'DE',
-      },
-      email: 'contact@stele-e-transfer.com',
-      phone: '+4915904826737',
-      types: ['EU_RESPONSIBLE_PERSON'],
-    }],
-    // Hersteller (eBay DE Pflichtfeld)
-    manufacturer: {
-      companyName: 'Markenlos',
-      address: {
-        addressLine1: 'Am Hochfeld 47',
-        city: 'Wiesbaden',
-        postalCode: '65205',
-        country: 'DE',
-      },
-      email: 'contact@stele-e-transfer.com',
-      phone: '+4915904826737',
-    },
-  };
+  const gpsr = buildGpsrBlock(input.gpsr);
 
   const offerIds: string[] = [];
   for (const { sku: varSku, combo: varCombo } of variantSkuCombos) {

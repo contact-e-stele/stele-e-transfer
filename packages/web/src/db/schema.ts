@@ -30,8 +30,14 @@ export const products = sqliteTable('products', {
   ebayError: text('ebay_error'),
   ebayCategory: text('ebay_category'),           // manuell gesetzte eBay Kategorie-ID
   variantContents: text('variant_contents'), // JSON: {"SET1":"10 kleine + 10 große","SET2":"..."}
-  gpsrRaw: text('gpsr_raw'),                 // Rohtext aus Import-Feld
-  gpsrHtml: text('gpsr_html'),               // fertiger HTML-Block für eBay
+  gpsrRaw: text('gpsr_raw'),                 // Rohtext aus Import-Feld (legacy)
+  gpsrHtml: text('gpsr_html'),               // fertiger HTML-Block für eBay (legacy)
+  // GPSR strukturiert (EU Produktsicherheitsverordnung)
+  gpsrName: text('gpsr_name'),               // Hersteller/Verantwortlicher Name
+  gpsrAddress: text('gpsr_address'),         // Straße + Hausnummer
+  gpsrCity: text('gpsr_city'),               // PLZ + Stadt
+  gpsrEmail: text('gpsr_email'),             // E-Mail
+  gpsrPhone: text('gpsr_phone'),             // Telefon
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

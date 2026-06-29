@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
-  TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye,
+  TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye, ShieldCheck,
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 
@@ -48,6 +48,11 @@ interface Product {
   ebayStatus: string;
   ebayError: string | null;
   ebayCategory: string | null;
+  gpsrName: string | null;
+  gpsrAddress: string | null;
+  gpsrCity: string | null;
+  gpsrEmail: string | null;
+  gpsrPhone: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -313,6 +318,196 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
   );
 }
 
+interface GpsrModalProps {
+  product: Product;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
+  const [name, setName] = useState(product.gpsrName ?? "");
+  const [address, setAddress] = useState(product.gpsrAddress ?? "");
+  const [city, setCity] = useState(product.gpsrCity ?? "");
+  const [email, setEmail] = useState(product.gpsrEmail ?? "");
+  const [phone, setPhone] = useState(product.gpsrPhone ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  const hasFallback = !product.gpsrName;
+
+  const save = async () => {
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const res = await fetch(`/api/products/${product.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gpsrName: name.trim() || null,
+          gpsrAddress: address.trim() || null,
+          gpsrCity: city.trim() || null,
+          gpsrEmail: email.trim() || null,
+          gpsrPhone: phone.trim() || null,
+        }),
+      });
+      if (res.ok) {
+        setSaveMsg("Gespeichert!");
+        onSaved();
+        setTimeout(onClose, 700);
+      } else {
+        setSaveMsg("Fehler beim Speichern");
+      }
+    } catch {
+      setSaveMsg("Netzwerkfehler");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fieldStyle: React.CSSProperties = {
+    width: "100%", padding: "9px 12px", borderRadius: 10,
+    border: "2px solid #E2E8F0", fontSize: 13, fontFamily: "inherit",
+    outline: "none", boxSizing: "border-box", color: "#0F172A",
+    background: "#FAFAFA",
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+    }} onClick={onClose}>
+      <div style={{
+        background: "#fff", borderRadius: 20, padding: 24, maxWidth: 460, width: "100%",
+        maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+      }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#0F172A", display: "flex", alignItems: "center", gap: 8 }}>
+              <ShieldCheck size={18} color="#0EA5E9" /> GPSR Verantwortliche Person
+            </h2>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748B" }}>{product.generatedTitle.slice(0, 50)}…</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Info Banner */}
+        {hasFallback ? (
+          <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#C2410C" }}>
+            <strong>Kein GPSR gesetzt</strong> — eBay verwendet automatisch den Stele-E-Transfer Fallback.
+            Hier kannst du produktspezifische Daten hinterlegen.
+          </div>
+        ) : (
+          <div style={{ background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#0369A1" }}>
+            <strong>✅ Produktspezifische GPSR gesetzt</strong> — wird beim eBay-Listen verwendet.
+          </div>
+        )}
+
+        {/* Felder */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Firmenname / Person</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="z.B. Stele-E-Transfer"
+              style={fieldStyle}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Straße + Hausnummer</label>
+            <input
+              type="text"
+              value={address}
+              onChange={e => setAddress(e.target.value)}
+              placeholder="z.B. Musterstraße 12"
+              style={fieldStyle}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>PLZ + Stadt</label>
+            <input
+              type="text"
+              value={city}
+              onChange={e => setCity(e.target.value)}
+              placeholder="z.B. 65205 Wiesbaden"
+              style={fieldStyle}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>E-Mail</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="z.B. info@example.de"
+              style={fieldStyle}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Telefon (optional)</label>
+            <input
+              type="text"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              placeholder="z.B. +49 611 12345"
+              style={fieldStyle}
+            />
+          </div>
+        </div>
+
+        {/* Löschen-Button */}
+        {!hasFallback && (
+          <button onClick={async () => {
+            setName(""); setAddress(""); setCity(""); setEmail(""); setPhone("");
+            await fetch(`/api/products/${product.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrPhone: null }),
+            });
+            setSaveMsg("GPSR gelöscht — Fallback aktiv");
+            onSaved();
+            setTimeout(onClose, 800);
+          }} style={{
+            marginTop: 14, width: "100%", padding: "8px 0", borderRadius: 10,
+            background: "#FEF2F2", color: "#DC2626", border: "1px solid #FECACA",
+            fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+          }}>
+            GPSR zurücksetzen (Fallback verwenden)
+          </button>
+        )}
+
+        {/* Footer */}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", marginTop: 16 }}>
+          {saveMsg && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: saveMsg.includes("Fehler") || saveMsg.includes("Netzwerk") ? "#DC2626" : "#16A34A" }}>
+              {saveMsg}
+            </span>
+          )}
+          <button onClick={onClose} style={{
+            padding: "8px 16px", borderRadius: 10, background: "#F1F5F9", color: "#64748B",
+            border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+          }}>
+            Abbrechen
+          </button>
+          <button onClick={save} disabled={saving} style={{
+            padding: "8px 20px", borderRadius: 10, background: "#0EA5E9", color: "#fff",
+            border: "none", fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            {saving ? <Loader size={13} style={{ animation: "spin 1s linear infinite" }} /> : null}
+            Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Produkte() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -327,6 +522,7 @@ export default function Produkte() {
   const [editingTitle, setEditingTitle] = useState<number | null>(null);
   const [titleInput, setTitleInput] = useState("");
   const [variantenModal, setVariantenModal] = useState<Product | null>(null);
+  const [gpsrModal, setGpsrModal] = useState<Product | null>(null);
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null);
   const [expandedVariants, setExpandedVariants] = useState<Set<number>>(new Set());
 
@@ -497,6 +693,13 @@ export default function Produkte() {
         <VariantenModal
           product={variantenModal}
           onClose={() => setVariantenModal(null)}
+          onSaved={load}
+        />
+      )}
+      {gpsrModal && (
+        <GpsrModal
+          product={gpsrModal}
+          onClose={() => setGpsrModal(null)}
           onSaved={load}
         />
       )}
@@ -848,6 +1051,20 @@ export default function Produkte() {
                     ? `Varianten (${parseVariants(product.variants).length})`
                     : "Varianten"
                   }
+                </button>
+
+                {/* GPSR */}
+                <button onClick={() => setGpsrModal(product)} style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  padding: "6px 10px", borderRadius: 8,
+                  background: product.gpsrName ? "#F0F9FF" : "#F8FAFC",
+                  color: product.gpsrName ? "#0EA5E9" : "#94A3B8",
+                  fontSize: 11, fontWeight: 700,
+                  border: product.gpsrName ? "1px solid #BAE6FD" : "1px solid #E2E8F0",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  <ShieldCheck size={11} />
+                  {product.gpsrName ? "GPSR ✓" : "GPSR"}
                 </button>
 
                 {/* Produkt löschen */}

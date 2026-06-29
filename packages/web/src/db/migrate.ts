@@ -28,6 +28,12 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN gpsr_raw TEXT`,
   `ALTER TABLE products ADD COLUMN gpsr_html TEXT`,
   `ALTER TABLE products ADD COLUMN ebay_category TEXT`,
+  // GPSR strukturiert
+  `ALTER TABLE products ADD COLUMN gpsr_name TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_address TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_city TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_email TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_phone TEXT`,
   // Preis-Historie Tabelle
   `CREATE TABLE IF NOT EXISTS price_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

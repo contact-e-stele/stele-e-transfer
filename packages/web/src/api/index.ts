@@ -947,6 +947,15 @@ const app = new Hono()
         return [];
       })();
 
+      // GPSR aus Produkt — strukturierte Felder haben Vorrang, sonst Fallback auf Stele-Adresse
+      const gpsrFromProduct = (product.gpsrName || product.gpsrEmail) ? {
+        name:    product.gpsrName    ?? 'Stele-E-Transfer',
+        address: product.gpsrAddress ?? 'Am Hochfeld 47',
+        city:    product.gpsrCity    ?? '65205 Wiesbaden',
+        email:   product.gpsrEmail   ?? 'contact@stele-e-transfer.com',
+        phone:   product.gpsrPhone   ?? '+4915904826737',
+      } : undefined;
+
       const listingId = await listOnEbay({
         sku: `stele-${product.id}`,
         title: (product.generatedTitle ?? product.title).slice(0, 80),
@@ -961,6 +970,7 @@ const app = new Hono()
         specs,
         mpn,
         adRate: product.adRate ?? 5,
+        gpsr: gpsrFromProduct,
       });
 
       await db.update(schema.products).set({
@@ -1263,6 +1273,11 @@ const app = new Hono()
       });
       const allowed: Partial<typeof schema.products.$inferInsert> = {};
       if ('ebayCategory' in body) allowed.ebayCategory = body.ebayCategory as string | null;
+      if ('gpsrName'    in body) allowed.gpsrName    = body.gpsrName    as string | null;
+      if ('gpsrAddress' in body) allowed.gpsrAddress = body.gpsrAddress as string | null;
+      if ('gpsrCity'    in body) allowed.gpsrCity    = body.gpsrCity    as string | null;
+      if ('gpsrEmail'   in body) allowed.gpsrEmail   = body.gpsrEmail   as string | null;
+      if ('gpsrPhone'   in body) allowed.gpsrPhone   = body.gpsrPhone   as string | null;
       if (Object.keys(allowed).length === 0) return c.json({ error: 'Keine bekannten Felder' }, 400);
       allowed.updatedAt = new Date().toISOString();
       await db.update(schema.products).set(allowed).where(eq(schema.products.id, id));
