@@ -416,7 +416,7 @@ sellPrice = buyPrice / (1 - 0.18) + 1.60
 ---
 
 *Automatisch generiert · Stele-E-Transfer Backup System v2.0*
-\`;
+`;
 }
 
 // ─── Email via Resend API ─────────────────────────────────────────────────────
