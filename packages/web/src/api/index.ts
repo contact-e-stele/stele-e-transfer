@@ -1626,9 +1626,10 @@ app.get('/aliexpress/search', async (c) => {
       return createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
     }
 
+    // Affiliate Product Query API (kein DS-Sonderrecht noetig)
     const params: Record<string, string> = {
       app_key: APP_KEY_VAL,
-      method: 'aliexpress.ds.product.search',
+      method: 'aliexpress.affiliate.product.query',
       timestamp: String(Date.now()),
       format: 'json',
       sign_method: 'md5',
@@ -1639,9 +1640,10 @@ app.get('/aliexpress/search', async (c) => {
       page_size: '20',
       target_currency: 'EUR',
       target_language: 'DE',
+      ship_to_country: 'DE',
       sort,
     };
-    // ship_from_country nur setzen wenn kein "ALL" ausgewaehlt
+    // ship_from_country nur setzen wenn explizit gewaehlt (nicht ALL)
     if (shipFrom && shipFrom !== 'ALL') {
       params.ship_from_country = shipFrom;
     }
@@ -1654,14 +1656,21 @@ app.get('/aliexpress/search', async (c) => {
       signal: AbortSignal.timeout(20000),
     });
     const data = await res.json() as Record<string, unknown>;
-    console.log('[AliExpress Search] Raw:', JSON.stringify(data).slice(0, 400));
+    console.log('[AliExpress Search] Raw:', JSON.stringify(data).slice(0, 500));
 
-    const resp = (data['aliexpress_ds_product_search_response'] as Record<string, unknown> | undefined);
-    if (!resp) {
-      return c.json({ status: 'api_error', message: JSON.stringify(data).slice(0, 200), results: [], total: 0 }, 200);
+    // Affiliate API Response-Struktur
+    const affResp = (data['aliexpress_affiliate_product_query_response'] as Record<string, unknown> | undefined);
+    if (!affResp) {
+      return c.json({ status: 'api_error', message: JSON.stringify(data).slice(0, 300), results: [], total: 0 }, 200);
     }
 
-    const searchResult = resp.result as Record<string, unknown> | undefined;
+    const respResult = affResp.resp_result as Record<string, unknown> | undefined;
+    if (!respResult || respResult.resp_code !== 200) {
+      const msg = String(respResult?.resp_msg || JSON.stringify(affResp).slice(0, 200));
+      return c.json({ status: 'api_error', message: msg, results: [], total: 0 }, 200);
+    }
+
+    const searchResult = respResult.result as Record<string, unknown> | undefined;
     if (!searchResult) {
       return c.json({ status: 'no_result', results: [], total: 0 }, 200);
     }
@@ -1695,7 +1704,7 @@ app.get('/aliexpress/search', async (c) => {
       const isEU = EU_COUNTRIES.some(c => shipFrom.toLowerCase().includes(c));
       const rating = Number(p.evaluate_rate || 0);
       const sold = Number(p.lastest_volume || 0);
-      const url = p.product_detail_url || `https://www.aliexpress.com/item/${id}.html`;
+      const url = p.product_detail_url || `https://de.aliexpress.com/item/${id}.html`;
       return { id, title, image, price, shipFrom, isEU, rating, sold, url };
     });
 
