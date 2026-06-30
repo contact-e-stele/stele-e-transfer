@@ -28,11 +28,19 @@ const SORT_OPTIONS = [
 const FALLBACK_PLATFORMS = [
   {
     id: "aliexpress",
-    name: "AliExpress DE",
+    name: "AliExpress Suche",
     icon: "🔴",
     color: "#E53E3E",
-    buildUrl: (q: string, sf: string) =>
-      `https://www.aliexpress.com/wholesale?SearchText=${encodeURIComponent(q)}&ship_from_country=${sf}&SortType=total_tranAmount_sort`,
+    buildUrl: (q: string, _sf: string) =>
+      `https://de.aliexpress.com/w/wholesale-${encodeURIComponent(q.replace(/\s+/g, '-'))}.html?sorttype=total_tranAmount_sort`,
+  },
+  {
+    id: "dscenter",
+    name: "AliExpress DS Center",
+    icon: "🟠",
+    color: "#FF6000",
+    buildUrl: (q: string) =>
+      `https://ds.aliexpress.com/products/search?keywords=${encodeURIComponent(q)}`,
   },
   {
     id: "cj",
@@ -41,14 +49,6 @@ const FALLBACK_PLATFORMS = [
     color: "#00A650",
     buildUrl: (q: string) =>
       `https://app.cjdropshipping.com/search.html#/?searchKey=${encodeURIComponent(q)}`,
-  },
-  {
-    id: "dsers",
-    name: "DSers",
-    icon: "🔶",
-    color: "#FF6B00",
-    buildUrl: (q: string) =>
-      `https://www.dsers.com/app/find-suppliers?productName=${encodeURIComponent(q)}&shipFromCountry=DE`,
   },
 ];
 
@@ -122,6 +122,8 @@ export default function Suche() {
   };
 
   const noToken = response?.status === "no_token";
+  const apiBlocked = response?.status === "api_error" || response?.status === "error";
+  const showFallback = noToken || apiBlocked;
   const hasResults = response?.status === "ok" && response.results.length > 0;
   const totalPages = response ? Math.ceil(response.total / 20) : 0;
 
@@ -267,7 +269,7 @@ export default function Suche() {
         </div>
 
         {/* Status: OAuth fehlt */}
-        {noToken && (
+        {showFallback && (
           <>
             <div style={{
               background: "#FFF7ED", borderRadius: 16, padding: 16,
@@ -277,11 +279,13 @@ export default function Suche() {
               <AlertCircle size={20} color="#F59E0B" style={{ flexShrink: 0, marginTop: 2 }} />
               <div>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#92400E" }}>
-                  AliExpress API ausstehend
+                  {apiBlocked ? "AliExpress API nicht verfügbar" : "AliExpress API ausstehend"}
                 </p>
                 <p style={{ margin: "4px 0 0", fontSize: 12, color: "#78350F", lineHeight: 1.6 }}>
-                  OAuth-Genehmigung wird noch geprüft (1–3 Tage).<br />
-                  Bis dahin kannst du direkt auf den Plattformen suchen:
+                  {apiBlocked
+                    ? "Direktsuche auf AliExpress nutzen — Produkt-URL dann im Lieferanten-Tab importieren."
+                    : "OAuth-Genehmigung ausstehend. Bis dahin direkt auf den Plattformen suchen:"
+                  }
                 </p>
               </div>
             </div>
@@ -487,19 +491,7 @@ export default function Suche() {
           </div>
         )}
 
-        {/* Error */}
-        {response?.status === "error" && (
-          <div style={{
-            background: "#FEF2F2", borderRadius: 14, padding: 14,
-            border: "1.5px solid #FECACA", marginTop: 8,
-            display: "flex", gap: 10, alignItems: "center",
-          }}>
-            <AlertCircle size={18} color="#DC2626" />
-            <p style={{ margin: 0, fontSize: 13, color: "#DC2626", fontWeight: 600 }}>
-              Fehler: {response.message}
-            </p>
-          </div>
-        )}
+
 
         {/* Keine Ergebnisse */}
         {response?.status === "ok" && response.results.length === 0 && (
