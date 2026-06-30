@@ -530,6 +530,7 @@ export default function Produkte() {
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null);
   const [katHelpId, setKatHelpId] = useState<number | null>(null);
   const [expandedVariants, setExpandedVariants] = useState<Set<number>>(new Set());
+  const [copiedSku, setCopiedSku] = useState<number | null>(null);
 
   // Alle-Preise-prüfen Job
   const [priceJob, setPriceJob] = useState<{
@@ -939,6 +940,28 @@ export default function Produkte() {
                     <span style={{ fontSize: 10, fontFamily: "monospace", background: "#F1F5F9", padding: "2px 6px", borderRadius: 5, color: "#475569" }}>
                       {product.asin}
                     </span>
+                    {product.skuId && (
+                      <span
+                        onClick={() => {
+                          navigator.clipboard.writeText(product.skuId).then(() => {
+                            setCopiedSku(product.id);
+                            setTimeout(() => setCopiedSku(null), 1800);
+                          });
+                        }}
+                        title="SKU kopieren"
+                        style={{
+                          fontSize: 10, fontFamily: "monospace",
+                          background: copiedSku === product.id ? "#DCFCE7" : "#F8FAFC",
+                          color: copiedSku === product.id ? "#16A34A" : "#94A3B8",
+                          padding: "2px 6px", borderRadius: 5,
+                          cursor: "pointer", border: "1px solid #E2E8F0",
+                          transition: "all 0.2s",
+                          userSelect: "none",
+                        }}
+                      >
+                        {copiedSku === product.id ? "✓ Kopiert" : `SKU: ${product.skuId}`}
+                      </span>
+                    )}
                     <StatusBadge status={product.ebayStatus} listingId={product.ebayListingId} />
                     {product.priceChanged && (
                       <span style={{ fontSize: 11, background: "#FFFBEB", color: "#92400E", padding: "2px 8px", borderRadius: 6, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
