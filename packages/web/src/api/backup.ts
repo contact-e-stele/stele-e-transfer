@@ -359,8 +359,64 @@ sellPrice = buyPrice / (1 - 0.18) + 1.60
 
 ---
 
+## KI-KONTEXT — Integrations-Status & TODOs
+
+> Dieser Abschnitt hält den KI-Kontext zwischen Sessions aktuell.
+> Stand: \${isoDate}
+
+### API-Integrations Status
+
+| Integration | Status | Hinweis |
+|-------------|--------|---------|
+| eBay Trading/Inventory API | ✅ funktioniert | OAuth User Token, Listings erstellen OK |
+| AliExpress DS API \`ds.product.get\` | ✅ funktioniert | Produktdetails per product_id abrufbar |
+| AliExpress DS API \`ds.category.get\` | ✅ funktioniert | Kategorien abrufbar |
+| AliExpress DS API \`ds.recommend.feed.get\` | ⚠️ liefert 0 Ergebnisse | API antwortet, aber leere Liste |
+| AliExpress Affiliate \`affiliate.product.query\` | ❌ BLOCKIERT | InsufficientPermission — nicht fixbar ohne neue AliExpress-Genehmigung |
+| AliExpress Suche (ScrapingAnt) | ✅ deployed | Scrapt de.aliexpress.com, extrahiert itemList JSON, 60 Produkte/Suche |
+| ScrapingAnt API | ✅ aktiv | Key in Render ENV, für AliExpress HTML-Scraping |
+| Gemini API (Google) | ✅ funktioniert | Titel + HTML-Beschreibung + Bullets generieren |
+| Resend Email | ✅ funktioniert | contact@stele-e-transfer.com, Backup-Emails laufen |
+| Turso DB | ✅ funktioniert | libSQL, Drizzle ORM, tägl. Backup |
+
+### Wichtige Erkenntnisse
+
+- **ScrapingAnt Suche**: shipFromCountry NICHT in Suchergebnissen — nur via \`ds.product.get\` beim Import prüfbar
+- **AliExpress OAuth**: \`ALIEXPRESS_ACCESS_TOKEN\` muss in Render gesetzt werden für DS API
+- **AliExpress App Key**: \`535690\` — App Status: Online (seit 01.06.2026)
+- **Ecomsniper**: gekündigt (2026-06-13) — nicht mehr nutzen
+- **AutoDS**: gekündigt (2026-06-28) — nicht mehr nutzen
+- **Go-Live**: erreicht am 2026-06-29 ✅
+
+### Aktuelle TODOs (nach Go-Live)
+
+1. **Preisaktualisierung** — Cron-Job: AliExpress-Preis täglich prüfen → DB updaten → eBay-Preis anpassen
+2. **Vorschau-Modal editierbar** — Produkte-Tab: Titel-Input + Bullets-Textarea + Speichern → PATCH /products/:id
+3. **shipsFrom-Fix in price-monitor.ts** — nur bestätigte China-Produkte überspringen, nicht wenn Scrape fehlgeschlagen
+4. **ALIEXPRESS_ACCESS_TOKEN** — in Render.com setzen → DS API vollständig nutzen
+5. **eBay Kat-ID Workflow** — Kategorie-ID aus eBay Breadcrumb (_sacat=XXXXX) manuell eintragen
+6. **EU-Lager-Filter** — Suche/Import nur EU-Lager (DE + AT + CH + FR + NL + PL + CZ + BE + LU)
+
+### Abonnements
+
+| Tool | Status |
+|------|--------|
+| AutoDS Starter 400 | ❌ gekündigt (2026-06-28) |
+| Ecomsniper | ❌ gekündigt (2026-06-13) |
+| ScrapingAnt | ✅ aktiv |
+| Trackerbot | ✅ aktiv |
+
+### Letzte wichtige Commits
+
+- \`a6d0605\` — AliExpress Suche via ScrapingAnt scraping (2026-06-30)
+- \`3ee2e93\` — Suche-Tab Fallback UI (externe Links bei API-Fehler)
+- \`8ff6b9c\` — AliExpress Affiliate API Integration
+- \`99364ea\` — ALL Default-Einstellungen
+
+---
+
 *Automatisch generiert · Stele-E-Transfer Backup System v2.0*
-`;
+\`;
 }
 
 // ─── Email via Resend API ─────────────────────────────────────────────────────
