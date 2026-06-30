@@ -9,6 +9,7 @@ import {
   TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye, ShieldCheck,
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
+import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 
 interface VariantGroup {
   name: string;
@@ -529,6 +530,10 @@ export default function Produkte() {
   const [variantenModal, setVariantenModal] = useState<Product | null>(null);
   const [gpsrModal, setGpsrModal] = useState<Product | null>(null);
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null);
+  const [editPreviewTitle, setEditPreviewTitle] = useState<string>("");
+  const [editPreviewBullets, setEditPreviewBullets] = useState<string>("");
+  const [previewSaving, setPreviewSaving] = useState(false);
+  const [previewSaveMsg, setPreviewSaveMsg] = useState("");
   const [katHelpId, setKatHelpId] = useState<number | null>(null);
   const [expandedVariants, setExpandedVariants] = useState<Set<number>>(new Set());
   const [copiedSku, setCopiedSku] = useState<number | null>(null);
@@ -712,25 +717,115 @@ export default function Produkte() {
       )}
 
       {/* Beschreibungs-Preview Modal */}
-      {previewProduct && (
+      {previewProduct && (() => {
+        // Live-Vorschau: HTML aus aktuellen Edit-Feldern neu bauen
+        const liveBullets = editPreviewBullets.split("\n").map(s => s.trim()).filter(Boolean);
+        const liveProduct: EbayScrapedProduct = {
+          title: editPreviewTitle,
+          bullets: liveBullets,
+          variants: Array.isArray(previewProduct.variants) ? (previewProduct.variants as EbayScrapedProduct["variants"]) : undefined,
+          skuVariants: (() => {
+            try { const vp = previewProduct.variantPrices ? JSON.parse(previewProduct.variantPrices) : null; return Array.isArray(vp) ? vp : undefined; } catch { return undefined; }
+          })(),
+          setContents: previewProduct.variantContents ?? undefined,
+          gpsrRaw: previewProduct.gpsrRaw ?? undefined,
+        };
+        const liveHtml = buildEbayHTMLLight(liveProduct);
+
+        const handleSave = async () => {
+          setPreviewSaving(true);
+          setPreviewSaveMsg("");
+          try {
+            const res = await fetch(`/api/products/${previewProduct.id}/description`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ generatedTitle: editPreviewTitle, bullets: liveBullets, htmlDescription: liveHtml }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            // Lokalen State updaten
+            const updated = { ...previewProduct, generatedTitle: editPreviewTitle, bullets: liveBullets, htmlDescription: liveHtml };
+            setPreviewProduct(updated);
+            setProducts(prev => prev.map(p => p.id === previewProduct.id ? updated : p));
+            setPreviewSaveMsg("✓ Gespeichert");
+          } catch (e) {
+            setPreviewSaveMsg("Fehler: " + String(e));
+          } finally {
+            setPreviewSaving(false);
+          }
+        };
+
+        return (
         <div style={{
           position: "fixed", inset: 0, zIndex: 1000,
           background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
           padding: 16,
         }} onClick={() => setPreviewProduct(null)}>
           <div style={{
-            background: "#fff", borderRadius: 16, width: "100%", maxWidth: 800,
+            background: "#fff", borderRadius: 16, width: "100%", maxWidth: 860,
             maxHeight: "90vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
           }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #E2E8F0", position: "sticky", top: 0, background: "#fff", zIndex: 10 }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>eBay Beschreibungs-Vorschau</span>
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>eBay Beschreibung bearbeiten</span>
               <button onClick={() => setPreviewProduct(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" }}>
                 <X size={18} color="#94A3B8" />
               </button>
             </div>
+
+            {/* Edit-Bereich */}
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #E2E8F0", background: "#F8FAFC" }}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>EBAY TITEL (max. 80 Zeichen)</label>
+                <input
+                  value={editPreviewTitle}
+                  onChange={e => setEditPreviewTitle(e.target.value)}
+                  maxLength={80}
+                  style={{
+                    width: "100%", padding: "8px 10px", borderRadius: 8, border: "1.5px solid #CBD5E1",
+                    fontSize: 13, fontFamily: "inherit", color: "#0F172A", background: "#fff", boxSizing: "border-box",
+                  }}
+                />
+                <div style={{ fontSize: 10, color: editPreviewTitle.length > 75 ? "#DC2626" : "#94A3B8", textAlign: "right", marginTop: 2 }}>
+                  {editPreviewTitle.length}/80
+                </div>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>BULLET-POINTS (eine pro Zeile)</label>
+                <textarea
+                  value={editPreviewBullets}
+                  onChange={e => setEditPreviewBullets(e.target.value)}
+                  rows={6}
+                  style={{
+                    width: "100%", padding: "8px 10px", borderRadius: 8, border: "1.5px solid #CBD5E1",
+                    fontSize: 12, fontFamily: "inherit", color: "#0F172A", background: "#fff",
+                    resize: "vertical", boxSizing: "border-box", lineHeight: 1.6,
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={handleSave}
+                  disabled={previewSaving}
+                  style={{
+                    padding: "8px 20px", borderRadius: 8, background: "#16A34A", color: "#fff",
+                    fontSize: 13, fontWeight: 700, border: "none", cursor: previewSaving ? "wait" : "pointer",
+                    fontFamily: "inherit", opacity: previewSaving ? 0.7 : 1,
+                  }}
+                >
+                  {previewSaving ? "Speichert…" : "Speichern"}
+                </button>
+                {previewSaveMsg && (
+                  <span style={{ fontSize: 12, color: previewSaveMsg.startsWith("✓") ? "#16A34A" : "#DC2626", fontWeight: 600 }}>
+                    {previewSaveMsg}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Vorschau */}
             <div style={{ padding: 20 }}>
-              <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 12 }}>So wird die Beschreibung im eBay Listing angezeigt:</div>
-              <div dangerouslySetInnerHTML={{ __html: previewProduct.htmlDescription }} />
+              <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 12 }}>Live-Vorschau (wird bei Speichern übernommen):</div>
+              <div dangerouslySetInnerHTML={{ __html: liveHtml }} />
               {previewProduct.variantContents && Object.keys(previewProduct.variantContents).length > 0 && (
                 <div style={{ marginTop: 20, borderTop: "1px solid #E2E8F0", paddingTop: 16 }}>
                   <div style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", marginBottom: 10 }}>Varianten-Inhalte</div>
@@ -751,7 +846,8 @@ export default function Produkte() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
 
         {/* Header */}
@@ -1061,7 +1157,7 @@ export default function Produkte() {
                   </>
                 )}
                 {/* Beschreibung Preview */}
-                <button onClick={() => setPreviewProduct(product)} style={{
+                <button onClick={() => { setPreviewProduct(product); setEditPreviewTitle(product.generatedTitle || product.title || ""); setEditPreviewBullets((product.bullets || []).join("\n")); setPreviewSaveMsg(""); }} style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
                   padding: "6px 10px", borderRadius: 8, background: "#F0FDF4", color: "#16A34A",
                   fontSize: 11, fontWeight: 700, border: "1px solid #BBF7D0", cursor: "pointer", fontFamily: "inherit",

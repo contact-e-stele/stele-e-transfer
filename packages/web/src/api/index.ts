@@ -1289,6 +1289,27 @@ const app = new Hono()
     }
   })
 
+  // ─── Beschreibung bearbeiten (Titel + Bullets + HTML) ───────────────────────
+  .patch('/products/:id/description', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+    try {
+      const body = await c.req.json() as { generatedTitle?: string; bullets?: string[]; htmlDescription?: string };
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const update: Partial<typeof schema.products.$inferInsert> = { updatedAt: new Date().toISOString() };
+      if (body.generatedTitle !== undefined) update.generatedTitle = body.generatedTitle;
+      if (body.bullets !== undefined) update.bullets = JSON.stringify(body.bullets);
+      if (body.htmlDescription !== undefined) update.htmlDescription = body.htmlDescription;
+      await db.update(schema.products).set(update).where(eq(schema.products.id, id));
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ error: 'DB Fehler: ' + String(e) }, 503);
+    }
+  })
+
   .post('/products/:id/reset-error', async (c) => {
     const id = parseInt(c.req.param('id'));
     if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
