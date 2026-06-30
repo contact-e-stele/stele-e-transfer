@@ -359,6 +359,43 @@ sellPrice = buyPrice / (1 - 0.18) + 1.60
 
 ---
 
+## BEKANNTE FALLSTRICKE — Fehler die uns im Kreis drehen
+
+> Immer zuerst lesen bevor Änderungen gemacht werden!
+
+### HONO basePath('api') — ALLE API-Routen laufen unter /api/...
+- Hono ist mit .basePath('api') konfiguriert
+- Jede Route app.get('/xyz', ...) ist unter /api/xyz erreichbar — NICHT unter /xyz
+- Beispiel: /backup/test ist FALSCH, /api/backup/test ist RICHTIG
+- GitHub Actions Cron ruft /api/backup/run auf
+- server.ts leitet nur /api/* und /backup/* an Hono weiter
+
+### Template Literals in backup.ts — Backticks NICHT escapen
+- Die generateAgentRestoreMd() Funktion ist ein Template Literal
+- Der schliessende Backtick am Ende DARF NICHT escaped werden (sonst schliesst der String nie)
+- Symptom: Build lokal OK, aber Render crasht mit exit status 1
+
+### server.ts routing — Nur /api/* geht an Hono (Standard)
+- Standardmaessig nur: if (url.pathname.startsWith('/api')) an Hono
+- Neue Non-API-Routen in Hono brauchen auch Eintrag in server.ts
+- Aktuell: /api und /backup werden weitergeleitet
+
+### AliExpress Suche — shipFromCountry NICHT in Suchergebnissen
+- ScrapingAnt scrapt de.aliexpress.com Suchergebnisse
+- shipFromCountry ist in Suchergebnis-Items NICHT enthalten
+- EU-Filter nur beim Import via ds.product.get moeglich
+
+### AliExpress affiliate.product.query — PERMANENT BLOCKIERT
+- Fehler: InsufficientPermission
+- Nicht fixbar ohne neue AliExpress App-Genehmigung
+- Alternative: ScrapingAnt HTML-Scraping (deployed, funktioniert)
+
+### price-monitor.ts — shipsFrom-Fix noch offen
+- Wenn Scrape fehlschlaegt: shipsFrom=unbekannt → Produkt wird faelschlich uebersprungen
+- Fix: Nur ueberspringen wenn shipsFrom BESTAETIGT = China, nicht bei unbekannt
+
+---
+
 ## KI-KONTEXT — Integrations-Status & TODOs
 
 > Dieser Abschnitt hält den KI-Kontext zwischen Sessions aktuell.
