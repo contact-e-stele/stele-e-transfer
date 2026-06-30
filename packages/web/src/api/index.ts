@@ -1637,11 +1637,14 @@ app.get('/aliexpress/search', async (c) => {
       keywords: keyword,
       page_no: String(page),
       page_size: '20',
-      ship_from_country: shipFrom,
       target_currency: 'EUR',
       target_language: 'DE',
       sort,
     };
+    // ship_from_country nur setzen wenn kein "ALL" ausgewaehlt
+    if (shipFrom && shipFrom !== 'ALL') {
+      params.ship_from_country = shipFrom;
+    }
     params.sign = signSearch(APP_SECRET_VAL, params);
 
     const res = await fetch(IOP_EP, {

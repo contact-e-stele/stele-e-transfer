@@ -8,13 +8,15 @@ import { Search, ExternalLink, Package, ShoppingCart, Star, Filter, RefreshCw, A
 import { useLocation } from "wouter";
 
 const SHIP_FROM_OPTIONS = [
-  { value: "DE", label: "🇩🇪 Deutschland" },
-  { value: "ES", label: "🇪🇸 Spanien" },
-  { value: "FR", label: "🇫🇷 Frankreich" },
-  { value: "IT", label: "🇮🇹 Italien" },
-  { value: "PL", label: "🇵🇱 Polen" },
-  { value: "NL", label: "🇳🇱 Niederlande" },
-  { value: "CZ", label: "🇨🇿 Tschechien" },
+  { value: "ALL", label: "Alle Laender" },
+  { value: "DE", label: "Deutschland" },
+  { value: "ES", label: "Spanien" },
+  { value: "FR", label: "Frankreich" },
+  { value: "IT", label: "Italien" },
+  { value: "PL", label: "Polen" },
+  { value: "NL", label: "Niederlande" },
+  { value: "CZ", label: "Tschechien" },
+  { value: "CN", label: "China" },
 ];
 
 const SORT_OPTIONS = [
@@ -74,7 +76,7 @@ interface SearchResponse {
 export default function Suche() {
   const [, setLocation] = useLocation();
   const [query, setQuery] = useState("");
-  const [shipFrom, setShipFrom] = useState("DE");
+  const [shipFrom, setShipFrom] = useState("ALL");
   const [sort, setSort] = useState("LAST_VOLUME_DESC");
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<SearchResponse | null>(null);
@@ -143,7 +145,7 @@ export default function Suche() {
             AliExpress Suche
           </h1>
           <p style={{ color: "#64748B", marginTop: 4, fontSize: 13 }}>
-            DE/EU Lager · Direkt importieren
+            Weltweite Suche · DE/EU/CN · Direkt importieren
           </p>
         </div>
 
@@ -366,8 +368,8 @@ export default function Suche() {
                       {item.price > 0 ? `${item.price.toFixed(2).replace(".", ",")} €` : "–"}
                     </span>
 
-                    {/* EU Badge */}
-                    {item.isEU && (
+                    {/* Lager Badge */}
+                    {item.isEU ? (
                       <span style={{
                         fontSize: 10, fontWeight: 700, padding: "2px 7px",
                         borderRadius: 10, background: "#F0FDF4", color: "#16A34A",
@@ -375,7 +377,15 @@ export default function Suche() {
                       }}>
                         <CheckCircle size={9} /> EU
                       </span>
-                    )}
+                    ) : item.shipFrom ? (
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                        borderRadius: 10, background: "#FFF7ED", color: "#C2410C",
+                        border: "1px solid #FED7AA",
+                      }}>
+                        {item.shipFrom.toUpperCase().slice(0,2)}
+                      </span>
+                    ) : null}
 
                     {/* Verkäufe */}
                     {item.sold > 0 && (
@@ -462,17 +472,17 @@ export default function Suche() {
           }}>
             <div style={{ fontSize: 44, marginBottom: 10 }}>🔍</div>
             <p style={{ fontWeight: 700, fontSize: 16, color: "#0F172A", margin: 0 }}>
-              AliExpress DE/EU Suche
+              AliExpress Suche
             </p>
             <p style={{ color: "#64748B", fontSize: 13, marginTop: 8, lineHeight: 1.6 }}>
-              Suche direkt in AliExpress mit<br />
-              voreingestelltem <strong>Deutschland-Lager</strong> Filter.<br />
+              Suche weltweit — DE/EU und CN Produkte.<br />
+              Lager-Filter im Filter-Panel einstellbar.<br />
               Produkte direkt in den Import-Tab übernehmen.
             </p>
             <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 10, background: "#F0FDF4", color: "#16A34A", border: "1px solid #BBF7D0" }}>🇩🇪 DE-Lager</span>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 10, background: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE" }}>🇪🇺 EU-Lager</span>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 10, background: "#F5F3FF", color: "#7C3AED", border: "1px solid #C4B5FD" }}>→ Import</span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 10, background: "#F0FDF4", color: "#16A34A", border: "1px solid #BBF7D0" }}>EU Lager</span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 10, background: "#FFF7ED", color: "#C2410C", border: "1px solid #FED7AA" }}>CN Lager</span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 10, background: "#F5F3FF", color: "#7C3AED", border: "1px solid #C4B5FD" }}>Import</span>
             </div>
           </div>
         )}
@@ -494,8 +504,8 @@ export default function Suche() {
         {/* Keine Ergebnisse */}
         {response?.status === "ok" && response.results.length === 0 && (
           <div style={{ textAlign: "center", padding: 24, color: "#64748B", fontSize: 13 }}>
-            Keine Ergebnisse für „{response.keyword}" mit {SHIP_FROM_OPTIONS.find(o => o.value === shipFrom)?.label}-Lager.<br />
-            Versuch ein anderes Lagerland im Filter.
+            Keine Ergebnisse für „{response.keyword}".<br />
+            Versuch einen anderen Suchbegriff oder anderen Lager-Filter.
           </div>
         )}
 
