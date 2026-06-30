@@ -48,6 +48,7 @@ interface Product {
   ebayStatus: string;
   ebayError: string | null;
   ebayCategory: string | null;
+  handlingTimeDays: number | null;
   gpsrName: string | null;
   gpsrAddress: string | null;
   gpsrCity: string | null;
@@ -1226,6 +1227,34 @@ export default function Produkte() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Bearbeitungszeit (Handling Time) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <span style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap" }}>Bearb.-Zeit</span>
+                <select
+                  value={String(product.handlingTimeDays ?? 10)}
+                  onChange={async (e) => {
+                    const val = parseInt(e.currentTarget.value);
+                    await fetch(`/api/products/${product.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ handlingTimeDays: val }),
+                    });
+                    setProducts(prev => prev.map(p => p.id === product.id ? { ...p, handlingTimeDays: val } : p));
+                  }}
+                  style={{
+                    fontSize: 11, padding: "4px 8px", borderRadius: 6,
+                    border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A",
+                    fontFamily: "inherit", cursor: "pointer",
+                  }}
+                >
+                  <option value="3">3 Tage</option>
+                  <option value="5">5 Tage</option>
+                  <option value="7">7 Tage</option>
+                  <option value="10">10 Tage</option>
+                  <option value="14">14 Tage</option>
+                </select>
               </div>
 
               {product.ebayError && !listingResult && (

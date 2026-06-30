@@ -48,6 +48,17 @@ const migrations = [
     value TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
   )`,
+  // Bearbeitungszeit pro Produkt (eBay Fulfillment Policy)
+  `ALTER TABLE products ADD COLUMN handling_time_days INTEGER DEFAULT 10`,
+  // Vertrauenswürdige Lieferanten (EU-bestätigte AliExpress Shops)
+  `CREATE TABLE IF NOT EXISTS trusted_suppliers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop_name TEXT NOT NULL,
+    shop_url TEXT NOT NULL,
+    ali_store_id TEXT,
+    eu_confirmed INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
 ];
 
 export async function runMigrations() {

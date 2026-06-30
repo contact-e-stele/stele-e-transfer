@@ -196,6 +196,46 @@ export default function Lieferanten() {
   const [rawGenError, setRawGenError] = useState("");
   const [shipsFromInfo, setShipsFromInfo] = useState<{ country: string; isEU: boolean } | null>(null);
   const [generatedDescription, setGeneratedDescription] = useState("");
+  const [trustedSuppliers, setTrustedSuppliers] = useState<Array<{ id: number; shopName: string; shopUrl: string; aliStoreId: string | null; euConfirmed: boolean }>>([]);
+  const [shopSaved, setShopSaved] = useState(false);
+
+  // Meine Shops laden
+  useEffect(() => {
+    fetch('/api/trusted-suppliers').then(r => r.json()).then(data => {
+      if (Array.isArray(data)) setTrustedSuppliers(data);
+    }).catch(() => {});
+  }, []);
+
+  const handleSaveShop = async () => {
+    if (!product || !urlInput.trim()) return;
+    // Shop-URL und Name aus AliExpress URL extrahieren
+    let shopUrl = urlInput.trim();
+    let shopName = product.title.slice(0, 40) + '...';
+    // Versuche Store-URL aus AliExpress URL zu bauen
+    const storeMatch = shopUrl.match(/\/store\/(\d+)/);
+    const aliStoreId = storeMatch ? storeMatch[1] : null;
+    const shopStoreUrl = aliStoreId ? `https://www.aliexpress.com/store/${aliStoreId}` : shopUrl;
+    // Besserer Name: aus URL-Domain oder Produkt
+    const titleWords = product.title.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).slice(0, 3).join(' ');
+    shopName = titleWords || 'AliExpress Shop';
+    const euBadge = shipsFromInfo?.isEU ?? false;
+    const res = await fetch('/api/trusted-suppliers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName, shopUrl: shopStoreUrl, aliStoreId, euConfirmed: euBadge }),
+    });
+    if (res.ok) {
+      const newShop = await res.json();
+      setTrustedSuppliers(prev => [...prev, newShop]);
+      setShopSaved(true);
+      setTimeout(() => setShopSaved(false), 3000);
+    }
+  };
+
+  const handleDeleteShop = async (id: number) => {
+    await fetch(`/api/trusted-suppliers/${id}`, { method: 'DELETE' });
+    setTrustedSuppliers(prev => prev.filter(s => s.id !== id));
+  };
 
   // ─── Marge berechnen ──────────────────────────────────────────────────────
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
@@ -542,6 +582,36 @@ export default function Lieferanten() {
           <h1 style={{ fontSize: 22, fontWeight: 700, color: "#0F172A", margin: 0 }}>Lieferanten Import</h1>
           <p style={{ color: "#64748B", marginTop: 4, fontSize: 13 }}>AliExpress URL → Titel + Beschreibung generieren</p>
         </div>
+
+        {/* ─── Meine Shops (Vertrauenswürdige Lieferanten) ───────────────────────── */}
+        {trustedSuppliers.length > 0 && (
+          <div style={{ background: "#fff", borderRadius: 16, padding: "16px 20px", marginBottom: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", border: "1.5px solid #E2E8F0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 16 }}>⭐</span>
+              <span style={{ fontWeight: 700, fontSize: 14, color: "#0F172A" }}>Meine EU-Shops</span>
+              <span style={{ fontSize: 11, color: "#64748B", marginLeft: 4 }}>{trustedSuppliers.length} gespeichert</span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {trustedSuppliers.map(s => (
+                <div key={s.id} style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  background: s.euConfirmed ? "#F0FDF4" : "#F8FAFC",
+                  border: `1.5px solid ${s.euConfirmed ? "#BBF7D0" : "#E2E8F0"}`,
+                  borderRadius: 10, padding: "6px 10px",
+                }}>
+                  <a href={s.shopUrl} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 12, fontWeight: 600, color: "#0F172A", textDecoration: "none" }}>
+                    {s.euConfirmed && <span style={{ color: "#16A34A", marginRight: 4 }}>🇪🇺</span>}
+                    {s.shopName}
+                  </a>
+                  <button onClick={() => handleDeleteShop(s.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: "0 2px", fontSize: 14, lineHeight: 1 }}
+                    title="Entfernen">×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Mode Tabs */}
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -1477,6 +1547,25 @@ export default function Lieferanten() {
                 <p style={{ margin: "8px 0 0", color: "#FCA5A5", fontSize: 13, fontWeight: 600 }}>✗ {saveAndListResult.error}</p>
               )}
             </div>
+
+            {/* Shop merken */}
+            {product && urlInput.trim() && (
+              <div style={{ background: "#fff", borderRadius: 16, padding: "14px 18px", marginBottom: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", border: "1.5px solid #E2E8F0" }}>
+                <button
+                  onClick={handleSaveShop}
+                  disabled={shopSaved}
+                  style={{
+                    width: "100%", padding: "10px 0", borderRadius: 10, border: "none",
+                    background: shopSaved ? "#F0FDF4" : "#FF6B00",
+                    color: shopSaved ? "#16A34A" : "#fff",
+                    fontWeight: 700, fontSize: 13, cursor: shopSaved ? "default" : "pointer",
+                    fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  }}
+                >
+                  {shopSaved ? "✓ Shop gespeichert!" : "⭐ Shop merken (EU-Lieferant)"}
+                </button>
+              </div>
+            )}
 
             {/* eBay Listen (separat, für bereits gespeicherte Produkte) */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>

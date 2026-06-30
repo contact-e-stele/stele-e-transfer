@@ -38,6 +38,7 @@ export const products = sqliteTable('products', {
   gpsrCity: text('gpsr_city'),               // PLZ + Stadt
   gpsrEmail: text('gpsr_email'),             // E-Mail
   gpsrPhone: text('gpsr_phone'),             // Telefon
+  handlingTimeDays: integer('handling_time_days').default(10), // Bearbeitungszeit in Tagen (eBay Fulfillment Policy)
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });
@@ -65,3 +66,16 @@ export const appSettings = sqliteTable('app_settings', {
 });
 
 export type AppSetting = typeof appSettings.$inferSelect;
+
+// ─── Vertrauenswürdige Lieferanten (EU-bestätigte AliExpress Shops) ───────────
+export const trustedSuppliers = sqliteTable('trusted_suppliers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  shopName: text('shop_name').notNull(),
+  shopUrl: text('shop_url').notNull(),
+  aliStoreId: text('ali_store_id'),
+  euConfirmed: integer('eu_confirmed', { mode: 'boolean' }).default(true),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+});
+
+export type TrustedSupplier = typeof trustedSuppliers.$inferSelect;
+export type NewTrustedSupplier = typeof trustedSuppliers.$inferInsert;

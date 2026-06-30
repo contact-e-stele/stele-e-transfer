@@ -150,6 +150,59 @@ export async function getBusinessPolicies(): Promise<PolicyCache> {
   return policyCache;
 }
 
+// ─── Fulfillment Policy per Handling-Zeit ─────────────────────────────────────
+// Sucht eine bestehende Policy mit passender Handling-Zeit oder erstellt eine neue.
+// Wird verwendet wenn handlingTimeDays explizit gesetzt ist.
+async function getOrCreateFulfillmentPolicy(days: number, token: string): Promise<string> {
+  // Bestehende Policies abrufen
+  const res = await fetch(`${BASE_URL}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_DE`, {
+    headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' },
+  });
+  if (res.ok) {
+    const data = await res.json() as { fulfillmentPolicies?: Array<{ fulfillmentPolicyId: string; handlingTime?: { value: number } }> };
+    const match = data.fulfillmentPolicies?.find(p => p.handlingTime?.value === days);
+    if (match) {
+      console.log(`[eBay] Fulfillment Policy gefunden: ${match.fulfillmentPolicyId} (${days} Tage)`);
+      return match.fulfillmentPolicyId;
+    }
+  }
+  // Neue Policy erstellen
+  const createRes = await fetch(`${BASE_URL}/sell/account/v1/fulfillment_policy`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Accept-Language': 'de-DE',
+    },
+    body: JSON.stringify({
+      name: `Stele ${days}d Handling`,
+      marketplaceId: 'EBAY_DE',
+      categoryTypes: [{ name: 'ALL_EXCLUDING_MOTORS_VEHICLES' }],
+      handlingTime: { value: days, unit: 'DAY' },
+      shippingOptions: [{
+        optionType: 'DOMESTIC',
+        costType: 'FLAT_RATE',
+        shippingServices: [{
+          shippingServiceCode: 'DE_DHLPaket',
+          buyerResponsibleForShipping: false,
+          shippingCost: { value: '0.00', currency: 'EUR' },
+        }],
+      }],
+      globalShipping: false,
+      pickupDropOff: false,
+    }),
+  });
+  if (!createRes.ok) {
+    const txt = await createRes.text();
+    console.error(`[eBay] Fulfillment Policy erstellen fehlgeschlagen: ${createRes.status} ${txt}`);
+    // Fallback auf env policy
+    return process.env.EBAY_FULFILLMENT_POLICY_ID ?? '276306574014';
+  }
+  const created = await createRes.json() as { fulfillmentPolicyId: string };
+  console.log(`[eBay] Neue Fulfillment Policy erstellt: ${created.fulfillmentPolicyId} (${days} Tage)`);
+  return created.fulfillmentPolicyId;
+}
+
 // ─── Inventory Item erstellen ──────────────────────────────────────────────────
 
 export interface VariantGroup {
@@ -172,6 +225,7 @@ export interface EbayListingInput {
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
   adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
+  handlingTimeDays?: number; // Bearbeitungszeit in Tagen (Standard: 10)
   gpsr?: {         // EU Produktsicherheit — aus DB; wenn undefined → Stele-Fallback
     name: string;
     address: string;
@@ -501,6 +555,10 @@ export async function deleteExistingOffers(sku: string): Promise<void> {
 export async function createOffer(input: EbayListingInput): Promise<string> {
   const token = await getAccessToken();
   const policies = await getBusinessPolicies();
+  // Wenn handlingTimeDays explizit gesetzt → eigene Policy verwenden
+  const fulfillmentPolicyId = input.handlingTimeDays != null
+    ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
+    : policies.fulfillmentPolicyId;
   const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
@@ -521,7 +579,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
     },
     merchantLocationKey: 'default',
     listingPolicies: {
-      fulfillmentPolicyId: policies.fulfillmentPolicyId,
+      fulfillmentPolicyId: fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
     },
@@ -864,6 +922,10 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Bei Variation Listings: Offer wird pro einzelnem Inventory Item SKU erstellt (NICHT für den Group-Key)
   // eBay verknüpft automatisch alle Offers mit der Group beim publish
   const policies = await getBusinessPolicies();
+  // Wenn handlingTimeDays explizit gesetzt → eigene Policy verwenden
+  const varFulfillmentPolicyId = input.handlingTimeDays != null
+    ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
+    : policies.fulfillmentPolicyId;
 
   const gpsr = buildGpsrBlock(input.gpsr);
 
@@ -892,7 +954,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       },
       merchantLocationKey: 'default',
       listingPolicies: {
-        fulfillmentPolicyId: policies.fulfillmentPolicyId,
+        fulfillmentPolicyId: varFulfillmentPolicyId,
         paymentPolicyId: policies.paymentPolicyId,
         returnPolicyId: policies.returnPolicyId,
       },

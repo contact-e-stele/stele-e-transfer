@@ -970,6 +970,7 @@ const app = new Hono()
         specs,
         mpn,
         adRate: product.adRate ?? 5,
+        handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
       });
 
@@ -1278,6 +1279,7 @@ const app = new Hono()
       if ('gpsrCity'    in body) allowed.gpsrCity    = body.gpsrCity    as string | null;
       if ('gpsrEmail'   in body) allowed.gpsrEmail   = body.gpsrEmail   as string | null;
       if ('gpsrPhone'   in body) allowed.gpsrPhone   = body.gpsrPhone   as string | null;
+      if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
       if (Object.keys(allowed).length === 0) return c.json({ error: 'Keine bekannten Felder' }, 400);
       allowed.updatedAt = new Date().toISOString();
       await db.update(schema.products).set(allowed).where(eq(schema.products.id, id));
@@ -1847,6 +1849,56 @@ REGELN:
     return c.json({ error: String(e) }, 500);
   }
 });
+
+// ─── Vertrauenswürdige Lieferanten ───────────────────────────────────────────
+app.get('/api/trusted-suppliers', async (c) => {
+  try {
+    const { db, schema } = await import('../db/index').then(async m => {
+      const s = await import('../db/schema');
+      return { db: m.db, schema: s };
+    });
+    const suppliers = await db.select().from(schema.trustedSuppliers).orderBy(schema.trustedSuppliers.createdAt);
+    return c.json(suppliers);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post('/api/trusted-suppliers', async (c) => {
+  try {
+    const body = await c.req.json() as { shopName: string; shopUrl: string; aliStoreId?: string; euConfirmed?: boolean };
+    if (!body.shopName || !body.shopUrl) return c.json({ error: 'shopName und shopUrl erforderlich' }, 400);
+    const { db, schema } = await import('../db/index').then(async m => {
+      const s = await import('../db/schema');
+      return { db: m.db, schema: s };
+    });
+    const result = await db.insert(schema.trustedSuppliers).values({
+      shopName: body.shopName,
+      shopUrl: body.shopUrl,
+      aliStoreId: body.aliStoreId ?? null,
+      euConfirmed: body.euConfirmed ?? true,
+    }).returning();
+    return c.json(result[0], 201);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.delete('/api/trusted-suppliers/:id', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => {
+      const s = await import('../db/schema');
+      return { db: m.db, schema: s };
+    });
+    await db.delete(schema.trustedSuppliers).where(eq(schema.trustedSuppliers.id, id));
+    return c.json({ ok: true });
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 
 export type AppType = typeof app;
 export default app;
