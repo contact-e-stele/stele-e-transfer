@@ -1675,18 +1675,26 @@ app.get('/aliexpress/search', async (c) => {
     const antUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(searchUrl)}&x-api-key=${SCRAPINGANT_KEY}&browser=true&proxy_country=DE`;
 
     console.log('[AliSearch] Scraping:', searchUrl);
-    const res = await fetch(antUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(40000),
-    });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error('[AliSearch] ScrapingAnt error:', res.status, errText.slice(0, 200));
-      return c.json({ status: 'api_error', message: `ScrapingAnt ${res.status}`, results: [], total: 0 }, 200);
+    // Retry bei 409 (concurrent limit) — bis 3x mit 4s Pause
+    let res: Response | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      res = await fetch(antUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(50000),
+      });
+      if (res.status !== 409) break;
+      console.log(`[AliSearch] 409 concurrent — Versuch ${attempt}/3, warte 4s...`);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 4000));
     }
 
-    const html = await res.text();
+    if (!res!.ok) {
+      const errText = await res!.text();
+      console.error('[AliSearch] ScrapingAnt error:', res!.status, errText.slice(0, 200));
+      return c.json({ status: 'api_error', message: `ScrapingAnt ${res!.status}`, results: [], total: 0 }, 200);
+    }
+
+    const html = await res!.text();
     console.log(`[AliSearch] Got ${html.length} chars from ScrapingAnt`);
 
     const listIdx = html.indexOf('"itemList":{"content":[');
