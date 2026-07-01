@@ -535,6 +535,10 @@ export default function Produkte() {
   const [previewSaving, setPreviewSaving] = useState(false);
   const [previewSaveMsg, setPreviewSaveMsg] = useState("");
   const [katHelpId, setKatHelpId] = useState<number | null>(null);
+  const [katSearchId, setKatSearchId] = useState<number | null>(null);
+  const [katSearchQuery, setKatSearchQuery] = useState("");
+  const [katSearchLoading, setKatSearchLoading] = useState(false);
+  const [katSearchResults, setKatSearchResults] = useState<Array<{ id: string; name: string; path: string }>>([]);
   const [expandedVariants, setExpandedVariants] = useState<Set<number>>(new Set());
   const [copiedSku, setCopiedSku] = useState<number | null>(null);
 
@@ -1293,7 +1297,109 @@ export default function Produkte() {
                   {product.ebayCategory && (
                     <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓ Manuell</span>
                   )}
+                  {/* Suche-Button */}
+                  <button
+                    onClick={() => {
+                      if (katSearchId === product.id) { setKatSearchId(null); setKatSearchResults([]); return; }
+                      setKatSearchId(product.id);
+                      setKatHelpId(null);
+                      setKatSearchQuery(product.generatedTitle?.slice(0, 30) ?? "");
+                      setKatSearchResults([]);
+                    }}
+                    style={{
+                      fontSize: 10, padding: "3px 8px", borderRadius: 5, cursor: "pointer",
+                      border: "1px solid #C9A227", background: katSearchId === product.id ? "#C9A227" : "#FFF8E7",
+                      color: katSearchId === product.id ? "#fff" : "#92400E", fontWeight: 600,
+                    }}
+                  >🔍 Suchen</button>
                 </div>
+                {/* Kategorie-Suche Popup */}
+                {katSearchId === product.id && (
+                  <div style={{
+                    position: "absolute", top: "100%", left: 0, zIndex: 1000,
+                    background: "#fff", border: "1.5px solid #C9A227", borderRadius: 10,
+                    boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "12px 14px",
+                    width: 360, marginTop: 6,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontWeight: 800, fontSize: 13, color: "#0F172A" }}>🔍 eBay Kategorie suchen</span>
+                      <span onClick={() => { setKatSearchId(null); setKatSearchResults([]); }} style={{ cursor: "pointer", fontSize: 16, color: "#94A3B8" }}>✕</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        value={katSearchQuery}
+                        onChange={e => setKatSearchQuery(e.currentTarget.value)}
+                        onKeyDown={async e => {
+                          if (e.key === 'Enter') {
+                            const q = katSearchQuery.trim();
+                            if (!q) return;
+                            setKatSearchLoading(true);
+                            setKatSearchResults([]);
+                            try {
+                              const res = await fetch(`/api/ebay/categories?q=${encodeURIComponent(q)}`);
+                              const data = await res.json() as { results?: Array<{ id: string; name: string; path: string }> };
+                              setKatSearchResults(data.results ?? []);
+                            } catch { setKatSearchResults([]); }
+                            finally { setKatSearchLoading(false); }
+                          }
+                        }}
+                        placeholder="Suchbegriff eingeben..."
+                        autoFocus
+                        style={{
+                          flex: 1, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                          border: "1px solid #E2E8F0", fontFamily: "inherit",
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          const q = katSearchQuery.trim();
+                          if (!q) return;
+                          setKatSearchLoading(true);
+                          setKatSearchResults([]);
+                          try {
+                            const res = await fetch(`/api/ebay/categories?q=${encodeURIComponent(q)}`);
+                            const data = await res.json() as { results?: Array<{ id: string; name: string; path: string }> };
+                            setKatSearchResults(data.results ?? []);
+                          } catch { setKatSearchResults([]); }
+                          finally { setKatSearchLoading(false); }
+                        }}
+                        style={{ padding: "5px 12px", background: "#C9A227", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                      >{katSearchLoading ? "..." : "Go"}</button>
+                    </div>
+                    {katSearchResults.length > 0 && (
+                      <div style={{ marginTop: 8, maxHeight: 220, overflowY: "auto" }}>
+                        {katSearchResults.map(r => (
+                          <div
+                            key={r.id}
+                            onClick={async () => {
+                              // ID in Feld setzen + speichern
+                              await fetch(`/api/products/${product.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ ebayCategory: r.id }),
+                              });
+                              setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayCategory: r.id } : p));
+                              setKatSearchId(null);
+                              setKatSearchResults([]);
+                            }}
+                            style={{
+                              padding: "7px 8px", borderRadius: 6, cursor: "pointer", marginBottom: 2,
+                              background: "#F8FAFC", border: "1px solid #E2E8F0",
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.background = "#FFF8E7")}
+                            onMouseLeave={e => (e.currentTarget.style.background = "#F8FAFC")}
+                          >
+                            <div style={{ fontWeight: 700, fontSize: 12, color: "#0F172A" }}>{r.name} <span style={{ color: "#C9A227" }}>#{r.id}</span></div>
+                            {r.path && <div style={{ fontSize: 10, color: "#64748B", marginTop: 2 }}>{r.path}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {katSearchResults.length === 0 && !katSearchLoading && katSearchQuery && (
+                      <div style={{ marginTop: 8, fontSize: 11, color: "#94A3B8", textAlign: "center" }}>Enter drücken oder "Go" klicken</div>
+                    )}
+                  </div>
+                )}
                 {/* Kategorie-Hilfe Popup */}
                 {katHelpId === product.id && (
                   <div style={{

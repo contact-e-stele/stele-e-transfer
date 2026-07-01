@@ -1420,6 +1420,39 @@ const app = new Hono()
   })
 
   // ─── Alle Preise aktualisieren (Batch) ───────────────────────────────────────
+  // eBay Kategorie-Suche via Taxonomy API (EBAY_DE tree_id=77)
+  .get('/ebay/categories', async (c) => {
+    const q = c.req.query('q')?.trim();
+    if (!q) return c.json({ error: 'q fehlt' }, 400);
+    try {
+      const { getAccessToken } = await import('./ebay');
+      const token = await getAccessToken();
+      const BASE_URL = process.env.EBAY_SANDBOX === 'true' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+      const res = await fetch(
+        `${BASE_URL}/commerce/taxonomy/v1/category_tree/77/get_category_suggestions?q=${encodeURIComponent(q)}`,
+        { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+      );
+      if (!res.ok) {
+        const txt = await res.text();
+        return c.json({ error: `eBay API ${res.status}`, detail: txt }, 502);
+      }
+      const data = await res.json() as {
+        categorySuggestions?: Array<{
+          category: { categoryId: string; categoryName: string };
+          categoryTreeNodeAncestors?: Array<{ categoryName: string }>;
+        }>;
+      };
+      const results = (data.categorySuggestions ?? []).slice(0, 10).map(s => ({
+        id: s.category.categoryId,
+        name: s.category.categoryName,
+        path: (s.categoryTreeNodeAncestors ?? []).map(a => a.categoryName).reverse().join(' > '),
+      }));
+      return c.json({ results });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
   .get('/ebay/policies', async (c) => {
     try {
       const { getAccessToken } = await import('./ebay');
