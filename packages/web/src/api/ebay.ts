@@ -17,6 +17,33 @@ const AUTH_URL = EBAY_SANDBOX
 // ─── OAuth ────────────────────────────────────────────────────────────────────
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
+let cachedAppToken: { token: string; expiresAt: number } | null = null;
+
+/** App-Token (client_credentials) - fuer Taxonomy API */
+export async function getAppToken(): Promise<string> {
+  if (cachedAppToken && Date.now() < cachedAppToken.expiresAt - 60_000) {
+    return cachedAppToken.token;
+  }
+  const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch(`${BASE_URL}/identity/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${credentials}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      scope: 'https://api.ebay.com/oauth/api_scope',
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`eBay App-Token failed: ${res.status} ${text}`);
+  }
+  const data = await res.json() as { access_token: string; expires_in: number };
+  cachedAppToken = { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return cachedAppToken.token;
+}
 
 export async function getAccessToken(): Promise<string> {
   if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) {

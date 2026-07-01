@@ -1425,8 +1425,8 @@ const app = new Hono()
     const q = c.req.query('q')?.trim();
     if (!q) return c.json({ error: 'q fehlt' }, 400);
     try {
-      const { getAccessToken } = await import('./ebay');
-      const token = await getAccessToken();
+      const { getAppToken } = await import('./ebay');
+      const token = await getAppToken();
       const BASE_URL = process.env.EBAY_SANDBOX === 'true' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
       const res = await fetch(
         `${BASE_URL}/commerce/taxonomy/v1/category_tree/77/get_category_suggestions?q=${encodeURIComponent(q)}`,
