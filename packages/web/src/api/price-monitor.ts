@@ -7,14 +7,16 @@ import { scrapeAliExpressUrl } from './aliexpress';
 import { getAccessToken } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 
-const EBAY_FEE = 0.18;       // 18% eBay Gebühren
-const MIN_GEWINN = 1.60;     // Mindestgewinn €
+const EBAY_FEE = 0.18;           // 18% eBay Gebühren
+const MIN_GEWINN = 1.60;         // Mindestgewinn €
+const CHINA_ZOLL_EUR = 3.00;     // Zollgebühr China-Sendungen ab 01.07.2026 (B2C bis 150€)
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 Stunden
-const ALERT_THRESHOLD = 0.50; // Alert wenn Preisänderung > 0,50€
+const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
 
-function calcSellPrice(buyPrice: number): number {
-  // sellPrice = (buyPrice + MIN_GEWINN) / (1 - EBAY_FEE)
-  return Math.ceil(((buyPrice + MIN_GEWINN) / (1 - EBAY_FEE)) * 100) / 100;
+function calcSellPrice(buyPrice: number, isChina = false): number {
+  // sellPrice = (buyPrice + MIN_GEWINN [+ CHINA_ZOLL]) / (1 - EBAY_FEE)
+  const extra = isChina ? CHINA_ZOLL_EUR : 0;
+  return Math.ceil(((buyPrice + MIN_GEWINN + extra) / (1 - EBAY_FEE)) * 100) / 100;
 }
 
 function parsePrice(raw: string): number {
@@ -187,10 +189,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
       if (!data) { errors++; return; }
 
-      // China-Versand überspringen — NUR wenn eindeutig China bestätigt
-      if (data.shipsFrom?.toLowerCase() === 'china') {
-        console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — übersprungen`);
-        return;
+      // China-Versand: Zollgebühr +3€ addieren (ab 01.07.2026), NICHT überspringen
+      const isChina = data.shipsFrom?.toLowerCase() === 'china';
+      if (isChina) {
+        console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Zollgebühr +${CHINA_ZOLL_EUR}€ wird addiert`);
       }
 
       if (!data.price) { errors++; return; }
@@ -205,7 +207,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       await db.insert(schema.priceHistory).values({ productId: product.id, price: newBuyPrice, source: 'aliexpress' });
 
       if (priceChanged) {
-        const newSellPrice = calcSellPrice(newBuyPrice);
+        const newSellPrice = calcSellPrice(newBuyPrice, isChina);
         const isAlert = priceDiff >= ALERT_THRESHOLD;
         console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}`);
 

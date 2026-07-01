@@ -739,6 +739,7 @@ const app = new Hono()
         variantContents?: Record<string, string>;
         gpsrRaw?: string;
         gpsrHtml?: string;
+        shipsFrom?: string;
       };
 
       // Titel + Beschreibung parallel generieren (schneller)
@@ -768,6 +769,7 @@ const app = new Hono()
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
           gpsrRaw: body.gpsrRaw ?? undefined,
           gpsrHtml: body.gpsrHtml ?? undefined,
+          shipsFrom: body.shipsFrom ?? undefined,
           updatedAt: new Date().toISOString(),
         }).where(eq(schema.products.asin, body.asin));
         return c.json({ id: existing[0].id, updated: true }, 200);
@@ -792,6 +794,7 @@ const app = new Hono()
         variantContents: body.variantContents ? JSON.stringify(body.variantContents) : null,
         gpsrRaw: body.gpsrRaw ?? null,
         gpsrHtml: body.gpsrHtml ?? null,
+        shipsFrom: body.shipsFrom ?? null,
         ebayStatus: 'none',
         aliexpressItemId: (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null,
       }).returning({ id: schema.products.id });
@@ -1522,8 +1525,10 @@ const app = new Hono()
               continue;
             }
             const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
-            // Neuen VK-Preis berechnen: (buyPrice + 1.60€ Mindestgewinn) / (1 - 0.18 eBay-Fee)
-            const newSellPrice = Math.ceil(((newPrice + 1.60) / (1 - 0.18)) * 100) / 100;
+            // Neuen VK-Preis berechnen: (buyPrice + 1.60€ Mindestgewinn [+ 3€ China-Zoll]) / (1 - 0.18 eBay-Fee)
+            const isChina = (product.shipsFrom ?? '').toLowerCase() === 'china';
+            const chinaZoll = isChina ? 3.00 : 0;
+            const newSellPrice = Math.ceil(((newPrice + 1.60 + chinaZoll) / (1 - 0.18)) * 100) / 100;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             await db.update(schema.products).set({
               buyPrice: newPrice,

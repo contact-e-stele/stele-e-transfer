@@ -39,6 +39,7 @@ export const products = sqliteTable('products', {
   gpsrEmail: text('gpsr_email'),             // E-Mail
   gpsrPhone: text('gpsr_phone'),             // Telefon
   handlingTimeDays: integer('handling_time_days').default(10), // Bearbeitungszeit in Tagen (eBay Fulfillment Policy)
+  shipsFrom: text('ships_from'),       // Versandland (z.B. 'DE', 'China') — gesetzt beim AliExpress Import
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

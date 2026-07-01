@@ -50,6 +50,8 @@ const migrations = [
   )`,
   // Bearbeitungszeit pro Produkt (eBay Fulfillment Policy)
   `ALTER TABLE products ADD COLUMN handling_time_days INTEGER DEFAULT 10`,
+  // Versandland — gesetzt beim AliExpress Import (ab 01.07.2026 relevant für China-Zoll)
+  `ALTER TABLE products ADD COLUMN ships_from TEXT`,
   // Vertrauenswürdige Lieferanten (EU-bestätigte AliExpress Shops)
   `CREATE TABLE IF NOT EXISTS trusted_suppliers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

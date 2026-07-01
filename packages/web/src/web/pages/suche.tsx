@@ -76,7 +76,7 @@ interface SearchResponse {
 export default function Suche() {
   const [, setLocation] = useLocation();
   const [query, setQuery] = useState("");
-  const [shipFrom, setShipFrom] = useState("ALL");
+  const [shipFrom, setShipFrom] = useState("DE");
   const [sort, setSort] = useState("LAST_VOLUME_DESC");
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<SearchResponse | null>(null);
