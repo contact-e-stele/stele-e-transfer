@@ -724,17 +724,26 @@ export default function Produkte() {
       {previewProduct && (() => {
         // Live-Vorschau: HTML aus aktuellen Edit-Feldern neu bauen
         const liveBullets = editPreviewBullets.split("\n").map(s => s.trim()).filter(Boolean);
+        // Nur VariantGroup-Objekte (mit name/values) weitergeben — reine Strings (Amazon-Format) ignorieren
+        const safeVariants: EbayScrapedProduct["variants"] = Array.isArray(previewProduct.variants)
+          ? (previewProduct.variants as any[]).filter(v => v && typeof v === 'object' && typeof v.name === 'string') as EbayScrapedProduct["variants"]
+          : undefined;
         const liveProduct: EbayScrapedProduct = {
           title: editPreviewTitle,
           bullets: liveBullets,
-          variants: Array.isArray(previewProduct.variants) ? (previewProduct.variants as EbayScrapedProduct["variants"]) : undefined,
+          variants: safeVariants,
           skuVariants: (() => {
             try { const vp = previewProduct.variantPrices ? JSON.parse(previewProduct.variantPrices) : null; return Array.isArray(vp) ? vp : undefined; } catch { return undefined; }
           })(),
           setContents: previewProduct.variantContents ?? undefined,
           gpsrRaw: previewProduct.gpsrRaw ?? undefined,
         };
-        const liveHtml = buildEbayHTMLLight(liveProduct);
+        let liveHtml = "";
+        try {
+          liveHtml = buildEbayHTMLLight(liveProduct);
+        } catch (err) {
+          liveHtml = '<p style="color:red;font-size:13px;">Vorschau-Fehler: ' + String(err) + '</p>';
+        }
 
         const handleSave = async () => {
           setPreviewSaving(true);
