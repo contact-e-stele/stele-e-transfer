@@ -733,7 +733,20 @@ export default function Produkte() {
           bullets: liveBullets,
           variants: safeVariants,
           skuVariants: (() => {
-            try { const vp = previewProduct.variantPrices ? JSON.parse(previewProduct.variantPrices) : null; return Array.isArray(vp) ? vp : undefined; } catch { return undefined; }
+            try {
+              const vp = previewProduct.variantPrices ? JSON.parse(previewProduct.variantPrices) : null;
+              if (!Array.isArray(vp)) return undefined;
+              // AliExpress-Rohdaten haben kein "name" (nur skuId + attrs) — Name aus attrs zusammenbauen
+              return vp.map((v: any) => ({
+                name: typeof v.name === 'string' && v.name
+                  ? v.name
+                  : (v.attrs && typeof v.attrs === 'object'
+                      ? Object.values(v.attrs).filter(Boolean).join(' / ')
+                      : String(v.skuId ?? 'Variante')),
+                price: typeof v.ebayPrice === 'number' ? v.ebayPrice : (typeof v.price === 'number' ? v.price : 0),
+                imageUrl: v.imageUrl,
+              })).filter((v: any) => v.name);
+            } catch { return undefined; }
           })(),
           setContents: previewProduct.variantContents ?? undefined,
           gpsrRaw: previewProduct.gpsrRaw ?? undefined,
