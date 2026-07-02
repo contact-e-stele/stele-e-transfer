@@ -5,8 +5,9 @@ import { useState, useEffect, useCallback } from "react";
 import {
   ShoppingCart, RefreshCw, Loader, CheckCircle, XCircle,
   ExternalLink, Package, TrendingUp, StopCircle, Link2, Link2Off,
-  Search, Filter, Edit2, Check, X, Calendar, Clock, Tag,
+  Search, Filter, Edit2, Check, X, Calendar, Clock, Tag, FileEdit, CheckSquare, Square,
 } from "lucide-react";
+import { buildEbayHTMLLight } from "../lib/ebay-description";
 
 interface EbayListing {
   itemId: string;
@@ -115,6 +116,31 @@ export default function Listings() {
   const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc" | "sku_asc">("default");
   const [expiryFilter, setExpiryFilter] = useState<"all" | "3days" | "7days" | "30days">("all");
 
+  // ─── Bearbeiten-Modal (Titel + Beschreibung, live auf eBay) ───────────────
+  const [editListing, setEditListing] = useState<EbayListing | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBullets, setEditBullets] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editSaveMsg, setEditSaveMsg] = useState("");
+
+  // ─── Mehrfachauswahl + Massenaktionen ──────────────────────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<null | "price" | "adrate" | "category" | "end">(null);
+  const [bulkPriceMode, setBulkPriceMode] = useState<"percent" | "fixed" | "set">("percent");
+  const [bulkPriceValue, setBulkPriceValue] = useState("");
+  const [bulkAdRate, setBulkAdRate] = useState(5);
+  const [bulkCategoryId, setBulkCategoryId] = useState("");
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkResults, setBulkResults] = useState<Array<{ itemId: string; ok: boolean; error?: string; oldPrice?: number; newPrice?: number }>>([]);
+
+  const toggleSelect = (itemId: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId); else next.add(itemId);
+      return next;
+    });
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -201,6 +227,90 @@ export default function Listings() {
     }
   };
 
+  // ─── Bearbeiten-Modal öffnen/speichern ─────────────────────────────────────
+  const openEdit = (listing: EbayListing) => {
+    setEditListing(listing);
+    setEditTitle(listing.appProduct?.generatedTitle || listing.title);
+    setEditBullets("");
+    setEditSaveMsg("");
+  };
+
+  const handleEditSave = async () => {
+    if (!editListing) return;
+    setEditSaving(true);
+    setEditSaveMsg("");
+    try {
+      const bullets = editBullets.split("\n").map(s => s.trim()).filter(Boolean);
+      const html = bullets.length > 0
+        ? buildEbayHTMLLight({ title: editTitle, bullets })
+        : undefined;
+      const res = await fetch(`/api/ebay/listings/${editListing.itemId}/content`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: editTitle, ...(html ? { htmlDescription: html } : {}) }),
+      });
+      const data = await res.json() as { ok?: boolean; error?: string };
+      if (data.ok) {
+        setListings(prev => prev.map(l => l.itemId === editListing.itemId ? { ...l, title: editTitle } : l));
+        setEditSaveMsg("✓ Auf eBay aktualisiert");
+      } else {
+        setEditSaveMsg("✗ Fehler: " + (data.error ?? "unbekannt"));
+      }
+    } catch (e) {
+      setEditSaveMsg("✗ Fehler: " + String(e));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // ─── Massenaktionen ausführen ──────────────────────────────────────────────
+  const runBulk = async (endpoint: string, body: Record<string, unknown>) => {
+    setBulkRunning(true);
+    setBulkResults([]);
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemIds: Array.from(selected), ...body }),
+      });
+      const data = await res.json() as { results?: Array<{ itemId: string; ok: boolean; error?: string; oldPrice?: number; newPrice?: number }>; error?: string };
+      if (data.results) {
+        setBulkResults(data.results);
+        // Erfolgreiche Beendigungen aus Liste entfernen
+        if (endpoint.endsWith("/end")) {
+          const endedIds = new Set(data.results.filter(r => r.ok).map(r => r.itemId));
+          setListings(prev => prev.filter(l => !endedIds.has(l.itemId)));
+        }
+        // Erfolgreiche Preisänderungen live in Liste übernehmen
+        if (endpoint.endsWith("/price")) {
+          const priceMap = new Map(data.results.filter(r => r.ok && r.newPrice).map(r => [r.itemId, r.newPrice!]));
+          setListings(prev => prev.map(l => priceMap.has(l.itemId) ? { ...l, currentPrice: priceMap.get(l.itemId)! } : l));
+        }
+      } else {
+        alert(data.error ?? "Fehler bei Massenaktion");
+      }
+    } catch (e) {
+      alert("Fehler: " + String(e));
+    } finally {
+      setBulkRunning(false);
+    }
+  };
+
+  const handleBulkEnd = () => {
+    if (!confirm(`${selected.size} Listings wirklich beenden?`)) return;
+    runBulk("/api/ebay/listings/bulk/end", {});
+  };
+  const handleBulkAdRate = () => runBulk("/api/ebay/listings/bulk/adrate", { ratePercent: bulkAdRate });
+  const handleBulkCategory = () => {
+    if (!bulkCategoryId.trim()) return;
+    runBulk("/api/ebay/listings/bulk/category", { categoryId: bulkCategoryId.trim() });
+  };
+  const handleBulkPrice = () => {
+    const value = parseFloat(bulkPriceValue.replace(",", "."));
+    if (isNaN(value)) return;
+    runBulk("/api/ebay/listings/bulk/price", { mode: bulkPriceMode, value });
+  };
+
   // Filter + Suche
   const filtered = listings
     .filter(l => {
@@ -242,6 +352,61 @@ export default function Listings() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F8FAFC", fontFamily: "'Poppins', sans-serif", padding: "24px 16px" }}>
+      {/* Bearbeiten-Modal — Titel + Bullets, sofort live auf eBay */}
+      {editListing && (() => {
+        const bullets = editBullets.split("\n").map(s => s.trim()).filter(Boolean);
+        let liveHtml = "";
+        try { liveHtml = bullets.length > 0 ? buildEbayHTMLLight({ title: editTitle, bullets }) : ""; } catch { /* ignore */ }
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setEditListing(null)}>
+            <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 780, maxHeight: "90vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #E2E8F0", position: "sticky", top: 0, background: "#fff", zIndex: 10 }}>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Listing bearbeiten — live auf eBay</span>
+                <button onClick={() => setEditListing(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" }}>
+                  <X size={18} color="#94A3B8" />
+                </button>
+              </div>
+              <div style={{ padding: "16px 20px" }}>
+                <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 12 }}>Item-ID: {editListing.itemId}{editListing.sku ? ` · SKU: ${editListing.sku}` : ""}</div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>EBAY TITEL (max. 80 Zeichen)</label>
+                  <input value={editTitle} onChange={e => setEditTitle(e.target.value)} maxLength={80} style={{
+                    width: "100%", padding: "8px 10px", borderRadius: 8, border: "1.5px solid #CBD5E1",
+                    fontSize: 13, fontFamily: "inherit", color: "#0F172A", background: "#fff", boxSizing: "border-box",
+                  }} />
+                  <div style={{ fontSize: 10, color: editTitle.length > 75 ? "#DC2626" : "#94A3B8", textAlign: "right", marginTop: 2 }}>{editTitle.length}/80</div>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>BULLET-POINTS (eine pro Zeile — leer lassen, um Beschreibung unverändert zu lassen)</label>
+                  <textarea value={editBullets} onChange={e => setEditBullets(e.target.value)} rows={6} style={{
+                    width: "100%", padding: "8px 10px", borderRadius: 8, border: "1.5px solid #CBD5E1",
+                    fontSize: 12, fontFamily: "inherit", color: "#0F172A", background: "#fff", resize: "vertical", boxSizing: "border-box", lineHeight: 1.6,
+                  }} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                  <button onClick={handleEditSave} disabled={editSaving} style={{
+                    padding: "8px 20px", borderRadius: 8, background: "#16A34A", color: "#fff",
+                    fontSize: 13, fontWeight: 700, border: "none", cursor: editSaving ? "wait" : "pointer",
+                    fontFamily: "inherit", opacity: editSaving ? 0.7 : 1,
+                  }}>
+                    {editSaving ? "Speichert…" : "Auf eBay speichern"}
+                  </button>
+                  {editSaveMsg && (
+                    <span style={{ fontSize: 12, color: editSaveMsg.startsWith("✓") ? "#16A34A" : "#DC2626", fontWeight: 600 }}>{editSaveMsg}</span>
+                  )}
+                </div>
+                {liveHtml && (
+                  <div>
+                    <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 8 }}>Live-Vorschau (Beschreibung wird bei Speichern übernommen):</div>
+                    <div dangerouslySetInnerHTML={{ __html: liveHtml }} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div style={{ maxWidth: 780, margin: "0 auto" }}>
 
         {/* Header */}
@@ -397,6 +562,134 @@ export default function Listings() {
           </div>
         )}
 
+        {/* Mehrfachauswahl-Leiste */}
+        {!loading && filtered.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <button
+              onClick={() => {
+                const allIds = filtered.map(l => l.itemId);
+                const allSelected = allIds.every(id => selected.has(id));
+                setSelected(allSelected ? new Set() : new Set(allIds));
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#475569", fontFamily: "inherit" }}
+            >
+              {filtered.length > 0 && filtered.every(l => selected.has(l.itemId))
+                ? <CheckSquare size={15} color="#6366F1" />
+                : <Square size={15} color="#94A3B8" />}
+              {selected.size > 0 ? `${selected.size} ausgewählt` : "Alle auswählen"}
+            </button>
+            {selected.size > 0 && (
+              <button onClick={() => setSelected(new Set())} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#DC2626", fontFamily: "inherit", fontWeight: 600 }}>
+                ✕ Auswahl aufheben
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Bulk-Aktionsleiste */}
+        {selected.size > 0 && (
+          <div style={{ background: "#EEF2FF", border: "1.5px solid #C7D2FE", borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: bulkAction ? 10 : 0 }}>
+              {([
+                ["end", "Beenden"],
+                ["adrate", "Anzeige-Rate"],
+                ["category", "Kategorie"],
+                ["price", "Preis"],
+              ] as [typeof bulkAction, string][]).map(([val, label]) => (
+                <button key={val} onClick={() => { setBulkAction(bulkAction === val ? null : val); setBulkResults([]); }} style={{
+                  padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  border: "1.5px solid " + (bulkAction === val ? "#6366F1" : "#C7D2FE"),
+                  background: bulkAction === val ? "#6366F1" : "#fff",
+                  color: bulkAction === val ? "#fff" : "#4338CA",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>{label}</button>
+              ))}
+            </div>
+
+            {bulkAction === "end" && (
+              <button onClick={handleBulkEnd} disabled={bulkRunning} style={{
+                padding: "8px 16px", borderRadius: 8, border: "none", background: "#DC2626", color: "#fff",
+                fontSize: 12, fontWeight: 700, cursor: bulkRunning ? "not-allowed" : "pointer", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                {bulkRunning && <Loader size={12} style={{ animation: "spin 1s linear infinite" }} />}
+                {selected.size} Listings jetzt beenden
+              </button>
+            )}
+
+            {bulkAction === "adrate" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <select value={bulkAdRate} onChange={e => setBulkAdRate(parseFloat(e.target.value))} style={{
+                  padding: "7px 10px", fontSize: 12, border: "1.5px solid #C7D2FE", borderRadius: 8, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0F172A",
+                }}>
+                  {[2, 3, 5, 8, 10].map(r => <option key={r} value={r}>{r}%</option>)}
+                </select>
+                <button onClick={handleBulkAdRate} disabled={bulkRunning} style={{
+                  padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366F1", color: "#fff",
+                  fontSize: 12, fontWeight: 700, cursor: bulkRunning ? "not-allowed" : "pointer", fontFamily: "inherit",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  {bulkRunning && <Loader size={12} style={{ animation: "spin 1s linear infinite" }} />}
+                  Für {selected.size} Listings setzen
+                </button>
+              </div>
+            )}
+
+            {bulkAction === "category" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input value={bulkCategoryId} onChange={e => setBulkCategoryId(e.target.value)} placeholder="eBay Kat-ID (z.B. 79720)" style={{
+                  padding: "7px 10px", fontSize: 12, border: "1.5px solid #C7D2FE", borderRadius: 8, outline: "none", fontFamily: "inherit", width: 180,
+                }} />
+                <button onClick={handleBulkCategory} disabled={bulkRunning || !bulkCategoryId.trim()} style={{
+                  padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366F1", color: "#fff",
+                  fontSize: 12, fontWeight: 700, cursor: (bulkRunning || !bulkCategoryId.trim()) ? "not-allowed" : "pointer", fontFamily: "inherit",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  {bulkRunning && <Loader size={12} style={{ animation: "spin 1s linear infinite" }} />}
+                  Für {selected.size} Listings setzen
+                </button>
+              </div>
+            )}
+
+            {bulkAction === "price" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <select value={bulkPriceMode} onChange={e => setBulkPriceMode(e.target.value as typeof bulkPriceMode)} style={{
+                  padding: "7px 10px", fontSize: 12, border: "1.5px solid #C7D2FE", borderRadius: 8, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0F172A",
+                }}>
+                  <option value="percent">Prozent ändern (+/-)</option>
+                  <option value="fixed">Betrag ändern (+/- €)</option>
+                  <option value="set">Fest auf Betrag setzen (€)</option>
+                </select>
+                <input value={bulkPriceValue} onChange={e => setBulkPriceValue(e.target.value)} placeholder={bulkPriceMode === "percent" ? "z.B. -10 oder 5" : "z.B. -1.50 oder 9.99"} style={{
+                  padding: "7px 10px", fontSize: 12, border: "1.5px solid #C7D2FE", borderRadius: 8, outline: "none", fontFamily: "inherit", width: 160,
+                }} />
+                <button onClick={handleBulkPrice} disabled={bulkRunning || !bulkPriceValue.trim()} style={{
+                  padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366F1", color: "#fff",
+                  fontSize: 12, fontWeight: 700, cursor: (bulkRunning || !bulkPriceValue.trim()) ? "not-allowed" : "pointer", fontFamily: "inherit",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  {bulkRunning && <Loader size={12} style={{ animation: "spin 1s linear infinite" }} />}
+                  Für {selected.size} Listings anwenden
+                </button>
+              </div>
+            )}
+
+            {bulkResults.length > 0 && (
+              <div style={{ marginTop: 10, maxHeight: 160, overflow: "auto", background: "#fff", borderRadius: 8, padding: 8 }}>
+                {bulkResults.map(r => (
+                  <div key={r.itemId} style={{ fontSize: 11, padding: "3px 0", color: r.ok ? "#16A34A" : "#DC2626", display: "flex", gap: 6 }}>
+                    {r.ok ? <CheckCircle size={11} /> : <XCircle size={11} />}
+                    {r.itemId}{r.ok && r.newPrice ? ` — ${r.oldPrice?.toFixed(2)}€ → ${r.newPrice.toFixed(2)}€` : ""}{!r.ok && r.error ? `: ${r.error}` : ""}
+                  </div>
+                ))}
+                <div style={{ fontSize: 11, fontWeight: 700, marginTop: 6, color: "#475569" }}>
+                  {bulkResults.filter(r => r.ok).length}/{bulkResults.length} erfolgreich
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {error && (
           <div style={{ background: "#FEF2F2", borderRadius: 12, padding: "14px 18px", marginBottom: 16, color: "#DC2626", fontSize: 13, fontWeight: 600 }}>
             ✗ {error}
@@ -426,6 +719,11 @@ export default function Listings() {
               borderLeft: `4px solid ${isLinked ? "#22C55E" : "#F59E0B"}`,
             }}>
               <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                {/* Checkbox */}
+                <button onClick={() => toggleSelect(listing.itemId)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2, flexShrink: 0 }}>
+                  {selected.has(listing.itemId) ? <CheckSquare size={18} color="#6366F1" /> : <Square size={18} color="#CBD5E1" />}
+                </button>
+
                 {/* Bild */}
                 {listing.imageUrl ? (
                   <img src={listing.imageUrl} alt="" style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
@@ -594,6 +892,19 @@ export default function Listings() {
                   }}>
                     <ExternalLink size={10} /> eBay
                   </a>
+                  <button
+                    onClick={() => openEdit(listing)}
+                    title="Titel & Beschreibung bearbeiten"
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8,
+                      background: "#EEF2FF", border: "1.5px solid #C7D2FE",
+                      color: "#4338CA", fontSize: 11, fontWeight: 700,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    <FileEdit size={10} /> Bearb.
+                  </button>
                   <button
                     onClick={() => handleEnd(listing.itemId)}
                     disabled={endingId === listing.itemId}

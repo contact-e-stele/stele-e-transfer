@@ -772,7 +772,27 @@ export default function Produkte() {
             const updated = { ...previewProduct, generatedTitle: editPreviewTitle, bullets: liveBullets, htmlDescription: liveHtml };
             setPreviewProduct(updated);
             setProducts(prev => prev.map(p => p.id === previewProduct.id ? updated : p));
-            setPreviewSaveMsg("✓ Gespeichert");
+
+            // Wenn Produkt bereits auf eBay gelistet ist: Titel + Beschreibung sofort live pushen
+            if (previewProduct.ebayListingId) {
+              try {
+                const ebayRes = await fetch(`/api/ebay/listings/${previewProduct.ebayListingId}/content`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ title: editPreviewTitle, htmlDescription: liveHtml }),
+                });
+                const ebayData = await ebayRes.json() as { ok?: boolean; error?: string };
+                if (ebayData.ok) {
+                  setPreviewSaveMsg("✓ Gespeichert & auf eBay aktualisiert");
+                } else {
+                  setPreviewSaveMsg("✓ In DB gespeichert — eBay-Push fehlgeschlagen: " + (ebayData.error ?? "unbekannt"));
+                }
+              } catch (ebayErr) {
+                setPreviewSaveMsg("✓ In DB gespeichert — eBay-Push fehlgeschlagen: " + String(ebayErr));
+              }
+            } else {
+              setPreviewSaveMsg("✓ Gespeichert");
+            }
           } catch (e) {
             setPreviewSaveMsg("Fehler: " + String(e));
           } finally {
