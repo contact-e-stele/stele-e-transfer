@@ -11,6 +11,7 @@ import {
 interface EbayListing {
   itemId: string;
   title: string;
+  sku: string | null;
   currentPrice: number;
   currency: string;
   quantity: number;
@@ -111,7 +112,7 @@ export default function Listings() {
   const [maxSold, setMaxSold] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc">("default");
+  const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc" | "sku_asc">("default");
   const [expiryFilter, setExpiryFilter] = useState<"all" | "3days" | "7days" | "30days">("all");
 
   const load = useCallback(async () => {
@@ -207,7 +208,7 @@ export default function Listings() {
       if (filter === "unlinked" && l.appProduct) return false;
       if (search) {
         const q = search.toLowerCase();
-        if (!l.title.toLowerCase().includes(q) && !l.itemId.includes(q)) return false;
+        if (!l.title.toLowerCase().includes(q) && !l.itemId.includes(q) && !(l.sku ?? "").toLowerCase().includes(q)) return false;
       }
       if (minSold !== "" && l.quantitySold < parseInt(minSold)) return false;
       if (maxSold !== "" && l.quantitySold > parseInt(maxSold)) return false;
@@ -232,6 +233,7 @@ export default function Listings() {
         const db_ = b.endTime ? new Date(b.endTime).getTime() : Infinity;
         return da - db_;
       }
+      if (sortBy === "sku_asc") return (a.sku ?? "").localeCompare(b.sku ?? "");
       return 0;
     });
 
@@ -287,7 +289,7 @@ export default function Listings() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Titel oder Item-ID suchen…"
+              placeholder="Titel, Item-ID oder SKU suchen…"
               style={{
                 width: "100%", padding: "10px 12px 10px 34px", fontSize: 13,
                 border: "1.5px solid #E2E8F0", borderRadius: 10, outline: "none",
@@ -368,6 +370,7 @@ export default function Listings() {
                   ["price_desc", "Preis ↓"],
                   ["price_asc", "Preis ↑"],
                   ["end_asc", "Läuft bald ab"],
+                  ["sku_asc", "Nach SKU"],
                 ] as [string, string][]).map(([val, label]) => (
                   <button key={val} onClick={() => setSortBy(val as typeof sortBy)} style={{
                     padding: "5px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600,
@@ -567,8 +570,11 @@ export default function Listings() {
                     );
                   })()}
 
-                  {/* Item ID */}
-                  <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 4 }}>ID: {listing.itemId}</div>
+                  {/* Item ID + SKU */}
+                  <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 4 }}>
+                    ID: {listing.itemId}
+                    {listing.sku && <span style={{ marginLeft: 10 }}>SKU: <span style={{ color: "#94A3B8", fontWeight: 600 }}>{listing.sku}</span></span>}
+                  </div>
 
                   {/* Preis-Ergebnis */}
                   {pRes?.ok && (

@@ -1169,6 +1169,7 @@ export async function getPoliciesInfo(): Promise<PolicyCache> {
 export interface EbaySellerListing {
   itemId: string;
   title: string;
+  sku: string | null;
   currentPrice: number;
   currency: string;
   quantity: number;
@@ -1178,6 +1179,115 @@ export interface EbaySellerListing {
   listingType: string;
   startTime: string;
   endTime: string;
+}
+
+// ─── Listing Titel/Beschreibung live auf eBay ändern (ReviseItem Trading API) ──
+// Wird sowohl vom Listings-Tab als auch vom Produkte-Tab genutzt (gemeinsame Sync-Funktion)
+export async function reviseListingContent(itemId: string, input: { title?: string; htmlDescription?: string }): Promise<{ ok: boolean; error?: string }> {
+  const token = await getAccessToken();
+  const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const titleXml = input.title ? `<Title>${escapeXml(input.title.slice(0, 80))}</Title>` : '';
+  const descXml = input.htmlDescription !== undefined
+    ? `<Description><![CDATA[${input.htmlDescription}]]></Description>`
+    : '';
+
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <Item>
+    <ItemID>${itemId}</ItemID>
+    ${titleXml}
+    ${descXml}
+  </Item>
+</ReviseFixedPriceItemRequest>`;
+
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'ReviseFixedPriceItem',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+  });
+
+  const text = await res.text();
+  const hasError = text.includes('<Ack>Failure</Ack>');
+  if (hasError) {
+    const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Unbekannter Fehler bei ReviseFixedPriceItem';
+    console.error('[eBay ReviseFixedPriceItem]', errMsg, text.slice(0, 400));
+    return { ok: false, error: errMsg };
+  }
+  return { ok: true };
+}
+
+// ─── Anzeige-Rate (Werbekosten) live setzen ────────────────────────────────────
+export async function setAdRate(itemId: string, ratePercent: number): Promise<{ ok: boolean; error?: string }> {
+  const token = await getAccessToken();
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <Item>
+    <ItemID>${itemId}</ItemID>
+    <AdvancedMarketing>
+      <BidPercentage>${ratePercent}</BidPercentage>
+    </AdvancedMarketing>
+  </Item>
+</ReviseFixedPriceItemRequest>`;
+
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'ReviseFixedPriceItem',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+  });
+  const text = await res.text();
+  const hasError = text.includes('<Ack>Failure</Ack>');
+  if (hasError) {
+    const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler bei Anzeige-Rate';
+    return { ok: false, error: errMsg };
+  }
+  return { ok: true };
+}
+
+// ─── Kategorie live ändern ─────────────────────────────────────────────────────
+export async function reviseCategory(itemId: string, categoryId: string): Promise<{ ok: boolean; error?: string }> {
+  const token = await getAccessToken();
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <Item>
+    <ItemID>${itemId}</ItemID>
+    <PrimaryCategory><CategoryID>${categoryId}</CategoryID></PrimaryCategory>
+  </Item>
+</ReviseFixedPriceItemRequest>`;
+
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'ReviseFixedPriceItem',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+  });
+  const text = await res.text();
+  const hasError = text.includes('<Ack>Failure</Ack>');
+  if (hasError) {
+    const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler bei Kategorie-Änderung';
+    return { ok: false, error: errMsg };
+  }
+  return { ok: true };
 }
 
 export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
@@ -1202,6 +1312,7 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   <GranularityLevel>Fine</GranularityLevel>
   <OutputSelector>ItemID</OutputSelector>
   <OutputSelector>Title</OutputSelector>
+  <OutputSelector>SKU</OutputSelector>
   <OutputSelector>SellingStatus</OutputSelector>
   <OutputSelector>Quantity</OutputSelector>
   <OutputSelector>QuantitySold</OutputSelector>
@@ -1236,6 +1347,7 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
 
       const itemId = get('ItemID');
       const title = get('Title');
+      const sku = get('SKU') || null;
       const price = parseFloat(get('CurrentPrice') || get('StartPrice') || '0');
       const currency = item.match(/currencyID="([^"]+)"/)?.[1] ?? 'EUR';
       const quantity = parseInt(get('Quantity') || '0');
@@ -1247,7 +1359,7 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
       const endTime = get('EndTime') || '';
 
       if (itemId) {
-        results.push({ itemId, title, currentPrice: price, currency, quantity, quantitySold, imageUrl, viewItemUrl, listingType, startTime, endTime });
+        results.push({ itemId, title, sku, currentPrice: price, currency, quantity, quantitySold, imageUrl, viewItemUrl, listingType, startTime, endTime });
         count++;
       }
     }

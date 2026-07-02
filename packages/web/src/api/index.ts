@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
@@ -638,6 +638,189 @@ const app = new Hono()
         return c.json({ warning: errMsg }, 200);
       }
       return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── eBay Listing Titel/Beschreibung live ändern (Sync-Funktion, von Listings- UND Produkte-Tab genutzt) ──
+  .patch('/ebay/listings/:itemId/content', async (c) => {
+    const itemId = c.req.param('itemId');
+    try {
+      const body = await c.req.json() as { title?: string; htmlDescription?: string };
+      if (body.title === undefined && body.htmlDescription === undefined) {
+        return c.json({ error: 'title oder htmlDescription erforderlich' }, 400);
+      }
+      const result = await reviseListingContent(itemId, body);
+      if (!result.ok) return c.json({ error: result.error }, 400);
+
+      // DB auch aktualisieren wenn Produkt verknüpft
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const dbProduct = await db.select().from(schema.products)
+        .where(eq(schema.products.ebayListingId, itemId)).get();
+      if (dbProduct) {
+        const update: Partial<typeof schema.products.$inferInsert> = { updatedAt: new Date().toISOString() };
+        if (body.title !== undefined) update.generatedTitle = body.title;
+        if (body.htmlDescription !== undefined) update.htmlDescription = body.htmlDescription;
+        await db.update(schema.products).set(update).where(eq(schema.products.ebayListingId, itemId));
+      }
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Massenaktionen: Preis / Beenden / Anzeige-Rate / Kategorie für mehrere Listings ──
+  .post('/ebay/listings/bulk/price', async (c) => {
+    try {
+      const body = await c.req.json() as { itemIds: string[]; mode: 'percent' | 'fixed' | 'set'; value: number };
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const token = await (await import('./ebay')).getAccessToken();
+      const results: Array<{ itemId: string; ok: boolean; oldPrice?: number; newPrice?: number; error?: string }> = [];
+      const listings = await getAllSellerListings();
+      const byId = new Map(listings.map(l => [l.itemId, l]));
+
+      for (const itemId of body.itemIds) {
+        const listing = byId.get(itemId);
+        if (!listing) { results.push({ itemId, ok: false, error: 'Listing nicht gefunden' }); continue; }
+        let newPrice = listing.currentPrice;
+        if (body.mode === 'percent') newPrice = listing.currentPrice * (1 + body.value / 100);
+        else if (body.mode === 'fixed') newPrice = listing.currentPrice + body.value;
+        else if (body.mode === 'set') newPrice = body.value;
+        newPrice = Math.max(0.01, Math.round(newPrice * 100) / 100);
+
+        try {
+          const xml = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <InventoryStatus>
+    <ItemID>${itemId}</ItemID>
+    <StartPrice>${newPrice.toFixed(2)}</StartPrice>
+  </InventoryStatus>
+</ReviseInventoryStatusRequest>`;
+          const res = await fetch('https://api.ebay.com/ws/api.dll', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/xml',
+              'X-EBAY-API-SITEID': '77',
+              'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+              'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus',
+              'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
+            },
+            body: xml,
+          });
+          const text = await res.text();
+          if (text.includes('<Ack>Failure</Ack>')) {
+            const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
+            results.push({ itemId, ok: false, oldPrice: listing.currentPrice, error: errMsg });
+          } else {
+            await db.update(schema.products).set({ sellPrice: newPrice }).where(eq(schema.products.ebayListingId, itemId));
+            results.push({ itemId, ok: true, oldPrice: listing.currentPrice, newPrice });
+          }
+        } catch (e) {
+          results.push({ itemId, ok: false, error: String(e) });
+        }
+        await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
+      }
+      return c.json({ results }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  .post('/ebay/listings/bulk/end', async (c) => {
+    try {
+      const body = await c.req.json() as { itemIds: string[] };
+      const token = await (await import('./ebay')).getAccessToken();
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const results: Array<{ itemId: string; ok: boolean; error?: string }> = [];
+      for (const itemId of body.itemIds) {
+        try {
+          const xml = `<?xml version="1.0" encoding="utf-8"?>
+<EndItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <ItemID>${itemId}</ItemID>
+  <EndingReason>NotAvailable</EndingReason>
+</EndItemRequest>`;
+          const res = await fetch('https://api.ebay.com/ws/api.dll', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/xml',
+              'X-EBAY-API-SITEID': '77',
+              'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+              'X-EBAY-API-CALL-NAME': 'EndItem',
+              'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
+            },
+            body: xml,
+          });
+          const text = await res.text();
+          if (text.includes('<Ack>Failure</Ack>')) {
+            const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
+            results.push({ itemId, ok: false, error: errMsg });
+          } else {
+            await db.update(schema.products).set({ ebayListingId: null, ebayStatus: 'none', ebayError: null })
+              .where(eq(schema.products.ebayListingId, itemId));
+            results.push({ itemId, ok: true });
+          }
+        } catch (e) {
+          results.push({ itemId, ok: false, error: String(e) });
+        }
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return c.json({ results }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  .post('/ebay/listings/bulk/adrate', async (c) => {
+    try {
+      const body = await c.req.json() as { itemIds: string[]; ratePercent: number };
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const results: Array<{ itemId: string; ok: boolean; error?: string }> = [];
+      for (const itemId of body.itemIds) {
+        const r = await setAdRate(itemId, body.ratePercent);
+        if (r.ok) {
+          await db.update(schema.products).set({ adRate: body.ratePercent }).where(eq(schema.products.ebayListingId, itemId));
+        }
+        results.push({ itemId, ok: r.ok, error: r.error });
+        await new Promise(res => setTimeout(res, 400));
+      }
+      return c.json({ results }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  .post('/ebay/listings/bulk/category', async (c) => {
+    try {
+      const body = await c.req.json() as { itemIds: string[]; categoryId: string };
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const results: Array<{ itemId: string; ok: boolean; error?: string }> = [];
+      for (const itemId of body.itemIds) {
+        const r = await reviseCategory(itemId, body.categoryId);
+        if (r.ok) {
+          await db.update(schema.products).set({ ebayCategory: body.categoryId }).where(eq(schema.products.ebayListingId, itemId));
+        }
+        results.push({ itemId, ok: r.ok, error: r.error });
+        await new Promise(res => setTimeout(res, 400));
+      }
+      return c.json({ results }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
