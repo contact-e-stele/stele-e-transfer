@@ -229,6 +229,9 @@ export default function Lieferanten() {
       setTrustedSuppliers(prev => [...prev, newShop]);
       setShopSaved(true);
       setTimeout(() => setShopSaved(false), 3000);
+    } else {
+      const err = await res.text().catch(() => res.statusText);
+      alert('Shop konnte nicht gespeichert werden: ' + err);
     }
   };
 

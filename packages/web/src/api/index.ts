@@ -1916,7 +1916,7 @@ REGELN:
 });
 
 // ─── Vertrauenswürdige Lieferanten ───────────────────────────────────────────
-app.get('/api/trusted-suppliers', async (c) => {
+app.get('/trusted-suppliers', async (c) => {
   try {
     const { db, schema } = await import('../db/index').then(async m => {
       const s = await import('../db/schema');
@@ -1929,7 +1929,7 @@ app.get('/api/trusted-suppliers', async (c) => {
   }
 });
 
-app.post('/api/trusted-suppliers', async (c) => {
+app.post('/trusted-suppliers', async (c) => {
   try {
     const body = await c.req.json() as { shopName: string; shopUrl: string; aliStoreId?: string; euConfirmed?: boolean };
     if (!body.shopName || !body.shopUrl) return c.json({ error: 'shopName und shopUrl erforderlich' }, 400);
@@ -1949,7 +1949,7 @@ app.post('/api/trusted-suppliers', async (c) => {
   }
 });
 
-app.delete('/api/trusted-suppliers/:id', async (c) => {
+app.delete('/trusted-suppliers/:id', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
   try {
