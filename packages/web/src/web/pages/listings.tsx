@@ -141,7 +141,7 @@ export default function Listings() {
     });
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     setError("");
     try {
@@ -149,7 +149,7 @@ export default function Listings() {
       const timeout = setTimeout(() => controller.abort(), 120000); // 2 Min Timeout
       let res: Response;
       try {
-        res = await fetch("/api/ebay/listings", { signal: controller.signal });
+        res = await fetch(`/api/ebay/listings${forceRefresh ? "?refresh=1" : ""}`, { signal: controller.signal });
       } finally {
         clearTimeout(timeout);
       }
@@ -420,7 +420,7 @@ export default function Listings() {
               <p style={{ fontSize: 12, color: "#64748B", margin: 0 }}>{listings.length} Listings · {linked} verknüpft · {unlinked} nicht verknüpft</p>
             </div>
           </div>
-          <button onClick={load} disabled={loading} style={{
+          <button onClick={() => load(true)} disabled={loading} style={{
             display: "flex", alignItems: "center", gap: 6,
             background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 10,
             padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#475569",

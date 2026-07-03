@@ -35,6 +35,7 @@ interface Product {
   title: string;
   generatedTitle: string;
   htmlDescription: string;
+  generatedDescription?: string | null;
   bullets: string[];
   variants: string[] | VariantGroup[];
   variantPrices: string | null; // JSON
@@ -97,6 +98,23 @@ const SKIP_VARIANT_GROUPS_P = ['ships from', 'ships_from', 'ship from', 'versand
 const isSkipGroup = (name: string) => SKIP_VARIANT_GROUPS_P.includes(name.toLowerCase().trim());
 
 // Hilfsfunktion: Varianten aus DB-Format lesen (entweder alt: string[] oder neu: VariantGroup[])
+// Fallback: Bullets aus generatedDescription extrahieren, falls bullets-Array leer ist
+// (ältere Importe speichern nur den Fließtext mit ###BULLETS### Marker, nicht das Array)
+function extractBulletsFallback(product: Product): string[] {
+  if (product.bullets && product.bullets.length > 0) return product.bullets;
+  const desc = product.generatedDescription ?? "";
+  if (!desc) return [];
+  const marker = "###BULLETS###";
+  const idx = desc.indexOf(marker);
+  const section = idx >= 0 ? desc.slice(idx + marker.length) : desc;
+  const nextMarkerIdx = section.search(/###[A-Z]+###/);
+  const bulletBlock = nextMarkerIdx >= 0 ? section.slice(0, nextMarkerIdx) : section;
+  return bulletBlock
+    .split("\n")
+    .map(line => line.replace(/^[-•*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
 function parseVariants(raw: string[] | VariantGroup[]): VariantGroup[] {
   if (!raw || raw.length === 0) return [];
   if (typeof raw[0] === "object" && "name" in raw[0]) {
@@ -1205,7 +1223,7 @@ export default function Produkte() {
                   </button>
                 )}
                 {/* Beschreibung Preview */}
-                <button onClick={() => { setPreviewProduct(product); setEditPreviewTitle(product.generatedTitle || product.title || ""); setEditPreviewBullets((product.bullets || []).join("\n")); setPreviewSaveMsg(""); }} style={{
+                <button onClick={() => { setPreviewProduct(product); setEditPreviewTitle(product.generatedTitle || product.title || ""); setEditPreviewBullets(extractBulletsFallback(product).join("\n")); setPreviewSaveMsg(""); }} style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
                   padding: "6px 10px", borderRadius: 8, background: "#F0FDF4", color: "#16A34A",
                   fontSize: 11, fontWeight: 700, border: "1px solid #BBF7D0", cursor: "pointer", fontFamily: "inherit",
