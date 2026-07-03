@@ -1188,7 +1188,7 @@ export default function Produkte() {
                   <>
                     <a href={`https://www.ebay.de/itm/${product.ebayListingId}`} target="_blank" rel="noopener noreferrer" style={{
                       display: "inline-flex", alignItems: "center", gap: 4,
-                      padding: "6px 10px", borderRadius: 8, background: "#FFD700", color: "#0F172A",
+                      padding: "6px 10px", borderRadius: 8, background: "#16A34A", color: "#fff",
                       fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit",
                     }}>
                       <ShoppingCart size={11} /> eBay ansehen
