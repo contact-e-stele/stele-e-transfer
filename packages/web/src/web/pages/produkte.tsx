@@ -3,6 +3,7 @@
  * Zeigt alle importierten Produkte, Preisänderungen, eBay-Status
  */
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
@@ -515,10 +516,12 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
 }
 
 export default function Produkte() {
+  const [, navigate] = useLocation();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [showListed, setShowListed] = useState(false);
   const [checkingPrice, setCheckingPrice] = useState<number | null>(null);
   const [listingProduct, setListingProduct] = useState<number | null>(null);
   const [listingResult, setListingResult] = useState<{ id: number; success: boolean; msg: string } | null>(null);
@@ -656,18 +659,6 @@ export default function Produkte() {
     }
   };
 
-  const endEbayListing = async (product: Product) => {
-    if (!confirm(`eBay Listing #${product.ebayListingId} beenden?`)) return;
-    const res = await fetch(`/api/products/${product.id}/ebay-listing`, { method: "DELETE" });
-    const data = await res.json() as { ok?: boolean; error?: string };
-    if (data.ok) {
-      setListingResult({ id: product.id, success: true, msg: "eBay Listing beendet" });
-    } else {
-      setListingResult({ id: product.id, success: false, msg: data.error ?? "Fehler" });
-    }
-    load();
-  };
-
   const listOnEbay = async (product: Product) => {
     setListingProduct(product.id);
     setListingResult(null);
@@ -692,9 +683,11 @@ export default function Produkte() {
     }
   };
 
-  const filtered = products.filter(p =>
-    !search || p.generatedTitle.toLowerCase().includes(search.toLowerCase()) || p.title.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = products.filter(p => {
+    if (!showListed && p.ebayStatus === "listed") return false;
+    if (!search) return true;
+    return p.generatedTitle.toLowerCase().includes(search.toLowerCase()) || p.title.toLowerCase().includes(search.toLowerCase());
+  });
 
   const stats = {
     total: products.length,
@@ -998,7 +991,7 @@ export default function Produkte() {
         </div>
 
         {/* Suche */}
-        <div style={{ position: "relative", marginBottom: 16 }}>
+        <div style={{ position: "relative", marginBottom: 10 }}>
           <Search size={16} color="#94A3B8" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
           <input
             type="text"
@@ -1012,6 +1005,24 @@ export default function Produkte() {
               background: "#fff",
             }}
           />
+        </div>
+
+        {/* Toggle: bereits gelistete Entwürfe ein-/ausblenden */}
+        <div style={{ marginBottom: 16 }}>
+          <button
+            onClick={() => setShowListed(v => !v)}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+              border: "1.5px solid " + (showListed ? "#16A34A" : "#E2E8F0"),
+              background: showListed ? "#F0FDF4" : "#fff",
+              color: showListed ? "#16A34A" : "#64748B",
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            {showListed ? <CheckCircle size={13} /> : <Eye size={13} />}
+            {showListed ? `Live-Listings werden angezeigt (${stats.listed})` : `Auch Live-Listings anzeigen (${stats.listed} ausgeblendet)`}
+          </button>
         </div>
 
         {/* Fehler */}
@@ -1185,22 +1196,13 @@ export default function Produkte() {
                   </button>
                 )}
                 {product.ebayStatus === "listed" && product.ebayListingId && (
-                  <>
-                    <a href={`https://www.ebay.de/itm/${product.ebayListingId}`} target="_blank" rel="noopener noreferrer" style={{
-                      display: "inline-flex", alignItems: "center", gap: 4,
-                      padding: "6px 10px", borderRadius: 8, background: "#16A34A", color: "#fff",
-                      fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit",
-                    }}>
-                      <ShoppingCart size={11} /> eBay ansehen
-                    </a>
-                    <button onClick={() => endEbayListing(product)} style={{
-                      display: "inline-flex", alignItems: "center", gap: 4,
-                      padding: "6px 10px", borderRadius: 8, background: "#FEF2F2", color: "#DC2626",
-                      fontSize: 11, fontWeight: 700, border: "1px solid #FECACA", cursor: "pointer", fontFamily: "inherit",
-                    }}>
-                      <XCircle size={11} /> Listing beenden
-                    </button>
-                  </>
+                  <button onClick={() => navigate("/listings")} style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    padding: "6px 10px", borderRadius: 8, background: "#F0FDF4", color: "#16A34A",
+                    fontSize: 11, fontWeight: 700, border: "1px solid #BBF7D0", cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                    <CheckCircle size={11} /> Live gelistet — im Listings-Tab verwalten
+                  </button>
                 )}
                 {/* Beschreibung Preview */}
                 <button onClick={() => { setPreviewProduct(product); setEditPreviewTitle(product.generatedTitle || product.title || ""); setEditPreviewBullets((product.bullets || []).join("\n")); setPreviewSaveMsg(""); }} style={{
