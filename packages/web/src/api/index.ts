@@ -521,6 +521,7 @@ const app = new Hono()
         sourceUrl: schema.products.sourceUrl,
         generatedTitle: schema.products.generatedTitle,
         adRate: schema.products.adRate,
+        lastPriceCheck: schema.products.lastPriceCheck,
       }).from(schema.products).all();
 
       // Index: ebayListingId → DB-Produkt
@@ -592,7 +593,7 @@ const app = new Hono()
       const dbProduct = await db.select().from(schema.products)
         .where(eq(schema.products.ebayListingId, itemId)).get();
       if (dbProduct) {
-        await db.update(schema.products).set({ sellPrice: body.price }).where(eq(schema.products.ebayListingId, itemId));
+        await db.update(schema.products).set({ sellPrice: body.price, lastPriceCheck: new Date().toISOString() }).where(eq(schema.products.ebayListingId, itemId));
       }
 
       return c.json({ ok: true, newPrice: body.price }, 200);
@@ -728,7 +729,7 @@ const app = new Hono()
             const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
             results.push({ itemId, ok: false, oldPrice: listing.currentPrice, error: errMsg });
           } else {
-            await db.update(schema.products).set({ sellPrice: newPrice }).where(eq(schema.products.ebayListingId, itemId));
+            await db.update(schema.products).set({ sellPrice: newPrice, lastPriceCheck: new Date().toISOString() }).where(eq(schema.products.ebayListingId, itemId));
             results.push({ itemId, ok: true, oldPrice: listing.currentPrice, newPrice });
           }
         } catch (e) {

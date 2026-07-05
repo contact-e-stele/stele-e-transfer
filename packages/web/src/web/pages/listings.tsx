@@ -31,6 +31,7 @@ interface EbayListing {
     sourceUrl: string | null;
     generatedTitle: string;
     adRate: number | null;
+    lastPriceCheck: string | null;
   } | null;
 }
 
@@ -55,6 +56,30 @@ function daysLeft(iso: string): number | null {
 function daysLeftColor(days: number): string {
   if (days <= 3) return "#DC2626";
   if (days <= 7) return "#F59E0B";
+  return "#16A34A";
+}
+
+// "vor X Tagen" / "vor X Stunden" für Preis-Update-Zeitstempel
+function timeAgo(iso: string | null): string {
+  if (!iso) return "nie geprüft";
+  const d = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return "nie geprüft";
+  const diffMs = Date.now() - d.getTime();
+  const diffH = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffH < 1) return "gerade eben";
+  if (diffH < 24) return `vor ${diffH} Std.`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD === 1) return "vor 1 Tag";
+  return `vor ${diffD} Tagen`;
+}
+
+function priceCheckColor(iso: string | null): string {
+  if (!iso) return "#94A3B8";
+  const d = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return "#94A3B8";
+  const diffDays = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24);
+  if (diffDays > 14) return "#DC2626";
+  if (diffDays > 7) return "#F59E0B";
   return "#16A34A";
 }
 
@@ -113,7 +138,7 @@ export default function Listings() {
   const [maxSold, setMaxSold] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc" | "sku_asc">("default");
+  const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc" | "sku_asc" | "price_check_asc">("default");
   const [expiryFilter, setExpiryFilter] = useState<"all" | "3days" | "7days" | "30days">("all");
 
   // ─── Bearbeiten-Modal (Titel + Beschreibung, live auf eBay) ───────────────
@@ -344,6 +369,11 @@ export default function Listings() {
         return da - db_;
       }
       if (sortBy === "sku_asc") return (a.sku ?? "").localeCompare(b.sku ?? "");
+      if (sortBy === "price_check_asc") {
+        const ta = a.appProduct?.lastPriceCheck ? new Date(a.appProduct.lastPriceCheck.replace(" ", "T") + "Z").getTime() : -Infinity;
+        const tb = b.appProduct?.lastPriceCheck ? new Date(b.appProduct.lastPriceCheck.replace(" ", "T") + "Z").getTime() : -Infinity;
+        return ta - tb; // älteste zuerst
+      }
       return 0;
     });
 
@@ -447,6 +477,41 @@ export default function Listings() {
           ))}
         </div>
 
+        {/* Preis-Check Übersicht — ältester Stand + Anzahl überfällig */}
+        {(() => {
+          const withCheck = listings.filter(l => l.appProduct?.lastPriceCheck);
+          const overdue = listings.filter(l => {
+            const iso = l.appProduct?.lastPriceCheck;
+            if (!iso) return true; // nie geprüft = überfällig
+            const diffDays = (Date.now() - new Date(iso.replace(" ", "T") + "Z").getTime()) / (1000 * 60 * 60 * 24);
+            return diffDays > 14;
+          });
+          const oldest = withCheck.length > 0
+            ? withCheck.reduce((a, b) => new Date(a.appProduct!.lastPriceCheck!.replace(" ", "T") + "Z") < new Date(b.appProduct!.lastPriceCheck!.replace(" ", "T") + "Z") ? a : b)
+            : null;
+          if (listings.length === 0) return null;
+          return (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8,
+              background: overdue.length > 0 ? "#FFFBEB" : "#F0FDF4",
+              border: "1.5px solid " + (overdue.length > 0 ? "#FDE68A" : "#BBF7D0"),
+              borderRadius: 12, padding: "10px 14px", marginBottom: 16, fontSize: 12,
+            }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: overdue.length > 0 ? "#92400E" : "#16A34A", fontWeight: 700 }}>
+                <RefreshCw size={13} />
+                {overdue.length > 0
+                  ? `${overdue.length} Listings seit über 14 Tagen nicht preisgeprüft`
+                  : "Alle Listings kürzlich preisgeprüft"}
+              </span>
+              {oldest && (
+                <span style={{ color: "#64748B", fontSize: 11 }}>
+                  Ältester Stand: {timeAgo(oldest.appProduct!.lastPriceCheck)} ({oldest.title.slice(0, 40)}{oldest.title.length > 40 ? "…" : ""})
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Suche + Filter */}
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <div style={{ flex: 1, position: "relative" }}>
@@ -536,6 +601,7 @@ export default function Listings() {
                   ["price_asc", "Preis ↑"],
                   ["end_asc", "Läuft bald ab"],
                   ["sku_asc", "Nach SKU"],
+                  ["price_check_asc", "Preis zuletzt geprüft (älteste zuerst)"],
                 ] as [string, string][]).map(([val, label]) => (
                   <button key={val} onClick={() => setSortBy(val as typeof sortBy)} style={{
                     padding: "5px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600,
@@ -872,6 +938,12 @@ export default function Listings() {
                   <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 4 }}>
                     ID: {listing.itemId}
                     {listing.sku && <span style={{ marginLeft: 10 }}>SKU: <span style={{ color: "#94A3B8", fontWeight: 600 }}>{listing.sku}</span></span>}
+                  </div>
+
+                  {/* Preis zuletzt aktualisiert */}
+                  <div style={{ fontSize: 10, fontWeight: 600, color: priceCheckColor(listing.appProduct?.lastPriceCheck ?? null), marginTop: 3, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                    <RefreshCw size={9} color={priceCheckColor(listing.appProduct?.lastPriceCheck ?? null)} />
+                    Preis geprüft: {timeAgo(listing.appProduct?.lastPriceCheck ?? null)}
                   </div>
 
                   {/* Preis-Ergebnis */}
