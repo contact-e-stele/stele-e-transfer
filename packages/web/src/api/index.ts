@@ -585,6 +585,10 @@ const app = new Hono()
       }
 
       // Auch in DB aktualisieren wenn Produkt verknüpft
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
       const dbProduct = await db.select().from(schema.products)
         .where(eq(schema.products.ebayListingId, itemId)).get();
       if (dbProduct) {
@@ -625,6 +629,10 @@ const app = new Hono()
       const hasError = text.includes('<Ack>Failure</Ack>');
 
       // DB-Produkt auch updaten wenn verknüpft
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
       const dbProduct = await db.select().from(schema.products)
         .where(eq(schema.products.ebayListingId, itemId)).get();
       if (dbProduct) {
