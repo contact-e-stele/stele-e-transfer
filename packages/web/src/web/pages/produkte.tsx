@@ -135,6 +135,21 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
   const [newValues, setNewValues] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [editingGroupName, setEditingGroupName] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState<{ gi: number; vi: number } | null>(null);
+  const [editText, setEditText] = useState("");
+
+  const renameGroup = (idx: number, name: string) => {
+    if (!name.trim()) return;
+    setGroups(g => g.map((group, i) => i === idx ? { ...group, name: name.trim() } : group));
+  };
+
+  const renameValue = (gi: number, vi: number, val: string) => {
+    if (!val.trim()) return;
+    setGroups(g => g.map((group, i) =>
+      i === gi ? { ...group, values: group.values.map((v, j) => j === vi ? val.trim() : v) } : group
+    ));
+  };
 
   const addGroup = () => {
     const name = newGroupName.trim();
@@ -219,9 +234,27 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
         {/* Gruppen */}
         {groups.map((group, gi) => (
           <div key={gi} style={{ border: "1.5px solid #E2E8F0", borderRadius: 12, padding: 14, marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <span style={{ fontWeight: 700, fontSize: 14, color: "#0F172A" }}>{group.name}</span>
-              <button onClick={() => removeGroup(gi)} style={{ background: "#FEF2F2", border: "none", borderRadius: 6, padding: "3px 8px", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
+              {editingGroupName === gi ? (
+                <input
+                  autoFocus
+                  value={editText}
+                  onChange={e => setEditText(e.target.value)}
+                  onBlur={() => { renameGroup(gi, editText); setEditingGroupName(null); }}
+                  onKeyDown={e => { if (e.key === "Enter") { renameGroup(gi, editText); setEditingGroupName(null); } if (e.key === "Escape") setEditingGroupName(null); }}
+                  style={{ flex: 1, fontWeight: 700, fontSize: 14, color: "#0F172A", padding: "4px 8px", borderRadius: 6, border: "2px solid #7C3AED", outline: "none", fontFamily: "inherit" }}
+                />
+              ) : (
+                <button
+                  onClick={() => { setEditingGroupName(gi); setEditText(group.name); }}
+                  title="Name bearbeiten"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: 6, fontFamily: "inherit" }}
+                >
+                  <span style={{ fontWeight: 700, fontSize: 14, color: "#0F172A" }}>{group.name}</span>
+                  <Edit2 size={11} color="#94A3B8" />
+                </button>
+              )}
+              <button onClick={() => removeGroup(gi)} style={{ background: "#FEF2F2", border: "none", borderRadius: 6, padding: "3px 8px", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
                 Gruppe löschen
               </button>
             </div>
@@ -229,16 +262,38 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
             {/* Werte */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
               {group.values.map((val, vi) => (
-                <span key={vi} style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  background: "#F5F3FF", color: "#7C3AED", padding: "4px 10px",
-                  borderRadius: 20, fontSize: 12, fontWeight: 700,
-                }}>
-                  {val}
-                  <button onClick={() => removeValue(gi, vi)} style={{ background: "none", border: "none", cursor: "pointer", color: "#A78BFA", padding: 0, display: "flex", alignItems: "center" }}>
-                    <X size={11} />
-                  </button>
-                </span>
+                editingValue?.gi === gi && editingValue?.vi === vi ? (
+                  <input
+                    key={vi}
+                    autoFocus
+                    value={editText}
+                    onChange={e => setEditText(e.target.value)}
+                    onBlur={() => { renameValue(gi, vi, editText); setEditingValue(null); }}
+                    onKeyDown={e => { if (e.key === "Enter") { renameValue(gi, vi, editText); setEditingValue(null); } if (e.key === "Escape") setEditingValue(null); }}
+                    style={{
+                      padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+                      border: "2px solid #7C3AED", outline: "none", fontFamily: "inherit", color: "#7C3AED",
+                      width: Math.max(60, val.length * 8 + 20),
+                    }}
+                  />
+                ) : (
+                  <span key={vi} style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    background: "#F5F3FF", color: "#7C3AED", padding: "4px 10px",
+                    borderRadius: 20, fontSize: 12, fontWeight: 700,
+                  }}>
+                    <button
+                      onClick={() => { setEditingValue({ gi, vi }); setEditText(val); }}
+                      title="Wert bearbeiten"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", padding: 0, fontFamily: "inherit", fontSize: 12, fontWeight: 700 }}
+                    >
+                      {val}
+                    </button>
+                    <button onClick={() => removeValue(gi, vi)} style={{ background: "none", border: "none", cursor: "pointer", color: "#A78BFA", padding: 0, display: "flex", alignItems: "center" }}>
+                      <X size={11} />
+                    </button>
+                  </span>
+                )
               ))}
               {group.values.length === 0 && (
                 <span style={{ fontSize: 11, color: "#CBD5E1" }}>Noch keine Werte</span>
