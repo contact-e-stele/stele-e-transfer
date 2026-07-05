@@ -1457,6 +1457,25 @@ const app = new Hono()
   })
 
   // ─── Produkt-Felder patchen (ebayCategory etc.) ──────────────────────────────
+  // ─── Sync-Korrektur: Produkt als "nicht mehr gelistet" markieren, ohne eBay-Call ──
+  // Nützlich wenn eBay und DB auseinanderlaufen (z.B. Listing wurde bei eBay beendet, DB-Update ist vorher gecrasht)
+  .post('/products/:id/unlink-ebay', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      await db.update(schema.products).set({
+        ebayListingId: null, ebayStatus: 'none', ebayError: null, updatedAt: new Date().toISOString(),
+      }).where(eq(schema.products.id, id));
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
   .patch('/products/:id', async (c) => {
     const id = parseInt(c.req.param('id'));
     if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
