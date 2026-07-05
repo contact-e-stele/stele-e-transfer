@@ -1570,47 +1570,6 @@ export default function Lieferanten() {
               </div>
             )}
 
-            {/* eBay Listen (separat, für bereits gespeicherte Produkte) */}
-            <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFD700", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <ShoppingCart size={18} color="#0F172A" />
-                </div>
-                <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Auf eBay listen</span>
-              </div>
-              {!saveResult?.id && (
-                <p style={{ margin: "0 0 10px", fontSize: 12, color: "#94A3B8", textAlign: "center" }}>
-                  Zuerst in DB speichern (Schritt 2 oben)
-                </p>
-              )}
-              <button
-                onClick={handleEbayList}
-                disabled={ebayLoading || !ebayPrice || parseFloat(ebayPrice) <= 0 || !saveResult?.id}
-                style={{
-                  width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
-                  background: (!saveResult?.id || !ebayPrice) ? "#E2E8F0" : ebayLoading ? "#FDE68A" : "#FFD700",
-                  color: (!saveResult?.id || !ebayPrice) ? "#94A3B8" : "#0F172A",
-                  fontWeight: 700, fontSize: 14,
-                  cursor: (!saveResult?.id || !ebayPrice || ebayLoading) ? "not-allowed" : "pointer",
-                  fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                }}
-              >
-                {ebayLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <ShoppingCart size={16} />}
-                {ebayLoading ? "Wird gelistet…" : `Auf eBay listen${ebayPrice ? ` (${ebayPrice} €)` : ""}`}
-              </button>
-              {ebayResult && (
-                <div style={{
-                  marginTop: 14, padding: "12px 16px", borderRadius: 10,
-                  background: ebayResult.listingId ? "#F0FDF4" : "#FEF2F2",
-                  border: `1.5px solid ${ebayResult.listingId ? "#BBF7D0" : "#FECACA"}`,
-                }}>
-                  {ebayResult.listingId
-                    ? <p style={{ margin: 0, color: "#15803D", fontWeight: 600, fontSize: 13 }}>✓ Gelistet! ID: <span style={{ fontFamily: "monospace" }}>{ebayResult.listingId}</span></p>
-                    : <p style={{ margin: 0, color: "#DC2626", fontWeight: 600, fontSize: 13 }}>✗ {ebayResult.error}</p>
-                  }
-                </div>
-              )}
-            </div>
             </div>{/* Ende rechte Spalte */}
             </div>{/* Ende 2-Spalten Grid */}
           </>
