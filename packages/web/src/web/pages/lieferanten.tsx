@@ -1200,6 +1200,16 @@ export default function Lieferanten() {
                 </div>
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Preiskalkulation</span>
               </div>
+
+              {/* EU-Zollhinweis ab 01.07.2026 bei China-Versand */}
+              {shipsFromInfo && !shipsFromInfo.isEU && (
+                <p style={{ color: "#DC2626", fontSize: 16, fontWeight: 700, marginTop: 0, marginBottom: 14, lineHeight: 1.4 }}>
+                  ⚠ EU-Zollregelung ab 01.07.2026: Bei Versand aus China (hier: {shipsFromInfo.country}) fällt pro Sendung eine Zollgebühr von 3,00 € an (bis 150 € Warenwert). Bitte in den Einkaufspreis miteinrechnen!<br />
+                  <span style={{ fontWeight: 600, fontSize: 13, color: "#991B1B" }}>
+                    Beispiel: Einkauf 12,87 € + 3,00 € Zoll = tatsächlicher Einkauf 15,87 €
+                  </span>
+                </p>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Einkauf (€)</label>
@@ -1218,7 +1228,8 @@ export default function Lieferanten() {
                           // Empfohlener Mindestpreis: (einkauf + 1.60) / (1 - (13+adRate)/100*1.19) + 0.45*1.19/(1-(13+adRate)/100*1.19)
                           // Vereinfacht: (einkauf + 1.60 + 0.45*1.19) / (1 - (13+adRate)/100*1.19)
                           const feeRate = (13 + adRate) / 100 * 1.19;
-                          const recommended = Math.ceil(((einkauf + 1.60 + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                          const chinaZoll = (shipsFromInfo && !shipsFromInfo.isEU) ? 3.00 : 0;
+                          const recommended = Math.ceil(((einkauf + chinaZoll + 1.60 + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
                           setEbayPrice(recommended.toFixed(2));
                         }}
                         style={{
@@ -1514,40 +1525,6 @@ export default function Lieferanten() {
               </button>
               {saveResult?.error && (
                 <p style={{ margin: "8px 0 0", color: "#DC2626", fontSize: 13, fontWeight: 600 }}>Fehler: {saveResult.error}</p>
-              )}
-            </div>
-
-            {/* ─── Speichern + Direkt Listen (Ein-Klick) ─── */}
-            <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%)", borderRadius: 20, padding: 24, boxShadow: "0 4px 20px rgba(15,23,42,0.25)", marginBottom: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#C9A227", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <ShoppingCart size={18} color="#0F172A" />
-                </div>
-                <span style={{ fontWeight: 700, fontSize: 15, color: "#fff" }}>Speichern + Direkt Listen</span>
-                <span style={{ fontSize: 11, color: "#C9A227", fontWeight: 600, background: "rgba(201,162,39,0.15)", padding: "2px 8px", borderRadius: 20 }}>Ein Klick</span>
-              </div>
-              <button
-                onClick={handleSaveAndList}
-                disabled={saveAndListLoading || !!ebayResult?.listingId}
-                style={{
-                  width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
-                  background: ebayResult?.listingId ? "#166534" : saveAndListLoading ? "rgba(201,162,39,0.5)" : "#C9A227",
-                  color: ebayResult?.listingId ? "#fff" : "#0F172A",
-                  fontWeight: 800, fontSize: 15,
-                  cursor: (saveAndListLoading || !!ebayResult?.listingId) ? "not-allowed" : "pointer",
-                  fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  transition: "all 0.2s",
-                }}
-              >
-                {saveAndListLoading
-                  ? <><Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> {saveAndListResult?.step || "Wird verarbeitet..."}</>
-                  : ebayResult?.listingId
-                  ? <><ShoppingCart size={16} /> ✓ Gelistet! ID: {ebayResult.listingId}</>
-                  : <><ShoppingCart size={16} /> Speichern & auf eBay listen{ebayPrice ? ` (${ebayPrice} €)` : ""}</>
-                }
-              </button>
-              {saveAndListResult?.error && (
-                <p style={{ margin: "8px 0 0", color: "#FCA5A5", fontSize: 13, fontWeight: 600 }}>✗ {saveAndListResult.error}</p>
               )}
             </div>
 
