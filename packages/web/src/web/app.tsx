@@ -85,7 +85,6 @@ function TabNav() {
 function App() {
   const [user, setUser] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
-  const [location, setLocation] = useLocation();
 
   useEffect(() => {
     // Session stored in localStorage — no server-side session needed
@@ -93,13 +92,6 @@ function App() {
     if (saved) setUser(saved);
     setChecking(false);
   }, []);
-
-  // App-Start soll direkt auf Import-Tab landen, nicht auf Preise
-  useEffect(() => {
-    if (!checking && user && location === "/") {
-      setLocation("/lieferanten");
-    }
-  }, [checking, user, location, setLocation]);
 
   const handleLogout = () => {
     localStorage.removeItem("stele_user");
