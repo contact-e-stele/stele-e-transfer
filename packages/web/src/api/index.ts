@@ -7,6 +7,7 @@ import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAli
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
+import { CHINA_ZOLL_EUR } from '../shared/constants';
 
 // ─── AliExpress Token Helper ──────────────────────────────────────────────────
 // Liest Token aus DB (app_settings) oder Env-Variable als Fallback
@@ -1771,7 +1772,7 @@ const app = new Hono()
             const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
             // Neuen VK-Preis berechnen: (buyPrice + 1.60€ Mindestgewinn [+ 3€ China-Zoll]) / (1 - 0.18 eBay-Fee)
             const isChina = (product.shipsFrom ?? '').toLowerCase() === 'china';
-            const chinaZoll = isChina ? 3.00 : 0;
+            const chinaZoll = isChina ? CHINA_ZOLL_EUR : 0;
             const newSellPrice = Math.ceil(((newPrice + 1.60 + chinaZoll) / (1 - 0.18)) * 100) / 100;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             await db.update(schema.products).set({

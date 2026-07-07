@@ -5,6 +5,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
+import { CHINA_ZOLL_EUR } from "../../shared/constants";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
@@ -1204,9 +1205,9 @@ export default function Lieferanten() {
               {/* EU-Zollhinweis ab 01.07.2026 bei China-Versand */}
               {shipsFromInfo && !shipsFromInfo.isEU && (
                 <p style={{ color: "#DC2626", fontSize: 16, fontWeight: 700, marginTop: 0, marginBottom: 14, lineHeight: 1.4 }}>
-                  ⚠ EU-Zollregelung ab 01.07.2026: Bei Versand aus China (hier: {shipsFromInfo.country}) fällt pro Sendung eine Zollgebühr von 3,00 € an (bis 150 € Warenwert). Bitte in den Einkaufspreis miteinrechnen!<br />
+                  ⚠ EU-Zollregelung ab 01.07.2026: Bei Versand aus China (hier: {shipsFromInfo.country}) fällt pro Sendung eine Zollgebühr von {CHINA_ZOLL_EUR.toFixed(2).replace(".", ",")} € an (bis 150 € Warenwert). Bitte in den Einkaufspreis miteinrechnen!<br />
                   <span style={{ fontWeight: 600, fontSize: 13, color: "#991B1B" }}>
-                    Beispiel: Einkauf 12,87 € + 3,00 € Zoll = tatsächlicher Einkauf 15,87 €
+                    Beispiel: Einkauf 12,87 € + {CHINA_ZOLL_EUR.toFixed(2).replace(".", ",")} € Zoll = tatsächlicher Einkauf {(12.87 + CHINA_ZOLL_EUR).toFixed(2).replace(".", ",")} €
                   </span>
                 </p>
               )}
@@ -1228,7 +1229,7 @@ export default function Lieferanten() {
                           // Empfohlener Mindestpreis: (einkauf + 1.60) / (1 - (13+adRate)/100*1.19) + 0.45*1.19/(1-(13+adRate)/100*1.19)
                           // Vereinfacht: (einkauf + 1.60 + 0.45*1.19) / (1 - (13+adRate)/100*1.19)
                           const feeRate = (13 + adRate) / 100 * 1.19;
-                          const chinaZoll = (shipsFromInfo && !shipsFromInfo.isEU) ? 3.00 : 0;
+                          const chinaZoll = (shipsFromInfo && !shipsFromInfo.isEU) ? CHINA_ZOLL_EUR : 0;
                           const recommended = Math.ceil(((einkauf + chinaZoll + 1.60 + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
                           setEbayPrice(recommended.toFixed(2));
                         }}
