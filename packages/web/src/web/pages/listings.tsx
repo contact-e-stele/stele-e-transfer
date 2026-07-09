@@ -957,6 +957,15 @@ export default function Listings() {
 
                 {/* Aktionen */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                  {listing.appProduct?.sourceUrl && listing.appProduct.sourceUrl.includes("aliexpress") && (
+                    <a href={listing.appProduct.sourceUrl} target="_blank" rel="noopener noreferrer" title="Zum Lieferanten-Produkt (AliExpress)" style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#FF6B00", color: "#fff",
+                      fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit",
+                    }}>
+                      <ExternalLink size={10} /> AliExpress
+                    </a>
+                  )}
                   <a href={listing.viewItemUrl} target="_blank" rel="noopener noreferrer" style={{
                     display: "inline-flex", alignItems: "center", gap: 4,
                     padding: "6px 10px", borderRadius: 8, background: "#FFD700", color: "#0F172A",
