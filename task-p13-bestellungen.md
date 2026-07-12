@@ -85,7 +85,13 @@ Angelehnt an Listings-Tab-Struktur (Wiederverwendung von Mustern):
 - 🔲 Tracking-Eingabe UI (nächster Schritt, separat)
 
 ## Nächste Schritte (nach diesem Grundgerüst)
-1. Deploy + Live-Test (echte eBay-Bestellungen prüfen, Rechnung generieren lassen)
+1. ✅ Deploy + Live-Test — echte eBay-Bestellungen kommen durch, Rechnung generiert korrekt
 2. Tracking-Eingabefeld pro Bestellung + "Als versendet markieren" Button → POST-Endpoint zu eBay Fulfillment API
 3. Carrier-Dropdown flexibel (kein Fixwert, da Lieferant wechselt)
 4. Später: P9 Trackerbot-Ersatz (Tracking-Konvertierung) als Upgrade
+
+## Bugfix während Live-Test (wichtig für zukünftige PDF/Chromium-Features)
+- Playwright/Chromium (@sparticuz/chromium) stürzte auf Render ab bei PDF-Generierung (Speicherlimit vermutlich zu knapp)
+- Erst Race-Condition-Fix versucht (Browser-Wiederverwendung + Queue) — half nicht vollständig
+- Finale Lösung: Rechnungs-PDF komplett auf `pdf-lib` umgestellt (kein Browser nötig, reines JS) — funktioniert zuverlässig, live getestet (200 OK, echtes PDF)
+- Lehre: Für einfache PDF-Erzeugung (Text/Tabellen) ist pdf-lib die bessere Wahl als Playwright/Chromium auf ressourcenbeschränkten Servern wie Render Free/Starter Tier
