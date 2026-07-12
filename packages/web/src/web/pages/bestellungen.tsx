@@ -55,6 +55,17 @@ function statusLabel(status: string): { label: string; color: string; bg: string
   return { label: "Offen", color: "#DC2626", bg: "#FEF2F2", icon: <Clock size={13} /> };
 }
 
+// Bestellung gilt als versendet, wenn eBay das bestätigt ODER wir es manuell markiert haben
+function isEffectivelyShipped(order: Order): boolean {
+  return order.orderFulfillmentStatus === "FULFILLED" || !!order.localNote?.shippedAt;
+}
+
+function effectiveStatusLabel(order: Order): { label: string; color: string; bg: string; icon: JSX.Element } {
+  if (order.orderFulfillmentStatus === "FULFILLED") return statusLabel(order.orderFulfillmentStatus);
+  if (order.localNote?.shippedAt) return { label: "Manuell versendet", color: "#0EA5E9", bg: "#F0F9FF", icon: <Truck size={13} /> };
+  return statusLabel(order.orderFulfillmentStatus);
+}
+
 export default function Bestellungen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,8 +166,8 @@ export default function Bestellungen() {
   useEffect(() => { load(); }, [load]);
 
   const filtered = orders.filter(o => {
-    if (filter === "open" && o.orderFulfillmentStatus === "FULFILLED") return false;
-    if (filter === "shipped" && o.orderFulfillmentStatus !== "FULFILLED") return false;
+    if (filter === "open" && isEffectivelyShipped(o)) return false;
+    if (filter === "shipped" && !isEffectivelyShipped(o)) return false;
     if (search) {
       const q = search.toLowerCase();
       const matchesOrderId = o.orderId.toLowerCase().includes(q);
@@ -169,8 +180,8 @@ export default function Bestellungen() {
 
   const stats = {
     total: orders.length,
-    open: orders.filter(o => o.orderFulfillmentStatus !== "FULFILLED").length,
-    shipped: orders.filter(o => o.orderFulfillmentStatus === "FULFILLED").length,
+    open: orders.filter(o => !isEffectivelyShipped(o)).length,
+    shipped: orders.filter(o => isEffectivelyShipped(o)).length,
     revenue: orders.reduce((a, o) => a + o.total, 0),
     nettoKnown: orders.filter(o => o.nettoErgebnis !== null),
   };
@@ -276,7 +287,7 @@ export default function Bestellungen() {
 
         {/* Bestellungen */}
         {!loading && filtered.map(order => {
-          const status = statusLabel(order.orderFulfillmentStatus);
+          const status = effectiveStatusLabel(order);
           return (
             <div key={order.orderId} style={{
               background: "#fff", borderRadius: 16, padding: 16,

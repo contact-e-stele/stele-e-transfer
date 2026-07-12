@@ -681,22 +681,42 @@ const app = new Hono()
       const notes = await db.select().from(schema.orderNotes).all();
       const notesByOrderId = new Map(notes.map(n => [n.ebayOrderId, n]));
 
-      // Einkaufspreise für Netto-Berechnung laden (Match über SKU-Präfix "stele-{productId}")
+      // Einkaufspreise für Netto-Berechnung laden
+      // Match über: 1) SKU-Präfix "stele-{productId}" (neue Listings) 2) ASIN direkt 3) Base64-dekodierte ASIN (alte Ecomsniper-Listings)
       const allProducts = await db.select({
         id: schema.products.id,
+        asin: schema.products.asin,
         buyPrice: schema.products.buyPrice,
         shipsFrom: schema.products.shipsFrom,
       }).from(schema.products).all();
       const productById = new Map(allProducts.map(p => [p.id, p]));
+      const productByAsin = new Map(
+        allProducts.filter(p => p.asin && !p.asin.startsWith('ali_')).map(p => [p.asin!.toUpperCase(), p])
+      );
+
+      const findProductForSku = (sku: string | null) => {
+        if (!sku) return null;
+        const steleMatch = sku.match(/^stele-(\d+)/);
+        if (steleMatch) return productById.get(parseInt(steleMatch[1])) ?? null;
+        // Direkter ASIN-Match (z.B. "B0CR9RWDSW")
+        const direct = productByAsin.get(sku.toUpperCase());
+        if (direct) return direct;
+        // Base64-dekodierte ASIN (alte Ecomsniper-Listings, z.B. "QjA3UUhXM1o2Tg==" → "B07QHW3Z6N")
+        try {
+          const decoded = Buffer.from(sku, 'base64').toString('utf8');
+          if (/^[A-Z0-9]{8,12}$/.test(decoded)) {
+            return productByAsin.get(decoded.toUpperCase()) ?? null;
+          }
+        } catch { /* kein gültiges Base64 */ }
+        return null;
+      };
 
       const merged = (orders as import('./ebay').EbayOrder[]).map(order => {
-        // Einkaufskosten pro Bestellung ermitteln (soweit SKU zuordenbar)
+        // Einkaufskosten pro Bestellung ermitteln (soweit SKU/ASIN zuordenbar)
         let einkaufBekannt = true;
         let einkaufGesamt = 0;
         for (const li of order.lineItems) {
-          const match = li.sku?.match(/^stele-(\d+)/);
-          if (!match) { einkaufBekannt = false; continue; }
-          const product = productById.get(parseInt(match[1]));
+          const product = findProductForSku(li.sku);
           if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
           const zoll = (product.shipsFrom ?? '').toLowerCase() === 'china' ? CHINA_ZOLL_EUR : 0;
           einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
