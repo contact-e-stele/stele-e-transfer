@@ -1,28 +1,8 @@
 /**
  * Rechnung/Quittung PDF-Generator (Kleinunternehmer §19 UStG — ohne ausgewiesene MwSt.)
- * Rendert HTML-Vorlage via Playwright zu PDF.
+ * Nutzt pdf-lib (kein Browser nötig) — zuverlässig auch bei begrenztem Server-Speicher.
  */
-// Nutzt gleiches serverless-kompatibles Chromium-Launch-Muster wie aliexpress.ts (@sparticuz/chromium Fallback)
-async function launchChromium() {
-  const { chromium: playwrightChromium } = await import('playwright-core');
-  let execPath: string | undefined = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined;
-  const launchArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
-
-  if (!execPath) {
-    try {
-      const sparticuzMod = await import('@sparticuz/chromium');
-      const { setupLambdaEnvironment } = sparticuzMod;
-      const sparticuzChromium = sparticuzMod.default;
-      setupLambdaEnvironment();
-      execPath = await sparticuzChromium.executablePath();
-      launchArgs.push(...sparticuzChromium.args);
-    } catch {
-      execPath = undefined;
-    }
-  }
-
-  return playwrightChromium.launch({ headless: true, executablePath: execPath, args: launchArgs });
-}
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 export interface InvoiceData {
   orderId: string;
@@ -41,97 +21,98 @@ const SELLER = {
   country: 'Deutschland',
 };
 
-function buildInvoiceHtml(data: InvoiceData): string {
-  const rows = data.lineItems.map(li => `
-    <tr>
-      <td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;">${li.title}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;text-align:center;">${li.quantity}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;text-align:right;">${li.unitPrice.toFixed(2)} ${data.currency}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;text-align:right;">${(li.unitPrice * li.quantity).toFixed(2)} ${data.currency}</td>
-    </tr>`).join('');
-
-  return `
-<!DOCTYPE html>
-<html lang="de">
-<head><meta charset="UTF-8"><style>
-  body { font-family: 'Helvetica', Arial, sans-serif; color: #0F172A; padding: 40px; }
-  h1 { font-size: 20px; margin-bottom: 4px; }
-  .muted { color: #64748B; font-size: 12px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 24px; }
-  th { background: #F8FAFC; padding: 8px 10px; text-align: left; font-size: 11px; text-transform: uppercase; color: #64748B; }
-  .total-row td { padding: 10px; font-weight: 700; font-size: 14px; border-top: 2px solid #0F172A; }
-  .footer { margin-top: 40px; font-size: 11px; color: #94A3B8; line-height: 1.6; }
-</style></head>
-<body>
-  <h1>Rechnung / Quittung</h1>
-  <p class="muted">Bestellnummer: ${data.orderId} · Datum: ${new Date(data.orderDate).toLocaleDateString('de-DE')}</p>
-
-  <div style="display:flex;justify-content:space-between;margin-top:24px;">
-    <div>
-      <strong>${SELLER.name}</strong><br>
-      ${SELLER.address}<br>
-      ${SELLER.city}<br>
-      ${SELLER.country}
-    </div>
-    <div style="text-align:right;">
-      <strong>${data.buyerName}</strong><br>
-      ${data.buyerAddress.street ?? ''}<br>
-      ${data.buyerAddress.postalCode ?? ''} ${data.buyerAddress.city ?? ''}<br>
-      ${data.buyerAddress.countryCode ?? ''}
-    </div>
-  </div>
-
-  <table>
-    <thead><tr><th>Artikel</th><th style="text-align:center;">Menge</th><th style="text-align:right;">Einzelpreis</th><th style="text-align:right;">Summe</th></tr></thead>
-    <tbody>${rows}</tbody>
-    <tfoot><tr class="total-row"><td colspan="3">Gesamtbetrag</td><td style="text-align:right;">${data.total.toFixed(2)} ${data.currency}</td></tr></tfoot>
-  </table>
-
-  <div class="footer">
-    Gemäß § 19 UStG wird keine Umsatzsteuer berechnet und ausgewiesen (Kleinunternehmerregelung).<br>
-    Vielen Dank für Ihren Einkauf bei ${SELLER.name}.
-  </div>
-</body>
-</html>`;
-}
-
-// Wiederverwendete Browser-Instanz (verhindert Race Condition/ETXTBSY bei gleichzeitigen Chromium-Starts,
-// z.B. wenn Auto-Generierung im Hintergrund läuft während gleichzeitig ein Download angefragt wird)
-let browserPromise: ReturnType<typeof launchChromium> | null = null;
-let queue: Promise<unknown> = Promise.resolve();
-
-async function getBrowser() {
-  if (browserPromise) {
-    try {
-      const existing = await browserPromise;
-      if (existing.isConnected()) return existing;
-      browserPromise = null; // Browser wurde geschlossen/ist abgestürzt — neu starten
-    } catch {
-      browserPromise = null;
+// Zeilenumbruch für lange Artikeltitel (grobe Zeichen-basierte Schätzung)
+function wrapText(text: string, maxChars: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    if ((current + ' ' + word).trim().length > maxChars) {
+      if (current) lines.push(current.trim());
+      current = word;
+    } else {
+      current = (current + ' ' + word).trim();
     }
   }
-  browserPromise = launchChromium();
-  try {
-    return await browserPromise;
-  } catch (e) {
-    browserPromise = null;
-    throw e;
-  }
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [''];
 }
 
 export async function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
-  // Sequentiell in Warteschlange ausführen — verhindert parallele Chromium-Launches
-  const task = queue.then(async () => {
-    const browser = await getBrowser();
-    const page = await browser.newPage();
-    try {
-      await page.setContent(buildInvoiceHtml(data), { waitUntil: 'load' });
-      const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' } });
-      return pdf;
-    } finally {
-      await page.close();
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([595.28, 841.89]); // A4
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const dark = rgb(0.06, 0.09, 0.16);
+  const muted = rgb(0.4, 0.45, 0.55);
+  const marginX = 50;
+  let y = 780;
+
+  const drawText = (text: string, x: number, yy: number, opts: { size?: number; bold?: boolean; color?: ReturnType<typeof rgb> } = {}) => {
+    page.drawText(text, {
+      x, y: yy,
+      size: opts.size ?? 11,
+      font: opts.bold ? fontBold : font,
+      color: opts.color ?? dark,
+    });
+  };
+
+  // Titel
+  drawText('Rechnung / Quittung', marginX, y, { size: 20, bold: true });
+  y -= 20;
+  drawText(`Bestellnummer: ${data.orderId} · Datum: ${new Date(data.orderDate).toLocaleDateString('de-DE')}`, marginX, y, { size: 10, color: muted });
+  y -= 40;
+
+  // Verkäufer / Käufer
+  drawText(SELLER.name, marginX, y, { bold: true });
+  drawText(data.buyerName, 350, y, { bold: true });
+  y -= 15;
+  drawText(SELLER.address, marginX, y);
+  drawText(`${data.buyerAddress.postalCode ?? ''} ${data.buyerAddress.city ?? ''}`.trim(), 350, y);
+  y -= 15;
+  drawText(SELLER.city, marginX, y);
+  drawText(data.buyerAddress.countryCode ?? '', 350, y);
+  y -= 15;
+  drawText(SELLER.country, marginX, y);
+  y -= 40;
+
+  // Tabellenkopf
+  drawText('ARTIKEL', marginX, y, { size: 9, bold: true, color: muted });
+  drawText('MENGE', 330, y, { size: 9, bold: true, color: muted });
+  drawText('EINZELPREIS', 400, y, { size: 9, bold: true, color: muted });
+  drawText('SUMME', 490, y, { size: 9, bold: true, color: muted });
+  y -= 8;
+  page.drawLine({ start: { x: marginX, y }, end: { x: 545, y }, thickness: 1, color: rgb(0.88, 0.9, 0.93) });
+  y -= 18;
+
+  // Artikelzeilen
+  for (const li of data.lineItems) {
+    const lines = wrapText(li.title, 45);
+    for (let i = 0; i < lines.length; i++) {
+      drawText(lines[i], marginX, y);
+      if (i === 0) {
+        drawText(String(li.quantity), 330, y);
+        drawText(`${li.unitPrice.toFixed(2)} ${data.currency}`, 400, y);
+        drawText(`${(li.unitPrice * li.quantity).toFixed(2)} ${data.currency}`, 490, y);
+      }
+      y -= 16;
     }
-  });
-  queue = task.catch(() => {}); // Fehler sollen die Queue nicht blockieren
-  return task;
+    y -= 4;
+  }
+
+  y -= 10;
+  page.drawLine({ start: { x: marginX, y }, end: { x: 545, y }, thickness: 1.5, color: dark });
+  y -= 22;
+  drawText('Gesamtbetrag', marginX, y, { bold: true, size: 13 });
+  drawText(`${data.total.toFixed(2)} ${data.currency}`, 470, y, { bold: true, size: 13 });
+
+  // Footer
+  y = 80;
+  drawText('Gemäß § 19 UStG wird keine Umsatzsteuer berechnet und ausgewiesen (Kleinunternehmerregelung).', marginX, y, { size: 9, color: muted });
+  y -= 14;
+  drawText(`Vielen Dank für Ihren Einkauf bei ${SELLER.name}.`, marginX, y, { size: 9, color: muted });
+
+  const pdfBytes = await pdfDoc.save();
+  return Buffer.from(pdfBytes);
 }
