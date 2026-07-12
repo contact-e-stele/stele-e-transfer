@@ -101,13 +101,20 @@ let browserPromise: ReturnType<typeof launchChromium> | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 
 async function getBrowser() {
-  if (!browserPromise) {
-    browserPromise = launchChromium();
+  if (browserPromise) {
+    try {
+      const existing = await browserPromise;
+      if (existing.isConnected()) return existing;
+      browserPromise = null; // Browser wurde geschlossen/ist abgestürzt — neu starten
+    } catch {
+      browserPromise = null;
+    }
   }
+  browserPromise = launchChromium();
   try {
     return await browserPromise;
   } catch (e) {
-    browserPromise = null; // Bei Fehler: nächster Aufruf versucht neu zu starten
+    browserPromise = null;
     throw e;
   }
 }
