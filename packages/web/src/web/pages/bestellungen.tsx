@@ -391,13 +391,25 @@ export default function Bestellungen() {
                 </a>
 
                 {order.localNote?.aliexpressInvoiceUrl ? (
-                  <a href={order.localNote.aliexpressInvoiceUrl} target="_blank" rel="noopener noreferrer" style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    padding: "6px 10px", borderRadius: 8, background: "#FFF7ED", color: "#C2410C",
-                    fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit", border: "1px solid #FED7AA",
-                  }}>
-                    <Download size={11} /> AliExpress-Rechnung ansehen
-                  </a>
+                  <>
+                    <a href={order.localNote.aliexpressInvoiceUrl} target="_blank" rel="noopener noreferrer" style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#FFF7ED", color: "#C2410C",
+                      fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit", border: "1px solid #FED7AA",
+                    }}>
+                      <Download size={11} /> AliExpress-Rechnung ansehen
+                    </a>
+                    <label style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#FEF2F2", color: "#DC2626",
+                      fontSize: 11, fontWeight: 700, fontFamily: "inherit", border: "1px solid #FECACA", cursor: "pointer",
+                    }}>
+                      {uploadingInvoice === order.orderId ? <Loader size={11} style={{ animation: "spin 1s linear infinite" }} /> : <FileText size={11} />}
+                      Ersetzen
+                      <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleInvoiceUpload(order.orderId, f); }} />
+                    </label>
+                  </>
                 ) : (
                   <label style={{
                     display: "inline-flex", alignItems: "center", gap: 4,
