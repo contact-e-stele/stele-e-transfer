@@ -45,6 +45,8 @@ try {
   await runMigrations();
   // Uploads-Ordner sicherstellen
   await Bun.write(`${distDir}/uploads/.gitkeep`, '').catch(() => {});
+  // Rechnungen-Ordner sicherstellen (P13)
+  await Bun.write(`${distDir}/invoices/.gitkeep`, '').catch(() => {});
 } catch (e) {
   console.error('[migrate] Fehler:', e);
 }

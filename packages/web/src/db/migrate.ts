@@ -61,6 +61,23 @@ const migrations = [
     eu_confirmed INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
   )`,
+  // Bestellungen — lokale Zusatzinfos zu eBay-Bestellungen (P13)
+  `CREATE TABLE IF NOT EXISTS order_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ebay_order_id TEXT NOT NULL UNIQUE,
+    tracking_number TEXT,
+    carrier TEXT,
+    shipped_at TEXT,
+    customer_notified_at TEXT,
+    internal_note TEXT,
+    invoice_generated_at TEXT,
+    invoice_path TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`,
+  // Falls order_notes schon ohne invoice-Spalten existiert (Update-Fall)
+  `ALTER TABLE order_notes ADD COLUMN invoice_generated_at TEXT`,
+  `ALTER TABLE order_notes ADD COLUMN invoice_path TEXT`,
 ];
 
 export async function runMigrations() {

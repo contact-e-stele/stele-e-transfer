@@ -4,6 +4,7 @@ import Index from "./pages/index";
 import Lieferanten from "./pages/lieferanten";
 import Produkte from "./pages/produkte";
 import Listings from "./pages/listings";
+import Bestellungen from "./pages/bestellungen";
 import Suche from "./pages/suche";
 import Retouren from "./pages/retouren";
 import Einstellungen from "./pages/einstellungen";
@@ -43,6 +44,7 @@ function TabNav() {
     { path: "/lieferanten", label: "📦",  title: "Import"    },
     { path: "/produkte",    label: "🗂️",  title: "Produkte" },
     { path: "/listings",    label: "🛒",  title: "Listings"  },
+    { path: "/bestellungen", label: "📬", title: "Bestell."  },
     { path: "/retouren",    label: "🔄",  title: "Retouren"  },
     { path: "/einstellungen", label: "⚙️", title: "Einst."  },
   ];
@@ -145,6 +147,7 @@ function App() {
         <Route path="/lieferanten" component={Lieferanten} />
         <Route path="/produkte"    component={Produkte}    />
         <Route path="/listings"    component={Listings}    />
+        <Route path="/bestellungen" component={Bestellungen} />
         <Route path="/retouren"    component={Retouren}    />
         <Route path="/einstellungen" component={Einstellungen} />
       </Switch>

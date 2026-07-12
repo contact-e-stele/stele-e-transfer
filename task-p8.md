@@ -68,3 +68,12 @@
 ## Offene Fragen für später
 - eBay Rate-Limits bei Massenaktionen mit vielen Listings (>50) — ggf. Batches mit Pausen
 - Ob Custom Label / SKU zuverlässig aus GetSellerList kommt oder Extra-Call nötig ist
+
+## P10 (vorgemerkt) — Gespeicherte EU-Shops bei Suche priorisieren
+Aktuell: "Shop merken" speichert nur eine Merkliste (Badges), wird aber bei der normalen Produktsuche nicht automatisch genutzt.
+Ziel: Bei der AliExpress-Suche zuerst in den gespeicherten/geprüften EU-Shops nachschauen (Treffer aus trusted-suppliers priorisiert anzeigen), bevor breit über alle Shops gesucht wird. Spart Zeit + senkt Zoll-Risiko (EU-Lager bereits bestätigt).
+Technisch grob:
+- `trusted-suppliers` Tabelle existiert bereits (shopName, shopUrl, aliStoreId, euConfirmed)
+- Bei Suche: erst prüfen ob einer der gespeicherten Shops (via aliStoreId) zum Suchbegriff passt, diese Treffer oben/markiert anzeigen
+- Noch nicht begonnen — nach P8 final + P7/P9 einplanen
+

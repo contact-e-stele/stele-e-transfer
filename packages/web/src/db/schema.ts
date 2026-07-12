@@ -80,3 +80,23 @@ export const trustedSuppliers = sqliteTable('trusted_suppliers', {
 
 export type TrustedSupplier = typeof trustedSuppliers.$inferSelect;
 export type NewTrustedSupplier = typeof trustedSuppliers.$inferInsert;
+
+// ─── Bestellungen — lokale Zusatzinfos zu eBay-Bestellungen ───────────────────
+// Kerndaten (Käufer, Artikel, Preis, Status) kommen live von eBay — hier nur App-spezifische Ergänzungen
+export const orderNotes = sqliteTable('order_notes', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ebayOrderId: text('ebay_order_id').notNull().unique(),
+  trackingNumber: text('tracking_number'),
+  carrier: text('carrier'),                    // z.B. DHL, Deutsche Post, Hermes, DPD
+  shippedAt: text('shipped_at'),
+  customerNotifiedAt: text('customer_notified_at'),
+  internalNote: text('internal_note'),
+  invoiceGeneratedAt: text('invoice_generated_at'), // automatische Rechnungs-Generierung (P13)
+  invoicePath: text('invoice_path'),                // Pfad zur automatisch generierten PDF
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+});
+
+export type OrderNote = typeof orderNotes.$inferSelect;
+export type NewOrderNote = typeof orderNotes.$inferInsert;
+

@@ -1375,3 +1375,109 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   console.log(`[eBay GetSellerList] Total items fetched: ${results.length}`);
   return results;
 }
+
+// ─── Bestellungen (Fulfillment API) ────────────────────────────────────────────
+export interface EbayOrder {
+  orderId: string;
+  buyerUsername: string;
+  orderDate: string;
+  orderFulfillmentStatus: string; // NOT_STARTED | IN_PROGRESS | FULFILLED
+  orderPaymentStatus: string;     // PAID | PENDING | FAILED
+  total: number;
+  currency: string;
+  lineItems: Array<{
+    lineItemId: string;
+    title: string;
+    imageUrl: string | null;
+    quantity: number;
+    sku: string | null;
+  }>;
+  shippingAddress: {
+    fullName: string;
+    city: string;
+    postalCode: string;
+    countryCode: string;
+  } | null;
+  trackingNumber: string | null;
+  carrier: string | null;
+}
+
+export async function getAllOrders(): Promise<EbayOrder[]> {
+  const token = await getAccessToken();
+  const results: EbayOrder[] = [];
+  let offset = 0;
+  const limit = 50;
+
+  while (true) {
+    const res = await fetch(
+      `${BASE_URL}/sell/fulfillment/v1/order?limit=${limit}&offset=${offset}`,
+      { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('[eBay GetOrders] Fehler:', res.status, errText.slice(0, 300));
+      break;
+    }
+    const data = await res.json() as {
+      orders?: Array<{
+        orderId: string;
+        buyer?: { username?: string };
+        creationDate?: string;
+        orderFulfillmentStatus?: string;
+        orderPaymentStatus?: string;
+        pricingSummary?: { total?: { value?: string; currency?: string } };
+        lineItems?: Array<{
+          lineItemId: string;
+          title?: string;
+          image?: { imageUrl?: string };
+          quantity?: number;
+          sku?: string;
+        }>;
+        fulfillmentStartInstructions?: Array<{
+          shippingStep?: {
+            shipTo?: { fullName?: string; contactAddress?: { city?: string; postalCode?: string; countryCode?: string } };
+          };
+        }>;
+        fulfillmentHrefs?: string[];
+      }>;
+      total?: number;
+    };
+
+    const orders = data.orders ?? [];
+    for (const o of orders) {
+      const shipTo = o.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
+      results.push({
+        orderId: o.orderId,
+        buyerUsername: o.buyer?.username ?? 'Unbekannt',
+        orderDate: o.creationDate ?? '',
+        orderFulfillmentStatus: o.orderFulfillmentStatus ?? 'NOT_STARTED',
+        orderPaymentStatus: o.orderPaymentStatus ?? 'PENDING',
+        total: parseFloat(o.pricingSummary?.total?.value ?? '0'),
+        currency: o.pricingSummary?.total?.currency ?? 'EUR',
+        lineItems: (o.lineItems ?? []).map(li => ({
+          lineItemId: li.lineItemId,
+          title: li.title ?? '',
+          imageUrl: li.image?.imageUrl ?? null,
+          quantity: li.quantity ?? 1,
+          sku: li.sku ?? null,
+        })),
+        shippingAddress: shipTo ? {
+          fullName: shipTo.fullName ?? '',
+          city: shipTo.contactAddress?.city ?? '',
+          postalCode: shipTo.contactAddress?.postalCode ?? '',
+          countryCode: shipTo.contactAddress?.countryCode ?? '',
+        } : null,
+        trackingNumber: null, // wird separat aus Fulfillment-Details geladen, falls benötigt
+        carrier: null,
+      });
+    }
+
+    if (orders.length < limit) break;
+    offset += limit;
+    if (offset > 1000) break; // Sicherheitslimit
+  }
+
+  console.log(`[eBay GetOrders] Total orders fetched: ${results.length}`);
+  return results;
+}
+

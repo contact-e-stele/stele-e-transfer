@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
@@ -648,6 +648,127 @@ const app = new Hono()
         return c.json({ warning: errMsg }, 200);
       }
       return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Bestellungen (Grundgerüst — nur Anzeige, P13) ───────────────────────────
+  .get('/ebay/orders', async (c) => {
+    const CACHE_TTL = 5 * 60 * 1000; // 5 Minuten
+    const cacheKey = 'ebay_orders';
+    const cached = (globalThis as Record<string, unknown>)[cacheKey] as { ts: number; data: unknown } | undefined;
+    const forceRefresh = c.req.query('refresh') === '1';
+
+    let orders;
+    if (!forceRefresh && cached && (Date.now() - cached.ts) < CACHE_TTL) {
+      orders = cached.data;
+    } else {
+      try {
+        orders = await getAllOrders();
+        (globalThis as Record<string, unknown>)[cacheKey] = { ts: Date.now(), data: orders };
+      } catch (e) {
+        return c.json({ error: String(e) }, 500);
+      }
+    }
+
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      // Lokale Zusatzinfos (Tracking, Notizen) mit eBay-Bestellungen zusammenführen
+      const notes = await db.select().from(schema.orderNotes).all();
+      const notesByOrderId = new Map(notes.map(n => [n.ebayOrderId, n]));
+
+      const merged = (orders as import('./ebay').EbayOrder[]).map(order => ({
+        ...order,
+        localNote: notesByOrderId.get(order.orderId) ?? null,
+      }));
+
+      // Automatische Rechnungs-Generierung für neue Bestellungen ohne bisherige Rechnung
+      // Läuft im Hintergrund, blockiert die Response nicht
+      const newOrders = (orders as import('./ebay').EbayOrder[]).filter(o => !notesByOrderId.get(o.orderId)?.invoiceGeneratedAt);
+      if (newOrders.length > 0) {
+        (async () => {
+          const { generateInvoicePdf } = await import('./invoice');
+          const invoicesDir = `${import.meta.dir}/../../dist/invoices`;
+          for (const order of newOrders.slice(0, 10)) { // Sicherheitslimit pro Durchlauf
+            try {
+              const pdf = await generateInvoicePdf({
+                orderId: order.orderId,
+                orderDate: order.orderDate,
+                buyerName: order.shippingAddress?.fullName ?? order.buyerUsername,
+                buyerAddress: {
+                  city: order.shippingAddress?.city,
+                  postalCode: order.shippingAddress?.postalCode,
+                  countryCode: order.shippingAddress?.countryCode,
+                },
+                lineItems: order.lineItems.map(li => ({
+                  title: li.title,
+                  quantity: li.quantity,
+                  unitPrice: order.total / Math.max(1, order.lineItems.reduce((a, l) => a + l.quantity, 0)),
+                })),
+                total: order.total,
+                currency: order.currency,
+              });
+              const fileName = `Rechnung-${order.orderId}.pdf`;
+              await Bun.write(`${invoicesDir}/${fileName}`, pdf);
+              await db.insert(schema.orderNotes).values({
+                ebayOrderId: order.orderId,
+                invoiceGeneratedAt: new Date().toISOString(),
+                invoicePath: `/invoices/${fileName}`,
+              }).onConflictDoUpdate({
+                target: schema.orderNotes.ebayOrderId,
+                set: { invoiceGeneratedAt: new Date().toISOString(), invoicePath: `/invoices/${fileName}` },
+              });
+            } catch (e) {
+              console.error(`[Rechnung Auto-Gen] Fehler bei ${order.orderId}:`, e);
+            }
+          }
+        })();
+      }
+
+      return c.json({ orders: merged, total: merged.length }, 200);
+    } catch (e) {
+      // Falls DB nicht verfügbar: trotzdem eBay-Daten ohne lokale Notizen zurückgeben
+      return c.json({ orders, total: (orders as unknown[]).length }, 200);
+    }
+  })
+
+  // ─── Rechnung/Quittung PDF (Ein-Klick-Download, on-demand generiert) ─────────
+  .get('/ebay/orders/:orderId/invoice', async (c) => {
+    const orderId = c.req.param('orderId');
+    try {
+      const allOrders = await getAllOrders();
+      const order = allOrders.find(o => o.orderId === orderId);
+      if (!order) return c.json({ error: 'Bestellung nicht gefunden' }, 404);
+
+      const { generateInvoicePdf } = await import('./invoice');
+      const pdf = await generateInvoicePdf({
+        orderId: order.orderId,
+        orderDate: order.orderDate,
+        buyerName: order.shippingAddress?.fullName ?? order.buyerUsername,
+        buyerAddress: {
+          city: order.shippingAddress?.city,
+          postalCode: order.shippingAddress?.postalCode,
+          countryCode: order.shippingAddress?.countryCode,
+        },
+        lineItems: order.lineItems.map(li => ({
+          title: li.title,
+          quantity: li.quantity,
+          unitPrice: order.total / Math.max(1, order.lineItems.reduce((a, l) => a + l.quantity, 0)),
+        })),
+        total: order.total,
+        currency: order.currency,
+      });
+
+      return new Response(pdf, {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="Rechnung-${orderId}.pdf"`,
+        },
+      });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
