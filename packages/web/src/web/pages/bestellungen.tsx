@@ -239,6 +239,9 @@ export default function Bestellungen() {
           </span>
           <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 4 }}>
             Hinweis: Enthält noch keine eBay-Gebühren, Versandkosten oder Anzeigenkosten — reiner Wareneinsatz-Abzug.
+            {stats.nettoKnown.length < orders.length && (
+              <> Nur Produkte, die über diese App importiert wurden, haben einen hinterlegten Einkaufspreis — ältere eBay-Listings (vor App-Nutzung) fehlt dieser Wert noch.</>
+            )}
           </div>
         </div>
 

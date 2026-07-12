@@ -90,8 +90,10 @@ Angelehnt an Listings-Tab-Struktur (Wiederverwendung von Mustern):
 3. Carrier-Dropdown flexibel (kein Fixwert, da Lieferant wechselt)
 4. Später: P9 Trackerbot-Ersatz (Tracking-Konvertierung) als Upgrade
 
-## Bugfix während Live-Test (wichtig für zukünftige PDF/Chromium-Features)
-- Playwright/Chromium (@sparticuz/chromium) stürzte auf Render ab bei PDF-Generierung (Speicherlimit vermutlich zu knapp)
-- Erst Race-Condition-Fix versucht (Browser-Wiederverwendung + Queue) — half nicht vollständig
-- Finale Lösung: Rechnungs-PDF komplett auf `pdf-lib` umgestellt (kein Browser nötig, reines JS) — funktioniert zuverlässig, live getestet (200 OK, echtes PDF)
-- Lehre: Für einfache PDF-Erzeugung (Text/Tabellen) ist pdf-lib die bessere Wahl als Playwright/Chromium auf ressourcenbeschränkten Servern wie Render Free/Starter Tier
+## Wichtiger Befund: Netto-Berechnung strukturell limitiert
+- Geprüft am Live-System: Nur 1 von 107 Bestellungen zeigt einen Netto-Wert
+- Root Cause: Unsere Stele-App-Datenbank hat aktuell nur 15 Produkte (alles was seit App-Nutzung importiert wurde)
+- Die 335+ restlichen eBay-Listings stammen aus der Zeit VOR dieser App (Ecomsniper/AutoDS-Ära) — nie mit Einkaufspreis in unsere DB importiert
+- Das ist kein Bug im Matching-Code (ASIN/Base64/SKU-Matching wurde erweitert und funktioniert korrekt für die 15 vorhandenen Produkte) — die Kostendaten existieren schlicht nicht im System für die alten Listings
+- Lösung nur möglich durch: manuellen Nachtrag der Einkaufspreise für alte Produkte, ODER Akzeptanz dass Netto nur für neu importierte Produkte sichtbar ist (wächst mit der Zeit von selbst)
+- Dem User in Zusammenfassung ehrlich erklärt
