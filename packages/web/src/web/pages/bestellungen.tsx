@@ -28,7 +28,16 @@ interface Order {
   shippingAddress: { fullName: string; city: string; postalCode: string; countryCode: string } | null;
   trackingNumber: string | null;
   carrier: string | null;
-  localNote: { invoiceGeneratedAt: string | null; invoicePath: string | null; trackingNumber: string | null } | null;
+  nettoEinkauf: number | null;
+  nettoErgebnis: number | null;
+  localNote: {
+    invoiceGeneratedAt: string | null;
+    invoicePath: string | null;
+    trackingNumber: string | null;
+    shippedAt: string | null;
+    aliexpressOrderId: string | null;
+    aliexpressInvoiceUrl: string | null;
+  } | null;
 }
 
 type FilterMode = "all" | "open" | "shipped";
@@ -52,6 +61,66 @@ export default function Bestellungen() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("all");
+
+  // Manuelle Zusatzinfos (AliExpress-Bestellnummer, Rechnung-Upload, manuell versendet)
+  const [editingAliId, setEditingAliId] = useState<string | null>(null); // orderId
+  const [aliIdInput, setAliIdInput] = useState("");
+  const [savingNote, setSavingNote] = useState<string | null>(null); // orderId
+  const [uploadingInvoice, setUploadingInvoice] = useState<string | null>(null); // orderId
+  const [markingShipped, setMarkingShipped] = useState<string | null>(null); // orderId
+
+  const saveOrderNote = async (orderId: string, body: Record<string, unknown>) => {
+    setSavingNote(orderId);
+    try {
+      await fetch(`/api/order-notes/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      await load(true);
+    } finally {
+      setSavingNote(null);
+    }
+  };
+
+  const handleAliIdSave = (orderId: string) => {
+    saveOrderNote(orderId, { aliexpressOrderId: aliIdInput.trim() || null });
+    setEditingAliId(null);
+  };
+
+  const handleInvoiceUpload = async (orderId: string, file: File) => {
+    setUploadingInvoice(orderId);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch("/api/upload-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, filename: `aliexpress-rechnung-${orderId}` }),
+      });
+      const data = await res.json() as { url?: string; error?: string };
+      if (data.url) {
+        await saveOrderNote(orderId, { aliexpressInvoiceUrl: data.url });
+      } else {
+        alert("Upload fehlgeschlagen: " + (data.error ?? "unbekannt"));
+      }
+    } catch (e) {
+      alert("Upload fehlgeschlagen: " + String(e));
+    } finally {
+      setUploadingInvoice(null);
+    }
+  };
+
+  const handleMarkShipped = async (orderId: string) => {
+    setMarkingShipped(orderId);
+    await saveOrderNote(orderId, { markShipped: true });
+    setMarkingShipped(null);
+  };
+
 
   const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
@@ -103,7 +172,9 @@ export default function Bestellungen() {
     open: orders.filter(o => o.orderFulfillmentStatus !== "FULFILLED").length,
     shipped: orders.filter(o => o.orderFulfillmentStatus === "FULFILLED").length,
     revenue: orders.reduce((a, o) => a + o.total, 0),
+    nettoKnown: orders.filter(o => o.nettoErgebnis !== null),
   };
+  const nettoSumme = stats.nettoKnown.reduce((a, o) => a + (o.nettoErgebnis ?? 0), 0);
 
   return (
     <div style={{ minHeight: "100vh", background: "#F8FAFC", fontFamily: "'Poppins', sans-serif", padding: "24px 16px" }}>
@@ -132,19 +203,32 @@ export default function Bestellungen() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
           {[
             { label: "Gesamt", value: stats.total, color: "#8B5CF6", bg: "#F5F3FF", icon: <Package size={16} color="#8B5CF6" /> },
             { label: "Offen", value: stats.open, color: "#DC2626", bg: "#FEF2F2", icon: <Clock size={16} color="#DC2626" /> },
             { label: "Versendet", value: stats.shipped, color: "#16A34A", bg: "#F0FDF4", icon: <Truck size={16} color="#16A34A" /> },
-            { label: "Umsatz", value: stats.revenue.toFixed(2) + " €", color: "#0EA5E9", bg: "#F0F9FF", icon: <CreditCard size={16} color="#0EA5E9" /> },
+            { label: "Umsatz (Brutto)", value: stats.revenue.toFixed(2) + " €", color: "#0EA5E9", bg: "#F0F9FF", icon: <CreditCard size={16} color="#0EA5E9" /> },
           ].map(s => (
             <div key={s.label} style={{ background: s.bg, borderRadius: 12, padding: "12px 8px", textAlign: "center" }}>
               <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}>{s.icon}</div>
-              <div style={{ fontSize: s.label === "Umsatz" ? 15 : 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: s.label === "Umsatz (Brutto)" ? 15 : 22, fontWeight: 800, color: s.color }}>{s.value}</div>
               <div style={{ fontSize: 10, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
             </div>
           ))}
+        </div>
+
+        {/* Netto-Ergebnis (Umsatz minus Einkauf/Zoll) — nur für Bestellungen mit bekanntem Einkaufspreis */}
+        <div style={{ background: "#F0FDF4", border: "1.5px solid #BBF7D0", borderRadius: 12, padding: "10px 14px", marginBottom: 20, fontSize: 12 }}>
+          <span style={{ fontWeight: 700, color: "#166534" }}>
+            Netto-Ergebnis (nach Einkauf{"/"}Zoll): {nettoSumme.toFixed(2)} €
+          </span>
+          <span style={{ color: "#64748B", marginLeft: 8 }}>
+            ({stats.nettoKnown.length}/{orders.length} Bestellungen berechenbar — Einkaufspreis muss im Produkt hinterlegt sein)
+          </span>
+          <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 4 }}>
+            Hinweis: Enthält noch keine eBay-Gebühren, Versandkosten oder Anzeigenkosten — reiner Wareneinsatz-Abzug.
+          </div>
         </div>
 
         {/* Suche + Filter */}
@@ -239,10 +323,48 @@ export default function Bestellungen() {
                 )}
                 <span>Bestellt: {fmtDate(order.orderDate)}</span>
                 <span style={{ fontWeight: 700, color: "#0F172A" }}>{order.total.toFixed(2)} {order.currency}</span>
+                {order.nettoErgebnis !== null && (
+                  <span style={{ fontWeight: 700, color: order.nettoErgebnis >= 0 ? "#16A34A" : "#DC2626" }}>
+                    Netto: {order.nettoErgebnis.toFixed(2)} {order.currency}
+                  </span>
+                )}
+                {order.localNote?.shippedAt && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#16A34A", fontWeight: 700 }}>
+                    <Truck size={11} /> Manuell als versendet markiert ({fmtDate(order.localNote.shippedAt)})
+                  </span>
+                )}
+              </div>
+
+              {/* AliExpress-Bestellnummer */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                {editingAliId === order.orderId ? (
+                  <>
+                    <input
+                      autoFocus
+                      value={aliIdInput}
+                      onChange={e => setAliIdInput(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && handleAliIdSave(order.orderId)}
+                      placeholder="AliExpress-Bestellnummer"
+                      style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1.5px solid #FF6B00", outline: "none", fontFamily: "inherit", width: 160 }}
+                    />
+                    <button onClick={() => handleAliIdSave(order.orderId)} style={{ background: "#FF6B00", color: "#fff", border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>
+                      <CheckCircle size={11} />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { setEditingAliId(order.orderId); setAliIdInput(order.localNote?.aliexpressOrderId ?? ""); }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", fontSize: 11, color: order.localNote?.aliexpressOrderId ? "#FF6B00" : "#94A3B8", fontFamily: "inherit", padding: 0 }}
+                  >
+                    <FileText size={11} />
+                    {order.localNote?.aliexpressOrderId ? `AliExpress-Bestellnr.: ${order.localNote.aliexpressOrderId}` : "AliExpress-Bestellnummer eintragen"}
+                  </button>
+                )}
+                {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
 
               {/* Aktionen */}
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                 <a
                   href={`/api/ebay/orders/${order.orderId}/invoice`}
                   target="_blank" rel="noopener noreferrer"
@@ -256,6 +378,43 @@ export default function Bestellungen() {
                   {order.localNote?.invoicePath ? <Download size={11} /> : <FileText size={11} />}
                   {order.localNote?.invoicePath ? "Rechnung herunterladen" : "Rechnung erzeugen"}
                 </a>
+
+                {order.localNote?.aliexpressInvoiceUrl ? (
+                  <a href={order.localNote.aliexpressInvoiceUrl} target="_blank" rel="noopener noreferrer" style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    padding: "6px 10px", borderRadius: 8, background: "#FFF7ED", color: "#C2410C",
+                    fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit", border: "1px solid #FED7AA",
+                  }}>
+                    <Download size={11} /> AliExpress-Rechnung ansehen
+                  </a>
+                ) : (
+                  <label style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    padding: "6px 10px", borderRadius: 8, background: "#FFF7ED", color: "#C2410C",
+                    fontSize: 11, fontWeight: 700, fontFamily: "inherit", border: "1px solid #FED7AA", cursor: "pointer",
+                  }}>
+                    {uploadingInvoice === order.orderId ? <Loader size={11} style={{ animation: "spin 1s linear infinite" }} /> : <FileText size={11} />}
+                    AliExpress-Rechnung hochladen
+                    <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleInvoiceUpload(order.orderId, f); }} />
+                  </label>
+                )}
+
+                {!order.localNote?.shippedAt && (
+                  <button
+                    onClick={() => handleMarkShipped(order.orderId)}
+                    disabled={markingShipped === order.orderId}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#F0FDF4", color: "#16A34A",
+                      fontSize: 11, fontWeight: 700, border: "1px solid #BBF7D0",
+                      cursor: markingShipped === order.orderId ? "not-allowed" : "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    {markingShipped === order.orderId ? <Loader size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Truck size={11} />}
+                    Manuell als versendet markieren
+                  </button>
+                )}
               </div>
             </div>
           );

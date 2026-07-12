@@ -88,11 +88,13 @@ export const orderNotes = sqliteTable('order_notes', {
   ebayOrderId: text('ebay_order_id').notNull().unique(),
   trackingNumber: text('tracking_number'),
   carrier: text('carrier'),                    // z.B. DHL, Deutsche Post, Hermes, DPD
-  shippedAt: text('shipped_at'),
+  shippedAt: text('shipped_at'),                // manuell gesetzt (lokaler Status, unabhaengig von eBay Fulfillment)
   customerNotifiedAt: text('customer_notified_at'),
   internalNote: text('internal_note'),
   invoiceGeneratedAt: text('invoice_generated_at'), // automatische Rechnungs-Generierung (P13)
   invoicePath: text('invoice_path'),                // Pfad zur automatisch generierten PDF
+  aliexpressOrderId: text('aliexpress_order_id'),   // manuell eingetragene Lieferanten-Bestellnummer
+  aliexpressInvoiceUrl: text('aliexpress_invoice_url'), // hochgeladene AliExpress-Rechnung (PDF/Bild)
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

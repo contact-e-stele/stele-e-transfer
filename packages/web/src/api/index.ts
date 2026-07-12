@@ -681,10 +681,33 @@ const app = new Hono()
       const notes = await db.select().from(schema.orderNotes).all();
       const notesByOrderId = new Map(notes.map(n => [n.ebayOrderId, n]));
 
-      const merged = (orders as import('./ebay').EbayOrder[]).map(order => ({
-        ...order,
-        localNote: notesByOrderId.get(order.orderId) ?? null,
-      }));
+      // Einkaufspreise für Netto-Berechnung laden (Match über SKU-Präfix "stele-{productId}")
+      const allProducts = await db.select({
+        id: schema.products.id,
+        buyPrice: schema.products.buyPrice,
+        shipsFrom: schema.products.shipsFrom,
+      }).from(schema.products).all();
+      const productById = new Map(allProducts.map(p => [p.id, p]));
+
+      const merged = (orders as import('./ebay').EbayOrder[]).map(order => {
+        // Einkaufskosten pro Bestellung ermitteln (soweit SKU zuordenbar)
+        let einkaufBekannt = true;
+        let einkaufGesamt = 0;
+        for (const li of order.lineItems) {
+          const match = li.sku?.match(/^stele-(\d+)/);
+          if (!match) { einkaufBekannt = false; continue; }
+          const product = productById.get(parseInt(match[1]));
+          if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
+          const zoll = (product.shipsFrom ?? '').toLowerCase() === 'china' ? CHINA_ZOLL_EUR : 0;
+          einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
+        }
+        return {
+          ...order,
+          localNote: notesByOrderId.get(order.orderId) ?? null,
+          nettoEinkauf: einkaufBekannt ? einkaufGesamt : null,
+          nettoErgebnis: einkaufBekannt ? Math.round((order.total - einkaufGesamt) * 100) / 100 : null,
+        };
+      });
 
       // Automatische Rechnungs-Generierung für neue Bestellungen ohne bisherige Rechnung
       // Läuft im Hintergrund, blockiert die Response nicht
@@ -769,6 +792,36 @@ const app = new Hono()
           'Content-Disposition': `attachment; filename="Rechnung-${orderId}.pdf"`,
         },
       });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Bestellungs-Zusatzinfos speichern (AliExpress-Bestellnummer, Rechnung-URL, manuell versendet) ──
+  .patch('/order-notes/:ebayOrderId', async (c) => {
+    const ebayOrderId = c.req.param('ebayOrderId');
+    try {
+      const body = await c.req.json() as {
+        aliexpressOrderId?: string;
+        aliexpressInvoiceUrl?: string;
+        markShipped?: boolean; // true = jetzt als versendet markieren (lokal, manuell)
+        internalNote?: string;
+      };
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
+      const update: Partial<typeof schema.orderNotes.$inferInsert> = { updatedAt: new Date().toISOString() };
+      if (body.aliexpressOrderId !== undefined) update.aliexpressOrderId = body.aliexpressOrderId || null;
+      if (body.aliexpressInvoiceUrl !== undefined) update.aliexpressInvoiceUrl = body.aliexpressInvoiceUrl || null;
+      if (body.internalNote !== undefined) update.internalNote = body.internalNote || null;
+      if (body.markShipped) update.shippedAt = new Date().toISOString();
+
+      await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
+        .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });
+
+      return c.json({ ok: true }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
@@ -1570,6 +1623,26 @@ const app = new Hono()
       const base64 = dataUrl.split(',')[1];
       const ext = dataUrl.match(/data:image\/(\w+);/)?.[1] ?? 'jpg';
       const name = (filename ?? `img-${Date.now()}`).replace(/[^a-z0-9_-]/gi, '_') + '.' + ext;
+      const uploadsDir = `${import.meta.dir}/../../dist/uploads`;
+      await Bun.write(`${uploadsDir}/${name}`, Buffer.from(base64, 'base64'));
+      const baseUrl = process.env.PUBLIC_URL ?? 'https://stele-e-transfer.onrender.com';
+      return c.json({ url: `${baseUrl}/uploads/${name}` }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Datei-Upload allgemein (PDF/Bild) — z.B. AliExpress-Rechnung hochladen ──
+  .post('/upload-file', async (c) => {
+    try {
+      const { dataUrl, filename } = await c.req.json() as { dataUrl: string; filename?: string };
+      const match = dataUrl?.match(/^data:([\w/+.-]+);base64,/);
+      if (!dataUrl || !match) return c.json({ error: 'Keine gültige Datei' }, 400);
+      const mime = match[1];
+      const extFromMime: Record<string, string> = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+      const ext = extFromMime[mime] ?? mime.split('/')[1]?.replace(/[^a-z0-9]/gi, '') ?? 'bin';
+      const base64 = dataUrl.slice(match[0].length);
+      const name = (filename ?? `file-${Date.now()}`).replace(/[^a-z0-9_-]/gi, '_') + '.' + ext;
       const uploadsDir = `${import.meta.dir}/../../dist/uploads`;
       await Bun.write(`${uploadsDir}/${name}`, Buffer.from(base64, 'base64'));
       const baseUrl = process.env.PUBLIC_URL ?? 'https://stele-e-transfer.onrender.com';

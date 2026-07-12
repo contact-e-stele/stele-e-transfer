@@ -78,6 +78,9 @@ const migrations = [
   // Falls order_notes schon ohne invoice-Spalten existiert (Update-Fall)
   `ALTER TABLE order_notes ADD COLUMN invoice_generated_at TEXT`,
   `ALTER TABLE order_notes ADD COLUMN invoice_path TEXT`,
+  // AliExpress-Bestellnummer + Rechnung (manuell), P13 Erweiterung
+  `ALTER TABLE order_notes ADD COLUMN aliexpress_order_id TEXT`,
+  `ALTER TABLE order_notes ADD COLUMN aliexpress_invoice_url TEXT`,
 ];
 
 export async function runMigrations() {
