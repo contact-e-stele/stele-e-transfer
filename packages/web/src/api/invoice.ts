@@ -95,14 +95,36 @@ function buildInvoiceHtml(data: InvoiceData): string {
 </html>`;
 }
 
-export async function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
-  const browser = await launchChromium();
-  try {
-    const page = await browser.newPage();
-    await page.setContent(buildInvoiceHtml(data), { waitUntil: 'load' });
-    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' } });
-    return pdf;
-  } finally {
-    await browser.close();
+// Wiederverwendete Browser-Instanz (verhindert Race Condition/ETXTBSY bei gleichzeitigen Chromium-Starts,
+// z.B. wenn Auto-Generierung im Hintergrund läuft während gleichzeitig ein Download angefragt wird)
+let browserPromise: ReturnType<typeof launchChromium> | null = null;
+let queue: Promise<unknown> = Promise.resolve();
+
+async function getBrowser() {
+  if (!browserPromise) {
+    browserPromise = launchChromium();
   }
+  try {
+    return await browserPromise;
+  } catch (e) {
+    browserPromise = null; // Bei Fehler: nächster Aufruf versucht neu zu starten
+    throw e;
+  }
+}
+
+export async function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
+  // Sequentiell in Warteschlange ausführen — verhindert parallele Chromium-Launches
+  const task = queue.then(async () => {
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setContent(buildInvoiceHtml(data), { waitUntil: 'load' });
+      const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' } });
+      return pdf;
+    } finally {
+      await page.close();
+    }
+  });
+  queue = task.catch(() => {}); // Fehler sollen die Queue nicht blockieren
+  return task;
 }
