@@ -95,6 +95,7 @@ export const orderNotes = sqliteTable('order_notes', {
   invoicePath: text('invoice_path'),                // Pfad zur automatisch generierten PDF
   aliexpressOrderId: text('aliexpress_order_id'),   // manuell eingetragene Lieferanten-Bestellnummer
   aliexpressInvoiceUrl: text('aliexpress_invoice_url'), // hochgeladene AliExpress-Rechnung (PDF/Bild)
+  manualBuyPrice: real('manual_buy_price'),         // tatsaechlicher Einkaufspreis laut Rechnung (manuell, hat Vorrang vor DB-Wert)
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

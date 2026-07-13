@@ -712,7 +712,15 @@ const app = new Hono()
       };
 
       const merged = (orders as import('./ebay').EbayOrder[]).map(order => {
-        // Einkaufskosten pro Bestellung ermitteln (soweit SKU/ASIN zuordenbar)
+        const note = notesByOrderId.get(order.orderId) ?? null;
+
+        // Manuell eingetragener Einkaufspreis hat IMMER Vorrang (z.B. exakter Betrag laut AliExpress-Rechnung)
+        if (note?.manualBuyPrice !== null && note?.manualBuyPrice !== undefined) {
+          const netto = Math.round((order.total - note.manualBuyPrice) * 100) / 100;
+          return { ...order, localNote: note, nettoEinkauf: note.manualBuyPrice, nettoErgebnis: netto, nettoQuelle: 'manuell' as const };
+        }
+
+        // Fallback: automatischer Match über SKU/ASIN + Produkt-DB
         let einkaufBekannt = true;
         let einkaufGesamt = 0;
         for (const li of order.lineItems) {
@@ -723,9 +731,10 @@ const app = new Hono()
         }
         return {
           ...order,
-          localNote: notesByOrderId.get(order.orderId) ?? null,
+          localNote: note,
           nettoEinkauf: einkaufBekannt ? einkaufGesamt : null,
           nettoErgebnis: einkaufBekannt ? Math.round((order.total - einkaufGesamt) * 100) / 100 : null,
+          nettoQuelle: einkaufBekannt ? ('automatisch' as const) : null,
         };
       });
 
@@ -826,6 +835,7 @@ const app = new Hono()
         aliexpressInvoiceUrl?: string;
         markShipped?: boolean; // true = jetzt als versendet markieren (lokal, manuell)
         internalNote?: string;
+        manualBuyPrice?: number | null; // tatsaechlicher Einkaufspreis laut Rechnung
       };
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
@@ -837,6 +847,7 @@ const app = new Hono()
       if (body.aliexpressInvoiceUrl !== undefined) update.aliexpressInvoiceUrl = body.aliexpressInvoiceUrl || null;
       if (body.internalNote !== undefined) update.internalNote = body.internalNote || null;
       if (body.markShipped) update.shippedAt = new Date().toISOString();
+      if (body.manualBuyPrice !== undefined) update.manualBuyPrice = body.manualBuyPrice;
 
       await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
         .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });

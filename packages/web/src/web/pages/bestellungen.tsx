@@ -30,6 +30,7 @@ interface Order {
   carrier: string | null;
   nettoEinkauf: number | null;
   nettoErgebnis: number | null;
+  nettoQuelle: "manuell" | "automatisch" | null;
   localNote: {
     invoiceGeneratedAt: string | null;
     invoicePath: string | null;
@@ -37,6 +38,7 @@ interface Order {
     shippedAt: string | null;
     aliexpressOrderId: string | null;
     aliexpressInvoiceUrl: string | null;
+    manualBuyPrice: number | null;
   } | null;
 }
 
@@ -97,6 +99,15 @@ export default function Bestellungen() {
   const handleAliIdSave = (orderId: string) => {
     saveOrderNote(orderId, { aliexpressOrderId: aliIdInput.trim() || null });
     setEditingAliId(null);
+  };
+
+  const [editingBuyPrice, setEditingBuyPrice] = useState<string | null>(null); // orderId
+  const [buyPriceInput, setBuyPriceInput] = useState("");
+
+  const handleBuyPriceSave = (orderId: string) => {
+    const val = parseFloat(buyPriceInput.replace(",", "."));
+    saveOrderNote(orderId, { manualBuyPrice: isNaN(val) ? null : val });
+    setEditingBuyPrice(null);
   };
 
   const handleInvoiceUpload = async (orderId: string, file: File) => {
@@ -340,8 +351,32 @@ export default function Bestellungen() {
                 {order.nettoErgebnis !== null && (
                   <span style={{ fontWeight: 700, color: order.nettoErgebnis >= 0 ? "#16A34A" : "#DC2626" }}>
                     Netto: {order.nettoErgebnis.toFixed(2)} {order.currency}
+                    {order.nettoQuelle === "manuell" && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (manuell)</span>}
                   </span>
                 )}
+                {editingBuyPrice === order.orderId ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <input
+                      autoFocus
+                      value={buyPriceInput}
+                      onChange={e => setBuyPriceInput(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && handleBuyPriceSave(order.orderId)}
+                      placeholder="Einkauf laut Rechnung €"
+                      style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1.5px solid #16A34A", outline: "none", fontFamily: "inherit", width: 130 }}
+                    />
+                    <button onClick={() => handleBuyPriceSave(order.orderId)} style={{ background: "#16A34A", color: "#fff", border: "none", borderRadius: 6, padding: "3px 6px", cursor: "pointer" }}>
+                      <CheckCircle size={11} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => { setEditingBuyPrice(order.orderId); setBuyPriceInput(order.localNote?.manualBuyPrice != null ? String(order.localNote.manualBuyPrice) : ""); }}
+                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#94A3B8", fontFamily: "inherit", padding: 0, textDecoration: "underline" }}
+                  >
+                    {order.localNote?.manualBuyPrice != null ? "Einkauf ändern" : "Einkaufspreis eintragen"}
+                  </button>
+                )}
+                {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
                 {order.localNote?.shippedAt && (
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#16A34A", fontWeight: 700 }}>
                     <Truck size={11} /> Manuell als versendet markiert ({fmtDate(order.localNote.shippedAt)})

@@ -81,6 +81,8 @@ const migrations = [
   // AliExpress-Bestellnummer + Rechnung (manuell), P13 Erweiterung
   `ALTER TABLE order_notes ADD COLUMN aliexpress_order_id TEXT`,
   `ALTER TABLE order_notes ADD COLUMN aliexpress_invoice_url TEXT`,
+  // Tatsaechlicher Einkaufspreis laut Rechnung (manuell) - hat Vorrang vor automatischem DB-Match
+  `ALTER TABLE order_notes ADD COLUMN manual_buy_price REAL`,
 ];
 
 export async function runMigrations() {
