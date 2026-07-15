@@ -1090,7 +1090,7 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
 
     // Ships from
     const shippingMod = result.SHIPPING as { deliveryLayoutInfo?: Array<{ bizData?: { shipFrom?: string } }> } | undefined;
-    let shipsFrom = 'China';
+    let shipsFrom = ''; // Leer lassen wenn nicht gefunden — NICHT automatisch "China" annehmen (fuehrte zu falschem Zoll-Alarm bei EU-Produkten wie Polen)
     for (const d of shippingMod?.deliveryLayoutInfo || []) {
       if (d.bizData?.shipFrom) { shipsFrom = d.bizData.shipFrom; break; }
     }
@@ -1261,7 +1261,12 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
   if (!seller) {
     const m = html.match(/"storeName"\s*:\s*"([^"]+)"/) ||
               html.match(/store-name[^>]*>([^<]{3,60})</) ||
-              html.match(/"sellerName"\s*:\s*"([^"]+)"/);
+              html.match(/"sellerName"\s*:\s*"([^"]+)"/) ||
+              html.match(/"shopName"\s*:\s*"([^"]+)"/) ||
+              html.match(/"companyName"\s*:\s*"([^"]+)"/) ||
+              // Deutsche Lokalisierung zeigt Verkäufernamen oft mit "(Händler)"-Suffix im Text
+              html.match(/>([^<]{3,60})\s*\(Händler\)</i) ||
+              html.match(/"storeTitle"\s*:\s*"([^"]+)"/);
     if (m) seller = m[1].trim();
   }
 
