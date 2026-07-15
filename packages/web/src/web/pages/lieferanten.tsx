@@ -35,6 +35,7 @@ interface ScrapedProduct {
   variantPrices?: VariantPrice[];
   shipsFrom?: string;
   shipsFromDE?: boolean;
+  seller?: string; // echter AliExpress Händler-/Shopname (z.B. "BOBO GO 1 Store")
 }
 
 // EU-Länder die akzeptiert werden (schnelle Lieferung, kein Zoll)
@@ -216,16 +217,13 @@ export default function Lieferanten() {
 
   const handleSaveShop = async () => {
     if (!product || !urlInput.trim()) return;
-    // Shop-URL und Name aus AliExpress URL extrahieren
+    // Shop-URL aus AliExpress URL extrahieren
     let shopUrl = urlInput.trim();
-    let shopName = product.title.slice(0, 40) + '...';
-    // Versuche Store-URL aus AliExpress URL zu bauen
     const storeMatch = shopUrl.match(/\/store\/(\d+)/);
     const aliStoreId = storeMatch ? storeMatch[1] : null;
     const shopStoreUrl = aliStoreId ? `https://www.aliexpress.com/store/${aliStoreId}` : shopUrl;
-    // Besserer Name: aus URL-Domain oder Produkt
-    const titleWords = product.title.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).slice(0, 3).join(' ');
-    shopName = titleWords || 'AliExpress Shop';
+    // Echter Händlername (z.B. "BOBO GO 1 Store") — Produkttitel nur als Fallback, falls kein Seller-Name gescraped wurde
+    const shopName = product.seller?.trim() || (product.title.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).slice(0, 3).join(' ') || 'AliExpress Shop');
     const euBadge = shipsFromInfo?.isEU ?? false;
     const res = await fetch('/api/trusted-suppliers', {
       method: 'POST',
