@@ -7,7 +7,7 @@ import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAli
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { CHINA_ZOLL_EUR } from '../shared/constants';
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
 // ─── AliExpress Token Helper ──────────────────────────────────────────────────
 // Liest Token aus DB (app_settings) oder Env-Variable als Fallback
@@ -1138,6 +1138,7 @@ const app = new Hono()
         gpsrRaw?: string;
         gpsrHtml?: string;
         shipsFrom?: string;
+        shippingCost?: number;
       };
 
       // Titel + Beschreibung parallel generieren (schneller)
@@ -1168,6 +1169,7 @@ const app = new Hono()
           gpsrRaw: body.gpsrRaw ?? undefined,
           gpsrHtml: body.gpsrHtml ?? undefined,
           shipsFrom: body.shipsFrom ?? undefined,
+          shippingCost: body.shippingCost ?? undefined,
           updatedAt: new Date().toISOString(),
         }).where(eq(schema.products.asin, body.asin));
         return c.json({ id: existing[0].id, updated: true }, 200);
@@ -1193,6 +1195,7 @@ const app = new Hono()
         gpsrRaw: body.gpsrRaw ?? null,
         gpsrHtml: body.gpsrHtml ?? null,
         shipsFrom: body.shipsFrom ?? null,
+        shippingCost: body.shippingCost ?? 0,
         ebayStatus: 'none',
         aliexpressItemId: (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null,
       }).returning({ id: schema.products.id });
@@ -1995,10 +1998,11 @@ const app = new Hono()
               continue;
             }
             const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
-            // Neuen VK-Preis berechnen: (buyPrice + 1.60€ Mindestgewinn [+ 3€ China-Zoll]) / (1 - 0.18 eBay-Fee)
+            // Neuen VK-Preis berechnen: (buyPrice + Versand + Mindestgewinn [+ China-Zoll]) / (1 - 0.18 eBay-Fee)
             const isChina = (product.shipsFrom ?? '').toLowerCase() === 'china';
             const chinaZoll = isChina ? CHINA_ZOLL_EUR : 0;
-            const newSellPrice = Math.ceil(((newPrice + 1.60 + chinaZoll) / (1 - 0.18)) * 100) / 100;
+            const versand = product.shippingCost ?? 0;
+            const newSellPrice = Math.ceil(((newPrice + versand + MIN_GEWINN_EUR + chinaZoll) / (1 - 0.18)) * 100) / 100;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             await db.update(schema.products).set({
               buyPrice: newPrice,

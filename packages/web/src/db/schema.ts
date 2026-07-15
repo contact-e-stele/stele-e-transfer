@@ -19,6 +19,7 @@ export const products = sqliteTable('products', {
   images: text('images'),                      // JSON array von Bild-URLs
   // Preise
   buyPrice: real('buy_price'),                 // Einkaufspreis (AliExpress, €)
+  shippingCost: real('shipping_cost').default(0), // Versandkosten laut Lieferanten-Seite (0 = kostenlos)
   sellPrice: real('sell_price'),               // Verkaufspreis (eBay, €)
   lastPriceCheck: text('last_price_check'),    // ISO datetime
   priceChanged: integer('price_changed', { mode: 'boolean' }).default(false),

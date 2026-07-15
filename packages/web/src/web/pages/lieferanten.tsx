@@ -5,7 +5,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
-import { CHINA_ZOLL_EUR } from "../../shared/constants";
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from "../../shared/constants";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
@@ -50,6 +50,12 @@ function isEUShipping(shipsFrom?: string): boolean {
   if (!shipsFrom) return false;
   const lower = shipsFrom.toLowerCase();
   return EU_COUNTRIES.some(c => lower.includes(c));
+}
+
+// Zoll gilt ausschliesslich bei China-Versand (nicht bei "nicht EU" allgemein) — konsistent mit Backend-Logik
+function isChinaShipping(shipsFrom?: string): boolean {
+  if (!shipsFrom) return false;
+  return shipsFrom.toLowerCase().includes('china');
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -183,6 +189,7 @@ export default function Lieferanten() {
     if (saved) sessionStorage.removeItem("import_price");
     return saved;
   });
+  const [shippingCost, setShippingCost] = useState("0"); // Versandkosten laut AliExpress-Seite (0 = kostenlos)
   const [adRate, setAdRate] = useState<number>(() => {
     const saved = localStorage.getItem("stele_ad_rate");
     return saved ? parseFloat(saved) : 5;
@@ -392,6 +399,7 @@ export default function Lieferanten() {
           buyPrice: einkauf || null,
           sellPrice: verkauf || null,
           adRate: adRate,
+          shippingCost: parseFloat(shippingCost.replace(",", ".")) || 0,
         }),
       });
       setSaveResult(data);
@@ -1203,7 +1211,7 @@ export default function Lieferanten() {
               </div>
 
               {/* EU-Zollhinweis ab 01.07.2026 bei China-Versand */}
-              {shipsFromInfo && !shipsFromInfo.isEU && (
+              {shipsFromInfo && isChinaShipping(shipsFromInfo.country) && (
                 <p style={{ color: "#DC2626", fontSize: 16, fontWeight: 700, marginTop: 0, marginBottom: 14, lineHeight: 1.4 }}>
                   ⚠ EU-Zollregelung ab 01.07.2026: Bei Versand aus China (hier: {shipsFromInfo.country}) fällt pro Sendung eine Zollgebühr von {CHINA_ZOLL_EUR.toFixed(2).replace(".", ",")} € an (bis 150 € Warenwert). Bitte in den Einkaufspreis miteinrechnen!<br />
                   <span style={{ fontWeight: 600, fontSize: 13, color: "#991B1B" }}>
@@ -1226,11 +1234,11 @@ export default function Lieferanten() {
                     {einkauf > 0 && (
                       <button
                         onClick={() => {
-                          // Empfohlener Mindestpreis: (einkauf + 1.60) / (1 - (13+adRate)/100*1.19) + 0.45*1.19/(1-(13+adRate)/100*1.19)
-                          // Vereinfacht: (einkauf + 1.60 + 0.45*1.19) / (1 - (13+adRate)/100*1.19)
+                          // Empfohlener Mindestpreis: (einkauf + versand + zoll + Mindestgewinn) / (1 - (13+adRate)/100*1.19)
                           const feeRate = (13 + adRate) / 100 * 1.19;
-                          const chinaZoll = (shipsFromInfo && !shipsFromInfo.isEU) ? CHINA_ZOLL_EUR : 0;
-                          const recommended = Math.ceil(((einkauf + chinaZoll + 1.60 + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                          const chinaZoll = (shipsFromInfo && isChinaShipping(shipsFromInfo.country)) ? CHINA_ZOLL_EUR : 0;
+                          const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
+                          const recommended = Math.ceil(((einkauf + versand + chinaZoll + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
                           setEbayPrice(recommended.toFixed(2));
                         }}
                         style={{
@@ -1239,7 +1247,7 @@ export default function Lieferanten() {
                           fontFamily: "inherit",
                         }}
                       >
-                        ≥1,60€ Gewinn →
+                        ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn →
                       </button>
                     )}
                   </div>
@@ -1249,6 +1257,28 @@ export default function Lieferanten() {
                     fontFamily: "inherit", boxSizing: "border-box", color: "#0F172A",
                   }} />
                 </div>
+              </div>
+
+              {/* Versandkosten */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", textTransform: "uppercase" }}>Versandkosten (€) — laut AliExpress-Seite</label>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button onClick={() => setShippingCost("0")} style={{
+                      fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
+                      border: "1px solid " + (shippingCost === "0" || shippingCost === "" ? "#16A34A" : "#E2E8F0"),
+                      background: shippingCost === "0" || shippingCost === "" ? "#F0FDF4" : "#fff",
+                      color: shippingCost === "0" || shippingCost === "" ? "#16A34A" : "#94A3B8",
+                    }}>
+                      Kostenlos
+                    </button>
+                  </div>
+                </div>
+                <input type="number" step="0.01" placeholder="0.00" value={shippingCost} onChange={e => setShippingCost(e.target.value)} style={{
+                  width: "100%", padding: "10px 12px", fontSize: 14, fontWeight: 600,
+                  border: "2px solid #E2E8F0", borderRadius: 10, outline: "none",
+                  fontFamily: "inherit", boxSizing: "border-box", color: "#0F172A",
+                }} />
               </div>
 
               {/* Anzeigentarif */}

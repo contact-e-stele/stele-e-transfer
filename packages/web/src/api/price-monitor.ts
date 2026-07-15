@@ -6,10 +6,10 @@ import * as schema from '../db/schema';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAccessToken } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
 const EBAY_FEE = 0.18;           // 18% eBay Gebühren
-const MIN_GEWINN = 1.60;         // Mindestgewinn €
-const CHINA_ZOLL_EUR = 3.00;     // Zollgebühr China-Sendungen ab 01.07.2026 (B2C bis 150€)
+const MIN_GEWINN = MIN_GEWINN_EUR; // Mindestgewinn € (zentral in shared/constants.ts)
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 Stunden
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
 
