@@ -767,13 +767,27 @@ const app = new Hono()
               });
               const fileName = `Rechnung-${order.orderId}.pdf`;
               await Bun.write(`${invoicesDir}/${fileName}`, pdf);
+              let invoicePath = `/invoices/${fileName}`;
+
+              // Zusaetzlich (bevorzugt) auf Google Drive sichern - lokaler Server-Speicher ist ephemeral (geht bei Deploy verloren)
+              try {
+                const { isDriveConnected, findOrCreatePath, uploadToDrive } = await import('./drive');
+                if (await isDriveConnected()) {
+                  const folderId = await findOrCreatePath(['RECHNUNG', 'E-Commerce-Plattform', 'stele-e-transfer']);
+                  const uploaded = await uploadToDrive(pdf, fileName, 'application/pdf', folderId);
+                  invoicePath = uploaded.webViewLink;
+                }
+              } catch (driveErr) {
+                console.error(`[Rechnung Auto-Gen] Drive-Upload fehlgeschlagen fuer ${order.orderId}, lokaler Pfad bleibt:`, driveErr);
+              }
+
               await db.insert(schema.orderNotes).values({
                 ebayOrderId: order.orderId,
                 invoiceGeneratedAt: new Date().toISOString(),
-                invoicePath: `/invoices/${fileName}`,
+                invoicePath,
               }).onConflictDoUpdate({
                 target: schema.orderNotes.ebayOrderId,
-                set: { invoiceGeneratedAt: new Date().toISOString(), invoicePath: `/invoices/${fileName}` },
+                set: { invoiceGeneratedAt: new Date().toISOString(), invoicePath },
               });
             } catch (e) {
               console.error(`[Rechnung Auto-Gen] Fehler bei ${order.orderId}:`, e);
@@ -1102,6 +1116,22 @@ const app = new Hono()
   .get('/drive/status', async (c) => {
     const connected = await isDriveConnected();
     return c.json({ connected }, 200);
+  })
+  // TEMPORÄRER TEST-ENDPUNKT (P14): prüft ob uploadPublicImage() wirklich eine direkt ladbare Bild-URL liefert.
+  // Wird wieder entfernt, sobald der GPSR-Upload-Endpoint umgestellt oder die Idee verworfen ist.
+  .get('/drive/test-image', async (c) => {
+    try {
+      const { findOrCreatePath, uploadPublicImage } = await import('./drive');
+      // 1x1 rotes PNG-Pixel als Testbild
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+      const buffer = Buffer.from(pngBase64, 'base64');
+      const folderId = await findOrCreatePath(['APP', 'STELE-DS-APP', 'Bilder']);
+      const result = await uploadPublicImage(buffer, `test-${Date.now()}.png`, 'image/png', folderId);
+      return c.json({ ok: true, directUrl: result.directUrl, fileId: result.id }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
   })
   .get('/aliexpress/status', async (c) => {
     const token = await getAliAccessToken();
@@ -1696,6 +1726,9 @@ const app = new Hono()
   })
 
   // ─── Datei-Upload allgemein (PDF/Bild) — z.B. AliExpress-Rechnung hochladen ──
+  // ─── Datei-Upload allgemein (aktuell: AliExpress-Rechnung im Bestellungen-Tab) ──
+  // Laedt zu Google Drive hoch (RECHNUNG/E-Commerce-Plattform/AliExpress) wenn verbunden,
+  // sonst Fallback auf lokalen Server-Speicher (dist/uploads)
   .post('/upload-file', async (c) => {
     try {
       const { dataUrl, filename } = await c.req.json() as { dataUrl: string; filename?: string };
@@ -1706,8 +1739,22 @@ const app = new Hono()
       const ext = extFromMime[mime] ?? mime.split('/')[1]?.replace(/[^a-z0-9]/gi, '') ?? 'bin';
       const base64 = dataUrl.slice(match[0].length);
       const name = (filename ?? `file-${Date.now()}`).replace(/[^a-z0-9_-]/gi, '_') + '.' + ext;
+      const buffer = Buffer.from(base64, 'base64');
+
+      try {
+        const { isDriveConnected, findOrCreatePath, uploadToDrive } = await import('./drive');
+        if (await isDriveConnected()) {
+          const folderId = await findOrCreatePath(['RECHNUNG', 'E-Commerce-Plattform', 'AliExpress']);
+          const uploaded = await uploadToDrive(buffer, name, mime, folderId);
+          return c.json({ url: uploaded.webViewLink }, 200);
+        }
+      } catch (driveErr) {
+        console.error('[Upload] Drive fehlgeschlagen, Fallback auf lokalen Speicher:', driveErr);
+      }
+
+      // Fallback: lokaler Speicher (falls Drive nicht verbunden/Fehler)
       const uploadsDir = `${import.meta.dir}/../../dist/uploads`;
-      await Bun.write(`${uploadsDir}/${name}`, Buffer.from(base64, 'base64'));
+      await Bun.write(`${uploadsDir}/${name}`, buffer);
       const baseUrl = process.env.PUBLIC_URL ?? 'https://stele-e-transfer.onrender.com';
       return c.json({ url: `${baseUrl}/uploads/${name}` }, 200);
     } catch (e) {

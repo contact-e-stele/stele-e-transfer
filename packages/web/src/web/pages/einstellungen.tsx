@@ -25,6 +25,7 @@ export default function Einstellungen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [driveConnected, setDriveConnected] = useState<boolean | null>(null);
 
   const loadStatus = useCallback(() => {
     setLoading(true);
@@ -33,6 +34,10 @@ export default function Einstellungen() {
       .then(d => setAliStatus(d as AliStatus))
       .catch(() => setAliStatus({ connected: false, appKey: "535690" }))
       .finally(() => setLoading(false));
+    fetch("/api/drive/status", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setDriveConnected((d as { connected?: boolean }).connected ?? false))
+      .catch(() => setDriveConnected(false));
   }, []);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
@@ -224,11 +229,40 @@ export default function Einstellungen() {
         <span style={badge(true)}>✅ API Key konfiguriert</span>
       </div>
 
+      {/* Google Drive */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>📁</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Google Drive</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
+          Für automatische Backups, Produktbilder und Rechnungen (statt lokalem Server-Speicher).
+        </p>
+        {driveConnected === null ? (
+          <span style={{ fontSize: 13, color: "#94A3B8" }}>Prüfe Status…</span>
+        ) : driveConnected ? (
+          <span style={badge(true)}>✅ Verbunden</span>
+        ) : (
+          <div>
+            <span style={badge(false)}>⚠️ Nicht verbunden</span>
+            <div style={{ marginTop: 10 }}>
+              <a href="/api/drive/auth" style={{
+                display: "inline-block", padding: "8px 16px", borderRadius: 8,
+                background: "#4285F4", color: "#fff", fontWeight: 700, fontSize: 13,
+                textDecoration: "none",
+              }}>
+                Mit Google Drive verbinden
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* App Info */}
       <div style={{ ...card, background: "#F8FAFC" }}>
         <div style={{ fontSize: 13, color: "#64748B" }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v0.8</span>
+            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v1.0</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span>Shop</span><span style={{ fontWeight: 600, color: "#1E293B" }}>stele-e-transfer (eBay DE)</span>

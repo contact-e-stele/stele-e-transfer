@@ -569,6 +569,20 @@ export async function runBackup(): Promise<{ ok: boolean; error?: string; produc
 
     await sendBackupEmail(csv, dbJson, agentRestoreMd, codeZipBuffer, products.length, priceHistoryRows.length);
 
+    // Zusätzlich zu Google Drive sichern (falls verbunden) — E-Mail bleibt die primäre Sicherung
+    try {
+      const { isDriveConnected, findOrCreatePath, uploadToDrive } = await import('./drive');
+      if (await isDriveConnected()) {
+        const hourStr = `${now.getHours()}h`;
+        const folderId = await findOrCreatePath(['APP', 'STELE-DS-APP', 'Backups']);
+        await uploadToDrive(Buffer.from(dbJson, 'utf-8'), `stele-db-${isoDate}-${hourStr}.json`, 'application/json', folderId);
+        await uploadToDrive(Buffer.from(csv, 'utf-8'), `stele-backup-${isoDate}-${hourStr}.csv`, 'text/csv', folderId);
+        console.log('[Backup] Zusätzlich auf Google Drive gesichert ✓');
+      }
+    } catch (driveErr) {
+      console.error('[Backup] Drive-Sicherung fehlgeschlagen (E-Mail-Backup bleibt bestehen):', driveErr);
+    }
+
     return { ok: true, productCount: products.length };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

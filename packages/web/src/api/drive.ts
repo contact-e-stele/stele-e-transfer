@@ -191,3 +191,33 @@ export async function uploadToDrive(
   if (!res.ok) throw new Error(`Drive-Upload fehlgeschlagen: ${res.status} ${await res.text()}`);
   return res.json() as Promise<{ id: string; webViewLink: string }>;
 }
+
+// ─── Datei öffentlich freigeben ("Jeder mit Link kann ansehen") ───────────────
+// Notwendig damit externe Dienste (z.B. eBay) das Bild direkt laden können
+export async function makeFilePublic(fileId: string): Promise<void> {
+  const token = await getDriveAccessToken();
+  if (!token) throw new Error('Google Drive nicht verbunden');
+  const res = await fetch(`${DRIVE_API}/files/${fileId}/permissions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+  });
+  if (!res.ok) throw new Error(`Freigabe fehlgeschlagen: ${res.status} ${await res.text()}`);
+}
+
+// Direkt abrufbare Bild-URL (kein Google-Viewer, sondern das Rohbild) — braucht makeFilePublic() vorher
+export function getDirectImageUrl(fileId: string): string {
+  return `https://drive.google.com/uc?export=view&id=${fileId}`;
+}
+
+// Komplettvorgang: hochladen + oeffentlich freigeben + direkte Bild-URL zurueckgeben
+export async function uploadPublicImage(
+  buffer: Buffer,
+  filename: string,
+  mimeType: string,
+  folderId: string
+): Promise<{ id: string; directUrl: string }> {
+  const uploaded = await uploadToDrive(buffer, filename, mimeType, folderId);
+  await makeFilePublic(uploaded.id);
+  return { id: uploaded.id, directUrl: getDirectImageUrl(uploaded.id) };
+}
