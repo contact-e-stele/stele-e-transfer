@@ -118,9 +118,14 @@ function isCleanLine(line: string): boolean {
 
 function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", overrideTitle?: string, setContents?: Record<string, string>, gpsrRaw?: string): string {
   // SKU-Varianten für HTML-Template aufbereiten
-  const skuVariants = (product.variantPrices ?? []).length > 0
-    ? product.variantPrices!.map(v => ({
-        name: Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([,val]) => val).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
+  // Nur echte Varianten (Farbe/Größe/etc.) zählen — reine "Ships From"-Einträge sind KEINE
+  // echten Varianten und wuerden sonst als sinnlose graue Box + SKU-Nummer angezeigt werden.
+  const realVariants = (product.variantPrices ?? []).filter(v =>
+    Object.keys(v.attrs).some(k => !isSkipVariantGroup(k))
+  );
+  const skuVariants = realVariants.length > 0
+    ? realVariants.map(v => ({
+        name: Object.entries(v.attrs).filter(([k]) => !isSkipVariantGroup(k)).map(([,val]) => val).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
         price: v.price,
         imageUrl: (v as any).imageUrl as string | undefined,
       }))
@@ -285,9 +290,12 @@ export default function Lieferanten() {
   useEffect(() => {
     if (!product) return; // nur wenn Produkt geladen
     const base = product;
-    const skuVariants = (base.variantPrices ?? []).length > 0
-      ? base.variantPrices!.map(v => ({
-          name: Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([,val]) => val).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
+    const realVariants = (base.variantPrices ?? []).filter(v =>
+      Object.keys(v.attrs).some(k => !isSkipVariantGroup(k))
+    );
+    const skuVariants = realVariants.length > 0
+      ? realVariants.map(v => ({
+          name: Object.entries(v.attrs).filter(([k]) => !isSkipVariantGroup(k)).map(([,val]) => val).join(" / ") || `SKU …${v.skuId.slice(-6)}`,
           price: v.price,
           imageUrl: (v as any).imageUrl as string | undefined,
         }))
