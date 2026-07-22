@@ -1117,6 +1117,20 @@ const app = new Hono()
     const connected = await isDriveConnected();
     return c.json({ connected }, 200);
   })
+  // Beliebiges Text-/Markdown-Dokument nach Drive sichern (z.B. P-UEBERSICHT.md) → Ordner APP/STELE-DS-APP/Backups
+  .post('/drive/upload-doc', async (c) => {
+    try {
+      const body = await c.req.json() as { filename?: string; content?: string };
+      if (!body.filename || !body.content) return c.json({ error: 'filename und content erforderlich' }, 400);
+      const { findOrCreatePath, uploadToDrive } = await import('./drive');
+      const folderId = await findOrCreatePath(['APP', 'STELE-DS-APP', 'Backups']);
+      const buffer = Buffer.from(body.content, 'utf8');
+      const result = await uploadToDrive(buffer, body.filename, 'text/markdown', folderId);
+      return c.json({ ok: true, fileId: result.id, webViewLink: result.webViewLink }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   // Liefert eine Drive-Datei über unseren Server mit korrektem Content-Type aus
   // (Bilder für eBay-Hotlinking + PDFs/Handbücher). Datei muss nicht öffentlich sein.
   .get('/drive/file/:fileId', async (c) => {
