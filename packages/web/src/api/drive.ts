@@ -216,8 +216,40 @@ export async function uploadPublicImage(
   filename: string,
   mimeType: string,
   folderId: string
-): Promise<{ id: string; directUrl: string }> {
+): Promise<{ id: string; directUrl: string; proxyUrl: string }> {
   const uploaded = await uploadToDrive(buffer, filename, mimeType, folderId);
   await makeFilePublic(uploaded.id);
-  return { id: uploaded.id, directUrl: getDirectImageUrl(uploaded.id) };
+  return { id: uploaded.id, directUrl: getDirectImageUrl(uploaded.id), proxyUrl: getProxyUrl(uploaded.id) };
+}
+
+// ─── Proxy: Datei über unseren eigenen Server ausliefern ──────────────────────
+// Grund: Googles "uc?export=view" liefert manchmal einen falschen Content-Type
+// (application/binary statt image/png), was strikte Abnehmer wie eBay ablehnen können.
+// Der Proxy holt die Datei über unser eigenes OAuth-Token und setzt den Content-Type
+// korrekt aus den Drive-Metadaten. Funktioniert für Bilder UND andere Dateien (z.B. PDF-Handbücher).
+// Datei muss dafür NICHT öffentlich freigegeben sein (unser Server hat ohnehin Zugriff).
+const BASE_URL = process.env.PUBLIC_BASE_URL ?? 'https://stele-e-transfer.onrender.com';
+
+export function getProxyUrl(fileId: string): string {
+  return `${BASE_URL}/api/drive/file/${fileId}`;
+}
+
+export async function downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string; name: string }> {
+  const token = await getDriveAccessToken();
+  if (!token) throw new Error('Google Drive nicht verbunden');
+
+  // Metadaten (für korrekten Content-Type + Dateiname)
+  const metaRes = await fetch(`${DRIVE_API}/files/${fileId}?fields=name,mimeType`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!metaRes.ok) throw new Error(`Drive-Metadaten fehlgeschlagen: ${metaRes.status} ${await metaRes.text()}`);
+  const meta = await metaRes.json() as { name: string; mimeType: string };
+
+  // Rohbytes
+  const fileRes = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!fileRes.ok) throw new Error(`Drive-Download fehlgeschlagen: ${fileRes.status} ${await fileRes.text()}`);
+  const arrayBuffer = await fileRes.arrayBuffer();
+  return { buffer: Buffer.from(arrayBuffer), mimeType: meta.mimeType, name: meta.name };
 }

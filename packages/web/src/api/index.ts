@@ -1117,6 +1117,21 @@ const app = new Hono()
     const connected = await isDriveConnected();
     return c.json({ connected }, 200);
   })
+  // Liefert eine Drive-Datei über unseren Server mit korrektem Content-Type aus
+  // (Bilder für eBay-Hotlinking + PDFs/Handbücher). Datei muss nicht öffentlich sein.
+  .get('/drive/file/:fileId', async (c) => {
+    try {
+      const { downloadDriveFile } = await import('./drive');
+      const fileId = c.req.param('fileId');
+      const { buffer, mimeType, name } = await downloadDriveFile(fileId);
+      c.header('Content-Type', mimeType);
+      c.header('Cache-Control', 'public, max-age=31536000, immutable');
+      c.header('Content-Disposition', `inline; filename="${name.replace(/"/g, '')}"`);
+      return c.body(buffer);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
   // TEMPORÄRER TEST-ENDPUNKT (P14): prüft ob uploadPublicImage() wirklich eine direkt ladbare Bild-URL liefert.
   // Wird wieder entfernt, sobald der GPSR-Upload-Endpoint umgestellt oder die Idee verworfen ist.
   .get('/drive/test-image', async (c) => {
@@ -1128,7 +1143,7 @@ const app = new Hono()
       const buffer = Buffer.from(pngBase64, 'base64');
       const folderId = await findOrCreatePath(['APP', 'STELE-DS-APP', 'Bilder']);
       const result = await uploadPublicImage(buffer, `test-${Date.now()}.png`, 'image/png', folderId);
-      return c.json({ ok: true, directUrl: result.directUrl, fileId: result.id }, 200);
+      return c.json({ ok: true, directUrl: result.directUrl, proxyUrl: result.proxyUrl, fileId: result.id }, 200);
     } catch (e) {
       return c.json({ ok: false, error: String(e) }, 500);
     }
