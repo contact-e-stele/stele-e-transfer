@@ -3,7 +3,7 @@
  * Nach OAuth-Genehmigung: echte API-Ergebnisse
  * Vorher: "API ausstehend" Hinweis + externe Links als Fallback
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Search, ExternalLink, Package, ShoppingCart, Star, Filter, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -82,6 +82,16 @@ export default function Suche() {
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [page, setPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
+  const [myShops, setMyShops] = useState<Array<{ id: number; shopName: string; shopUrl: string; category: string | null }>>([]);
+
+  // Meine Shops laden (fuer "Wo zuerst nachschauen"-Dropdown, alphabetisch)
+  useEffect(() => {
+    fetch('/api/trusted-suppliers').then(r => r.json()).then(data => {
+      if (Array.isArray(data)) {
+        setMyShops([...data].sort((a, b) => a.shopName.localeCompare(b.shopName, 'de')));
+      }
+    }).catch(() => {});
+  }, []);
 
   const doSearch = useCallback(async (q: string, p: number, sf: string, s: string) => {
     if (!q.trim()) return;
@@ -203,6 +213,32 @@ export default function Suche() {
               {loading ? <RefreshCw size={15} style={{ animation: "spin 1s linear infinite" }} /> : "Suchen"}
             </button>
           </div>
+
+          {/* Meine Shops — Dropdown, wo zuerst nachschauen (alphabetisch, mit Kategorie) */}
+          {myShops.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <select
+                defaultValue=""
+                onChange={e => {
+                  const url = e.target.value;
+                  if (url) window.open(url, "_blank", "noopener,noreferrer");
+                  e.target.value = "";
+                }}
+                style={{
+                  width: "100%", padding: "9px 12px", fontSize: 13, fontWeight: 500,
+                  border: "2px solid #E2E8F0", borderRadius: 10, outline: "none",
+                  fontFamily: "inherit", color: "#0F172A", background: "#F8FAFC",
+                }}
+              >
+                <option value="" disabled>⭐ Meine Shops — zuerst nachschauen ({myShops.length})</option>
+                {myShops.map(s => (
+                  <option key={s.id} value={s.shopUrl}>
+                    {s.shopName}{s.category ? ` — ${s.category}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Filter-Panel */}
           {showFilters && (

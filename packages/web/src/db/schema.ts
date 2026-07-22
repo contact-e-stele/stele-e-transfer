@@ -76,6 +76,7 @@ export const trustedSuppliers = sqliteTable('trusted_suppliers', {
   shopUrl: text('shop_url').notNull(),
   aliStoreId: text('ali_store_id'),
   euConfirmed: integer('eu_confirmed', { mode: 'boolean' }).default(true),
+  category: text('category'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
 });
 

@@ -85,6 +85,8 @@ const migrations = [
   `ALTER TABLE order_notes ADD COLUMN aliexpress_invoice_url TEXT`,
   // Tatsaechlicher Einkaufspreis laut Rechnung (manuell) - hat Vorrang vor automatischem DB-Match
   `ALTER TABLE order_notes ADD COLUMN manual_buy_price REAL`,
+  // Kategorie fuer manuell gespeicherte Shops (feste Auswahlliste, siehe shared/constants.ts SHOP_CATEGORIES)
+  `ALTER TABLE trusted_suppliers ADD COLUMN category TEXT`,
 ];
 
 export async function runMigrations() {

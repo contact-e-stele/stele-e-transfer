@@ -2463,7 +2463,7 @@ app.get('/trusted-suppliers', async (c) => {
 
 app.post('/trusted-suppliers', async (c) => {
   try {
-    const body = await c.req.json() as { shopName: string; shopUrl: string; aliStoreId?: string; euConfirmed?: boolean };
+    const body = await c.req.json() as { shopName: string; shopUrl: string; aliStoreId?: string; euConfirmed?: boolean; category?: string };
     if (!body.shopName || !body.shopUrl) return c.json({ error: 'shopName und shopUrl erforderlich' }, 400);
     const { db, schema } = await import('../db/index').then(async m => {
       const s = await import('../db/schema');
@@ -2474,6 +2474,7 @@ app.post('/trusted-suppliers', async (c) => {
       shopUrl: body.shopUrl,
       aliStoreId: body.aliStoreId ?? null,
       euConfirmed: body.euConfirmed ?? true,
+      category: body.category ?? null,
     }).returning();
     return c.json(result[0], 201);
   } catch (e) {

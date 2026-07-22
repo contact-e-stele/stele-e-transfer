@@ -5,7 +5,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from "../../shared/constants";
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
@@ -205,8 +205,13 @@ export default function Lieferanten() {
   const [rawGenError, setRawGenError] = useState("");
   const [shipsFromInfo, setShipsFromInfo] = useState<{ country: string; isEU: boolean } | null>(null);
   const [generatedDescription, setGeneratedDescription] = useState("");
-  const [trustedSuppliers, setTrustedSuppliers] = useState<Array<{ id: number; shopName: string; shopUrl: string; aliStoreId: string | null; euConfirmed: boolean }>>([]);
-  const [shopSaved, setShopSaved] = useState(false);
+  const [trustedSuppliers, setTrustedSuppliers] = useState<Array<{ id: number; shopName: string; shopUrl: string; aliStoreId: string | null; euConfirmed: boolean; category: string | null }>>([]);
+  // Manuelles Shop-Formular (statt automatischem Scraping — zuverlässiger)
+  const [manualShopUrl, setManualShopUrl] = useState("");
+  const [manualShopName, setManualShopName] = useState("");
+  const [manualShopCategory, setManualShopCategory] = useState(SHOP_CATEGORIES[0]);
+  const [manualShopSaving, setManualShopSaving] = useState(false);
+  const [manualShopError, setManualShopError] = useState("");
 
   // Meine Shops laden
   useEffect(() => {
@@ -215,29 +220,36 @@ export default function Lieferanten() {
     }).catch(() => {});
   }, []);
 
-  const handleSaveShop = async () => {
-    if (!product || !urlInput.trim()) return;
-    // Shop-URL aus AliExpress URL extrahieren
-    let shopUrl = urlInput.trim();
-    const storeMatch = shopUrl.match(/\/store\/(\d+)/);
-    const aliStoreId = storeMatch ? storeMatch[1] : null;
-    const shopStoreUrl = aliStoreId ? `https://www.aliexpress.com/store/${aliStoreId}` : shopUrl;
-    // Echter Händlername (z.B. "BOBO GO 1 Store") — Produkttitel nur als Fallback, falls kein Seller-Name gescraped wurde
-    const shopName = product.seller?.trim() || (product.title.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).slice(0, 3).join(' ') || 'AliExpress Shop');
-    const euBadge = shipsFromInfo?.isEU ?? false;
-    const res = await fetch('/api/trusted-suppliers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopName, shopUrl: shopStoreUrl, aliStoreId, euConfirmed: euBadge }),
-    });
-    if (res.ok) {
-      const newShop = await res.json();
-      setTrustedSuppliers(prev => [...prev, newShop]);
-      setShopSaved(true);
-      setTimeout(() => setShopSaved(false), 3000);
-    } else {
-      const err = await res.text().catch(() => res.statusText);
-      alert('Shop konnte nicht gespeichert werden: ' + err);
+  const handleAddShopManual = async () => {
+    setManualShopError("");
+    if (!manualShopUrl.trim() || !manualShopName.trim()) {
+      setManualShopError("Link und Name bitte ausfüllen");
+      return;
+    }
+    setManualShopSaving(true);
+    try {
+      const res = await fetch('/api/trusted-suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopName: manualShopName.trim(),
+          shopUrl: manualShopUrl.trim(),
+          euConfirmed: true,
+          category: manualShopCategory,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTrustedSuppliers(prev => [...prev, data]);
+        setManualShopUrl("");
+        setManualShopName("");
+      } else {
+        setManualShopError(data.error ?? "Fehler beim Speichern");
+      }
+    } catch (e) {
+      setManualShopError(e instanceof Error ? e.message : "Fehler beim Speichern");
+    } finally {
+      setManualShopSaving(false);
     }
   };
 
@@ -614,6 +626,11 @@ export default function Lieferanten() {
                     {s.euConfirmed && <span style={{ color: "#16A34A", marginRight: 4 }}>🇪🇺</span>}
                     {s.shopName}
                   </a>
+                  {s.category && (
+                    <span style={{ fontSize: 10, fontWeight: 600, color: "#64748B", background: "#F1F5F9", borderRadius: 6, padding: "2px 6px" }}>
+                      {s.category}
+                    </span>
+                  )}
                   <button onClick={() => handleDeleteShop(s.id)}
                     style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: "0 2px", fontSize: 14, lineHeight: 1 }}
                     title="Entfernen">×</button>
@@ -622,6 +639,49 @@ export default function Lieferanten() {
             </div>
           </div>
         )}
+
+        {/* ─── Shop manuell hinzufügen (statt automatischem Scraping) ───────────── */}
+        <div style={{ background: "#fff", borderRadius: 16, padding: "16px 20px", marginBottom: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", border: "1.5px solid #E2E8F0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 16 }}>⭐</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: "#0F172A" }}>Shop manuell hinzufügen</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <input
+              value={manualShopUrl}
+              onChange={(e) => setManualShopUrl(e.target.value)}
+              placeholder="Shop-Link (einfach reinkopieren)"
+              style={{ padding: "10px 12px", fontSize: 13, border: "1.5px solid #E2E8F0", borderRadius: 10, outline: "none", fontFamily: "inherit" }}
+            />
+            <input
+              value={manualShopName}
+              onChange={(e) => setManualShopName(e.target.value)}
+              placeholder="Shop-Name (frei eintragen)"
+              style={{ padding: "10px 12px", fontSize: 13, border: "1.5px solid #E2E8F0", borderRadius: 10, outline: "none", fontFamily: "inherit" }}
+            />
+            <select
+              value={manualShopCategory}
+              onChange={(e) => setManualShopCategory(e.target.value)}
+              style={{ padding: "10px 12px", fontSize: 13, border: "1.5px solid #E2E8F0", borderRadius: 10, outline: "none", fontFamily: "inherit", background: "#fff" }}
+            >
+              {SHOP_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+            </select>
+            <button
+              onClick={handleAddShopManual}
+              disabled={manualShopSaving}
+              style={{
+                padding: "10px 0", borderRadius: 10, border: "none",
+                background: "#FF6B00", color: "#fff", fontWeight: 700, fontSize: 13,
+                cursor: manualShopSaving ? "default" : "pointer", fontFamily: "inherit",
+              }}
+            >
+              {manualShopSaving ? "Wird gespeichert…" : "+ Shop speichern"}
+            </button>
+            {manualShopError && (
+              <p style={{ margin: 0, color: "#DC2626", fontSize: 12, fontWeight: 600 }}>{manualShopError}</p>
+            )}
+          </div>
+        </div>
 
         {/* Mode Tabs */}
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -1557,24 +1617,7 @@ export default function Lieferanten() {
               )}
             </div>
 
-            {/* Shop merken */}
-            {product && urlInput.trim() && (
-              <div style={{ background: "#fff", borderRadius: 16, padding: "14px 18px", marginBottom: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", border: "1.5px solid #E2E8F0" }}>
-                <button
-                  onClick={handleSaveShop}
-                  disabled={shopSaved}
-                  style={{
-                    width: "100%", padding: "10px 0", borderRadius: 10, border: "none",
-                    background: shopSaved ? "#F0FDF4" : "#FF6B00",
-                    color: shopSaved ? "#16A34A" : "#fff",
-                    fontWeight: 700, fontSize: 13, cursor: shopSaved ? "default" : "pointer",
-                    fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  }}
-                >
-                  {shopSaved ? "✓ Shop gespeichert!" : "⭐ Shop merken (EU-Lieferant)"}
-                </button>
-              </div>
-            )}
+
 
             </div>{/* Ende rechte Spalte */}
             </div>{/* Ende 2-Spalten Grid */}
