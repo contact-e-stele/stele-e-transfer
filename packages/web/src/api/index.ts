@@ -4,6 +4,7 @@ import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllS
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
+import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected } from './drive';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
@@ -1073,6 +1074,34 @@ const app = new Hono()
         <a href="/" style="color:#C9A227;font-weight:bold">→ Zurück zur App</a>
       </body></html>
     `);
+  })
+
+  // ─── Google Drive OAuth ──────────────────────────────────────────────────────
+  .get('/drive/auth', (c) => {
+    const state = Math.random().toString(36).slice(2);
+    const url = getDriveOAuthUrl(state);
+    return c.redirect(url);
+  })
+  .get('/drive/callback', async (c) => {
+    const code = c.req.query('code');
+    if (!code) return c.json({ error: 'Kein Code von Google' }, 400);
+    try {
+      await handleDriveCallback(code);
+      return c.html(`
+        <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff;font-family:Montserrat,sans-serif">
+          <h2 style="color:#4285F4">✅ Google Drive erfolgreich verbunden!</h2>
+          <p>Ab sofort werden Backups, Bilder und Rechnungen automatisch auf Google Drive gesichert.</p>
+          <br>
+          <a href="/" style="color:#4285F4;font-weight:bold">→ Zurück zur App</a>
+        </body></html>
+      `);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .get('/drive/status', async (c) => {
+    const connected = await isDriveConnected();
+    return c.json({ connected }, 200);
   })
   .get('/aliexpress/status', async (c) => {
     const token = await getAliAccessToken();
