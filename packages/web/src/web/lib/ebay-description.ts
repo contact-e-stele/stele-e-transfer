@@ -45,8 +45,11 @@ function cleanText(text: string): string {
 // ─── Varianten-HTML ────────────────────────────────────────────────────────
 function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): string {
   // SKU-Varianten (mit Preisen) haben Vorrang
-  const hasSku = product.skuVariants && product.skuVariants.length > 0;
-  const hasGroups = product.variants && product.variants.length > 0;
+  const hasSku = !!(product.skuVariants && product.skuVariants.length > 0);
+  // Ships From ist keine echte Variante — erst filtern, dann prüfen ob noch etwas übrig bleibt
+  // (sonst erscheint eine leere Box, wenn "Ships From" die einzige gescrapte "Variante" war)
+  const filteredGroups = (product.variants ?? []).filter(g => g.name.toLowerCase() !== 'ships from');
+  const hasGroups = filteredGroups.length > 0;
   if (!hasSku && !hasGroups) return "";
 
   const isDark = theme === "dark";
@@ -95,9 +98,7 @@ function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): st
       </tr>`;
     });
   } else {
-    // Gruppen-Varianten: Name | Werte
-    // Ships From ausblenden
-    const filteredGroups = product.variants!.filter(g => g.name.toLowerCase() !== 'ships from');
+    // Gruppen-Varianten: Name | Werte (Ships From wurde bereits oben rausgefiltert)
     filteredGroups.forEach((grp, gi) => {
       const rowBg = gi % 2 === 0 ? rowEven : rowAlt;
       const setContents = product.setContents ?? {};
@@ -124,6 +125,19 @@ function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): st
   <p style="font-size:11px;color:${subColor};margin:6px 0 0;text-align:center;">Bitte die gew&uuml;nschte Variante beim Kauf ausw&auml;hlen.</p>
 </div>`;
   return html;
+}
+
+// ─── Hauptbild-HTML ─────────────────────────────────────────────────────────
+// Nur für Produkte OHNE echte Varianten: zeigt statt der Varianten-Box das
+// AliExpress-Hauptproduktbild, damit die Beschreibung nicht "leer" wirkt.
+function buildMainImageHtml(product: ScrapedProduct, theme: "dark" | "light"): string {
+  const img = product.images?.find(u => u.startsWith('http'));
+  if (!img) return "";
+  const border = theme === "dark" ? "#2a2a0a" : "#e8d8a0";
+  return `
+<div style="margin:20px 0;text-align:center;">
+  <img src="${img}" alt="${cleanText(product.title || "")}" style="max-width:100%;height:auto;border-radius:6px;border:1px solid ${border};" />
+</div>`;
 }
 
 function isGarbage(text: string): boolean {
@@ -257,8 +271,9 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     </table>`;
   }
 
-  // ── Varianten-Sektion ──────────────────────────────────────────────────────
+  // ── Varianten-Sektion (Fallback: Hauptbild, wenn keine echten Varianten) ────
   const variantsHtml = buildVariantsHtml(product, "dark");
+  const variantsOrImageHtml = variantsHtml || buildMainImageHtml(product, "dark");
 
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
   const tab1 = `
@@ -267,7 +282,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     ${bulletsHtml}
     ${outroHtml}
     ${specsHtml}
-    ${variantsHtml}
+    ${variantsOrImageHtml}
     <hr style="margin:20px 0;border:none;border-top:1px solid #2a2a0a;" />
     <p style="font-size:11px;color:#5a4a20;margin:0;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
   `.trim();
@@ -549,8 +564,9 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     </table>`;
   }
 
-  // ── Varianten-Sektion ──────────────────────────────────────────────────────
+  // ── Varianten-Sektion (Fallback: Hauptbild, wenn keine echten Varianten) ────
   const variantsHtml = buildVariantsHtml(product, "light");
+  const variantsOrImageHtml = variantsHtml || buildMainImageHtml(product, "light");
 
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
   const tab1 = `
@@ -559,7 +575,7 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     ${bulletsHtml}
     ${outroHtml}
     ${specsHtml}
-    ${variantsHtml}
+    ${variantsOrImageHtml}
     <hr style="margin:20px 0;border:none;border-top:1px solid #e8e0d0;" />
     <p style="font-size:11px;color:#888888;margin:0;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
   `.trim();
