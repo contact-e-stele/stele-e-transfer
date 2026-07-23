@@ -39,6 +39,16 @@ function checkEnv(key: string, label: string): CheckResult {
   };
 }
 
+// Wie checkEnv, aber ohne Teile des Werts zu loggen — für Passwörter/Secrets
+function checkEnvSecret(key: string, label: string): CheckResult {
+  const val = process.env[key];
+  return {
+    name: label,
+    ok: !!val && val.length > 5,
+    detail: val ? 'gesetzt ✓' : 'FEHLT',
+  };
+}
+
 export async function runStartupCheck(): Promise<void> {
   console.log('\n╔══════════════════════════════════════╗');
   console.log('║     STELE APP — STARTUP CHECK        ║');
@@ -46,6 +56,9 @@ export async function runStartupCheck(): Promise<void> {
 
   const checks: CheckResult[] = [
     await checkDB(),
+    checkEnvSecret('SESSION_SECRET',      'Session Secret'),
+    checkEnv('AUTH_USER1_NAME',           'Auth User 1'),
+    checkEnvSecret('AUTH_USER1_PASS',     'Auth Pass 1'),
     checkEnv('TURSO_DATABASE_URL',        'Turso URL'),
     checkEnv('TURSO_AUTH_TOKEN',          'Turso Token'),
     checkEnv('EBAY_APP_ID',               'eBay App ID'),

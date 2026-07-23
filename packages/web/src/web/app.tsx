@@ -89,15 +89,18 @@ function App() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    // Session stored in localStorage — no server-side session needed
-    const saved = localStorage.getItem("stele_user");
-    if (saved) setUser(saved);
-    setChecking(false);
+    // Echter Session-Check gegen den Server (httpOnly-Cookie) — localStorage hat keine sicherheitsrelevante Bedeutung mehr
+    fetch("/api/auth/me")
+      .then(res => res.json())
+      .then((data: { loggedIn: boolean; username?: string }) => {
+        if (data.loggedIn && data.username) setUser(data.username);
+      })
+      .catch(() => {})
+      .finally(() => setChecking(false));
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem("stele_user");
-    setUser(null);
+    fetch("/api/auth/logout", { method: "POST" }).finally(() => setUser(null));
   };
 
   if (checking) {
@@ -112,7 +115,7 @@ function App() {
     return (
       <Provider>
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-        <Login onLogin={(u) => { localStorage.setItem("stele_user", u); setUser(u); }} />
+        <Login onLogin={(u) => setUser(u)} />
       </Provider>
     );
   }
