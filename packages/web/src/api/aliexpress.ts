@@ -262,6 +262,13 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
     const variantPrices: VariantPrice[] = [];
     const variantGroupMap: Record<string, Set<string>> = {};
 
+    // Verifikations-Log: zeigt einmalig die volle Roh-Struktur der ersten SKU,
+    // damit sich in den Render-Logs prüfen lässt, ob "sku_image" (oder ein anderes
+    // Bild-Feld) in der echten DS-API-Antwort überhaupt vorkommt.
+    if (skuDtos.length > 0) {
+      console.log('[DS API] Erste SKU (Rohdaten, Bild-Feld-Diagnose):', JSON.stringify(skuDtos[0]));
+    }
+
     for (const sku of skuDtos) {
       const skuId = String(sku.sku_id || sku.id || '');
       // offer_sale_price = tatsächlicher Rabattpreis, sku_price = Originalpreis ohne Rabatt
@@ -1132,6 +1139,51 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
   }
 }
 
+// ── Varianten-Bilder nachladen ──────────────────────────────────────────────
+// Die offizielle DS-API (aliexpress.ds.product.get) liefert kein zuverlässiges
+// Bild pro SKU-Eigenschaft. Die echte Produktseite (window-JSON) hat es aber unter
+// productSKUPropertyList[].skuPropertyValues[].skuPropertyImagePath — das lesen
+// wir hier per leichtem HTML-Fetch nach (kein Playwright/Browser nötig) und matchen
+// über den sichtbaren Variantenwert (z.B. "Rot"), da SKU-IDs zwischen DS-API und
+// Live-Seite nicht übereinstimmen.
+export async function backfillVariantImages(url: string, variantPrices: VariantPrice[]): Promise<VariantPrice[]> {
+  if (variantPrices.length === 0 || variantPrices.every(v => v.imageUrl)) return variantPrices;
+  try {
+    const html = await fetchWithFallbacks(url);
+    if (!html) return variantPrices;
+    const { variantPrices: htmlVariants } = extractSteleData(html);
+    if (htmlVariants.length === 0) return variantPrices;
+
+    const imgByValue = new Map<string, string>();
+    for (const hv of htmlVariants) {
+      if (!hv.imageUrl) continue;
+      for (const val of Object.values(hv.attrs)) {
+        const key = val.trim().toLowerCase();
+        if (key && !imgByValue.has(key)) imgByValue.set(key, hv.imageUrl);
+      }
+    }
+    if (imgByValue.size === 0) {
+      console.log('[AliExpress] Bild-Backfill: keine Bilder auf der Live-Seite gefunden');
+      return variantPrices;
+    }
+
+    let filled = 0;
+    const result = variantPrices.map(v => {
+      if (v.imageUrl) return v;
+      for (const val of Object.values(v.attrs)) {
+        const match = imgByValue.get(val.trim().toLowerCase());
+        if (match) { filled++; return { ...v, imageUrl: match }; }
+      }
+      return v;
+    });
+    console.log(`[AliExpress] Bild-Backfill: ${filled}/${variantPrices.length} Varianten mit Bild ergänzt`);
+    return result;
+  } catch (e) {
+    console.log('[AliExpress] Bild-Backfill fehlgeschlagen:', e);
+    return variantPrices;
+  }
+}
+
 export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
   // Normalize URL — always use de.aliexpress.com + clean URL (strip tracking params)
   let fetchUrl = url;
@@ -1160,6 +1212,7 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
     const dsResult = await scrapeWithDsApi(productId);
     if (dsResult && dsResult.title) {
       console.log('[AliExpress] DS API erfolgreich — überspringe Playwright/HTML');
+      dsResult.variantPrices = await backfillVariantImages(fetchUrl, dsResult.variantPrices);
       return dsResult;
     }
     console.log('[AliExpress] DS API fehlgeschlagen, versuche Playwright...');
