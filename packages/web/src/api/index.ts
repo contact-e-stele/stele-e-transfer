@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
-import { scrapeAliExpressUrl } from './aliexpress';
+import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected } from './drive';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -1506,6 +1506,8 @@ const app = new Hono()
       if (apiData) {
         const aiDesc = await generateDescriptionWithGemini(apiData.title, apiData.specs ?? {}, apiData.description ?? '');
         if (aiDesc) apiData.description = aiDesc;
+        // DS-API liefert keine zuverlässigen Varianten-Bilder — von der echten Produktseite nachladen
+        apiData.variantPrices = await backfillVariantImages(url, apiData.variantPrices ?? []);
         // Rückgabe als ScrapedProduct-kompatibles Objekt (variantPrices + variants inkludiert)
         return c.json({
           title: apiData.title,

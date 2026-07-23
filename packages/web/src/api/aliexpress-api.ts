@@ -155,6 +155,13 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
   const variantPrices: VariantPrice[] = [];
   const variantGroups: Record<string, Set<string>> = {};
 
+  // Verifikations-Log: zeigt einmalig die volle Roh-Struktur der ersten SKU,
+  // damit sich in den Render-Logs prüfen lässt, ob "sku_image" in der echten
+  // DS-API-Antwort überhaupt vorkommt.
+  if (skuList.length > 0) {
+    console.log('[AliExpress API] Erste SKU (Rohdaten, Bild-Feld-Diagnose):', JSON.stringify(skuList[0]));
+  }
+
   for (const sku of skuList) {
     const skuId = String(sku.sku_id || sku.id || '');
     // offer_sale_price = tatsächlicher Rabattpreis, sku_price = Originalpreis ohne Rabatt
