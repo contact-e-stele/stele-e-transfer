@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
+import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
+import { CHINA_ZOLL_EUR } from "../../shared/constants";
 
 function formatEuro(val: number) {
   return val.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -24,6 +25,11 @@ const VERLUST_VORLAGEN = [
   `herzlichen Dank für Ihren Vorschlag. Dieser Preis liegt unter unseren Einkaufskosten, daher können wir ihn leider nicht annehmen.\n\nMit freundlichen Grüßen\nstele-e-transfer`,
   `vielen Dank für Ihr Interesse. Zu diesem Preis arbeiten wir leider unter Selbstkosten. Ein Verkauf ist uns nicht möglich.\n\nMit freundlichen Grüßen\nstele-e-transfer`,
   `danke für Ihren Preisvorschlag. Leider deckt dieser nicht unsere Kosten. Wir können den Artikel zu diesem Preis nicht verkaufen.\n\nMit freundlichen Grüßen\nstele-e-transfer`,
+];
+
+// Lieferanten-Optionen — aktuell nur AliExpress, Struktur für spätere Erweiterung (z.B. eigene EU-Lager)
+const LIEFERANTEN = [
+  { value: "aliexpress", label: "AliExpress" },
 ];
 
 function Ampel({ gewinnProzent }: { gewinnProzent: number | null }) {
@@ -80,6 +86,11 @@ export default function Index() {
   const [gebuehr, setGebuehr] = useState("17");
   const [einkauf, setEinkauf] = useState("");
   const [anzeigegebuehr, setAnzeigegebuehr] = useState("");
+  const [lieferant, setLieferant] = useState("aliexpress");
+  const [versand, setVersand] = useState("");
+  const [ausChina, setAusChina] = useState(false);
+  const [zollPauschale, setZollPauschale] = useState(String(CHINA_ZOLL_EUR));
+  const [zollManuell, setZollManuell] = useState("");
 
   const [copied, setCopied] = useState(false);
   const [copiedVerlust, setCopiedVerlust] = useState(false);
@@ -131,27 +142,36 @@ export default function Index() {
   const anzeigegebuehrProzent = (parseFloat(anzeigegebuehr.replace(",", ".")) || 0) / 100;
   const verkaufBrutto = vorschlagVal > 0 ? vorschlagVal : listen;
 
+  // Versand + Zoll → "wahrer Einkauf" (ersetzt reinen Stückpreis in der Gewinn-Rechnung)
+  const versandVal = parseFloat(versand.replace(",", ".")) || 0;
+  const zollPauschaleVal = parseFloat(zollPauschale.replace(",", ".")) || 0;
+  const zollManuellVal = parseFloat(zollManuell.replace(",", ".")) || 0;
+  const sendungswert = einkaufVal + versandVal;
+  const ueberZollSchwelle = ausChina && sendungswert > 150;
+  const zollVal = !ausChina ? 0 : (sendungswert <= 150 ? zollPauschaleVal : zollManuellVal);
+  const wahrerEinkauf = einkaufVal > 0 ? einkaufVal + versandVal + zollVal : 0;
+
   const EBAY_FEE_NETTO = (parseFloat(gebuehr.replace(",", ".")) || 18) / 100;
   const MWST = 1.19;
-  // Alle Gebühren inkl. 19% MwSt.
+  // EBAY_FEE (nur Provision, ohne Anzeigegebühr) bleibt separat erhalten — wird weiterhin
+  // für die Untergrenze (minPreis80) gebraucht, die bewusst unverändert bleibt.
   const EBAY_FEE = EBAY_FEE_NETTO * MWST;
   const FIXBETRAG = 0.45 * MWST; // 0,45 € + 19% MwSt. = 0,5355 €
+  // Gesamtgebührensatz: eBay-Provision + Anzeigegebühr zusammen, beide inkl. MwSt. (wie im Wizard)
+  const GESAMT_FEE = (EBAY_FEE_NETTO + anzeigegebuehrProzent) * MWST;
 
-  // Anzeigegebühr: % vom Listenpreis, inkl. MwSt.
-  const anzeigegebuehrVal = verkaufBrutto * anzeigegebuehrProzent * MWST;
-
-  // Netto = was du bekommst nach allen eBay-Gebühren (Provision % + Fixbetrag)
-  const nettoListen = listen > 0 ? listen * (1 - EBAY_FEE) - FIXBETRAG : 0;
-  const nettoVorschlag = vorschlagVal > 0 ? vorschlagVal * (1 - EBAY_FEE) - FIXBETRAG : 0;
+  // Netto = was du bekommst nach ALLEN eBay-Gebühren (Provision % + Anzeigegebühr % + Fixbetrag)
+  const nettoListen = listen > 0 ? listen * (1 - GESAMT_FEE) - FIXBETRAG : 0;
+  const nettoVorschlag = vorschlagVal > 0 ? vorschlagVal * (1 - GESAMT_FEE) - FIXBETRAG : 0;
   const rabattProzent = listen > 0 ? ((listen - vorschlagVal) / listen) * 100 : 0;
   const differenz = nettoListen - nettoVorschlag;
 
   // Gewinn basierend auf Vorschlag (wenn vorhanden) sonst Listenpreis
   const verkaufNetto = vorschlagVal > 0 ? nettoVorschlag : nettoListen;
-  const gesamtGebuehren = verkaufBrutto * EBAY_FEE + FIXBETRAG + anzeigegebuehrVal;
-  const gewinn = einkaufVal > 0 ? verkaufNetto - einkaufVal - anzeigegebuehrVal : null;
-  const gewinnProzent = einkaufVal > 0
-    ? ((verkaufNetto - einkaufVal - anzeigegebuehrVal) / einkaufVal) * 100
+  const gesamtGebuehren = verkaufBrutto * GESAMT_FEE + FIXBETRAG; // GESAMT_FEE enthält Anzeigegebühr bereits
+  const gewinn = wahrerEinkauf > 0 ? verkaufNetto - wahrerEinkauf : null;
+  const gewinnProzent = wahrerEinkauf > 0
+    ? ((verkaufNetto - wahrerEinkauf) / wahrerEinkauf) * 100
     : null;
 
   const hasResult = listen > 0 && vorschlagVal > 0;
@@ -262,11 +282,25 @@ export default function Index() {
               </div>
             </div>
 
-            {/* Amazon Einkaufspreis */}
+            {/* Lieferant */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: "block", fontWeight: 600, color: "#0F172A", marginBottom: 8, fontSize: 14 }}>
+                Lieferant
+              </label>
+              <select
+                value={lieferant}
+                onChange={e => setLieferant(e.target.value)}
+                style={{ ...inputStyle, paddingLeft: 14, cursor: "pointer" }}
+              >
+                {LIEFERANTEN.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+            </div>
+
+            {/* Einkaufspreis */}
             <div style={{ marginBottom: 20 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, color: "#0F172A", marginBottom: 8, fontSize: 14 }}>
                 <ShoppingCart size={15} color="#F97316" />
-                Amazon Einkaufspreis (€)
+                Einkaufspreis (€)
               </label>
               <div style={{ position: "relative" }}>
                 <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#94A3B8", fontWeight: 600 }}>€</span>
@@ -278,8 +312,90 @@ export default function Index() {
                   onBlur={e => (e.target.style.borderColor = "#E2E8F0")}
                 />
               </div>
+            </div>
+
+            {/* Versandkosten */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, color: "#0F172A", marginBottom: 8, fontSize: 14 }}>
+                <Truck size={15} color="#0EA5E9" />
+                Versandkosten (€)
+              </label>
+              <div style={{ position: "relative" }}>
+                <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#94A3B8", fontWeight: 600 }}>€</span>
+                <input
+                  type="number" inputMode="decimal" placeholder="0,00" value={versand}
+                  onChange={e => setVersand(e.target.value)}
+                  style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = "#0EA5E9")}
+                  onBlur={e => (e.target.style.borderColor = "#E2E8F0")}
+                />
+              </div>
+            </div>
+
+            {/* Herkunft / Zoll */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, color: "#0F172A", marginBottom: 8, fontSize: 14 }}>
+                <Globe size={15} color="#0EA5E9" />
+                Herkunft
+              </label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={() => setAusChina(true)} style={{
+                  flex: 1, padding: "10px 0", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer",
+                  border: ausChina ? "2px solid #0EA5E9" : "2px solid #E2E8F0",
+                  background: ausChina ? "#F0F9FF" : "#F8FAFC", color: ausChina ? "#0369A1" : "#64748B",
+                }}>China</button>
+                <button type="button" onClick={() => setAusChina(false)} style={{
+                  flex: 1, padding: "10px 0", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer",
+                  border: !ausChina ? "2px solid #0EA5E9" : "2px solid #E2E8F0",
+                  background: !ausChina ? "#F0F9FF" : "#F8FAFC", color: !ausChina ? "#0369A1" : "#64748B",
+                }}>EU / Inland</button>
+              </div>
+
+              {ueberZollSchwelle && (
+                <div style={{ marginTop: 10 }}>
+                  <p style={{ fontSize: 12, color: "#C8511B", fontWeight: 600, marginBottom: 6 }}>
+                    Sendungswert {formatEuro(sendungswert)} liegt über 150 € — Zollpauschale entfällt, bitte realen Zollbetrag eintragen.
+                  </p>
+                  <div style={{ position: "relative" }}>
+                    <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#94A3B8", fontWeight: 600 }}>€</span>
+                    <input
+                      type="number" inputMode="decimal" placeholder="Realer Zollbetrag" value={zollManuell}
+                      onChange={e => setZollManuell(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {ausChina && !ueberZollSchwelle && (
+                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                  <label style={{ fontSize: 12, color: "#64748B" }}>
+                    Zollpauschale (€, bis 150 € Sendungswert):
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={zollPauschale}
+                    onChange={e => setZollPauschale(e.target.value)}
+                    style={{
+                      width: 70,
+                      padding: "4px 8px",
+                      fontSize: 12,
+                      border: "1px solid #E2E8F0",
+                      borderRadius: 6,
+                    }}
+                  />
+                </div>
+              )}
+
+              {einkaufVal > 0 && (
+                <p style={{ fontSize: 12, color: "#64748B", marginTop: 10 }}>
+                  Wahrer Einkauf (inkl. Versand + Zoll): <strong style={{ color: "#0F172A" }}>{formatEuro(wahrerEinkauf)}</strong>
+                </p>
+              )}
               {gewinn !== null && (
-                <p style={{ fontSize: 13, marginTop: 6, fontWeight: 600, color: gewinn >= 0 ? "#16a34a" : "#dc2626" }}>
+                <p style={{ fontSize: 13, marginTop: 4, fontWeight: 600, color: gewinn >= 0 ? "#16a34a" : "#dc2626" }}>
                   Gewinn: {formatEuro(gewinn)} ({gewinnProzent!.toFixed(1)}%)
                 </p>
               )}
