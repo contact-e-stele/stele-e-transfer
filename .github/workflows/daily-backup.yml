@@ -20,4 +20,5 @@ jobs:
 
       - name: Backup auslösen
         run: |
-          curl -fsS --max-time 30 https://stele-e-transfer.onrender.com/api/backup/run
+          curl -fsS --max-time 30 -H "X-Backup-Key: ${{ secrets.BACKUP_API_KEY }}" \
+            https://stele-e-transfer.onrender.com/api/backup/run
