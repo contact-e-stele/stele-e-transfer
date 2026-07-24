@@ -190,6 +190,9 @@ export default function Lieferanten() {
 
   const [ebayPrice, setEbayPrice] = useState("");
   const [variantEbayPrices, setVariantEbayPrices] = useState<Record<string, string>>({});
+  const [variantHerkunft, setVariantHerkunft] = useState<Record<string, boolean>>({}); // true = China (zollpflichtig), false = EU
+  const [variantShipping, setVariantShipping] = useState<Record<string, string>>({}); // Versandkosten pro Variante
+  const [variantZollManuell, setVariantZollManuell] = useState<Record<string, string>>({}); // manueller Zollbetrag bei Sendungswert > 150€
   const [buyPrice, setBuyPrice] = useState(() => {
     const saved = sessionStorage.getItem("import_price") || "";
     if (saved) sessionStorage.removeItem("import_price");
@@ -1276,15 +1279,6 @@ export default function Lieferanten() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Preiskalkulation</span>
               </div>
 
-              {/* EU-Zollhinweis ab 01.07.2026 bei China-Versand */}
-              {shipsFromInfo && isChinaShipping(shipsFromInfo.country) && (
-                <p style={{ color: "#DC2626", fontSize: 16, fontWeight: 700, marginTop: 0, marginBottom: 14, lineHeight: 1.4 }}>
-                  ⚠ EU-Zollregelung ab 01.07.2026: Bei Versand aus China (hier: {shipsFromInfo.country}) fällt pro Sendung eine Zollgebühr von {CHINA_ZOLL_EUR.toFixed(2).replace(".", ",")} € an (bis 150 € Warenwert). Bitte in den Einkaufspreis miteinrechnen!<br />
-                  <span style={{ fontWeight: 600, fontSize: 13, color: "#991B1B" }}>
-                    Beispiel: Einkauf 12,87 € + {CHINA_ZOLL_EUR.toFixed(2).replace(".", ",")} € Zoll = tatsächlicher Einkauf {(12.87 + CHINA_ZOLL_EUR).toFixed(2).replace(".", ",")} €
-                  </span>
-                </p>
-              )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Einkauf (€)</label>
@@ -1449,16 +1443,24 @@ export default function Lieferanten() {
                       const attrLabel = Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([,val]) => val).join(" / ") || `Variante …${v.skuId.slice(-6)}`;
                       const varEbayRaw = variantEbayPrices[v.skuId] ?? "";
                       const varEbay = parseFloat(varEbayRaw.replace(",", ".")) || 0;
+                      // Herkunft/Versand/Zoll pro Variante — Default aus dem gescrapten Ships-From-Land
+                      const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
+                      const versandV = parseFloat((variantShipping[v.skuId] ?? "").replace(",", ".")) || 0;
+                      const sendungswertV = v.price + versandV;
+                      const ueberSchwelleV = ausChinaV && sendungswertV > 150;
+                      const zollManuellV = parseFloat((variantZollManuell[v.skuId] ?? "").replace(",", ".")) || 0;
+                      const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
+                      const wahrerEinkaufV = v.price + versandV + zollV;
                       const varProfit = varEbay > 0
-                        ? varEbay - varEbay * (13 + adRate) / 100 * 1.19 - 0.45 * 1.19 - v.price
+                        ? varEbay - varEbay * (13 + adRate) / 100 * 1.19 - 0.45 * 1.19 - wahrerEinkaufV
                         : null;
                       return (
                         <div key={v.skuId} style={{
-                          display: "grid", gridTemplateColumns: "36px 1fr 90px 90px 80px 55px",
-                          gap: 6, padding: "8px 6px", alignItems: "center",
+                          display: "flex", flexDirection: "column", gap: 6, padding: "8px 6px",
                           borderRadius: 10, border: `1.5px solid ${isCheapest ? "#BBF7D0" : "#F1F5F9"}`,
                           background: isCheapest ? "#F0FDF4" : i % 2 === 0 ? "#fff" : "#FAFAFA",
                         }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 90px 90px 80px 55px", gap: 6, alignItems: "center" }}>
                           {/* Bild */}
                           <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                             {v.imageUrl
@@ -1500,6 +1502,81 @@ export default function Lieferanten() {
                           {/* Lager */}
                           <div style={{ textAlign: "right", fontSize: 11, color: v.stock === 0 ? "#DC2626" : "#64748B", fontWeight: v.stock === 0 ? 700 : 400 }}>
                             {v.stock !== undefined ? (v.stock === 0 ? "0 ❌" : v.stock) : "–"}
+                          </div>
+                          </div>
+                          {/* Herkunft / Versand / Zoll pro Variante */}
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", paddingLeft: 42 }}>
+                            <div style={{ display: "flex", gap: 3 }}>
+                              <button
+                                type="button"
+                                onClick={() => setVariantHerkunft(prev => ({ ...prev, [v.skuId]: true }))}
+                                style={{
+                                  padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700,
+                                  cursor: "pointer", fontFamily: "inherit",
+                                  border: ausChinaV ? "1.5px solid #0EA5E9" : "1.5px solid #E2E8F0",
+                                  background: ausChinaV ? "#F0F9FF" : "#F8FAFC",
+                                  color: ausChinaV ? "#0369A1" : "#94A3B8",
+                                }}
+                              >
+                                China
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setVariantHerkunft(prev => ({ ...prev, [v.skuId]: false }))}
+                                style={{
+                                  padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700,
+                                  cursor: "pointer", fontFamily: "inherit",
+                                  border: !ausChinaV ? "1.5px solid #0EA5E9" : "1.5px solid #E2E8F0",
+                                  background: !ausChinaV ? "#F0F9FF" : "#F8FAFC",
+                                  color: !ausChinaV ? "#0369A1" : "#94A3B8",
+                                }}
+                              >
+                                EU
+                              </button>
+                            </div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="Versand €"
+                              value={variantShipping[v.skuId] ?? ""}
+                              onChange={e => setVariantShipping(prev => ({ ...prev, [v.skuId]: e.target.value }))}
+                              style={{
+                                width: 70, padding: "2px 6px", fontSize: 10, fontWeight: 600,
+                                border: "1.5px solid #E2E8F0", borderRadius: 6, outline: "none",
+                                fontFamily: "inherit", color: "#0F172A",
+                              }}
+                            />
+                            {ausChinaV && !ueberSchwelleV && (
+                              <span style={{ fontSize: 10, color: "#94A3B8" }}>
+                                Zoll: {CHINA_ZOLL_EUR.toFixed(2)} €
+                              </span>
+                            )}
+                            {ueberSchwelleV && (
+                              <>
+                                <span style={{ fontSize: 10, color: "#C8511B", fontWeight: 700 }}>
+                                  &gt;150€ Sendungswert: Zoll manuell
+                                </span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="Zoll €"
+                                  value={variantZollManuell[v.skuId] ?? ""}
+                                  onChange={e => setVariantZollManuell(prev => ({ ...prev, [v.skuId]: e.target.value }))}
+                                  style={{
+                                    width: 70, padding: "2px 6px", fontSize: 10, fontWeight: 600,
+                                    border: "1.5px solid #FED7AA", borderRadius: 6, outline: "none",
+                                    fontFamily: "inherit", color: "#0F172A",
+                                  }}
+                                />
+                              </>
+                            )}
+                            {(versandV > 0 || zollV > 0) && (
+                              <span style={{ fontSize: 10, color: "#64748B" }}>
+                                wahrer Einkauf: <strong style={{ color: "#0F172A" }}>{wahrerEinkaufV.toFixed(2)} €</strong>
+                              </span>
+                            )}
                           </div>
                         </div>
                       );
