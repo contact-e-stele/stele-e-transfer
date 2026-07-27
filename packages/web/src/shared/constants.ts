@@ -1,11 +1,15 @@
 // ─── Gemeinsame Konstanten (Backend + Frontend) ───────────────────────────────
 
 // EU-Zollregelung China-Versand (ab 01.07.2026)
-// Aktuell: pauschal 3,00 € Zoll pro Sendung bis 150 € Warenwert (Übergangsregelung).
+// Pauschal 4,00 € Zoll pro Sendung bis 150 € Warenwert (Übergangsregelung).
+// Am 2026-07-27 von 3,00 € auf 4,00 € angehoben: reale AliExpress-Zölle lagen bei
+// manchen Artikeln höher als die bisherige Pauschale (z.B. 3,65€ Einkauf + 1,99€
+// Versand → real 3,57€ Zoll statt angenommener 3,00€), wodurch die Gewinn-Vorschau
+// in Preise-Tab und Import-Tab zu optimistisch war.
 // ACHTUNG: Für Ende 2026 ist zusätzlich eine EU-weite Handling Fee (~2,00 €) geplant,
-// die diesen Betrag voraussichtlich auf ca. 5,00 € erhöht (Stand: noch nicht final beschlossen).
+// die diesen Betrag voraussichtlich weiter erhöht (Stand: noch nicht final beschlossen).
 // Bei offizieller Bestätigung hier zentral anpassen — wird in api/index.ts + lieferanten.tsx verwendet.
-export const CHINA_ZOLL_EUR = 3.00;
+export const CHINA_ZOLL_EUR = 4.00;
 
 // Mindestgewinn pro Verkauf (€) — wird in der Preisempfehlung/automatischer Neuberechnung mit einkalkuliert
 // Geaendert von 1,60€ auf 2,00€ am 2026-07-14 auf Wunsch des Users
