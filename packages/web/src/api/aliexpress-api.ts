@@ -84,8 +84,21 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(params),
     });
-    const data = await res.json() as Record<string, unknown>;
-    console.log('[AliExpress OAuth] Token exchange response:', JSON.stringify(data).slice(0, 1000));
+    const rawText = await res.text();
+    console.log(`[AliExpress OAuth] Token exchange HTTP ${res.status}, Body:`, rawText.slice(0, 1000));
+
+    let data: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(rawText);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed as Record<string, unknown>;
+    } catch (parseErr) {
+      console.error('[AliExpress OAuth] Token exchange: Antwort ist kein gültiges JSON:', parseErr);
+    }
+
+    if (!data) {
+      console.error(`[AliExpress OAuth] Token exchange fehlgeschlagen — HTTP ${res.status}, kein verwertbares JSON-Objekt. Roh-Body:`, rawText.slice(0, 1000));
+      return null;
+    }
 
     // Neuer REST-Pfad liefert Felder vermutlich flach (kein "...response.result"-Wrapper
     // wie beim alten TOP-Gateway) — auf beide Formen prüfen, bis in echten Logs bestätigt.
@@ -125,8 +138,21 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(params),
     });
-    const data = await res.json() as Record<string, unknown>;
-    console.log('[AliExpress OAuth] Token refresh response:', JSON.stringify(data).slice(0, 1000));
+    const rawText = await res.text();
+    console.log(`[AliExpress OAuth] Token refresh HTTP ${res.status}, Body:`, rawText.slice(0, 1000));
+
+    let data: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(rawText);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed as Record<string, unknown>;
+    } catch (parseErr) {
+      console.error('[AliExpress OAuth] Token refresh: Antwort ist kein gültiges JSON:', parseErr);
+    }
+
+    if (!data) {
+      console.error(`[AliExpress OAuth] Token refresh fehlgeschlagen — HTTP ${res.status}, kein verwertbares JSON-Objekt. Roh-Body:`, rawText.slice(0, 1000));
+      return null;
+    }
 
     const flat = data['access_token'] ? data : undefined;
     const nested = (data['aliexpress_solution_oauth_token_refresh_response'] as Record<string, unknown>)?.result as Record<string, unknown> | undefined;
