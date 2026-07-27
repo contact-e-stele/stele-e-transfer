@@ -1,6 +1,7 @@
 // AliExpress DS API — offizielle Produktdaten über IOP OAuth
-// Signing: MD5 (secret + sorted_params + secret), method als eigenes Feld
-// aliexpress.ds.product.get → title, images, price, specs, shipsFrom, variantPrices
+// Zwei Gateways/Signierverfahren:
+// - /sync (TOP-Legacy, MD5): aliexpress.ds.product.get → title, images, price, specs, shipsFrom, variantPrices
+// - /auth/token/security/* (IOP-REST, HMAC-SHA256): OAuth Token Create/Refresh
 
 import * as crypto from 'crypto';
 import type { VariantPrice } from './aliexpress';
@@ -8,6 +9,10 @@ import type { VariantPrice } from './aliexpress';
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
 const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
 const IOP_ENDPOINT = 'https://api-sg.aliexpress.com/sync';
+// Neueres IOP-REST-Gateway — für OAuth Token-Create/Refresh. Das alte /sync-Gateway mit
+// method=aliexpress.solution.oauth.token.create liefert dort "InvalidApiPath".
+// aliexpress.ds.product.get läuft weiterhin über IOP_ENDPOINT/iopSign — nicht angefasst.
+const IOP_REST_BASE = 'https://api-sg.aliexpress.com';
 
 const OAUTH_URL = 'https://auth.aliexpress.com/oauth/authorize';
 
@@ -32,6 +37,15 @@ function iopSign(secret: string, params: Record<string, string>): string {
   return crypto.createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
 }
 
+// IOP REST Signing (neueres Gateway, z.B. /auth/token/security/create):
+// HMAC-SHA256(secret, apiPath + sortierte "key+value"-Verkettung aller Params außer "sign") → hex → uppercase.
+// Pfad wird vorangestellt, da er mit "/" beginnt (Alibaba/AliExpress IOP-SDK-Konvention).
+function iopRestSign(secret: string, apiPath: string, params: Record<string, string>): string {
+  const sorted = Object.keys(params).sort().map(k => `${k}${params[k]}`).join('');
+  const base = apiPath.startsWith('/') ? apiPath + sorted : sorted;
+  return crypto.createHmac('sha256', secret).update(base, 'utf8').digest('hex').toUpperCase();
+}
+
 export function getAliExpressOAuthUrl(redirectUri: string, state: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
@@ -52,36 +66,42 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
   expires_in: number;
   refresh_token_valid_time: number;
 } | null> {
+  // redirectUri wird laut aktueller AliExpress-Doku vom REST-Pfad nicht verlangt
+  // (nur code + optionales uuid) — Parameter bleibt für Aufrufer-Kompatibilität erhalten.
+  void redirectUri;
   try {
-    const method = 'aliexpress.solution.oauth.token.create';
+    const apiPath = '/auth/token/security/create';
     const params: Record<string, string> = {
       app_key: APP_KEY,
-      method,
+      sign_method: 'sha256',
       timestamp: String(Date.now()),
-      format: 'json',
-      sign_method: 'md5',
-      v: '2.0',
       code,
-      redirect_uri: redirectUri,
     };
-    params.sign = iopSign(APP_SECRET, params);
+    params.sign = iopRestSign(APP_SECRET, apiPath, params);
 
-    const res = await fetch(IOP_ENDPOINT, {
+    const res = await fetch(`${IOP_REST_BASE}${apiPath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(params),
     });
     const data = await res.json() as Record<string, unknown>;
-    console.log('[AliExpress OAuth] Token exchange response:', JSON.stringify(data).slice(0, 300));
-    const result = (data['aliexpress_solution_oauth_token_create_response'] as Record<string, unknown>)?.result as Record<string, unknown> | undefined;
+    console.log('[AliExpress OAuth] Token exchange response:', JSON.stringify(data).slice(0, 1000));
+
+    // Neuer REST-Pfad liefert Felder vermutlich flach (kein "...response.result"-Wrapper
+    // wie beim alten TOP-Gateway) — auf beide Formen prüfen, bis in echten Logs bestätigt.
+    const flat = data['access_token'] ? data : undefined;
+    const nested = (data['aliexpress_solution_oauth_token_create_response'] as Record<string, unknown>)?.result as Record<string, unknown> | undefined;
+    const result = flat ?? nested;
+
     if (result?.access_token) {
       return {
         access_token: String(result.access_token),
         refresh_token: String(result.refresh_token || ''),
-        expires_in: Number(result.expire_time || 0),
-        refresh_token_valid_time: Number(result.refresh_token_valid_time || 0),
+        expires_in: Number(result.expires_in || result.expire_time || 0),
+        refresh_token_valid_time: Number(result.refresh_expires_in || result.refresh_token_valid_time || 0),
       };
     }
+    console.error('[AliExpress OAuth] Token exchange fehlgeschlagen — Response:', JSON.stringify(data).slice(0, 1000));
     return null;
   } catch (e) {
     console.error('[AliExpress OAuth] Token exchange error:', e);
@@ -91,28 +111,31 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
 
 export async function refreshAliToken(refreshToken: string): Promise<{ access_token: string; expires_in: number } | null> {
   try {
-    const method = 'aliexpress.solution.oauth.token.refresh';
+    const apiPath = '/auth/token/security/refresh';
     const params: Record<string, string> = {
       app_key: APP_KEY,
-      method,
+      sign_method: 'sha256',
       timestamp: String(Date.now()),
-      format: 'json',
-      sign_method: 'md5',
-      v: '2.0',
       refresh_token: refreshToken,
     };
-    params.sign = iopSign(APP_SECRET, params);
+    params.sign = iopRestSign(APP_SECRET, apiPath, params);
 
-    const res = await fetch(IOP_ENDPOINT, {
+    const res = await fetch(`${IOP_REST_BASE}${apiPath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(params),
     });
     const data = await res.json() as Record<string, unknown>;
-    const result = (data['aliexpress_solution_oauth_token_refresh_response'] as Record<string, unknown>)?.result as Record<string, unknown> | undefined;
+    console.log('[AliExpress OAuth] Token refresh response:', JSON.stringify(data).slice(0, 1000));
+
+    const flat = data['access_token'] ? data : undefined;
+    const nested = (data['aliexpress_solution_oauth_token_refresh_response'] as Record<string, unknown>)?.result as Record<string, unknown> | undefined;
+    const result = flat ?? nested;
+
     if (result?.access_token) {
-      return { access_token: String(result.access_token), expires_in: Number(result.expire_time || 0) };
+      return { access_token: String(result.access_token), expires_in: Number(result.expires_in || result.expire_time || 0) };
     }
+    console.error('[AliExpress OAuth] Token refresh fehlgeschlagen — Response:', JSON.stringify(data).slice(0, 1000));
     return null;
   } catch (e) {
     console.error('[AliExpress OAuth] Token refresh error:', e);
