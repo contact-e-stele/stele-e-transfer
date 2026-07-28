@@ -8,15 +8,21 @@ import { getAccessToken } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
-const EBAY_FEE = 0.18;           // 18% eBay Gebühren
 const MIN_GEWINN = MIN_GEWINN_EUR; // Mindestgewinn € (zentral in shared/constants.ts)
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 Stunden
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
 
-function calcSellPrice(buyPrice: number, isChina = false): number {
-  // sellPrice = (buyPrice + MIN_GEWINN [+ CHINA_ZOLL]) / (1 - EBAY_FEE)
-  const extra = isChina ? CHINA_ZOLL_EUR : 0;
-  return Math.ceil(((buyPrice + MIN_GEWINN + extra) / (1 - EBAY_FEE)) * 100) / 100;
+// Gleiche Formel wie in lieferanten.tsx (Mindestpreis-Button):
+// feeRate = (13% eBay + adRate%) × 1.19 MwSt
+// sellPrice = (buyPrice + versand + zoll + MIN_GEWINN + 0.45€ Bestellgebühr × 1.19 MwSt) / (1 - feeRate)
+function calcSellPrice(buyPrice: number, versand: number, zoll: number, adRate: number): number {
+  const feeRate = (13 + adRate) / 100 * 1.19;
+  return Math.ceil(((buyPrice + versand + zoll + MIN_GEWINN + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+}
+
+function isChinaShipping(shipsFrom?: string | null): boolean {
+  if (!shipsFrom) return false;
+  return shipsFrom.toLowerCase().includes('china');
 }
 
 function parsePrice(raw: string): number {
@@ -190,7 +196,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       if (!data) { errors++; return; }
 
       // China-Versand: Zollgebühr +3€ addieren (ab 01.07.2026), NICHT überspringen
-      const isChina = data.shipsFrom?.toLowerCase() === 'china';
+      const isChina = isChinaShipping(data.shipsFrom);
+      const zoll = isChina ? CHINA_ZOLL_EUR : 0;
+      const versand = product.shippingCost ?? 0;
+      const adRate = product.adRate ?? 0;
       if (isChina) {
         console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Zollgebühr +${CHINA_ZOLL_EUR}€ wird addiert`);
       }
@@ -207,7 +216,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       await db.insert(schema.priceHistory).values({ productId: product.id, price: newBuyPrice, source: 'aliexpress' });
 
       if (priceChanged) {
-        const newSellPrice = calcSellPrice(newBuyPrice, isChina);
+        const newSellPrice = calcSellPrice(newBuyPrice, versand, zoll, adRate);
         const isAlert = priceDiff >= ALERT_THRESHOLD;
         console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}`);
 
