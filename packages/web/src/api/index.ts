@@ -1075,7 +1075,8 @@ const app = new Hono()
     console.log('[AliExpress OAuth] Access token obtained:', tokens.access_token.slice(0, 20) + '...');
     console.log('[AliExpress OAuth] Refresh token:', tokens.refresh_token.slice(0, 20) + '...');
     // Token automatisch in DB speichern
-    await saveAliTokens(tokens.access_token, tokens.refresh_token, tokens.expires_in);
+    const expiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;  // Aktueller Timestamp (Sekunden) + expires_in (Sekunden)
+    await saveAliTokens(tokens.access_token, tokens.refresh_token, expiresAt);
     return c.html(`
       <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff;font-family:Montserrat,sans-serif">
         <h2 style="color:#C9A227">✅ AliExpress erfolgreich verbunden!</h2>
@@ -1189,7 +1190,7 @@ const app = new Hono()
       if (!refRow?.value) return c.json({ error: 'Kein Refresh Token in DB — bitte neu verbinden' }, 400);
       const tokens = await refreshAliToken(refRow.value);
       if (!tokens) return c.json({ error: 'Refresh fehlgeschlagen — Token möglicherweise abgelaufen. Bitte neu verbinden.' }, 502);
-      const expiresAt = Date.now() + tokens.expires_in * 1000;
+      const expiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;  // Sekunden-Format wie in OAuth-Callback
       await saveAliTokens(tokens.access_token, tokens.refresh_token, expiresAt);
       return c.json({ ok: true, expiresAt });
     } catch (e) {
