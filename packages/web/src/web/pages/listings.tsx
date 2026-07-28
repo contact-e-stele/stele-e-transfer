@@ -32,6 +32,7 @@ interface EbayListing {
     generatedTitle: string;
     adRate: number | null;
     lastPriceCheck: string | null;
+    shipsFrom: string | null;
   } | null;
 }
 
@@ -209,6 +210,26 @@ export default function Listings() {
     setEditingPrice(listing.itemId);
     setPriceInput(listing.currentPrice.toFixed(2));
     setPriceResult(r => ({ ...r, [listing.itemId]: {} }));
+  };
+
+  const handleShippingOriginToggle = async (listing: EbayListing, shipsFrom: "China" | "EU") => {
+    const productId = listing.appProduct?.id;
+    if (!productId) return;
+    // Optimistisch lokal übernehmen
+    setListings(prev => prev.map(l => l.itemId === listing.itemId
+      ? { ...l, appProduct: l.appProduct ? { ...l.appProduct, shipsFrom } : l.appProduct }
+      : l));
+    try {
+      const res = await fetch(`/api/products/${productId}/shipping-origin`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shipsFrom }),
+      });
+      if (!res.ok) throw new Error("Fehler beim Speichern");
+    } catch {
+      // Bei Fehler: alten Wert wiederherstellen
+      load();
+    }
   };
 
   const handlePriceSave = async (itemId: string) => {
@@ -858,6 +879,41 @@ export default function Listings() {
                         )}
                       </>
                     )}
+
+                    {/* China/EU Versand-Herkunft Toggle — nur wenn verknüpft */}
+                    {isLinked && (() => {
+                      const ausChina = (listing.appProduct!.shipsFrom ?? "").toLowerCase().includes("china");
+                      return (
+                        <div style={{ display: "flex", gap: 3 }}>
+                          <button
+                            type="button"
+                            onClick={() => handleShippingOriginToggle(listing, "China")}
+                            style={{
+                              padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700,
+                              cursor: "pointer", fontFamily: "inherit",
+                              border: ausChina ? "1.5px solid #0EA5E9" : "1.5px solid #E2E8F0",
+                              background: ausChina ? "#F0F9FF" : "#F8FAFC",
+                              color: ausChina ? "#0369A1" : "#94A3B8",
+                            }}
+                          >
+                            China
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleShippingOriginToggle(listing, "EU")}
+                            style={{
+                              padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700,
+                              cursor: "pointer", fontFamily: "inherit",
+                              border: !ausChina ? "1.5px solid #0EA5E9" : "1.5px solid #E2E8F0",
+                              background: !ausChina ? "#F0F9FF" : "#F8FAFC",
+                              color: !ausChina ? "#0369A1" : "#94A3B8",
+                            }}
+                          >
+                            EU
+                          </button>
+                        </div>
+                      );
+                    })()}
 
                     {/* adRate Badge — nur wenn verknüpft */}
                     {isLinked && (() => {

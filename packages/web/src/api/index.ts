@@ -524,6 +524,7 @@ const app = new Hono()
         generatedTitle: schema.products.generatedTitle,
         adRate: schema.products.adRate,
         lastPriceCheck: schema.products.lastPriceCheck,
+        shipsFrom: schema.products.shipsFrom,
       }).from(schema.products).all();
 
       // Index: ebayListingId → DB-Produkt
@@ -960,6 +961,106 @@ const app = new Hono()
       }
       return c.json({ results }, 200);
     } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Preise mit korrigierter Formel neu berechnen (P-8) — nur Vorschau, keine Änderung ──
+  .get('/ebay/listings/recalculate-preview', async (c) => {
+    try {
+      const { calcSellPrice, isChinaShipping } = await import('./price-monitor');
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
+      const listings = await getAllSellerListings();
+      const dbProducts = await db.select({
+        id: schema.products.id,
+        ebayListingId: schema.products.ebayListingId,
+        ebayStatus: schema.products.ebayStatus,
+        buyPrice: schema.products.buyPrice,
+        shippingCost: schema.products.shippingCost,
+        adRate: schema.products.adRate,
+        shipsFrom: schema.products.shipsFrom,
+        generatedTitle: schema.products.generatedTitle,
+      }).from(schema.products).all();
+      const dbByListingId = new Map(dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
+
+      const preview: Array<{ itemId: string; title: string; oldPrice: number; newPrice: number; diff: number }> = [];
+      for (const listing of listings) {
+        const product = dbByListingId.get(listing.itemId);
+        if (!product || product.ebayStatus !== 'listed' || product.buyPrice == null) continue;
+
+        const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+        const versand = product.shippingCost ?? 0;
+        const adRate = product.adRate ?? 0;
+        const newPrice = calcSellPrice(product.buyPrice, versand, zoll, adRate);
+        const oldPrice = listing.currentPrice;
+        const diff = Math.round((newPrice - oldPrice) * 100) / 100;
+
+        preview.push({ itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff });
+      }
+      preview.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+
+      return c.json({ preview, total: preview.length }, 200);
+    } catch (e) {
+      console.error('[recalculate-preview]', e);
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── Vom Nutzer bestätigte Preise anwenden (P-8) ─────────────────────────────
+  .post('/ebay/listings/recalculate-apply', async (c) => {
+    try {
+      const body = await c.req.json() as { itemIds: string[] };
+      if (!Array.isArray(body.itemIds) || body.itemIds.length === 0) {
+        return c.json({ error: 'Keine itemIds übergeben' }, 400);
+      }
+
+      const { calcSellPrice, isChinaShipping, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
+      const dbProducts = await db.select().from(schema.products).all();
+      const byListingId = new Map(dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
+
+      const results: Array<{ itemId: string; ok: boolean; oldPrice?: number; newPrice?: number; error?: string }> = [];
+
+      for (const itemId of body.itemIds) {
+        const product = byListingId.get(itemId);
+        if (!product || product.buyPrice == null) {
+          results.push({ itemId, ok: false, error: 'Produkt nicht gefunden oder kein Einkaufspreis' });
+          continue;
+        }
+
+        const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+        const versand = product.shippingCost ?? 0;
+        const adRate = product.adRate ?? 0;
+        const newPrice = calcSellPrice(product.buyPrice, versand, zoll, adRate);
+        const oldPrice = product.sellPrice ?? undefined;
+
+        let ok = await updateEbayPriceInventory(product.id, newPrice);
+        if (!ok) ok = await updateEbayPriceTrading(itemId, newPrice);
+
+        if (ok) {
+          await db.update(schema.products).set({
+            sellPrice: newPrice,
+            lastPriceCheck: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }).where(eq(schema.products.id, product.id));
+          results.push({ itemId, ok: true, oldPrice, newPrice });
+        } else {
+          results.push({ itemId, ok: false, oldPrice, error: 'eBay-Update fehlgeschlagen (Inventory + Trading API)' });
+        }
+        await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
+      }
+
+      return c.json({ results }, 200);
+    } catch (e) {
+      console.error('[recalculate-apply]', e);
       return c.json({ error: String(e) }, 500);
     }
   })
@@ -1641,6 +1742,26 @@ const app = new Hono()
       await db.update(schema.products).set({ adRate, updatedAt: new Date().toISOString() })
         .where(eq(schema.products.id, id));
       return c.json({ ok: true, adRate }, 200);
+    } catch (e) {
+      return c.json({ error: 'DB Fehler' }, 503);
+    }
+  })
+
+  .patch('/products/:id/shipping-origin', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+    try {
+      const body = await c.req.json() as { shipsFrom?: string };
+      if (body.shipsFrom !== 'China' && body.shipsFrom !== 'EU') {
+        return c.json({ error: 'shipsFrom muss "China" oder "EU" sein' }, 400);
+      }
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      await db.update(schema.products).set({ shipsFrom: body.shipsFrom, updatedAt: new Date().toISOString() })
+        .where(eq(schema.products.id, id));
+      return c.json({ ok: true, shipsFrom: body.shipsFrom }, 200);
     } catch (e) {
       return c.json({ error: 'DB Fehler' }, 503);
     }

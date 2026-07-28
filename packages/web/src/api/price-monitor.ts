@@ -15,12 +15,12 @@ const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
 // Gleiche Formel wie in lieferanten.tsx (Mindestpreis-Button):
 // feeRate = (13% eBay + adRate%) × 1.19 MwSt
 // sellPrice = (buyPrice + versand + zoll + MIN_GEWINN + 0.45€ Bestellgebühr × 1.19 MwSt) / (1 - feeRate)
-function calcSellPrice(buyPrice: number, versand: number, zoll: number, adRate: number): number {
+export function calcSellPrice(buyPrice: number, versand: number, zoll: number, adRate: number): number {
   const feeRate = (13 + adRate) / 100 * 1.19;
   return Math.ceil(((buyPrice + versand + zoll + MIN_GEWINN + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
 }
 
-function isChinaShipping(shipsFrom?: string | null): boolean {
+export function isChinaShipping(shipsFrom?: string | null): boolean {
   if (!shipsFrom) return false;
   return shipsFrom.toLowerCase().includes('china');
 }
@@ -36,7 +36,7 @@ const EBAY_API_BASE = 'https://api.ebay.com';
 
 // eBay Preis über Inventory API updaten (für neue Listings die über Inventory API erstellt wurden)
 // Sucht Offer per SKU und updated pricingSummary
-async function updateEbayPriceInventory(productId: number, newPrice: number): Promise<boolean> {
+export async function updateEbayPriceInventory(productId: number, newPrice: number): Promise<boolean> {
   try {
     const token = await getAccessToken();
     const sku = `stele-${productId}`;
@@ -128,7 +128,7 @@ async function updateEbayPriceInventory(productId: number, newPrice: number): Pr
 }
 
 // eBay Listing-Preis über Trading API aktualisieren (Fallback für ältere Listings)
-async function updateEbayPriceTrading(itemId: string, newPrice: number): Promise<boolean> {
+export async function updateEbayPriceTrading(itemId: string, newPrice: number): Promise<boolean> {
   try {
     const token = await getAccessToken();
     const xml = `<?xml version="1.0" encoding="utf-8"?>
