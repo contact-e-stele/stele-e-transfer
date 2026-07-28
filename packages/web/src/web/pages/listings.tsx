@@ -149,6 +149,83 @@ export default function Listings() {
   const [editSaving, setEditSaving] = useState(false);
   const [editSaveMsg, setEditSaveMsg] = useState("");
 
+  // ─── Preise neu berechnen (P-8) ────────────────────────────────────────────
+  interface RecalcRow { itemId: string; title: string; oldPrice: number; newPrice: number; diff: number }
+  const [recalcOpen, setRecalcOpen] = useState(false);
+  const [recalcLoading, setRecalcLoading] = useState(false);
+  const [recalcPreview, setRecalcPreview] = useState<RecalcRow[]>([]);
+  const [recalcSelected, setRecalcSelected] = useState<Set<string>>(new Set());
+  const [recalcApplying, setRecalcApplying] = useState(false);
+  const [recalcError, setRecalcError] = useState<string | null>(null);
+  const [recalcResultMsg, setRecalcResultMsg] = useState<string | null>(null);
+
+  const handleRecalcOpen = async () => {
+    setRecalcOpen(true);
+    setRecalcLoading(true);
+    setRecalcError(null);
+    setRecalcResultMsg(null);
+    try {
+      const res = await fetch("/api/ebay/listings/recalculate-preview");
+      const data = await res.json() as { preview?: RecalcRow[]; error?: string };
+      if (!res.ok || !data.preview) throw new Error(data.error ?? "Fehler beim Laden der Vorschau");
+      setRecalcPreview(data.preview);
+      setRecalcSelected(new Set(data.preview.map(p => p.itemId))); // alle standardmäßig angehakt
+    } catch (e) {
+      setRecalcError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRecalcLoading(false);
+    }
+  };
+
+  const toggleRecalcSelect = (itemId: string) => {
+    setRecalcSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId); else next.add(itemId);
+      return next;
+    });
+  };
+
+  const toggleRecalcSelectAll = () => {
+    setRecalcSelected(prev => prev.size === recalcPreview.length ? new Set() : new Set(recalcPreview.map(p => p.itemId)));
+  };
+
+  const handleRecalcApply = async () => {
+    const itemIds = Array.from(recalcSelected);
+    if (itemIds.length === 0) return;
+    setRecalcApplying(true);
+    setRecalcError(null);
+    setRecalcResultMsg(null);
+    try {
+      const res = await fetch("/api/ebay/listings/recalculate-apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemIds }),
+      });
+      const data = await res.json() as { results?: Array<{ itemId: string; ok: boolean; newPrice?: number; error?: string }>; error?: string };
+      if (!res.ok || !data.results) throw new Error(data.error ?? "Fehler bei der Übernahme");
+
+      const okCount = data.results.filter(r => r.ok).length;
+      const failCount = data.results.length - okCount;
+      setRecalcResultMsg(`${okCount} Preis${okCount === 1 ? "" : "e"} übernommen${failCount > 0 ? `, ${failCount} fehlgeschlagen` : ""}`);
+
+      // Erfolgreiche Preise live in die Listings-Liste übernehmen
+      const priceMap = new Map(data.results.filter(r => r.ok && r.newPrice).map(r => [r.itemId, r.newPrice!]));
+      setListings(prev => prev.map(l => priceMap.has(l.itemId) ? { ...l, currentPrice: priceMap.get(l.itemId)! } : l));
+
+      // Übernommene Zeilen aus der Vorschau entfernen
+      setRecalcPreview(prev => prev.filter(p => !priceMap.has(p.itemId)));
+      setRecalcSelected(prev => {
+        const next = new Set(prev);
+        priceMap.forEach((_, id) => next.delete(id));
+        return next;
+      });
+    } catch (e) {
+      setRecalcError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRecalcApplying(false);
+    }
+  };
+
   // ─── Mehrfachauswahl + Massenaktionen ──────────────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<null | "price" | "adrate" | "category" | "end">(null);
@@ -458,6 +535,92 @@ export default function Listings() {
         );
       })()}
 
+      {/* Preise-neu-berechnen-Modal (P-8) */}
+      {recalcOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setRecalcOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 640, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #E2E8F0", position: "sticky", top: 0, background: "#fff", zIndex: 10 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Preise neu berechnen</span>
+              <button onClick={() => setRecalcOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" }}>
+                <X size={18} color="#94A3B8" />
+              </button>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              {recalcLoading && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "20px 0", color: "#64748B", fontSize: 13 }}>
+                  <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Berechne Preise…
+                </div>
+              )}
+
+              {!recalcLoading && recalcError && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: "#FEF2F2", color: "#991B1B", fontSize: 13, marginBottom: 12 }}>
+                  {recalcError}
+                </div>
+              )}
+
+              {!recalcLoading && recalcResultMsg && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: "#F0FDF4", color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
+                  ✓ {recalcResultMsg}
+                </div>
+              )}
+
+              {!recalcLoading && !recalcError && recalcPreview.length === 0 && (
+                <div style={{ padding: "20px 0", textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
+                  Keine Preisänderungen — alle verknüpften Listings sind bereits korrekt bepreist.
+                </div>
+              )}
+
+              {!recalcLoading && recalcPreview.length > 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, cursor: "pointer" }} onClick={toggleRecalcSelectAll}>
+                    {recalcSelected.size === recalcPreview.length ? <CheckSquare size={16} color="#6366F1" /> : <Square size={16} color="#CBD5E1" />}
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>
+                      Alle auswählen ({recalcSelected.size}/{recalcPreview.length})
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+                    {recalcPreview.map(row => (
+                      <div key={row.itemId} style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+                        borderRadius: 8, border: "1px solid #F1F5F9", background: "#FAFAFA",
+                      }}>
+                        <button type="button" onClick={() => toggleRecalcSelect(row.itemId)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0 }}>
+                          {recalcSelected.has(row.itemId) ? <CheckSquare size={16} color="#6366F1" /> : <Square size={16} color="#CBD5E1" />}
+                        </button>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "#0F172A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.title}>
+                          {row.title}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#94A3B8", flexShrink: 0 }}>{row.oldPrice.toFixed(2)} €</div>
+                        <div style={{ fontSize: 12, color: "#94A3B8", flexShrink: 0 }}>→</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", flexShrink: 0 }}>{row.newPrice.toFixed(2)} €</div>
+                        <div style={{
+                          fontSize: 11, fontWeight: 700, flexShrink: 0, minWidth: 52, textAlign: "right",
+                          color: row.diff > 0 ? "#16A34A" : row.diff < 0 ? "#DC2626" : "#94A3B8",
+                        }}>
+                          {row.diff > 0 ? "+" : ""}{row.diff.toFixed(2)} €
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={handleRecalcApply} disabled={recalcApplying || recalcSelected.size === 0} style={{
+                    width: "100%", padding: "10px 0", borderRadius: 10, border: "none",
+                    background: recalcApplying || recalcSelected.size === 0 ? "#E2E8F0" : "#16A34A",
+                    color: recalcApplying || recalcSelected.size === 0 ? "#94A3B8" : "#fff",
+                    fontSize: 13, fontWeight: 700, cursor: recalcApplying || recalcSelected.size === 0 ? "not-allowed" : "pointer",
+                    fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  }}>
+                    {recalcApplying ? <Loader size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={14} />}
+                    {recalcApplying ? "Übernimmt…" : `Ausgewählte übernehmen (${recalcSelected.size})`}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ maxWidth: 780, margin: "0 auto" }}>
 
         {/* Header */}
@@ -471,15 +634,26 @@ export default function Listings() {
               <p style={{ fontSize: 12, color: "#64748B", margin: 0 }}>{listings.length} Listings · {linked} verknüpft · {unlinked} nicht verknüpft</p>
             </div>
           </div>
-          <button onClick={() => load(true)} disabled={loading} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 10,
-            padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#475569",
-            cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit",
-          }}>
-            <RefreshCw size={14} style={loading ? { animation: "spin 1s linear infinite" } : {}} />
-            Laden
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handleRecalcOpen} style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "#FFF8DC", border: "1.5px solid #FFD700", borderRadius: 10,
+              padding: "8px 14px", fontSize: 13, fontWeight: 700, color: "#92400E",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+              <TrendingUp size={14} />
+              Preise neu berechnen
+            </button>
+            <button onClick={() => load(true)} disabled={loading} style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 10,
+              padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#475569",
+              cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit",
+            }}>
+              <RefreshCw size={14} style={loading ? { animation: "spin 1s linear infinite" } : {}} />
+              Laden
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
