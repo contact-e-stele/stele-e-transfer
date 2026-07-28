@@ -1577,6 +1577,22 @@ export default function Lieferanten() {
                                 wahrer Einkauf: <strong style={{ color: "#0F172A" }}>{wahrerEinkaufV.toFixed(2)} €</strong>
                               </span>
                             )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Gleiche Formel wie beim Einzelprodukt, aber mit wahrerEinkaufV (inkl. Versand + Zoll dieser Variante)
+                                const feeRate = (13 + adRate) / 100 * 1.19;
+                                const recommendedV = Math.ceil(((wahrerEinkaufV + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                                setVariantEbayPrices(prev => ({ ...prev, [v.skuId]: recommendedV.toFixed(2) }));
+                              }}
+                              style={{
+                                fontSize: 10, fontWeight: 700, color: "#16A34A", background: "#F0FDF4",
+                                border: "1px solid #BBF7D0", borderRadius: 6, padding: "2px 8px", cursor: "pointer",
+                                fontFamily: "inherit",
+                              }}
+                            >
+                              ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ →
+                            </button>
                           </div>
                         </div>
                       );
