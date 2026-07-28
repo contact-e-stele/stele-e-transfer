@@ -13,15 +13,15 @@ import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 // ─── AliExpress Token Helper ──────────────────────────────────────────────────
 // Liest Token aus DB (app_settings) oder Env-Variable als Fallback
 async function getAliAccessToken(): Promise<string | null> {
-  // 1) Env-Variable (gesetzt in Render oder lokal)
-  if (process.env.ALIEXPRESS_ACCESS_TOKEN) return process.env.ALIEXPRESS_ACCESS_TOKEN;
-  // 2) DB (gespeichert nach OAuth-Login)
+  // 1) DB first (gespeichert nach OAuth-Login) — dieser Token ist aktuell!
   try {
     const { db } = await import('../db/index');
     const { appSettings } = await import('../db/schema');
     const row = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_access_token')).get();
-    if (row?.value) return row.value;
+    if (row?.value) return row.value;  // Neuer Token aus DB hat Vorrang
   } catch { /* DB nicht verfügbar */ }
+  // 2) Fallback: Env-Variable (Backup, z.B. manuell in Render gesetzt)
+  if (process.env.ALIEXPRESS_ACCESS_TOKEN) return process.env.ALIEXPRESS_ACCESS_TOKEN;
   return null;
 }
 
