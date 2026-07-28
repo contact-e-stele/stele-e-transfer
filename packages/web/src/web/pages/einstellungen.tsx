@@ -11,7 +11,7 @@ interface AliStatus {
 function formatExpiry(ts: number | null | undefined): { label: string; urgent: boolean; expired: boolean } {
   if (!ts) return { label: "Unbekannt", urgent: false, expired: false };
   const now = Date.now();
-  const diff = ts - now;
+  const diff = ts * 1000 - now; // ts kommt vom Server in Sekunden (Unix-Timestamp)
   if (diff <= 0) return { label: "Abgelaufen", urgent: true, expired: true };
   const days = Math.floor(diff / 86400000);
   const hours = Math.floor((diff % 86400000) / 3600000);
