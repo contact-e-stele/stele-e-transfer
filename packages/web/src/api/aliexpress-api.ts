@@ -66,16 +66,15 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
   expires_in: number;
   refresh_token_valid_time: number;
 } | null> {
-  // redirectUri wird laut aktueller AliExpress-Doku vom REST-Pfad nicht verlangt
-  // (nur code + optionales uuid) — Parameter bleibt für Aufrufer-Kompatibilität erhalten.
-  void redirectUri;
   try {
     const apiPath = '/auth/token/create';
     const params: Record<string, string> = {
       app_key: APP_KEY,
-      sign_method: 'sha256',
-      timestamp: String(Date.now()),
       code,
+      redirect_uri: redirectUri,
+      timestamp: String(Date.now()),
+      sign_method: 'sha256',
+      simplify: 'true',
     };
     params.sign = iopRestSign(APP_SECRET, apiPath, params);
 
@@ -127,9 +126,10 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
     const apiPath = '/auth/token/refresh';
     const params: Record<string, string> = {
       app_key: APP_KEY,
-      sign_method: 'sha256',
-      timestamp: String(Date.now()),
       refresh_token: refreshToken,
+      timestamp: String(Date.now()),
+      sign_method: 'sha256',
+      simplify: 'true',
     };
     params.sign = iopRestSign(APP_SECRET, apiPath, params);
 
