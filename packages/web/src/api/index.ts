@@ -984,13 +984,24 @@ const app = new Hono()
         adRate: schema.products.adRate,
         shipsFrom: schema.products.shipsFrom,
         generatedTitle: schema.products.generatedTitle,
+        variantPrices: schema.products.variantPrices,
       }).from(schema.products).all();
       const dbByListingId = new Map(dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
+
+      // Mindest-Differenz, unter der ein Preis-Update keinen Sinn ergibt (P-11)
+      const DIFF_THRESHOLD = 0.50;
 
       const preview: Array<{ itemId: string; title: string; oldPrice: number; newPrice: number; diff: number }> = [];
       for (const listing of listings) {
         const product = dbByListingId.get(listing.itemId);
         if (!product || product.ebayStatus !== 'listed' || product.buyPrice == null) continue;
+
+        // P-13: Varianten-Produkte ausschließen — buyPrice ist bei Multi-Varianten-Listings
+        // nicht zuverlässig (nur eine von mehreren Varianten), und ein einzelner neuer Preis
+        // würde beim Anwenden alle Varianten-Offers auf denselben Wert überschreiben.
+        let variantCount = 0;
+        try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
+        if (variantCount > 1) continue;
 
         const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
         const versand = product.shippingCost ?? 0;
@@ -998,6 +1009,8 @@ const app = new Hono()
         const newPrice = calcSellPrice(product.buyPrice, versand, zoll, adRate);
         const oldPrice = listing.currentPrice;
         const diff = Math.round((newPrice - oldPrice) * 100) / 100;
+
+        if (Math.abs(diff) < DIFF_THRESHOLD) continue;
 
         preview.push({ itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff });
       }

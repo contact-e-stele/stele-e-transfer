@@ -421,6 +421,7 @@ export default function Lieferanten() {
           sellPrice: verkauf || null,
           adRate: adRate,
           shippingCost: parseFloat(shippingCost.replace(",", ".")) || 0,
+          shipsFrom: shipsFromInfo?.country,
         }),
       });
       setSaveResult(data);
@@ -492,6 +493,7 @@ export default function Lieferanten() {
             buyPrice: einkauf || null,
             sellPrice: verkauf || null,
             adRate: adRate,
+            shipsFrom: shipsFromInfo?.country,
           }),
         });
         const data = await res.json() as { id?: number; error?: string };

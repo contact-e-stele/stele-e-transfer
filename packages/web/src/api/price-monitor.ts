@@ -12,12 +12,21 @@ const MIN_GEWINN = MIN_GEWINN_EUR; // Mindestgewinn € (zentral in shared/const
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 Stunden
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
 
+// Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Bewusst kein "nächstgelegen"-Runden:
+// calcSellPrice() ist ein Mindestpreis (garantiert MIN_GEWINN) — würde man zur nächstgelegenen
+// ,95-Marke runden, könnte der tatsächliche Preis unter den berechneten Mindestpreis fallen
+// und die Gewinn-Garantie brechen. Aufrunden ist der einzige Modus, der das nicht tut.
+export function roundUpToX95(price: number): number {
+  return Math.round((Math.ceil(price - 0.95) + 0.95) * 100) / 100;
+}
+
 // Gleiche Formel wie in lieferanten.tsx (Mindestpreis-Button):
 // feeRate = (13% eBay + adRate%) × 1.19 MwSt
 // sellPrice = (buyPrice + versand + zoll + MIN_GEWINN + 0.45€ Bestellgebühr × 1.19 MwSt) / (1 - feeRate)
 export function calcSellPrice(buyPrice: number, versand: number, zoll: number, adRate: number): number {
   const feeRate = (13 + adRate) / 100 * 1.19;
-  return Math.ceil(((buyPrice + versand + zoll + MIN_GEWINN + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+  const minPrice = ((buyPrice + versand + zoll + MIN_GEWINN + 0.45 * 1.19) / (1 - feeRate));
+  return roundUpToX95(minPrice);
 }
 
 export function isChinaShipping(shipsFrom?: string | null): boolean {
