@@ -1,7 +1,7 @@
 // AliExpress DS API — offizielle Produktdaten über IOP OAuth
 // Zwei Gateways/Signierverfahren:
 // - /sync (TOP-Legacy, MD5): aliexpress.ds.product.get → title, images, price, specs, shipsFrom, variantPrices
-// - /auth/token/security/* (IOP-REST, HMAC-SHA256): OAuth Token Create/Refresh
+// - /auth/token/create, /auth/token/refresh (IOP-REST, HMAC-SHA256): OAuth Token Create/Refresh
 
 import * as crypto from 'crypto';
 import type { VariantPrice } from './aliexpress';
@@ -37,7 +37,7 @@ function iopSign(secret: string, params: Record<string, string>): string {
   return crypto.createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
 }
 
-// IOP REST Signing (neueres Gateway, z.B. /auth/token/security/create):
+// IOP REST Signing (neueres Gateway, z.B. /auth/token/create):
 // HMAC-SHA256(secret, apiPath + sortierte "key+value"-Verkettung aller Params außer "sign") → hex → uppercase.
 // Pfad wird vorangestellt, da er mit "/" beginnt (Alibaba/AliExpress IOP-SDK-Konvention).
 function iopRestSign(secret: string, apiPath: string, params: Record<string, string>): string {
@@ -70,7 +70,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
   // (nur code + optionales uuid) — Parameter bleibt für Aufrufer-Kompatibilität erhalten.
   void redirectUri;
   try {
-    const apiPath = '/auth/token/security/create';
+    const apiPath = '/auth/token/create';
     const params: Record<string, string> = {
       app_key: APP_KEY,
       sign_method: 'sha256',
@@ -124,7 +124,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
 
 export async function refreshAliToken(refreshToken: string): Promise<{ access_token: string; expires_in: number } | null> {
   try {
-    const apiPath = '/auth/token/security/refresh';
+    const apiPath = '/auth/token/refresh';
     const params: Record<string, string> = {
       app_key: APP_KEY,
       sign_method: 'sha256',
