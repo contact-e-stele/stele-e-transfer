@@ -4,7 +4,7 @@
 import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl } from './aliexpress';
-import { getAccessToken } from './ebay';
+import { getAccessToken, hasVariations } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
@@ -137,8 +137,17 @@ export async function updateEbayPriceInventory(productId: number, newPrice: numb
 }
 
 // eBay Listing-Preis über Trading API aktualisieren (Fallback für ältere Listings)
-export async function updateEbayPriceTrading(itemId: string, newPrice: number): Promise<boolean> {
+export async function updateEbayPriceTrading(itemId: string, newPrice: number): Promise<{ ok: boolean; error?: string }> {
   try {
+    // P-14: ReviseInventoryStatus kennt nur Item-Level-Preise und schlägt bei
+    // Variations-Listings garantiert fehl — vorher per GetItem prüfen und den
+    // aussichtslosen Request gar nicht erst versuchen.
+    if (await hasVariations(itemId)) {
+      const msg = 'Hat Varianten auf eBay-Seite — automatische Preisänderung über diesen Weg nicht unterstützt';
+      console.warn(`[PriceMonitor] ${itemId}: ${msg}`);
+      return { ok: false, error: msg };
+    }
+
     const token = await getAccessToken();
     const xml = `<?xml version="1.0" encoding="utf-8"?>
 <ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
@@ -165,12 +174,12 @@ export async function updateEbayPriceTrading(itemId: string, newPrice: number): 
     if (text.includes('<Ack>Failure</Ack>')) {
       const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Unbekannter Fehler';
       console.warn(`[PriceMonitor] Trading API Fehler für ${itemId}: ${errMsg}`);
-      return false;
+      return { ok: false, error: errMsg };
     }
-    return true;
+    return { ok: true };
   } catch (e) {
     console.warn(`[PriceMonitor] Trading API fehlgeschlagen für ${itemId}:`, e);
-    return false;
+    return { ok: false, error: String(e) };
   }
 }
 
@@ -246,7 +255,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           let ok = await updateEbayPriceInventory(product.id, newSellPrice);
           if (!ok) {
             console.log(`[PriceMonitor] ${product.id}: Inventory API fehlgeschlagen, versuche Trading API...`);
-            ok = await updateEbayPriceTrading(product.ebayListingId, newSellPrice);
+            ok = (await updateEbayPriceTrading(product.ebayListingId, newSellPrice)).ok;
           }
           if (ok) {
             ebayUpdated++;

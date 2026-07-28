@@ -985,6 +985,7 @@ const app = new Hono()
         shipsFrom: schema.products.shipsFrom,
         generatedTitle: schema.products.generatedTitle,
         variantPrices: schema.products.variantPrices,
+        variants: schema.products.variants,
       }).from(schema.products).all();
       const dbByListingId = new Map(dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
 
@@ -996,12 +997,17 @@ const app = new Hono()
         const product = dbByListingId.get(listing.itemId);
         if (!product || product.ebayStatus !== 'listed' || product.buyPrice == null) continue;
 
-        // P-13: Varianten-Produkte ausschließen — buyPrice ist bei Multi-Varianten-Listings
+        // P-13/P-14: Varianten-Produkte ausschließen — buyPrice ist bei Multi-Varianten-Listings
         // nicht zuverlässig (nur eine von mehreren Varianten), und ein einzelner neuer Preis
         // würde beim Anwenden alle Varianten-Offers auf denselben Wert überschreiben.
+        // variantPrices.length > 1 allein reicht nicht: manche Listings haben auf eBay-Seite
+        // einen Variations-Block, obwohl lokal nur eine Preis-Zeile erfasst ist — deshalb
+        // zusätzlich das variants-Gruppen-Feld prüfen (siehe P-14-Diagnose).
         let variantCount = 0;
         try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
-        if (variantCount > 1) continue;
+        let variantGroupCount = 0;
+        try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
+        if (variantCount > 1 || variantGroupCount > 0) continue;
 
         const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
         const versand = product.shippingCost ?? 0;
@@ -1056,7 +1062,12 @@ const app = new Hono()
         const oldPrice = product.sellPrice ?? undefined;
 
         let ok = await updateEbayPriceInventory(product.id, newPrice);
-        if (!ok) ok = await updateEbayPriceTrading(itemId, newPrice);
+        let tradingError: string | undefined;
+        if (!ok) {
+          const tradingResult = await updateEbayPriceTrading(itemId, newPrice);
+          ok = tradingResult.ok;
+          tradingError = tradingResult.error;
+        }
 
         if (ok) {
           await db.update(schema.products).set({
@@ -1066,7 +1077,7 @@ const app = new Hono()
           }).where(eq(schema.products.id, product.id));
           results.push({ itemId, ok: true, oldPrice, newPrice });
         } else {
-          results.push({ itemId, ok: false, oldPrice, error: 'eBay-Update fehlgeschlagen (Inventory + Trading API)' });
+          results.push({ itemId, ok: false, oldPrice, error: tradingError ?? 'eBay-Update fehlgeschlagen (Inventory + Trading API)' });
         }
         await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
       }

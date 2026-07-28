@@ -1290,6 +1290,34 @@ export async function reviseCategory(itemId: string, categoryId: string): Promis
   return { ok: true };
 }
 
+// Prüft per Trading API GetItem, ob ein Listing ein <Variations>-Block hat (P-14).
+// Variations-Listings können nicht über die einfache Item-Level-Preisänderung
+// (ReviseInventoryStatus) bearbeitet werden — das muss VOR einem Preis-Update geprüft werden.
+export async function hasVariations(itemId: string): Promise<boolean> {
+  const token = await getAccessToken();
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <ItemID>${itemId}</ItemID>
+  <DetailLevel>ReturnAll</DetailLevel>
+  <OutputSelector>Variations</OutputSelector>
+</GetItemRequest>`;
+
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'GetItem',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+  });
+  const text = await res.text();
+  return text.includes('<Variations>');
+}
+
 export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   const token = await getAccessToken();
   const results: EbaySellerListing[] = [];
