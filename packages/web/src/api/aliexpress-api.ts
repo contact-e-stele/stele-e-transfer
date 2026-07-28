@@ -12,7 +12,7 @@ const IOP_ENDPOINT = 'https://api-sg.aliexpress.com/sync';
 // Neueres IOP-REST-Gateway — für OAuth Token-Create/Refresh. Das alte /sync-Gateway mit
 // method=aliexpress.solution.oauth.token.create liefert dort "InvalidApiPath".
 // aliexpress.ds.product.get läuft weiterhin über IOP_ENDPOINT/iopSign — nicht angefasst.
-const IOP_REST_BASE = 'https://api-sg.aliexpress.com';
+const IOP_REST_ENDPOINT = 'https://api-sg.aliexpress.com/rest';
 
 const OAUTH_URL = 'https://auth.aliexpress.com/oauth/authorize';
 
@@ -78,7 +78,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
     };
     params.sign = iopRestSign(APP_SECRET, apiPath, params);
 
-    const res = await fetch(`${IOP_REST_BASE}${apiPath}`, {
+    const res = await fetch(`${IOP_REST_ENDPOINT}${apiPath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(params),
@@ -133,7 +133,7 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
     };
     params.sign = iopRestSign(APP_SECRET, apiPath, params);
 
-    const res = await fetch(`${IOP_REST_BASE}${apiPath}`, {
+    const res = await fetch(`${IOP_REST_ENDPOINT}${apiPath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(params),
