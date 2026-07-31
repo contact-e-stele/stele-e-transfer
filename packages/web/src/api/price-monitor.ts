@@ -1,4 +1,4 @@
-// Automatische Preisüberwachung — alle 6 Stunden
+// Automatische Preisüberwachung — alle 8 Stunden (P-23: Ressourcenverbrauch reduziert)
 // Prüft AliExpress-Preise, passt eBay-Preise an, speichert Historie
 
 import { db } from '../db/index';
@@ -9,7 +9,7 @@ import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
 const MIN_GEWINN = MIN_GEWINN_EUR; // Mindestgewinn € (zentral in shared/constants.ts)
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 Stunden
+const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
 
 // Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Bewusst kein "nächstgelegen"-Runden:
@@ -292,10 +292,10 @@ export function startPriceMonitor() {
     await runPriceCheck().catch(e => console.error('[PriceMonitor] Startup check error:', e));
   }, 2 * 60 * 1000);
 
-  // Dann alle 6 Stunden
+  // Dann alle 8 Stunden
   setInterval(async () => {
     await runPriceCheck().catch(e => console.error('[PriceMonitor] Interval error:', e));
   }, CHECK_INTERVAL_MS);
 
-  console.log('[PriceMonitor] Scheduler aktiv — alle 6 Stunden, erster Check in 2 Min');
+  console.log('[PriceMonitor] Scheduler aktiv — alle 8 Stunden, erster Check in 2 Min');
 }

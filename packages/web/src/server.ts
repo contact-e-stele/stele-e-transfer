@@ -54,10 +54,10 @@ try {
 // Startup-Check: alle kritischen Features prüfen
 await runStartupCheck();
 
-// Automatischer DB-Backup: täglich 08:00, 13:00, 20:00 Uhr
+// Automatischer DB-Backup: täglich 15:00, 23:35 Uhr (P-23)
 startBackupScheduler();
 
-// Preisüberwachung: alle 6h AliExpress-Preise prüfen, erster Check nach 2 Min
+// Preisüberwachung: alle 8h AliExpress-Preise prüfen, erster Check nach 2 Min (P-23)
 startPriceMonitor();
 
 function getStaticFilePath(pathname: string) {

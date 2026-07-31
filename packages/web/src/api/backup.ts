@@ -1,4 +1,4 @@
-// Automatischer DB-Backup per Email — 4x täglich (08:00, 13:00, 20:00, 23:35)
+// Automatischer DB-Backup per Email — 2x täglich (15:00, 23:35) (P-23: Ressourcenverbrauch reduziert)
 // Sendet: CSV + vollständiges DB-JSON + Code-ZIP + AGENT-RESTORE.md
 
 import { db } from '../db/index';
@@ -333,7 +333,7 @@ sellPrice = buyPrice / (1 - 0.18) + 1.60
 ### Backup-Email
 - Von: onboarding@resend.dev
 - An: contact@stele-e-transfer.com
-- 4x täglich: 08:00, 13:00, 20:00, 23:35 Uhr
+- 2x täglich: 15:00, 23:35 Uhr
 
 ---
 
@@ -591,7 +591,7 @@ export async function runBackup(): Promise<{ ok: boolean; error?: string; produc
   }
 }
 
-// ─── Scheduler — 08:00, 13:00, 20:00, 23:35 Uhr ─────────────────────────────
+// ─── Scheduler — 15:00, 23:35 Uhr (P-23) ────────────────────────────────────
 
 export function startBackupScheduler(): void {
   if (!RESEND_API_KEY) {
@@ -599,7 +599,7 @@ export function startBackupScheduler(): void {
     return;
   }
 
-  const BACKUP_TIMES: [number, number][] = [[8, 0], [13, 0], [20, 0], [23, 35]];
+  const BACKUP_TIMES: [number, number][] = [[15, 0], [23, 35]];
 
   function scheduleNext(): void {
     const now = new Date();
@@ -625,5 +625,5 @@ export function startBackupScheduler(): void {
   }
 
   scheduleNext();
-  console.log('[Backup] Scheduler gestartet — täglich 08:00, 13:00, 20:00, 23:35 Uhr');
+  console.log('[Backup] Scheduler gestartet — täglich 15:00, 23:35 Uhr');
 }
