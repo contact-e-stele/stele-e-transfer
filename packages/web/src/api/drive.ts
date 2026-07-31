@@ -3,6 +3,7 @@
  * OAuth2 (Web-Anwendung), Refresh-Token wird in app_settings (DB) gespeichert.
  */
 import { eq } from 'drizzle-orm';
+import * as crypto from 'crypto';
 
 const CLIENT_ID = process.env.GOOGLE_DRIVE_CLIENT_ID ?? '';
 const CLIENT_SECRET = process.env.GOOGLE_DRIVE_CLIENT_SECRET ?? '';
@@ -230,8 +231,26 @@ export async function uploadPublicImage(
 // Datei muss dafür NICHT öffentlich freigegeben sein (unser Server hat ohnehin Zugriff).
 const BASE_URL = process.env.PUBLIC_BASE_URL ?? 'https://stele-e-transfer.onrender.com';
 
+// P-18: Der Proxy muss öffentlich erreichbar sein (eBay hotlinkt das Bild ohne Session-Cookie),
+// darf aber nicht jede beliebige Drive-Datei rausgeben. Ersatzschutz statt Session-Auth:
+// signierter Token pro fileId (HMAC mit SESSION_SECRET) — nur von uns selbst generierte
+// URLs (über getProxyUrl) sind gültig, Erraten/Aufzählen fremder fileIds schlägt fehl.
+const PROXY_SECRET = process.env.SESSION_SECRET ?? '';
+
+function signFileId(fileId: string): string {
+  return crypto.createHmac('sha256', PROXY_SECRET).update(fileId).digest('hex').slice(0, 32);
+}
+
+export function verifyFileSignature(fileId: string, sig: string | undefined | null): boolean {
+  if (!PROXY_SECRET || !sig) return false;
+  const expected = signFileId(fileId);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 export function getProxyUrl(fileId: string): string {
-  return `${BASE_URL}/api/drive/file/${fileId}`;
+  return `${BASE_URL}/api/drive/file/${fileId}?sig=${signFileId(fileId)}`;
 }
 
 export async function downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string; name: string }> {

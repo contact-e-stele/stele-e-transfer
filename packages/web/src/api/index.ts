@@ -4,7 +4,7 @@ import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllS
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
-import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected } from './drive';
+import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
@@ -426,6 +426,46 @@ const app = new Hono()
   .basePath('api')
   .use(cors({ origin: (origin) => origin ?? '*', credentials: true }))
   .route('/auth', authRouter)
+  // P-18: Diese beiden Routen laufen VOR der Session-Auth-Middleware und sind bewusst
+  // davon ausgenommen — Google kann beim OAuth-Callback kein Session-Cookie mitschicken,
+  // und der Bild-Proxy muss für eBay-Hotlinking ohne Cookie erreichbar sein.
+  // Ersatzschutz für den Proxy: signierter Token pro fileId (siehe verifyFileSignature in drive.ts).
+  .get('/drive/callback', async (c) => {
+    const code = c.req.query('code');
+    if (!code) return c.json({ error: 'Kein Code von Google' }, 400);
+    try {
+      await handleDriveCallback(code);
+      return c.html(`
+        <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff;font-family:Montserrat,sans-serif">
+          <h2 style="color:#4285F4">✅ Google Drive erfolgreich verbunden!</h2>
+          <p>Ab sofort werden Backups, Bilder und Rechnungen automatisch auf Google Drive gesichert.</p>
+          <br>
+          <a href="/" style="color:#4285F4;font-weight:bold">→ Zurück zur App</a>
+        </body></html>
+      `);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  // Liefert eine Drive-Datei über unseren Server mit korrektem Content-Type aus
+  // (Bilder für eBay-Hotlinking + PDFs/Handbücher). Öffentlich erreichbar, aber nur mit
+  // gültiger Signatur (?sig=...) — die nur getProxyUrl() selbst erzeugen kann.
+  .get('/drive/file/:fileId', async (c) => {
+    const fileId = c.req.param('fileId');
+    if (!verifyFileSignature(fileId, c.req.query('sig'))) {
+      return c.json({ error: 'Ungültige oder fehlende Signatur' }, 403);
+    }
+    try {
+      const { downloadDriveFile } = await import('./drive');
+      const { buffer, mimeType, name } = await downloadDriveFile(fileId);
+      c.header('Content-Type', mimeType);
+      c.header('Cache-Control', 'public, max-age=31536000, immutable');
+      c.header('Content-Disposition', `inline; filename="${name.replace(/"/g, '')}"`);
+      return c.body(buffer);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
   .use('*', authMiddleware)
   .get('/ping', (c) => c.json({ message: `Pong! ${Date.now()}` }, 200))
   .get('/health', (c) => c.json({ status: 'ok' }, 200))
@@ -1222,23 +1262,6 @@ const app = new Hono()
     const url = getDriveOAuthUrl(state);
     return c.redirect(url);
   })
-  .get('/drive/callback', async (c) => {
-    const code = c.req.query('code');
-    if (!code) return c.json({ error: 'Kein Code von Google' }, 400);
-    try {
-      await handleDriveCallback(code);
-      return c.html(`
-        <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff;font-family:Montserrat,sans-serif">
-          <h2 style="color:#4285F4">✅ Google Drive erfolgreich verbunden!</h2>
-          <p>Ab sofort werden Backups, Bilder und Rechnungen automatisch auf Google Drive gesichert.</p>
-          <br>
-          <a href="/" style="color:#4285F4;font-weight:bold">→ Zurück zur App</a>
-        </body></html>
-      `);
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
-  })
   .get('/drive/status', async (c) => {
     const connected = await isDriveConnected();
     return c.json({ connected }, 200);
@@ -1255,21 +1278,6 @@ const app = new Hono()
       return c.json({ ok: true, fileId: result.id, webViewLink: result.webViewLink }, 200);
     } catch (e) {
       return c.json({ ok: false, error: String(e) }, 500);
-    }
-  })
-  // Liefert eine Drive-Datei über unseren Server mit korrektem Content-Type aus
-  // (Bilder für eBay-Hotlinking + PDFs/Handbücher). Datei muss nicht öffentlich sein.
-  .get('/drive/file/:fileId', async (c) => {
-    try {
-      const { downloadDriveFile } = await import('./drive');
-      const fileId = c.req.param('fileId');
-      const { buffer, mimeType, name } = await downloadDriveFile(fileId);
-      c.header('Content-Type', mimeType);
-      c.header('Cache-Control', 'public, max-age=31536000, immutable');
-      c.header('Content-Disposition', `inline; filename="${name.replace(/"/g, '')}"`);
-      return c.body(buffer);
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
     }
   })
   // TEMPORÄRER TEST-ENDPUNKT (P14): prüft ob uploadPublicImage() wirklich eine direkt ladbare Bild-URL liefert.
