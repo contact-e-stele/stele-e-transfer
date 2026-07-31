@@ -223,6 +223,12 @@ export default function Lieferanten() {
   const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
   const [shopSearch, setShopSearch] = useState("");
   const shopDropdownRef = useRef<HTMLDivElement>(null);
+  // P-31: Duplikat-Warnung vor dem Import
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    productId: string;
+    product: { id: number; title: string; generatedTitle: string; ebayStatus: string | null; createdAt: string | null };
+  } | null>(null);
+  const [duplicateChecking, setDuplicateChecking] = useState(false);
 
   // Meine Shops laden
   useEffect(() => {
@@ -412,6 +418,38 @@ export default function Lieferanten() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // ─── Duplikat-Check vor dem Import (P-31) ──────────────────────────────────
+  // Extrahiert die AliExpress-Produkt-ID serverseitig und prüft, ob das Produkt
+  // bereits importiert wurde. Blockiert NICHT automatisch — zeigt nur eine
+  // Warnung, die Nutzerin entscheidet, ob trotzdem importiert werden soll.
+  const handleScrapeClick = async () => {
+    const url = urlInput.trim();
+    if (!url) return;
+    setDuplicateWarning(null);
+    setDuplicateChecking(true);
+    try {
+      const data = await safeJson<{
+        exists: boolean;
+        productId: string | null;
+        product?: { id: number; title: string; generatedTitle: string; ebayStatus: string | null; createdAt: string | null };
+      }>(`/api/products/check-duplicate?url=${encodeURIComponent(url)}`);
+      if (data.exists && data.productId && data.product) {
+        setDuplicateChecking(false);
+        setDuplicateWarning({ productId: data.productId, product: data.product });
+        return; // Import NICHT automatisch fortsetzen — erst nach Bestätigung
+      }
+    } catch {
+      // Duplikat-Check fehlgeschlagen (z.B. Netzwerk) — Import trotzdem normal fortsetzen, nicht blockieren
+    }
+    setDuplicateChecking(false);
+    handleScrape();
+  };
+
+  const handleImportAnyway = () => {
+    setDuplicateWarning(null);
+    handleScrape();
   };
 
   const handleManual = () => {
@@ -793,30 +831,75 @@ export default function Lieferanten() {
                   type="url"
                   placeholder="https://www.aliexpress.com/item/..."
                   value={urlInput}
-                  onChange={e => setUrlInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && handleScrape()}
+                  onChange={e => { setUrlInput(e.target.value); setDuplicateWarning(null); }}
+                  onKeyDown={e => e.key === "Enter" && handleScrapeClick()}
                   style={{ ...inputStyle, paddingLeft: 38 }}
                 />
               </div>
               <button
-                onClick={handleScrape}
-                disabled={loading || !urlInput.trim()}
+                onClick={handleScrapeClick}
+                disabled={loading || duplicateChecking || !urlInput.trim()}
                 style={{
                   padding: "13px 18px", borderRadius: 12, border: "none",
-                  background: loading || !urlInput.trim() ? "#FDD0A8" : "#FF6B00",
+                  background: loading || duplicateChecking || !urlInput.trim() ? "#FDD0A8" : "#FF6B00",
                   color: "#fff", fontWeight: 700, fontSize: 14,
-                  cursor: loading || !urlInput.trim() ? "not-allowed" : "pointer",
+                  cursor: loading || duplicateChecking || !urlInput.trim() ? "not-allowed" : "pointer",
                   fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6,
                   whiteSpace: "nowrap",
                 }}
               >
-                {loading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <FileText size={16} />}
-                {loading ? "Lädt…" : "Scrapen"}
+                {(loading || duplicateChecking) ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <FileText size={16} />}
+                {duplicateChecking ? "Prüfe…" : loading ? "Lädt…" : "Scrapen"}
               </button>
             </div>
             <p style={{ margin: "10px 0 0", fontSize: 11, color: "#94A3B8" }}>
               ⚠️ Nur EU-Lager-Produkte (DE/AT/CH) für schnelle Lieferzeiten
             </p>
+
+            {/* P-31: Duplikat-Warnung */}
+            {duplicateWarning && (
+              <div style={{
+                marginTop: 12, padding: "12px 14px", borderRadius: 12,
+                background: "#FFFBEB", border: "1.5px solid #FDE68A",
+                display: "flex", flexDirection: "column", gap: 8,
+              }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <span style={{ fontSize: 16, lineHeight: "20px" }}>⚠️</span>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#92400E" }}>
+                      Bereits importiert
+                    </p>
+                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "#78350F" }}>
+                      „{duplicateWarning.product.generatedTitle || duplicateWarning.product.title}"
+                      {duplicateWarning.product.createdAt && <> am {duplicateWarning.product.createdAt.slice(0, 10)}</>}
+                      {" "}importiert · Status: <strong>{duplicateWarning.product.ebayStatus ?? "none"}</strong>
+                    </p>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={handleImportAnyway}
+                    style={{
+                      padding: "7px 12px", borderRadius: 8, border: "1.5px solid #F59E0B",
+                      background: "#fff", color: "#92400E", fontWeight: 700, fontSize: 12,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    Trotzdem importieren
+                  </button>
+                  <button
+                    onClick={() => setDuplicateWarning(null)}
+                    style={{
+                      padding: "7px 12px", borderRadius: 8, border: "1.5px solid transparent",
+                      background: "transparent", color: "#92400E", fontWeight: 600, fontSize: 12,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

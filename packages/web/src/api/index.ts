@@ -6,7 +6,7 @@ import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { eq } from 'drizzle-orm';
+import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
@@ -2687,6 +2687,39 @@ app.delete('/trusted-suppliers/:id', async (c) => {
   }
 });
 
+// ─── Duplikat-Check vor dem Import (P-31) ────────────────────────────────────
+// Extrahiert die AliExpress-Produkt-ID aus der URL (Tracking-Parameter ignorieren)
+// und prüft, ob bereits ein Produkt mit dieser ID gespeichert ist.
+app.get('/products/check-duplicate', async (c) => {
+  try {
+    const url = c.req.query('url') ?? '';
+    const productId = url.match(/\/item\/(\d+)\.html/)?.[1] ?? url.match(/[?&]id=(\d+)/)?.[1] ?? null;
+    if (!productId) return c.json({ exists: false, productId: null });
+
+    const { db, schema } = await import('../db/index').then(async m => {
+      const s = await import('../db/schema');
+      return { db: m.db, schema: s };
+    });
+
+    const existing = await db.select({
+      id: schema.products.id,
+      title: schema.products.title,
+      generatedTitle: schema.products.generatedTitle,
+      ebayStatus: schema.products.ebayStatus,
+      createdAt: schema.products.createdAt,
+    }).from(schema.products)
+      .where(or(
+        eq(schema.products.aliexpressItemId, productId),
+        like(schema.products.sourceUrl, `%/item/${productId}.html%`)
+      ))
+      .limit(1);
+
+    if (existing.length === 0) return c.json({ exists: false, productId });
+    return c.json({ exists: true, productId, product: existing[0] });
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
 
 export type AppType = typeof app;
 export default app;
