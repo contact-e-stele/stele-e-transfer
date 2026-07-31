@@ -42,6 +42,45 @@ async function saveAliTokens(accessToken: string, refreshToken: string, expiresA
   }
 }
 
+// P-2: Vor jedem getAliProductByApi()-Aufruf prüfen ob der Access-Token in <3 Tagen abläuft
+// und ihn vorab per Refresh-Token erneuern — sonst würde ein Import-Batch (check-all-prices)
+// mitten im Lauf durch einen abgelaufenen Token abbrechen. Schlägt der Refresh fehl, wird NICHT
+// blockiert: mit dem alten Token weitergemacht, Fehler nur geloggt (Ablauf-/Speicherlogik analog
+// zum bestehenden OAuth-Callback/saveAliTokens).
+const ALI_TOKEN_REFRESH_MARGIN_SEC = 3 * 24 * 60 * 60; // 3 Tage
+
+async function ensureFreshAliToken(): Promise<void> {
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const expRow = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_token_expires')).get();
+    if (!expRow?.value) return; // kein bekannter Ablauf (z.B. nur Env-Token) — nichts zu tun
+
+    const expiresAt = Number(expRow.value);
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (expiresAt - nowSec >= ALI_TOKEN_REFRESH_MARGIN_SEC) return; // noch lange genug gültig
+
+    const refRow = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_refresh_token')).get();
+    if (!refRow?.value) {
+      console.warn('[AliExpress] Access-Token läuft in <3 Tagen ab, aber kein Refresh-Token in DB — kann nicht automatisch erneuert werden');
+      return;
+    }
+
+    console.log(`[AliExpress] Access-Token läuft in ${Math.round((expiresAt - nowSec) / 3600)}h ab — erneuere automatisch vor Produktabruf...`);
+    const refreshed = await refreshAliToken(refRow.value);
+    if (!refreshed) {
+      console.warn('[AliExpress] Automatischer Token-Refresh fehlgeschlagen — mache mit altem Token weiter');
+      return;
+    }
+
+    const newExpiresAt = Math.floor(Date.now() / 1000) + refreshed.expires_in;
+    await saveAliTokens(refreshed.access_token, refreshed.refresh_token, newExpiresAt); // AliExpress rotiert den Refresh-Token bei jedem Refresh
+    console.log('[AliExpress] Access-Token automatisch erneuert ✓');
+  } catch (e) {
+    console.warn('[AliExpress] Token-Ablauf-Prüfung fehlgeschlagen — mache mit altem Token weiter:', e);
+  }
+}
+
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
   title: string,
@@ -1303,7 +1342,7 @@ const app = new Hono()
       const tokens = await refreshAliToken(refRow.value);
       if (!tokens) return c.json({ error: 'Refresh fehlgeschlagen — Token möglicherweise abgelaufen. Bitte neu verbinden.' }, 502);
       const expiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;  // Sekunden-Format wie in OAuth-Callback
-      await saveAliTokens(tokens.access_token, tokens.refresh_token, expiresAt);
+      await saveAliTokens(tokens.access_token, tokens.refresh_token, expiresAt); // AliExpress rotiert den Refresh-Token bei jedem Refresh
       return c.json({ ok: true, expiresAt });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
@@ -1612,6 +1651,7 @@ const app = new Hono()
     const productId = productIdMatch?.[1];
 
     // Try AliExpress DS API first (official, reliable) if access_token available
+    await ensureFreshAliToken();
     const accessToken = await getAliAccessToken();
     if (accessToken && productId) {
       console.log(`[AliExpress] Using DS API for product ${productId}`);
@@ -2220,6 +2260,7 @@ const app = new Hono()
             continue;
           }
           try {
+            await ensureFreshAliToken();
             const accessToken = await getAliAccessToken();
             const productIdMatch = url.match(/\/item\/(\d+)\.html/) || url.match(/[?&]id=(\d+)/);
             const productId = productIdMatch?.[1];

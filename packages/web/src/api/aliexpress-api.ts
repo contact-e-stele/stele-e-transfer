@@ -121,7 +121,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
   }
 }
 
-export async function refreshAliToken(refreshToken: string): Promise<{ access_token: string; expires_in: number } | null> {
+export async function refreshAliToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string; expires_in: number } | null> {
   try {
     const apiPath = '/auth/token/refresh';
     const params: Record<string, string> = {
@@ -159,7 +159,14 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
     const result = flat ?? nested;
 
     if (result?.access_token) {
-      return { access_token: String(result.access_token), expires_in: Number(result.expires_in || result.expire_time || 0) };
+      // AliExpress rotiert den Refresh-Token bei jedem Refresh (neuer Wert in der Response) —
+      // der alte wird danach ungültig. Falls die Response ausnahmsweise keinen liefert,
+      // den bisherigen Refresh-Token als Fallback weiterverwenden.
+      return {
+        access_token: String(result.access_token),
+        refresh_token: result.refresh_token ? String(result.refresh_token) : refreshToken,
+        expires_in: Number(result.expires_in || result.expire_time || 0),
+      };
     }
     console.error('[AliExpress OAuth] Token refresh fehlgeschlagen — Response:', JSON.stringify(data).slice(0, 1000));
     return null;
