@@ -54,7 +54,6 @@ function buildVariantsHtml(product: ScrapedProduct, theme: "dark" | "light"): st
 
   const isDark = theme === "dark";
   const gold = isDark ? "#C9A84C" : "#B8860B";
-  const bg = isDark ? "#0f0f07" : "#fdf9f0";
   const border = isDark ? "#2a2a0a" : "#e8d8a0";
   const textColor = isDark ? "#e0d0a0" : "#333333";
   const subColor = isDark ? "#8a7040" : "#666666";

@@ -162,9 +162,9 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
   if (!accessToken) {
     try {
       const { db } = await import('../db/index');
-      const { settings } = await import('../db/schema');
+      const { appSettings } = await import('../db/schema');
       const { eq } = await import('drizzle-orm');
-      const row = await db.select().from(settings).where(eq(settings.key, 'aliexpress_access_token')).limit(1);
+      const row = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_access_token')).limit(1);
       accessToken = row[0]?.value || '';
     } catch { /* ignore */ }
   }
@@ -967,6 +967,7 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
         const sparticuzMod = await import('@sparticuz/chromium');
         const { setupLambdaEnvironment } = sparticuzMod;
         const sparticuzChromium = sparticuzMod.default;
+        // @ts-expect-error — baseLibPath ist nur für AWS Lambda relevant; hier (Render) reicht der Zero-Arg-Aufruf
         setupLambdaEnvironment();
         execPath = await sparticuzChromium.executablePath();
         launchArgs.push(...sparticuzChromium.args);
@@ -1014,7 +1015,7 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
       console.log(`[Playwright] goto error (non-fatal): ${gotoErr}`);
     }
     // Kurz warten damit mtop-Request ankommen kann, aber max 8s
-    const waited = await Promise.race([
+    await Promise.race([
       new Promise<'mtop'>(resolve => {
         const check = setInterval(() => { if (mtopResult) { clearInterval(check); resolve('mtop'); } }, 200);
       }),
@@ -1027,7 +1028,10 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
       return null;
     }
 
-    const result = mtopResult;
+    // mtopResult wird von der page.on('response', ...)-Closure oben reassigned — TS kann das
+    // über die await-Grenzen hinweg nicht narrowen, obwohl der !mtopResult-Check direkt darüber
+    // null bereits ausschließt. Assertion spiegelt nur die zur Laufzeit bereits bewiesene Garantie.
+    const result = mtopResult as Record<string, unknown>;
 
     // Title
     const globalData = (result.GLOBAL_DATA as { globalData?: { subject?: string } } | undefined)?.globalData;

@@ -38,7 +38,9 @@ function productsToCSV(products: typeof schema.products.$inferSelect[]): string 
 
 // ─── Vollständiger DB-JSON Export ─────────────────────────────────────────────
 
-async function exportDatabaseJSON(): Promise<string> {
+// Aktuell ungenutzt (runBackup() baut das JSON inline) — als export erhalten, keine funktionierende
+// Nutzung entfernt, nur für den Backend-Typecheck (P-25) als absichtlich öffentlich markiert.
+export async function exportDatabaseJSON(): Promise<string> {
   const [products, priceHistory] = await Promise.all([
     db.select().from(schema.products),
     db.select().from(schema.priceHistory),

@@ -22,7 +22,7 @@ async function checkDB(): Promise<CheckResult> {
     } catch { /* existiert bereits */ }
     // specs Spalte vorhanden?
     const cols = await db.run(sql`PRAGMA table_info(products)`);
-    const rows = (cols as { rows?: Array<[number, string, string]> }).rows ?? [];
+    const rows = (cols as unknown as { rows?: Array<[number, string, string]> }).rows ?? [];
     const hasSpecs = rows.some((r) => r[1] === 'specs');
     return { name: 'DB', ok: true, detail: hasSpecs ? 'specs ✓' : 'specs FEHLT — Migration nötig!' };
   } catch (e) {

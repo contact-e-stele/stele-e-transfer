@@ -4,7 +4,7 @@
 // - /auth/token/create, /auth/token/refresh (IOP-REST, HMAC-SHA256): OAuth Token Create/Refresh
 
 import * as crypto from 'crypto';
-import type { VariantPrice } from './aliexpress';
+import type { VariantPrice, GpsrInfo } from './aliexpress';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
 const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
@@ -28,6 +28,7 @@ export interface AliProductData {
   variants: Array<{ name: string; values: string[] }>;
   variantPrices: VariantPrice[];
   seller?: string;
+  gpsr?: GpsrInfo; // DS API liefert kein HTML — GPSR kommt aus dem HTML-Scraper falls DS API nicht reicht
 }
 
 // IOP MD5 Signing: secret + sorted(key+value pairs) + secret → MD5 → uppercase

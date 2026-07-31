@@ -272,7 +272,7 @@ const PIECE_TRANSLATIONS: Record<string, string> = {
   // Italienisch
   'pezzi': 'Stück', 'pezzo': 'Stück', 'pz': 'Stück',
   // Französisch
-  'pièces': 'Stück', 'pieces': 'Stück', 'pièce': 'Stück',
+  'pièces': 'Stück', 'pièce': 'Stück',
   // Spanisch
   'piezas': 'Stück', 'pieza': 'Stück', 'unidades': 'Stück', 'unidad': 'Stück',
   // Englisch
@@ -392,7 +392,7 @@ async function scrapeAmazon(url: string): Promise<{
   variants: string[];
   description: string;
 } | null> {
-  const attempts = [
+  const attempts: Record<string, string>[] = [
     {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -500,7 +500,7 @@ const app = new Hono()
       c.header('Content-Type', mimeType);
       c.header('Cache-Control', 'public, max-age=31536000, immutable');
       c.header('Content-Disposition', `inline; filename="${name.replace(/"/g, '')}"`);
-      return c.body(buffer);
+      return c.body(new Uint8Array(buffer)); // Node-Buffer ist Uint8Array<ArrayBufferLike>, Hono will Uint8Array<ArrayBuffer>
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
@@ -910,7 +910,7 @@ const app = new Hono()
         currency: order.currency,
       });
 
-      return new Response(pdf, {
+      return new Response(new Uint8Array(pdf), {
         headers: {
           'Content-Type': 'application/pdf',
           'Content-Disposition': `attachment; filename="Rechnung-${orderId}.pdf"`,

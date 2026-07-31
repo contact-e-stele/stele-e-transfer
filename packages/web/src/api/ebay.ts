@@ -325,7 +325,9 @@ const aspectCache = new Map<string, Record<string, string | null>>();
 const variationsEnabledCache = new Map<string, boolean>();
 
 // Prüft ob eine Kategorie Variations-Listings unterstützt (Trading API GetCategoryFeatures)
-async function checkVariationsEnabled(categoryId: string, token: string): Promise<boolean> {
+// Aktuell ungenutzt (durch hasVariations()/P-14 abgelöst) — als export erhalten statt gelöscht,
+// nur für den Backend-Typecheck (P-25) als absichtlich öffentlich markiert.
+export async function checkVariationsEnabled(categoryId: string, token: string): Promise<boolean> {
   if (variationsEnabledCache.has(categoryId)) return variationsEnabledCache.get(categoryId)!;
   try {
     const res = await fetch(
@@ -345,7 +347,7 @@ async function checkVariationsEnabled(categoryId: string, token: string): Promis
 
 // Bekannte eBay DE Kategorien mit VariationsEnabled=true (Fallback-Liste)
 // Quelle: manuell geprüft via eBay
-const KNOWN_VARIATION_CATEGORIES: Record<string, string> = {
+export const KNOWN_VARIATION_CATEGORIES: Record<string, string> = {
   // Kfz / Motorrad
   'motorrad_reifen_reparatur': '83595',   // Kfz-Werkzeuge
   'kfz_werkzeug': '83595',
