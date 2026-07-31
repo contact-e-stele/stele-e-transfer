@@ -220,6 +220,9 @@ export default function Lieferanten() {
   const [manualShopCategory, setManualShopCategory] = useState(SHOP_CATEGORIES[0]);
   const [manualShopSaving, setManualShopSaving] = useState(false);
   const [manualShopError, setManualShopError] = useState("");
+  const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
+  const [shopSearch, setShopSearch] = useState("");
+  const shopDropdownRef = useRef<HTMLDivElement>(null);
 
   // Meine Shops laden
   useEffect(() => {
@@ -265,6 +268,42 @@ export default function Lieferanten() {
     await fetch(`/api/trusted-suppliers/${id}`, { method: 'DELETE' });
     setTrustedSuppliers(prev => prev.filter(s => s.id !== id));
   };
+
+  // Dropdown schließen bei Klick außerhalb (P-30)
+  useEffect(() => {
+    if (!shopDropdownOpen) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (shopDropdownRef.current && !shopDropdownRef.current.contains(e.target as Node)) {
+        setShopDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [shopDropdownOpen]);
+
+  const handleSelectShop = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
+    setShopDropdownOpen(false);
+    setShopSearch("");
+  };
+
+  // Nach Kategorie gruppieren, vorher nach Name/Kategorie filtern (P-30)
+  const SHOP_NO_CATEGORY = "Ohne Kategorie";
+  const shopSearchLower = shopSearch.trim().toLowerCase();
+  const filteredShops = shopSearchLower
+    ? trustedSuppliers.filter(s =>
+        s.shopName.toLowerCase().includes(shopSearchLower) ||
+        (s.category ?? "").toLowerCase().includes(shopSearchLower)
+      )
+    : trustedSuppliers;
+  const groupedShops = filteredShops.reduce<Record<string, typeof trustedSuppliers>>((groups, s) => {
+    const key = s.category ?? SHOP_NO_CATEGORY;
+    (groups[key] ??= []).push(s);
+    return groups;
+  }, {});
+  const shopGroupNames = Object.keys(groupedShops).sort((a, b) =>
+    a === SHOP_NO_CATEGORY ? 1 : b === SHOP_NO_CATEGORY ? -1 : a.localeCompare(b, "de")
+  );
 
   // ─── Marge berechnen ──────────────────────────────────────────────────────
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
@@ -618,38 +657,68 @@ export default function Lieferanten() {
           <p style={{ color: "#64748B", marginTop: 4, fontSize: 13 }}>AliExpress URL → Titel + Beschreibung generieren</p>
         </div>
 
-        {/* ─── Meine Shops (Vertrauenswürdige Lieferanten) ───────────────────────── */}
+        {/* ─── Meine Shops (Vertrauenswürdige Lieferanten) — gruppiertes Dropdown (P-30) ── */}
         {trustedSuppliers.length > 0 && (
-          <div style={{ background: "#fff", borderRadius: 16, padding: "16px 20px", marginBottom: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", border: "1.5px solid #E2E8F0" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <div ref={shopDropdownRef} style={{ position: "relative", background: "#fff", borderRadius: 16, padding: "16px 20px", marginBottom: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", border: "1.5px solid #E2E8F0" }}>
+            <div
+              onClick={() => setShopDropdownOpen(v => !v)}
+              style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}
+            >
               <span style={{ fontSize: 16 }}>⭐</span>
               <span style={{ fontWeight: 700, fontSize: 14, color: "#0F172A" }}>Meine EU-Shops</span>
               <span style={{ fontSize: 11, color: "#64748B", marginLeft: 4 }}>{trustedSuppliers.length} gespeichert</span>
+              <span style={{ marginLeft: "auto", fontSize: 12, color: "#94A3B8", transform: shopDropdownOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▼</span>
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {trustedSuppliers.map(s => (
-                <div key={s.id} style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  background: s.euConfirmed ? "#F0FDF4" : "#F8FAFC",
-                  border: `1.5px solid ${s.euConfirmed ? "#BBF7D0" : "#E2E8F0"}`,
-                  borderRadius: 10, padding: "6px 10px",
-                }}>
-                  <a href={s.shopUrl} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 12, fontWeight: 600, color: "#0F172A", textDecoration: "none" }}>
-                    {s.euConfirmed && <span style={{ color: "#16A34A", marginRight: 4 }}>🇪🇺</span>}
-                    {s.shopName}
-                  </a>
-                  {s.category && (
-                    <span style={{ fontSize: 10, fontWeight: 600, color: "#64748B", background: "#F1F5F9", borderRadius: 6, padding: "2px 6px" }}>
-                      {s.category}
-                    </span>
-                  )}
-                  <button onClick={() => handleDeleteShop(s.id)}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: "0 2px", fontSize: 14, lineHeight: 1 }}
-                    title="Entfernen">×</button>
+
+            {shopDropdownOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 4px)", left: 20, right: 20, zIndex: 20,
+                background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 12,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 360, display: "flex", flexDirection: "column",
+              }}>
+                <div style={{ padding: 10, borderBottom: "1px solid #F1F5F9" }}>
+                  <input
+                    autoFocus
+                    value={shopSearch}
+                    onChange={(e) => setShopSearch(e.target.value)}
+                    placeholder="Shop oder Kategorie suchen…"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 13, border: "1.5px solid #E2E8F0", borderRadius: 8, outline: "none", fontFamily: "inherit" }}
+                  />
                 </div>
-              ))}
-            </div>
+                <div style={{ overflowY: "auto" }}>
+                  {shopGroupNames.length === 0 && (
+                    <div style={{ padding: "16px 14px", fontSize: 12, color: "#94A3B8", textAlign: "center" }}>Keine Treffer</div>
+                  )}
+                  {shopGroupNames.map(groupName => (
+                    <div key={groupName}>
+                      <div style={{ padding: "8px 14px 4px", fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        {groupName}
+                      </div>
+                      {groupedShops[groupName].map(s => (
+                        <div
+                          key={s.id}
+                          onClick={() => handleSelectShop(s.shopUrl)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            padding: "8px 14px", cursor: "pointer",
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "#F8FAFC")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                        >
+                          {s.euConfirmed && <span style={{ color: "#16A34A", fontSize: 12 }}>🇪🇺</span>}
+                          <span style={{ fontSize: 13, fontWeight: 600, color: "#0F172A", flex: 1 }}>{s.shopName}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteShop(s.id); }}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: "0 2px", fontSize: 14, lineHeight: 1 }}
+                            title="Entfernen"
+                          >×</button>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
