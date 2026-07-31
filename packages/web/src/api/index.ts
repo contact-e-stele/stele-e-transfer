@@ -952,7 +952,10 @@ const app = new Hono()
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
-      const token = await (await import('./ebay')).getAccessToken();
+      // P-15: Trading-API-Update über updateEbayPriceTrading() statt eigener Inline-Implementierung —
+      // die Funktion prüft per hasVariations() vorher, ob das Listing Varianten hat (P-14), sonst
+      // schlägt ReviseInventoryStatus dort garantiert fehl.
+      const { updateEbayPriceTrading } = await import('./price-monitor');
       const results: Array<{ itemId: string; ok: boolean; oldPrice?: number; newPrice?: number; error?: string }> = [];
       const listings = await getAllSellerListings();
       const byId = new Map(listings.map(l => [l.itemId, l]));
@@ -966,36 +969,12 @@ const app = new Hono()
         else if (body.mode === 'set') newPrice = body.value;
         newPrice = Math.max(0.01, Math.round(newPrice * 100) / 100);
 
-        try {
-          const xml = `<?xml version="1.0" encoding="utf-8"?>
-<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
-  <InventoryStatus>
-    <ItemID>${itemId}</ItemID>
-    <StartPrice>${newPrice.toFixed(2)}</StartPrice>
-  </InventoryStatus>
-</ReviseInventoryStatusRequest>`;
-          const res = await fetch('https://api.ebay.com/ws/api.dll', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'text/xml',
-              'X-EBAY-API-SITEID': '77',
-              'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
-              'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus',
-              'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
-            },
-            body: xml,
-          });
-          const text = await res.text();
-          if (text.includes('<Ack>Failure</Ack>')) {
-            const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
-            results.push({ itemId, ok: false, oldPrice: listing.currentPrice, error: errMsg });
-          } else {
-            await db.update(schema.products).set({ sellPrice: newPrice, lastPriceCheck: new Date().toISOString() }).where(eq(schema.products.ebayListingId, itemId));
-            results.push({ itemId, ok: true, oldPrice: listing.currentPrice, newPrice });
-          }
-        } catch (e) {
-          results.push({ itemId, ok: false, error: String(e) });
+        const tradingResult = await updateEbayPriceTrading(itemId, newPrice);
+        if (tradingResult.ok) {
+          await db.update(schema.products).set({ sellPrice: newPrice, lastPriceCheck: new Date().toISOString() }).where(eq(schema.products.ebayListingId, itemId));
+          results.push({ itemId, ok: true, oldPrice: listing.currentPrice, newPrice });
+        } else {
+          results.push({ itemId, ok: false, oldPrice: listing.currentPrice, error: tradingResult.error ?? 'Fehler' });
         }
         await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
       }
