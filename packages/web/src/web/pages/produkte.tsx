@@ -7,7 +7,7 @@ import { useLocation } from "wouter";
 import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
-  TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye, ShieldCheck,
+  TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye, ShieldCheck, Edit2,
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
