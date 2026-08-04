@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { FileText, Copy, Check, Loader, AlertCircle, RefreshCw, ShoppingCart, Package, Link, ChevronLeft } from "lucide-react";
-import { normalizeShippingText } from "../lib/text-helpers";
 import { buildEbayHTML } from "../lib/ebay-description";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -24,19 +23,6 @@ function decodeEntities(str: string): string {
     .replace(/&nbsp;/g, " ")
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
     .replace(/&[a-zA-Z]+;/g, "");
-}
-
-function cleanText(text: string): string {
-  return text
-    .replace(/([a-zäöüß]{4,})([A-ZÄÖÜ])/g, "$1 $2")
-    .replace(/\b(.{10,40}?)\s+\1\b/gi, "$1")
-    .trim();
-}
-
-function extractKeyword(text: string): string {
-  const words = text.split(/[\s,–\-:]/);
-  const meaningful = words.filter(w => w.length > 3).slice(0, 2);
-  return meaningful.join(" ") || words[0] || "Merkmal";
 }
 
 function buildTitle(rawTitle: string): string {

@@ -162,15 +162,6 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
     setGroups(g => g.filter((_, i) => i !== idx));
   };
 
-  const addValue = (groupIdx: number) => {
-    const val = (newValues[groupIdx] ?? "").trim();
-    if (!val) return;
-    setGroups(g => g.map((group, i) =>
-      i === groupIdx ? { ...group, values: [...group.values, val] } : group
-    ));
-    setNewValues(v => ({ ...v, [groupIdx]: "" }));
-  };
-
   const removeValue = (groupIdx: number, valIdx: number) => {
     setGroups(g => g.map((group, i) =>
       i === groupIdx ? { ...group, values: group.values.filter((_, j) => j !== valIdx) } : group

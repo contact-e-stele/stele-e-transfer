@@ -8,7 +8,7 @@ import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
-  RefreshCw, ShoppingCart, Package, Link, ChevronLeft,
+  RefreshCw, Package, Link, ChevronLeft,
   TrendingDown, Save, Eye, EyeOff, X, Plus, Trash2,
 } from "lucide-react";
 
@@ -73,13 +73,6 @@ function decodeEntities(str: string): string {
     .replace(/&[a-zA-Z]+;/g, "");
 }
 
-function cleanText(text: string): string {
-  return text
-    .replace(/([a-zäöüß]{4,})([A-ZÄÖÜ])/g, "$1 $2")
-    .replace(/\b(.{10,40}?)\s+\1\b/gi, "$1")
-    .trim();
-}
-
 function buildTitle(rawTitle: string): string {
   let title = decodeEntities(rawTitle)
     .replace(/\[.*?\]/g, "")
@@ -93,27 +86,6 @@ function buildTitle(rawTitle: string): string {
     .trim();
   if (title.length > 80) title = title.slice(0, 77) + "...";
   return title;
-}
-
-// Bekannte Footer/Spam-Phrasen die aus AliExpress HTML kommen
-const BLOCKED_PHRASES = [
-  /aliexpress/gi, /alibaba/gi, /alimama/gi, /taobao/gi, /tmall/gi, /fliggy/gi,
-  /dingtalk/gi, /juhuasuan/gi, /alintern/gi, /alicdn/gi, /alipay/gi,
-  /amazon/gi, /temu/gi, /wish\.com/gi, /ebay\.com/gi,
-  /mehrsprachige.*websites/gi, /browse by category/gi,
-  /hilfe-?center/gi, /streitigkeiten/gi, /rückgabe.*erstattung/gi,
-  /transparenz.*zentrum/gi, /dsa.*osa/gi, /integrität.*konformität/gi,
-  /beschwerdeein.*stieg/gi, /rückruf/gi,
-  /русский|portuguese|español|français|italiano|türkçe|日本語|한국어|عربي|hebrew|polski/gi,
-];
-
-function isCleanLine(line: string): boolean {
-  const trimmed = line.trim();
-  if (trimmed.length < 15) return false;
-  for (const re of BLOCKED_PHRASES) {
-    if (re.test(trimmed)) return false;
-  }
-  return true;
 }
 
 function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", overrideTitle?: string, setContents?: Record<string, string>, gpsrRaw?: string): string {
@@ -174,9 +146,9 @@ export default function Lieferanten() {
   const [showPreview, setShowPreview] = useState(false); // false = Vorschau sichtbar, true = Code sichtbar
 
   // Varianten-Auswahl: { "Farbe": ["Schwarz", "Blau"], "Größe": ["M"] }
-  const [selectedVariants, setSelectedVariants] = useState<Record<string, string[]>>({});
+  const [, setSelectedVariants] = useState<Record<string, string[]>>({});
   // Varianten-Bearbeitung: welcher Wert gerade editiert wird { "Farbe:Schwarz": true }
-  const [editingVariant, setEditingVariant] = useState<Record<string, string>>({}); // key = "group||oldVal", value = currentEditText
+  const [, setEditingVariant] = useState<Record<string, string>>({}); // key = "group||oldVal", value = currentEditText
   // Varianten-Werte (editierbar, Kopie von product.variants)
   const [editedVariants, setEditedVariants] = useState<Array<{ name: string; values: string[] }>>([]);
   // Lieferumfang je SET-Wert: { "SET1": "10 kleine + 10 große + Bohrer", ... }
@@ -186,7 +158,6 @@ export default function Lieferanten() {
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [editableTitle, setEditableTitle] = useState("");
   const [editableHtml, setEditableHtml] = useState("");
-  const [htmlTheme, setHtmlTheme] = useState<"dark" | "light">("light");
 
   const [ebayPrice, setEbayPrice] = useState("");
   const [variantEbayPrices, setVariantEbayPrices] = useState<Record<string, string>>({});
@@ -203,8 +174,7 @@ export default function Lieferanten() {
     const saved = localStorage.getItem("stele_ad_rate");
     return saved ? parseFloat(saved) : 5;
   });
-  const [ebayLoading, setEbayLoading] = useState(false);
-  const [ebayResult, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
+  const [, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
   const [saveResult, setSaveResult] = useState<{ id?: number; error?: string } | null>(null);
@@ -506,95 +476,6 @@ export default function Lieferanten() {
       setSaveResult({ error: e instanceof Error ? e.message : "Fehler" });
     } finally {
       setSaveLoading(false);
-    }
-  };
-
-  // ─── eBay listen (nur mit bereits gespeicherter productId) ───────────────
-  const handleEbayList = async () => {
-    if (!saveResult?.id) return;
-    const price = parseFloat(ebayPrice.replace(",", "."));
-    if (!price || price <= 0) return;
-    setEbayLoading(true);
-    setEbayResult(null);
-    try {
-      const data = await safeJson<{ listingId?: string; error?: string }>("/api/ebay/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId: saveResult.id }),
-      });
-      setEbayResult(data);
-    } catch (e) {
-      setEbayResult({ error: e instanceof Error ? e.message : "Fehler" });
-    } finally {
-      setEbayLoading(false);
-    }
-  };
-
-  // ─── Speichern + Direkt Listen (kombiniert) ───────────────────────────────
-  const [saveAndListLoading, setSaveAndListLoading] = useState(false);
-  const [saveAndListResult, setSaveAndListResult] = useState<{ listingId?: string; error?: string; step?: string } | null>(null);
-
-  const handleSaveAndList = async () => {
-    if (!result || !product) return;
-    if (!ebayPrice || parseFloat(ebayPrice.replace(",", ".")) <= 0) {
-      setSaveAndListResult({ error: "Bitte Verkaufspreis eingeben (Schritt 4 oben)" });
-      return;
-    }
-    setSaveAndListLoading(true);
-    setSaveAndListResult({ step: "Speichere in DB..." });
-    try {
-      // 1) Speichern
-      let productId = saveResult?.id;
-      if (!productId) {
-        const res = await fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            asin: `ali_${Date.now()}`,
-            amazonUrl: urlInput || "manual",
-            sourceUrl: urlInput || "manual",
-            title: product.title,
-            generatedTitle: editableTitle,
-            htmlDescription: editableHtml,
-            bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
-            variants: editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
-            variantPrices: (product.variantPrices ?? []).map(v => ({
-              ...v,
-              ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
-            })),
-            variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
-            gpsrRaw: gpsrHersteller.trim() || undefined,
-            gpsrHtml: gpsrHersteller.trim() ? `<div class="gpsr-block"><h3>Produktsicherheit (GPSR)</h3><pre>${gpsrHersteller.trim()}</pre></div>` : undefined,
-            description: product.description,
-            images: visibleImages,
-            buyPrice: einkauf || null,
-            sellPrice: verkauf || null,
-            adRate: adRate,
-            shipsFrom: shipsFromInfo?.country,
-          }),
-        });
-        const data = await res.json() as { id?: number; error?: string };
-        if (!data.id) {
-          setSaveAndListResult({ error: data.error || "Speichern fehlgeschlagen" });
-          return;
-        }
-        setSaveResult(data);
-        productId = data.id;
-      }
-      // 2) Listen
-      setSaveAndListResult({ step: "Liste auf eBay..." });
-      const listRes = await fetch("/api/ebay/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId }),
-      });
-      const listData = await listRes.json() as { listingId?: string; error?: string };
-      setEbayResult(listData);
-      setSaveAndListResult(listData);
-    } catch (e) {
-      setSaveAndListResult({ error: e instanceof Error ? e.message : "Fehler" });
-    } finally {
-      setSaveAndListLoading(false);
     }
   };
 
@@ -1569,8 +1450,6 @@ export default function Lieferanten() {
             {product && (product.variantPrices ?? []).length > 0 && (() => {
               const vp = product.variantPrices!;
               const minP = Math.min(...vp.map(v => v.price));
-              const ebay = parseFloat(ebayPrice) || 0;
-              const totalFeeRate = (13 + adRate) / 100 * 1.19 + 0.0045 * 1.19 / (ebay || 1);
               return (
                 <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
