@@ -183,7 +183,10 @@ export default function Lieferanten() {
   const [rawGenError, setRawGenError] = useState("");
   const [shipsFromInfo, setShipsFromInfo] = useState<{ country: string; isEU: boolean } | null>(null);
   const [generatedDescription, setGeneratedDescription] = useState("");
-  const [trustedSuppliers, setTrustedSuppliers] = useState<Array<{ id: number; shopName: string; shopUrl: string; aliStoreId: string | null; euConfirmed: boolean; category: string | null }>>([]);
+  const [trustedSuppliers, setTrustedSuppliers] = useState<Array<{
+    id: number; shopName: string; shopUrl: string; aliStoreId: string | null; euConfirmed: boolean; category: string | null;
+    complianceStatus: 'ungeprueft' | 'geprueft' | 'abgelehnt'; complianceDocsVerifiedAt: string | null; complianceNotes: string | null;
+  }>>([]);
   // Manuelles Shop-Formular (statt automatischem Scraping — zuverlässiger)
   const [manualShopUrl, setManualShopUrl] = useState("");
   const [manualShopName, setManualShopName] = useState("");
@@ -193,6 +196,12 @@ export default function Lieferanten() {
   const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
   const [shopSearch, setShopSearch] = useState("");
   const shopDropdownRef = useRef<HTMLDivElement>(null);
+  const [complianceFilter, setComplianceFilter] = useState<'all' | 'ungeprueft' | 'geprueft' | 'abgelehnt'>('all');
+  const [editingSupplierId, setEditingSupplierId] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState<{ complianceStatus: 'ungeprueft' | 'geprueft' | 'abgelehnt'; complianceDocsVerifiedAt: string; complianceNotes: string }>({
+    complianceStatus: 'ungeprueft', complianceDocsVerifiedAt: '', complianceNotes: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
   // P-31: Duplikat-Warnung vor dem Import
   const [duplicateWarning, setDuplicateWarning] = useState<{
     productId: string;
@@ -245,6 +254,46 @@ export default function Lieferanten() {
     setTrustedSuppliers(prev => prev.filter(s => s.id !== id));
   };
 
+  const handleStartEditSupplier = (s: typeof trustedSuppliers[number]) => {
+    setEditingSupplierId(s.id);
+    setEditDraft({
+      complianceStatus: s.complianceStatus,
+      complianceDocsVerifiedAt: s.complianceDocsVerifiedAt ?? '',
+      complianceNotes: s.complianceNotes ?? '',
+    });
+  };
+
+  const handleCancelEditSupplier = () => setEditingSupplierId(null);
+
+  const handleSaveSupplierCompliance = async (id: number) => {
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/trusted-suppliers/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complianceStatus: editDraft.complianceStatus,
+          complianceDocsVerifiedAt: editDraft.complianceDocsVerifiedAt || null,
+          complianceNotes: editDraft.complianceNotes || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTrustedSuppliers(prev => prev.map(s => s.id === id ? { ...s, ...data } : s));
+        setEditingSupplierId(null);
+      }
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const COMPLIANCE_LABELS: Record<string, string> = { ungeprueft: 'Ungeprüft', geprueft: 'Geprüft', abgelehnt: 'Abgelehnt' };
+  const COMPLIANCE_COLORS: Record<string, { bg: string; fg: string }> = {
+    ungeprueft: { bg: '#FEF3C7', fg: '#92400E' },
+    geprueft: { bg: '#DCFCE7', fg: '#166534' },
+    abgelehnt: { bg: '#FEE2E2', fg: '#991B1B' },
+  };
+
   // Dropdown schließen bei Klick außerhalb (P-30)
   useEffect(() => {
     if (!shopDropdownOpen) return;
@@ -266,12 +315,13 @@ export default function Lieferanten() {
   // Nach Kategorie gruppieren, vorher nach Name/Kategorie filtern (P-30)
   const SHOP_NO_CATEGORY = "Ohne Kategorie";
   const shopSearchLower = shopSearch.trim().toLowerCase();
-  const filteredShops = shopSearchLower
-    ? trustedSuppliers.filter(s =>
-        s.shopName.toLowerCase().includes(shopSearchLower) ||
-        (s.category ?? "").toLowerCase().includes(shopSearchLower)
-      )
-    : trustedSuppliers;
+  const filteredShops = trustedSuppliers
+    .filter(s => complianceFilter === 'all' || s.complianceStatus === complianceFilter)
+    .filter(s =>
+      !shopSearchLower ||
+      s.shopName.toLowerCase().includes(shopSearchLower) ||
+      (s.category ?? "").toLowerCase().includes(shopSearchLower)
+    );
   const groupedShops = filteredShops.reduce<Record<string, typeof trustedSuppliers>>((groups, s) => {
     const key = s.category ?? SHOP_NO_CATEGORY;
     (groups[key] ??= []).push(s);
@@ -595,6 +645,22 @@ export default function Lieferanten() {
                 background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 12,
                 boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 360, display: "flex", flexDirection: "column",
               }}>
+                <div style={{ display: "flex", gap: 4, padding: "8px 10px 0", flexWrap: "wrap" }}>
+                  {(["all", "ungeprueft", "geprueft", "abgelehnt"] as const).map(f => (
+                    <button
+                      key={f}
+                      onClick={(e) => { e.stopPropagation(); setComplianceFilter(f); }}
+                      style={{
+                        padding: "3px 8px", borderRadius: 999, border: "1px solid " + (complianceFilter === f ? "#FF6B00" : "#E2E8F0"),
+                        background: complianceFilter === f ? "#FF6B00" : "#fff",
+                        color: complianceFilter === f ? "#fff" : "#64748B",
+                        fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                      }}
+                    >
+                      {f === "all" ? "Alle" : COMPLIANCE_LABELS[f]}
+                    </button>
+                  ))}
+                </div>
                 <div style={{ padding: 10, borderBottom: "1px solid #F1F5F9" }}>
                   <input
                     autoFocus
@@ -614,23 +680,71 @@ export default function Lieferanten() {
                         {groupName}
                       </div>
                       {groupedShops[groupName].map(s => (
-                        <div
-                          key={s.id}
-                          onClick={() => handleSelectShop(s.shopUrl)}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            padding: "8px 14px", cursor: "pointer",
-                          }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = "#F8FAFC")}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                        >
-                          {s.euConfirmed && <span style={{ color: "#16A34A", fontSize: 12 }}>🇪🇺</span>}
-                          <span style={{ fontSize: 13, fontWeight: 600, color: "#0F172A", flex: 1 }}>{s.shopName}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteShop(s.id); }}
-                            style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: "0 2px", fontSize: 14, lineHeight: 1 }}
-                            title="Entfernen"
-                          >×</button>
+                        <div key={s.id}>
+                          <div
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              padding: "8px 14px", cursor: "pointer",
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "#F8FAFC")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                          >
+                            <span onClick={() => handleSelectShop(s.shopUrl)} style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
+                              {s.euConfirmed && <span style={{ color: "#16A34A", fontSize: 12 }}>🇪🇺</span>}
+                              <span style={{ fontSize: 13, fontWeight: 600, color: "#0F172A" }}>{s.shopName}</span>
+                              <span style={{
+                                fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999,
+                                background: COMPLIANCE_COLORS[s.complianceStatus].bg, color: COMPLIANCE_COLORS[s.complianceStatus].fg,
+                              }}>
+                                {COMPLIANCE_LABELS[s.complianceStatus]}
+                              </span>
+                            </span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleStartEditSupplier(s); }}
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: "0 2px", fontSize: 13, lineHeight: 1 }}
+                              title="Compliance bearbeiten"
+                            >✎</button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteShop(s.id); }}
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: "0 2px", fontSize: 14, lineHeight: 1 }}
+                              title="Entfernen"
+                            >×</button>
+                          </div>
+                          {editingSupplierId === s.id && (
+                            <div onClick={(e) => e.stopPropagation()} style={{ padding: "8px 14px 12px", background: "#F8FAFC", display: "flex", flexDirection: "column", gap: 6 }}>
+                              <select
+                                value={editDraft.complianceStatus}
+                                onChange={(e) => setEditDraft(d => ({ ...d, complianceStatus: e.target.value as typeof d.complianceStatus }))}
+                                style={{ padding: "6px 8px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }}
+                              >
+                                {(["ungeprueft", "geprueft", "abgelehnt"] as const).map(v => <option key={v} value={v}>{COMPLIANCE_LABELS[v]}</option>)}
+                              </select>
+                              <input
+                                type="date"
+                                value={editDraft.complianceDocsVerifiedAt}
+                                onChange={(e) => setEditDraft(d => ({ ...d, complianceDocsVerifiedAt: e.target.value }))}
+                                style={{ padding: "6px 8px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }}
+                              />
+                              <textarea
+                                value={editDraft.complianceNotes}
+                                onChange={(e) => setEditDraft(d => ({ ...d, complianceNotes: e.target.value }))}
+                                placeholder="Notiz zur Prüfung…"
+                                rows={2}
+                                style={{ padding: "6px 8px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit", resize: "vertical" }}
+                              />
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button
+                                  onClick={() => handleSaveSupplierCompliance(s.id)}
+                                  disabled={editSaving}
+                                  style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "none", background: "#FF6B00", color: "#fff", fontWeight: 700, fontSize: 12, cursor: editSaving ? "default" : "pointer", fontFamily: "inherit" }}
+                                >{editSaving ? "Speichert…" : "Speichern"}</button>
+                                <button
+                                  onClick={handleCancelEditSupplier}
+                                  style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "1.5px solid #E2E8F0", background: "#fff", color: "#64748B", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}
+                                >Abbrechen</button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
