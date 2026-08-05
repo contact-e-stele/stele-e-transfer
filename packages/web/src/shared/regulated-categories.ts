@@ -104,3 +104,13 @@ export const REGULATED_CATEGORIES: RegulatedCategory[] = [
     ],
   },
 ];
+
+// Reine Substring-Erkennung (case-insensitive) — bewusst simpel, keine NLP/Fuzzy-Logik.
+// Gibt alle Kategorien zurück, deren Keywords (DE oder EN) im Text vorkommen.
+export function matchRegulatedCategories(text: string): RegulatedCategory[] {
+  const lower = text.toLowerCase();
+  return REGULATED_CATEGORIES.filter(cat =>
+    cat.keywordsDe.some(k => lower.includes(k.toLowerCase())) ||
+    cat.keywordsEn.some(k => lower.includes(k.toLowerCase()))
+  );
+}
