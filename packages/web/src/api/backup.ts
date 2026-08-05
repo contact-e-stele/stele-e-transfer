@@ -543,15 +543,16 @@ export async function runBackup(): Promise<{ ok: boolean; error?: string; produc
   try {
     console.log('[Backup] Starte vollständigen Backup...');
 
-    const [products, priceHistoryRows] = await Promise.all([
+    const [products, priceHistoryRows, trustedSuppliersRows] = await Promise.all([
       db.select().from(schema.products),
       db.select().from(schema.priceHistory),
+      db.select().from(schema.trustedSuppliers),
     ]);
 
     const now = new Date();
     const isoDate = now.toISOString().slice(0, 10);
 
-    console.log(`[Backup] ${products.length} Produkte, ${priceHistoryRows.length} Preis-Einträge`);
+    console.log(`[Backup] ${products.length} Produkte, ${priceHistoryRows.length} Preis-Einträge, ${trustedSuppliersRows.length} Lieferanten`);
 
     const csv = productsToCSV(products);
     const dbJson = JSON.stringify({
@@ -560,6 +561,7 @@ export async function runBackup(): Promise<{ ok: boolean; error?: string; produc
       tables: {
         products: { count: products.length, rows: products },
         price_history: { count: priceHistoryRows.length, rows: priceHistoryRows },
+        trusted_suppliers: { count: trustedSuppliersRows.length, rows: trustedSuppliersRows },
       },
     }, null, 2);
 

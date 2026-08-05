@@ -77,6 +77,12 @@ export const trustedSuppliers = sqliteTable('trusted_suppliers', {
   aliStoreId: text('ali_store_id'),
   euConfirmed: integer('eu_confirmed', { mode: 'boolean' }).default(true),
   category: text('category'),
+  // Compliance-Prüfung (P-66) — noch ohne Import-Gate, nur Erfassung
+  complianceStatus: text('compliance_status', { enum: ['ungeprueft', 'geprueft', 'abgelehnt'] })
+    .notNull()
+    .default('ungeprueft'),
+  complianceDocsVerifiedAt: text('compliance_docs_verified_at'), // Datum, an dem Nachweise geprüft wurden
+  complianceNotes: text('compliance_notes'), // Freitext-Notiz zur Prüfung
   createdAt: text('created_at').default(sql`(datetime('now'))`),
 });
 

@@ -2672,6 +2672,36 @@ app.post('/trusted-suppliers', async (c) => {
   }
 });
 
+app.patch('/trusted-suppliers/:id', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const body = await c.req.json() as {
+      complianceStatus?: 'ungeprueft' | 'geprueft' | 'abgelehnt';
+      complianceDocsVerifiedAt?: string | null;
+      complianceNotes?: string | null;
+    };
+    const ALLOWED_STATUS = ['ungeprueft', 'geprueft', 'abgelehnt'];
+    if (body.complianceStatus !== undefined && !ALLOWED_STATUS.includes(body.complianceStatus)) {
+      return c.json({ error: 'Ungültiger compliance_status' }, 400);
+    }
+    const { db, schema } = await import('../db/index').then(async m => {
+      const s = await import('../db/schema');
+      return { db: m.db, schema: s };
+    });
+    const updates: Record<string, unknown> = {};
+    if (body.complianceStatus !== undefined) updates.complianceStatus = body.complianceStatus;
+    if (body.complianceDocsVerifiedAt !== undefined) updates.complianceDocsVerifiedAt = body.complianceDocsVerifiedAt;
+    if (body.complianceNotes !== undefined) updates.complianceNotes = body.complianceNotes;
+    if (Object.keys(updates).length === 0) return c.json({ error: 'Keine Felder zum Aktualisieren' }, 400);
+    const result = await db.update(schema.trustedSuppliers).set(updates).where(eq(schema.trustedSuppliers.id, id)).returning();
+    if (result.length === 0) return c.json({ error: 'Lieferant nicht gefunden' }, 404);
+    return c.json(result[0]);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.delete('/trusted-suppliers/:id', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);

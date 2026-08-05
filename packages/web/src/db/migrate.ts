@@ -87,6 +87,10 @@ const migrations = [
   `ALTER TABLE order_notes ADD COLUMN manual_buy_price REAL`,
   // Kategorie fuer manuell gespeicherte Shops (feste Auswahlliste, siehe shared/constants.ts SHOP_CATEGORIES)
   `ALTER TABLE trusted_suppliers ADD COLUMN category TEXT`,
+  // Compliance-Prüfung für Lieferanten (P-66 Schritt 1) — noch kein Import-Gate
+  `ALTER TABLE trusted_suppliers ADD COLUMN compliance_status TEXT DEFAULT 'ungeprueft'`,
+  `ALTER TABLE trusted_suppliers ADD COLUMN compliance_docs_verified_at TEXT`,
+  `ALTER TABLE trusted_suppliers ADD COLUMN compliance_notes TEXT`,
 ];
 
 export async function runMigrations() {
