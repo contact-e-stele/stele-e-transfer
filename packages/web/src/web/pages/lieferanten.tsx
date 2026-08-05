@@ -6,6 +6,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
+import { matchRegulatedCategories, type RegulatedCategory } from "../../shared/regulated-categories";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -117,6 +118,18 @@ function parsePrice(raw: string): number {
   const m = raw.match(/([\d]+[.,][\d]{2})/);
   if (!m) return 0;
   return parseFloat(m[1].replace(",", "."));
+}
+
+// Ordnet den beim Scrape gelieferten Shop-Namen einem gespeicherten Lieferanten zu.
+// Simple case-insensitive Gleichheit/Teilstring-Prüfung — kein exaktes ID-Matching möglich,
+// da AliExpress-Scrapes keine stabile Store-ID liefern, nur den Anzeigenamen.
+function findMatchingSupplier<T extends { shopName: string }>(sellerName: string | undefined, suppliers: T[]): T | undefined {
+  if (!sellerName?.trim()) return undefined;
+  const needle = sellerName.trim().toLowerCase();
+  return suppliers.find(s => {
+    const hay = s.shopName.trim().toLowerCase();
+    return hay === needle || hay.includes(needle) || needle.includes(hay);
+  });
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -342,6 +355,14 @@ export default function Lieferanten() {
   const gewinn = verkauf - einkauf - ebayFee;
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
 
+  // ─── P-66 Schritt 2: Compliance-Gate für regulierte Produktgruppen ────────
+  const regulatedMatches: RegulatedCategory[] = product
+    ? matchRegulatedCategories([product.title, editableTitle, product.description ?? ''].join(' '))
+    : [];
+  const matchedSupplier = product ? findMatchingSupplier(product.seller, trustedSuppliers) : undefined;
+  const supplierVerified = matchedSupplier?.complianceStatus === 'geprueft';
+  const complianceBlocked = regulatedMatches.length > 0 && !supplierVerified;
+
   // ─── Auto-Start from Suche-Tab ────────────────────────────────────────────
   useEffect(() => {
     const autostart = sessionStorage.getItem("import_autostart");
@@ -489,6 +510,7 @@ export default function Lieferanten() {
   // ─── Speichern in DB ──────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!result || !product) return;
+    if (complianceBlocked) return; // P-66: harte Sperre, kein Bypass
     setSaveLoading(true);
     setSaveResult(null);
     try {
@@ -1844,21 +1866,43 @@ export default function Lieferanten() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>In DB speichern</span>
                 {saveResult?.id && <span style={{ fontSize: 12, color: "#15803D", fontWeight: 600 }}>✓ Gespeichert (ID: {saveResult.id})</span>}
               </div>
+
+              {complianceBlocked && (
+                <div style={{
+                  marginBottom: 14, padding: "12px 14px", borderRadius: 12,
+                  background: "#FEF2F2", border: "1.5px solid #FECACA",
+                  display: "flex", flexDirection: "column", gap: 4,
+                }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <span style={{ fontSize: 16, lineHeight: "20px" }}>🚫</span>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#991B1B" }}>
+                        Dieses Produkt gehört möglicherweise zu einer regulierten Kategorie. Lieferant muss erst im Lieferanten-Tab als geprüft markiert werden.
+                      </p>
+                      <p style={{ margin: "4px 0 0", fontSize: 11, color: "#B91C1C" }}>
+                        Erkannt als: {regulatedMatches.map(m => m.labelDe).join(', ')} — automatische Stichwort-Erkennung, keine rechtsverbindliche Prüfung.
+                        {matchedSupplier && <> Lieferant „{matchedSupplier.shopName}" ist aktuell: <strong>{matchedSupplier.complianceStatus}</strong>.</>}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={handleSave}
-                disabled={saveLoading || !!saveResult?.id}
+                disabled={saveLoading || !!saveResult?.id || complianceBlocked}
                 style={{
                   width: "100%", padding: "13px 0", borderRadius: 12,
                   border: saveResult?.id ? "1.5px solid #BBF7D0" : "1.5px solid transparent",
-                  background: saveResult?.id ? "#F0FDF4" : saveLoading ? "#E2E8F0" : "#0F172A",
-                  color: saveResult?.id ? "#15803D" : saveLoading ? "#94A3B8" : "#C9A227",
+                  background: saveResult?.id ? "#F0FDF4" : complianceBlocked ? "#FEE2E2" : saveLoading ? "#E2E8F0" : "#0F172A",
+                  color: saveResult?.id ? "#15803D" : complianceBlocked ? "#991B1B" : saveLoading ? "#94A3B8" : "#C9A227",
                   fontWeight: 700, fontSize: 14,
-                  cursor: (saveLoading || !!saveResult?.id) ? "not-allowed" : "pointer",
+                  cursor: (saveLoading || !!saveResult?.id || complianceBlocked) ? "not-allowed" : "pointer",
                   fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
                 {saveLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={16} />}
-                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : "In DB speichern"}
+                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : complianceBlocked ? "Blockiert — Lieferant nicht geprüft" : "In DB speichern"}
               </button>
               {saveResult?.error && (
                 <p style={{ margin: "8px 0 0", color: "#DC2626", fontSize: 13, fontWeight: 600 }}>Fehler: {saveResult.error}</p>
