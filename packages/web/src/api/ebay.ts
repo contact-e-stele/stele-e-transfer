@@ -786,7 +786,19 @@ function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
 }
 
 function slugify(s: string): string {
-  return s.toUpperCase().replace(/[^A-Z0-9]/g, '-').slice(0, 20);
+  return s.toUpperCase().replace(/[^A-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
+}
+
+// Gruppennamen-Normalisierung für den VARIANT_GROUP_MAP-Lookup: Apostroph-Varianten
+// (´ ' ’ `) entfernen und übrige Sonderzeichen/Mehrfach-Leerzeichen glätten.
+// AliExpress liefert Gruppennamen wie "Set´s" — ohne das matcht z.B. 'set' nicht mehr,
+// der Rohstring geht dann unverändert als (für eBay unbekannter) Aspektname raus.
+function normalizeGroupKey(name: string): string {
+  return name.toLowerCase().trim()
+    .replace(/[´'’`]/g, '')
+    .replace(/[^a-zäöüß0-9\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Varianten-Gruppen-Name → eBay Aspekt-Name mappen
@@ -812,6 +824,7 @@ const VARIANT_GROUP_MAP: Record<string, string> = {
   'menge': 'Menge',
   'anzahl': 'Menge',
   'set': 'Menge',
+  'sets': 'Menge', // AliExpress "Set´s" → nach normalizeGroupKey() "sets"
   'quantity': 'Menge',
   // Variante — AliExpress "Color"/"Colour" ist oft kein echtes Farb-Attribut
   // sondern ein Set/Varianten-Name → deshalb → 'Variante'
@@ -827,7 +840,7 @@ const VARIANT_GROUP_MAP: Record<string, string> = {
 };
 
 function mapVariantGroupName(name: string): string {
-  return VARIANT_GROUP_MAP[name.toLowerCase().trim()] ?? name;
+  return VARIANT_GROUP_MAP[normalizeGroupKey(name)] ?? name;
 }
 
 export async function deleteInventoryItemGroup(groupKey: string): Promise<void> {
@@ -884,7 +897,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const variantSkus: string[] = [];
   const variantSkuCombos: Array<{ sku: string; combo: Record<string, string> }> = [];
   for (const combo of combos) {
-    const suffix = Object.values(combo).map(slugify).join('-');
+    const suffix = Object.values(combo).map(slugify).filter(Boolean).join('-');
     const varSku = `${input.sku}-${suffix}`;
     variantSkus.push(varSku);
     variantSkuCombos.push({ sku: varSku, combo });
