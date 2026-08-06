@@ -51,6 +51,7 @@ interface Product {
   ebayStatus: string;
   ebayError: string | null;
   ebayCategory: string | null;
+  ean: string | null;
   handlingTimeDays: number | null;
   gpsrName: string | null;
   gpsrAddress: string | null;
@@ -1375,6 +1376,32 @@ export default function Produkte() {
                   {listingResult.msg}
                 </div>
               )}
+              {/* EAN/GTIN manuell setzen — viele eBay-Kategorien verlangen einen Produkt-Identifier */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <span style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap" }}>EAN/GTIN</span>
+                <input
+                  defaultValue={product.ean ?? ''}
+                  placeholder="ohne = 'Nicht zutreffend'"
+                  onBlur={async (e) => {
+                    const val = e.currentTarget.value.trim();
+                    if (val === (product.ean ?? '')) return;
+                    await fetch(`/api/products/${product.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ ean: val || null }),
+                    });
+                    setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ean: val || null } : p));
+                  }}
+                  style={{
+                    fontSize: 11, padding: "4px 8px", borderRadius: 6,
+                    border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A",
+                    width: 140, fontFamily: "inherit",
+                  }}
+                />
+                {product.ean && (
+                  <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓</span>
+                )}
+              </div>
               {/* eBay Kategorie manuell setzen */}
               <div style={{ position: "relative" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>

@@ -30,6 +30,7 @@ export const products = sqliteTable('products', {
   ebayStatus: text('ebay_status').default('none'), // none | listed | error
   ebayError: text('ebay_error'),
   ebayCategory: text('ebay_category'),           // manuell gesetzte eBay Kategorie-ID
+  ean: text('ean'),                              // EAN/GTIN Barcode — meist manuell gepflegt, AliExpress liefert i.d.R. keine echte EAN
   variantContents: text('variant_contents'), // JSON: {"SET1":"10 kleine + 10 große","SET2":"..."}
   gpsrRaw: text('gpsr_raw'),                 // Rohtext aus Import-Feld (legacy)
   gpsrHtml: text('gpsr_html'),               // fertiger HTML-Block für eBay (legacy)

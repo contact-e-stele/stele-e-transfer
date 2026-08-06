@@ -1613,6 +1613,7 @@ const app = new Hono()
         variantPrices: variantPricesForListing.length > 0 ? variantPricesForListing : undefined,
         specs,
         mpn,
+        ean: product.ean ?? undefined,
         adRate: product.adRate ?? 5,
         handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
@@ -1997,6 +1998,7 @@ const app = new Hono()
       });
       const allowed: Partial<typeof schema.products.$inferInsert> = {};
       if ('ebayCategory' in body) allowed.ebayCategory = body.ebayCategory as string | null;
+      if ('ean'          in body) allowed.ean          = body.ean          as string | null;
       if ('gpsrName'    in body) allowed.gpsrName    = body.gpsrName    as string | null;
       if ('gpsrAddress' in body) allowed.gpsrAddress = body.gpsrAddress as string | null;
       if ('gpsrCity'    in body) allowed.gpsrCity    = body.gpsrCity    as string | null;
