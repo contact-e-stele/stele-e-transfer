@@ -251,6 +251,7 @@ export interface EbayListingInput {
   variantPrices?: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }>; // pro-Variante Preise
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
+  ean?: string; // EAN/GTIN Barcode — falls vorhanden, sonst "Nicht zutreffend"
   adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
   handlingTimeDays?: number; // Bearbeitungszeit in Tagen (Standard: 10)
   gpsr?: {         // EU Produktsicherheit — aus DB; wenn undefined → Stele-Fallback
@@ -400,11 +401,18 @@ async function getRequiredAspects(categoryId: string, token: string): Promise<Re
 }
 
 // Specs → eBay Aspekte (async, befüllt Pflichtfelder automatisch)
+// Produkt-Identifier-Aspekte — eBay validiert diese als Barcode-Format, NICHT als Freitext.
+// Der generische "Nicht angegeben"-Fallback (für normale Merkmale gedacht) besteht diese Validierung
+// nicht und führt zu 400ern ("fehlende/ungültige EAN"). Hier stattdessen eBays anerkannter
+// Identifier-Sentinel "Nicht zutreffend" (wie bereits bei Herstellernummer verwendet).
+const IDENTIFIER_ASPECT_NAMES = new Set(['EAN', 'GTIN', 'UPC', 'ISBN']);
+
 async function buildAspects(
   specs: Record<string, string> = {},
   mpn?: string,
   categoryId?: string,
-  token?: string
+  token?: string,
+  ean?: string
 ): Promise<Record<string, string[]>> {
   // Key-Mapping: AliExpress Spec-Keys → eBay Aspekt-Namen (DE)
   const KEY_MAP: Record<string, string> = {
@@ -436,6 +444,13 @@ async function buildAspects(
     const required = await getRequiredAspects(categoryId, token);
     for (const [name, firstAllowed] of Object.entries(required)) {
       if (!aspects[name]) {
+        if (IDENTIFIER_ASPECT_NAMES.has(name)) {
+          // Identifier-Aspekte NIE mit Freitext-Fallback befüllen — eBay validiert das Format.
+          const fallback = ean?.trim() || 'Nicht zutreffend';
+          aspects[name] = [fallback];
+          console.log(`[eBay] Auto-filled identifier aspect "${name}" = "${fallback}"`);
+          continue;
+        }
         // Priorität: 1. erster erlaubter Wert der API, 2. bekannter Default, 3. "Nicht angegeben"
         const catDefaults = getAspectDefaultsForCategory(categoryId);
         const fallback = firstAllowed ?? catDefaults[name] ?? 'Nicht angegeben';
@@ -459,6 +474,10 @@ async function buildAspects(
   // MPN
   if (mpn) aspects['MPN'] = [mpn];
 
+  // EAN — explizit setzen wenn vorhanden, auch wenn die Kategorie sie nicht als "required"
+  // Aspekt listet (eBays Produkt-Identifier-Prüfung greift teils unabhängig davon)
+  if (ean?.trim()) aspects['EAN'] = [ean.trim()];
+
   return aspects;
 }
 
@@ -478,7 +497,8 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       title: input.title,
       description: plainDesc,
       imageUrls: input.imageUrls,
-      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, token),
+      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean),
+      ...(input.ean?.trim() ? { gtin: input.ean.trim() } : {}),
     },
   };
 
@@ -588,7 +608,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   const fulfillmentPolicyId = input.handlingTimeDays != null
     ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
     : policies.fulfillmentPolicyId;
-  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token);
+  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
   const gpsrBlock = buildGpsrBlock(input.gpsr);
@@ -844,7 +864,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const plainDesc = (input.shortDescription ?? input.description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 4000);
 
   // Pflichtaspekte einmal abrufen (gilt für alle Varianten)
-  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token);
+  // Hinweis: input.ean ist genau EIN Wert pro Produkt (kein Feld pro Variante im Datenmodell) —
+  // wird hier für alle Varianten übernommen; besser als der ungültige "Nicht angegeben"-Fallback.
+  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean);
 
   // Varianten-Aspekt-Namen (gemappt) — diese dürfen NICHT in baseAspects stecken
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler
@@ -892,6 +914,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         description: plainDesc,
         imageUrls: varImageUrls.filter(u => u.startsWith('http')).slice(0, 8),
         aspects: variantAspects,
+        ...(input.ean?.trim() ? { gtin: input.ean.trim() } : {}),
       },
     };
 
