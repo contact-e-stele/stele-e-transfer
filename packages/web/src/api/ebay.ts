@@ -855,20 +855,64 @@ export async function deleteInventoryItemGroup(groupKey: string): Promise<void> 
   console.log(`[eBay] DELETE item_group ${groupKey}: ${res.status}`);
 }
 
+// Liest die tatsächlich zur Gruppe gehörenden Varianten-SKUs aus — statt sie zu erraten.
+// Wichtig für Cleanup vor Re-Listing: die SKU-Suffixe werden dynamisch aus den Varianten-
+// Werten generiert (z.B. "-01-3PCS") und ändern sich, wenn sich Varianten-Werte oder die
+// slugify()-Logik ändern — eine hartcodierte Liste (z.B. "-SET1".."-SET4") trifft die realen
+// SKUs oft gar nicht, wodurch alte Offers aus fehlgeschlagenen Vorversuchen liegen bleiben.
+async function getInventoryItemGroupSkus(groupKey: string, token: string): Promise<string[]> {
+  const res = await fetch(
+    `${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!res.ok) return [];
+  const data = await res.json() as { variantSKUs?: string[] };
+  return data.variantSKUs ?? [];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// eBays Sell Inventory API hat eine kurze Verarbeitungsverzögerung zwischen dem Schreiben
+// eines Inventory Items und dessen Sichtbarkeit für nachfolgende, abhängige Calls
+// (Item Group anlegen, Offer publishen). Äußert sich als 500/"system error" (25001) direkt
+// nach dem Anlegen, oder als "Product not found ... Please try again" (25604) beim Offer-Update.
+// Beide Fehlermeldungen selbst deuten auf einen transienten Zustand hin, nicht auf ein
+// Datenproblem — daher hier ein kurzer Retry-mit-Backoff statt sofort hart zu failen.
+function isTransientEbayError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b25604\b|\b25001\b|product not found|please try again|system error/i.test(msg);
+}
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 2, delayMs = 2000): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === retries || !isTransientEbayError(err)) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[eBay] Transienter Fehler, Retry ${attempt + 1}/${retries} in ${delayMs * (attempt + 1)}ms: ${msg.slice(0, 200)}`);
+      await sleep(delayMs * (attempt + 1));
+    }
+  }
+  throw lastErr;
+}
+
 export async function listOnEbayWithVariants(input: EbayListingInput): Promise<string> {
   const token = await getAccessToken();
   const groups = input.variantGroups ?? [];
   const combos = buildCombinations(groups);
   const groupSku = `${input.sku}-GROUP`;
 
-  // Cleanup: alte Item Group + alte Offers löschen vor Re-Listing
+  // Cleanup: alte Item Group + alte Offers löschen vor Re-Listing.
+  // Erst die real zur Gruppe gehörenden SKUs auslesen (aus einem evtl. vorherigen,
+  // fehlgeschlagenen Versuch), DANN die Gruppe löschen — sonst sind die SKUs weg.
+  const oldVariantSkus = await getInventoryItemGroupSkus(groupSku, token).catch(() => []);
   await deleteInventoryItemGroup(groupSku).catch(() => {});
-  for (const oldSku of [
-    `${input.sku}-SET1`, `${input.sku}-SET2`,
-    `${input.sku}-SET3`, `${input.sku}-SET4`,
-    `${input.sku}-MENGE1`, `${input.sku}-MENGE2`,
-    `${input.sku}-MENGE3`, `${input.sku}-MENGE4`,
-  ]) {
+  for (const oldSku of oldVariantSkus) {
     await deleteExistingOffers(oldSku).catch(() => {});
   }
 
@@ -946,6 +990,10 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     }
   }
 
+  // Kurze Pause: eBay braucht nach dem Schreiben der Inventory Items etwas Zeit, bis sie für
+  // die Item-Group-Erstellung sichtbar sind (eventual consistency) — siehe isTransientEbayError.
+  await sleep(1500);
+
   // 2. Inventory Item Group erstellen
   // eBay erwartet: variationInformation mit variantSKUs + variantAspectName
   const mappedGroupNames = groups.map(g => mapVariantGroupName(g.name));
@@ -969,19 +1017,21 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     },
   };
 
-  const groupRes = await fetch(`${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Content-Language': 'de-DE',
-    },
-    body: JSON.stringify(groupBody),
+  await withRetry(async () => {
+    const groupRes = await fetch(`${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Language': 'de-DE',
+      },
+      body: JSON.stringify(groupBody),
+    });
+    if (!groupRes.ok && groupRes.status !== 204) {
+      const text = await groupRes.text();
+      throw new Error(`createInventoryItemGroup failed: ${groupRes.status} ${text}`);
+    }
   });
-  if (!groupRes.ok && groupRes.status !== 204) {
-    const text = await groupRes.text();
-    throw new Error(`createInventoryItemGroup failed: ${groupRes.status} ${text}`);
-  }
 
   // 3. Pro Varianten-SKU ein Offer erstellen
   // Bei Variation Listings: Offer wird pro einzelnem Inventory Item SKU erstellt (NICHT für den Group-Key)
@@ -1045,19 +1095,21 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       const existingOfferId = existing?.parameters?.find(p => p.name === 'offerId')?.value;
       if (existingOfferId) {
         console.log(`[eBay] Offer für ${varSku} existiert (${existingOfferId}) — update via PUT`);
-        const putRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${existingOfferId}`, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Content-Language': 'de-DE',
-          },
-          body: JSON.stringify(offerBody),
+        await withRetry(async () => {
+          const putRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${existingOfferId}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Content-Language': 'de-DE',
+            },
+            body: JSON.stringify(offerBody),
+          });
+          if (!putRes.ok) {
+            const putText = await putRes.text();
+            throw new Error(`updateOffer (variant ${varSku}) failed: ${putRes.status} ${putText}`);
+          }
         });
-        if (!putRes.ok) {
-          const putText = await putRes.text();
-          throw new Error(`updateOffer (variant ${varSku}) failed: ${putRes.status} ${putText}`);
-        }
         finalOfferId = existingOfferId;
       } else {
         throw new Error(`createOffer (variant ${varSku}) failed: ${offerRes.status} ${JSON.stringify(errorData)}`);
