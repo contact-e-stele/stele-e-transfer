@@ -31,6 +31,7 @@ export interface AliProductData {
   gpsr?: GpsrInfo; // DS API liefert kein HTML — GPSR kommt aus dem HTML-Scraper falls DS API nicht reicht
   reviewCount?: number; // Anzahl Bewertungen (ae_item_base_info_dto.evaluation_count)
   rating?: number;      // Durchschnittliche Sternebewertung 0-5 (ae_item_base_info_dto.avg_evaluation_rating)
+  shippingCost?: number; // Versandkosten laut AliExpress (aliexpress.ds.freight.query) — undefined wenn nicht ermittelbar
 }
 
 // IOP MD5 Signing: secret + sorted(key+value pairs) + secret → MD5 → uppercase
@@ -261,6 +262,61 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
   return { variantPrices, variants };
 }
 
+// ── Versandkosten (P-69) ─────────────────────────────────────────────────────
+// aliexpress.ds.product.get liefert KEIN Frachtfeld (verifiziert per Live-Call —
+// logistics_info_dto enthält nur delivery_time/ship_to_country). Versandpreis kommt
+// über die separate Dropshipper-Methode aliexpress.ds.freight.query, die pro SKU
+// die vom Käufer zu zahlende Versandoption(en) inkl. Preis zurückgibt.
+async function getFreightCost(productId: string, skuId: string, accessToken: string): Promise<number | undefined> {
+  try {
+    const params: Record<string, string> = {
+      app_key: APP_KEY,
+      method: 'aliexpress.ds.freight.query',
+      timestamp: String(Date.now()),
+      format: 'json',
+      sign_method: 'md5',
+      v: '2.0',
+      access_token: accessToken,
+      queryDeliveryReq: JSON.stringify({
+        quantity: 1,
+        shipToCountry: 'DE',
+        productId: Number(productId),
+        selectedSkuId: skuId,
+        currency: 'EUR',
+        locale: 'de_DE',
+        language: 'de',
+      }),
+    };
+    params.sign = iopSign(APP_SECRET, params);
+
+    const res = await fetch(IOP_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    const resp = data['aliexpress_ds_freight_query_response'] as Record<string, unknown> | undefined;
+    const result = resp?.result as Record<string, unknown> | undefined;
+    if (!result?.success) {
+      console.log('[AliExpress API] Freight-Query ohne Ergebnis:', JSON.stringify(data).slice(0, 300));
+      return undefined;
+    }
+    const options = (result.delivery_options as { delivery_option_d_t_o?: Array<{
+      shipping_fee_cent?: string; free_shipping?: boolean;
+    }> } | undefined)?.delivery_option_d_t_o || [];
+    if (options.length === 0) return undefined;
+
+    // Günstigste Versandoption verwenden (Käufer wählt i.d.R. die billigste)
+    const fees = options.map(o => o.free_shipping ? 0 : parseFloat(o.shipping_fee_cent ?? '')).filter(f => Number.isFinite(f));
+    if (fees.length === 0) return undefined;
+    return Math.min(...fees);
+  } catch (e) {
+    console.error('[AliExpress API] getFreightCost error:', e);
+    return undefined;
+  }
+}
+
 // ── Hauptfunktion ──────────────────────────────────────────────────────────────
 export async function getAliProductByApi(productId: string, accessToken: string): Promise<AliProductData | null> {
   try {
@@ -331,6 +387,12 @@ export async function getAliProductByApi(productId: string, accessToken: string)
 
     const { variantPrices, variants } = parseVariantPrices(rawSkuContainer);
 
+    // ── Versandkosten ──────────────────────────────────────────────────────────
+    // Eine repräsentative SKU reicht — der Versand fällt pro Bestellung an, nicht pro Variante.
+    const shippingCost = variantPrices.length > 0
+      ? await getFreightCost(productId, variantPrices[0].skuId, accessToken)
+      : undefined;
+
     // ── Preis (Minimum aller Varianten) ───────────────────────────────────────
     let price = '';
     if (variantPrices.length > 0) {
@@ -367,7 +429,7 @@ export async function getAliProductByApi(productId: string, accessToken: string)
     // ── Seller ─────────────────────────────────────────────────────────────────
     const seller = (result.store_info as { store_name?: string } | undefined)?.store_name || '';
 
-    console.log(`[AliExpress API] OK: "${subject.slice(0, 50)}" | Preis: ${price} | Varianten: ${variantPrices.length} | shipsFrom: ${shipFrom}`);
+    console.log(`[AliExpress API] OK: "${subject.slice(0, 50)}" | Preis: ${price} | Varianten: ${variantPrices.length} | shipsFrom: ${shipFrom} | Versand: ${shippingCost ?? 'unbekannt'}`);
 
     return {
       title: subject,
@@ -383,6 +445,7 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       seller,
       reviewCount,
       rating,
+      shippingCost,
     };
   } catch (e) {
     console.error('[AliExpress API] getAliProductByApi error:', e);

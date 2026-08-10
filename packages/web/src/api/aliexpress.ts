@@ -57,6 +57,7 @@ export interface ScrapedProduct {
   gpsr?: GpsrInfo;        // GPSR-Daten von AliExpress (Hersteller/EU-Verantwortlicher)
   reviewCount?: number;   // Anzahl Bewertungen — nur über DS API verfügbar, nicht im HTML-Fallback
   rating?: number;        // Durchschnittliche Sternebewertung 0-5 — nur über DS API verfügbar
+  shippingCost?: number;  // Versandkosten (P-69) — nur über getAliProductByApi/aliexpress.ds.freight.query verfügbar, nicht im Playwright/HTML-Fallback
 }
 
 // ── GPSR Extraktor ─────────────────────────────────────────────────────────────

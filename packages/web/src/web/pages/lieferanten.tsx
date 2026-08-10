@@ -39,6 +39,7 @@ interface ScrapedProduct {
   seller?: string; // echter AliExpress Händler-/Shopname (z.B. "BOBO GO 1 Store")
   reviewCount?: number | null; // Anzahl Bewertungen — nur verfügbar wenn DS-API genutzt wurde
   rating?: number | null;      // Durchschnittliche Sternebewertung 0-5 — nur verfügbar wenn DS-API genutzt wurde
+  shippingCost?: number | null; // Versandkosten laut AliExpress (P-69) — nur verfügbar wenn DS-API genutzt wurde
 }
 
 // P-73: Bewertungs-Ampel — kombiniert Anzahl UND Sternebewertung, schlechterer Wert gewinnt
@@ -114,6 +115,14 @@ function isEUShipping(shipsFrom?: string): boolean {
 function isChinaShipping(shipsFrom?: string): boolean {
   if (!shipsFrom) return false;
   return shipsFrom.toLowerCase().includes('china');
+}
+
+// P-74: Rundet zur NÄCHSTEN ,95-Endung (auf oder ab) — bewusst anders als der automatische
+// Preis-Monitor (dort immer aufrunden für garantierten Mindestgewinn). Hier im manuellen
+// Modal darf der Preis auch knapp unter den berechneten Mindestpreis fallen.
+function roundToNearest95(value: number): number {
+  const nearestInt = Math.round(value - 0.95);
+  return Math.round((nearestInt + 0.95) * 100) / 100;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -231,7 +240,6 @@ export default function Lieferanten() {
   const [ebayPrice, setEbayPrice] = useState("");
   const [variantEbayPrices, setVariantEbayPrices] = useState<Record<string, string>>({});
   const [variantHerkunft, setVariantHerkunft] = useState<Record<string, boolean>>({}); // true = China (zollpflichtig), false = EU
-  const [variantShipping, setVariantShipping] = useState<Record<string, string>>({}); // Versandkosten pro Variante
   const [variantZollManuell, setVariantZollManuell] = useState<Record<string, string>>({}); // manueller Zollbetrag bei Sendungswert > 150€
   const [buyPrice, setBuyPrice] = useState(() => {
     const saved = sessionStorage.getItem("import_price") || "";
@@ -471,6 +479,8 @@ export default function Lieferanten() {
       });
       if (data.error) throw new Error(data.error);
       setProduct(data);
+      // Versandkosten vom Scrape übernehmen (P-69) — "0" nur wenn AliExpress tatsächlich kostenlosen Versand meldet
+      setShippingCost(data.shippingCost != null ? data.shippingCost.toFixed(2) : "0");
       setAllImages(data.images ?? []);
       setExcludedImages(new Set());
       setVisibleImages(data.images ?? []);
@@ -1671,9 +1681,10 @@ export default function Lieferanten() {
                       const attrLabel = Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([,val]) => val).join(" / ") || `Variante …${v.skuId.slice(-6)}`;
                       const varEbayRaw = variantEbayPrices[v.skuId] ?? "";
                       const varEbay = parseFloat(varEbayRaw.replace(",", ".")) || 0;
-                      // Herkunft/Versand/Zoll pro Variante — Default aus dem gescrapten Ships-From-Land
+                      // Herkunft/Zoll pro Variante — Default aus dem gescrapten Ships-From-Land.
+                      // Versand ist zentral (P-69): fällt pro Bestellung an, nicht pro Variante.
                       const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
-                      const versandV = parseFloat((variantShipping[v.skuId] ?? "").replace(",", ".")) || 0;
+                      const versandV = parseFloat(shippingCost.replace(",", ".")) || 0;
                       const sendungswertV = v.price + versandV;
                       const ueberSchwelleV = ausChinaV && sendungswertV > 150;
                       const zollManuellV = parseFloat((variantZollManuell[v.skuId] ?? "").replace(",", ".")) || 0;
@@ -1732,7 +1743,7 @@ export default function Lieferanten() {
                             {v.stock !== undefined ? (v.stock === 0 ? "0 ❌" : v.stock) : "–"}
                           </div>
                           </div>
-                          {/* Herkunft / Versand / Zoll pro Variante */}
+                          {/* Herkunft / Zoll pro Variante — Versand ist zentral oben in der Preiskalkulation (P-69) */}
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", paddingLeft: 42 }}>
                             <div style={{ display: "flex", gap: 3 }}>
                               <button
@@ -1762,19 +1773,6 @@ export default function Lieferanten() {
                                 EU
                               </button>
                             </div>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              placeholder="Versand €"
-                              value={variantShipping[v.skuId] ?? ""}
-                              onChange={e => setVariantShipping(prev => ({ ...prev, [v.skuId]: e.target.value }))}
-                              style={{
-                                width: 70, padding: "2px 6px", fontSize: 10, fontWeight: 600,
-                                border: "1.5px solid #E2E8F0", borderRadius: 6, outline: "none",
-                                fontFamily: "inherit", color: "#0F172A",
-                              }}
-                            />
                             {ausChinaV && !ueberSchwelleV && (
                               <span style={{ fontSize: 10, color: "#94A3B8" }}>
                                 Zoll: {CHINA_ZOLL_EUR.toFixed(2)} €
@@ -1808,9 +1806,12 @@ export default function Lieferanten() {
                             <button
                               type="button"
                               onClick={() => {
-                                // Gleiche Formel wie beim Einzelprodukt, aber mit wahrerEinkaufV (inkl. Versand + Zoll dieser Variante)
+                                // Gleiche Formel wie beim Einzelprodukt, aber mit wahrerEinkaufV (inkl. Versand + Zoll dieser Variante).
+                                // P-74: auf die nächste ,95-Endung runden (auch abrunden möglich) — bewusst
+                                // knapp unter dem rechnerischen Mindestpreis möglich, da manuell ausgelöst.
                                 const feeRate = (13 + adRate) / 100 * 1.19;
-                                const recommendedV = Math.ceil(((wahrerEinkaufV + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                                const rawMinV = (wahrerEinkaufV + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate);
+                                const recommendedV = roundToNearest95(rawMinV);
                                 setVariantEbayPrices(prev => ({ ...prev, [v.skuId]: recommendedV.toFixed(2) }));
                               }}
                               style={{
