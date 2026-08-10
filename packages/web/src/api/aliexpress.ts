@@ -55,6 +55,8 @@ export interface ScrapedProduct {
   variantPrices: VariantPrice[]; // alle Varianten mit SKU-ID + Preis
   seller?: string;        // AliExpress Shopname für GPSR
   gpsr?: GpsrInfo;        // GPSR-Daten von AliExpress (Hersteller/EU-Verantwortlicher)
+  reviewCount?: number;   // Anzahl Bewertungen — nur über DS API verfügbar, nicht im HTML-Fallback
+  rating?: number;        // Durchschnittliche Sternebewertung 0-5 — nur über DS API verfügbar
 }
 
 // ── GPSR Extraktor ─────────────────────────────────────────────────────────────
@@ -217,7 +219,7 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
       image_urls?: string[];
       ae_item_base_info_dto?: {
         subject?: string;
-        evaluation_count?: number;
+        evaluation_count?: string; // API liefert String, nicht Number (verifiziert per Live-Call)
         avg_evaluation_rating?: string;
       };
       ae_multimedia_info_dto?: { image_urls?: string[] };
@@ -247,6 +249,12 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
     // Titel
     const title = cleanTitle(detail.ae_item_base_info_dto?.subject || (result['subject'] as string) || '');
     if (!title) { console.log('[DS API] Kein Titel'); return null; }
+
+    // Bewertungen
+    const reviewCountRaw = parseInt(detail.ae_item_base_info_dto?.evaluation_count ?? '', 10);
+    const reviewCount = Number.isFinite(reviewCountRaw) ? reviewCountRaw : undefined;
+    const ratingRaw = parseFloat(detail.ae_item_base_info_dto?.avg_evaluation_rating ?? '');
+    const rating = Number.isFinite(ratingRaw) ? ratingRaw : undefined;
 
     // Bilder
     const images: string[] = [];
@@ -327,6 +335,8 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
       variantPrices,
       seller,
       gpsr: undefined, // DS API liefert kein HTML — GPSR kommt aus HTML-Scraper falls DS API nicht reicht
+      reviewCount,
+      rating,
     };
   } catch (e) {
     console.log(`[DS API] Fehler: ${e}`);

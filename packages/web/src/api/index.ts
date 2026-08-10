@@ -1675,6 +1675,8 @@ const app = new Hono()
           variantPrices: apiData.variantPrices ?? [],
           seller: apiData.seller ?? '',
           gpsr: apiData.gpsr ?? null,
+          reviewCount: apiData.reviewCount ?? null,
+          rating: apiData.rating ?? null,
           _source: 'ds-api',
         }, 200);
       }
