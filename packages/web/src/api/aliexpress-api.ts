@@ -29,6 +29,8 @@ export interface AliProductData {
   variantPrices: VariantPrice[];
   seller?: string;
   gpsr?: GpsrInfo; // DS API liefert kein HTML — GPSR kommt aus dem HTML-Scraper falls DS API nicht reicht
+  reviewCount?: number; // Anzahl Bewertungen (ae_item_base_info_dto.evaluation_count)
+  rating?: number;      // Durchschnittliche Sternebewertung 0-5 (ae_item_base_info_dto.avg_evaluation_rating)
 }
 
 // IOP MD5 Signing: secret + sorted(key+value pairs) + secret → MD5 → uppercase
@@ -307,6 +309,13 @@ export async function getAliProductByApi(productId: string, accessToken: string)
     ).trim();
     if (!subject) { console.error('[AliExpress API] Kein Titel — result keys:', Object.keys(result).join(',')); return null; }
 
+    // ── Bewertungen ────────────────────────────────────────────────────────────
+    // API liefert evaluation_count/avg_evaluation_rating als Strings (verifiziert per Live-Call)
+    const reviewCountRaw = parseInt(String(baseInfo?.evaluation_count ?? ''), 10);
+    const reviewCount = Number.isFinite(reviewCountRaw) ? reviewCountRaw : undefined;
+    const ratingRaw = parseFloat(String(baseInfo?.avg_evaluation_rating ?? ''));
+    const rating = Number.isFinite(ratingRaw) ? ratingRaw : undefined;
+
     // ── Bilder ─────────────────────────────────────────────────────────────────
     const multimediaInfo = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
     const imageRaw = (multimediaInfo?.image_urls as string) || (result.image_urls as string) || '';
@@ -372,6 +381,8 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       variants,
       variantPrices,
       seller,
+      reviewCount,
+      rating,
     };
   } catch (e) {
     console.error('[AliExpress API] getAliProductByApi error:', e);

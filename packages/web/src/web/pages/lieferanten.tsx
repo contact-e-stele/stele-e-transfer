@@ -37,6 +37,62 @@ interface ScrapedProduct {
   shipsFrom?: string;
   shipsFromDE?: boolean;
   seller?: string; // echter AliExpress Händler-/Shopname (z.B. "BOBO GO 1 Store")
+  reviewCount?: number | null; // Anzahl Bewertungen — nur verfügbar wenn DS-API genutzt wurde
+  rating?: number | null;      // Durchschnittliche Sternebewertung 0-5 — nur verfügbar wenn DS-API genutzt wurde
+}
+
+// P-73: Bewertungs-Ampel — kombiniert Anzahl UND Sternebewertung, schlechterer Wert gewinnt
+type RatingLevel = "red" | "yellow" | "green" | "unknown";
+
+function getRatingLevel(reviewCount?: number | null, rating?: number | null): RatingLevel {
+  if (reviewCount == null || rating == null) return "unknown";
+  if (reviewCount === 0) return "red";
+  if (reviewCount < 50 || rating < 4.0) return "red";
+  if (reviewCount < 300 || rating < 4.5) return "yellow";
+  return "green";
+}
+
+const RATING_LEVEL_STYLE: Record<RatingLevel, { bg: string; border: string; fg: string; fgSub: string; icon: string }> = {
+  red:     { bg: "#FEF2F2", border: "#FECACA", fg: "#B91C1C", fgSub: "#DC2626", icon: "🔴" },
+  yellow:  { bg: "#FFFBEB", border: "#FDE68A", fg: "#92400E", fgSub: "#B45309", icon: "🟡" },
+  green:   { bg: "#F0FDF4", border: "#86EFAC", fg: "#15803D", fgSub: "#16A34A", icon: "🟢" },
+  unknown: { bg: "#F8FAFC", border: "#E2E8F0", fg: "#475569", fgSub: "#64748B", icon: "⚪" },
+};
+
+function RatingBanner({ reviewCount, rating }: { reviewCount?: number | null; rating?: number | null }) {
+  const level = getRatingLevel(reviewCount, rating);
+  const style = RATING_LEVEL_STYLE[level];
+
+  let title: string;
+  let subtitle: string;
+  if (level === "unknown") {
+    title = "Keine Bewertungsdaten verfügbar";
+    subtitle = "Diese Import-Methode liefert keine Bewertungen (nur über AliExpress DS-API verfügbar)";
+  } else if (reviewCount === 0) {
+    title = "Keine Bewertungen vorhanden";
+    subtitle = "Neues oder unbewertetes Angebot — erhöhtes Risiko";
+  } else {
+    title = `${rating!.toFixed(1)} ★ · ${reviewCount} Bewertung${reviewCount === 1 ? "" : "en"}`;
+    subtitle = level === "red"
+      ? "Wenige Bewertungen oder niedrige Sternebewertung — vor Import prüfen"
+      : level === "yellow"
+      ? "Mittlere Bewertungslage — noch keine breite Vertrauensbasis"
+      : "Solide Bewertungslage";
+  }
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10,
+      background: style.bg, border: `1.5px solid ${style.border}`,
+      borderRadius: 12, padding: "10px 14px", marginBottom: 14,
+    }}>
+      <span style={{ fontSize: 20 }}>{style.icon}</span>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 13, color: style.fg }}>{title}</div>
+        <div style={{ fontSize: 11, color: style.fgSub, marginTop: 2 }}>{subtitle}</div>
+      </div>
+    </div>
+  );
 }
 
 // EU-Länder die akzeptiert werden (schnelle Lieferung, kein Zoll)
@@ -987,6 +1043,9 @@ export default function Lieferanten() {
             <div className="stele-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
             <div>
             {/* LINKE SPALTE — Bild, GPSR, Varianten-Preistabelle */}
+
+            {/* Bewertungs-Ampel (P-73) */}
+            <RatingBanner reviewCount={product.reviewCount} rating={product.rating} />
 
             {/* EU-Lager Banner */}
             {shipsFromInfo && (
