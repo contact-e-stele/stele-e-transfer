@@ -1677,6 +1677,7 @@ const app = new Hono()
           gpsr: apiData.gpsr ?? null,
           reviewCount: apiData.reviewCount ?? null,
           rating: apiData.rating ?? null,
+          shippingCost: apiData.shippingCost ?? null,
           _source: 'ds-api',
         }, 200);
       }
