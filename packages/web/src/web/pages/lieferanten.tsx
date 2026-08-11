@@ -1519,7 +1519,7 @@ export default function Lieferanten() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Preiskalkulation</span>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div className="stele-grid-2" style={{ gap: 10, marginBottom: 10 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Einkauf (€)</label>
                   <input type="number" step="0.01" placeholder="0.00" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} style={{
@@ -1635,7 +1635,7 @@ export default function Lieferanten() {
                   borderRadius: 12, padding: "14px 16px",
                   border: `1.5px solid ${gewinn >= 0 ? "#BBF7D0" : "#FECACA"}`,
                 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+                  <div className="stele-grid-3" style={{ gap: 8, textAlign: "center" }}>
                     {[
                       { label: `Gebühr (${13 + adRate}%)`, value: `−${ebayFee.toFixed(2)} €`, color: "#64748B" },
                       { label: "Gewinn", value: `${gewinn >= 0 ? "+" : ""}${gewinn.toFixed(2)} €`, color: gewinn >= 0 ? "#16A34A" : "#DC2626" },
@@ -1668,7 +1668,7 @@ export default function Lieferanten() {
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {/* Header */}
-                    <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 120px 80px 80px 70px", gap: 8, padding: "0 8px", alignItems: "center" }}>
+                    <div className="stele-variant-header" style={{ display: "grid", gridTemplateColumns: "40px 1fr 120px 80px 80px 70px", gap: 8, padding: "0 8px", alignItems: "center" }}>
                       <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase" }}></div>
                       <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase" }}>Name / SKU</div>
                       <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", textAlign: "right" }}>Einkauf</div>
@@ -1699,7 +1699,8 @@ export default function Lieferanten() {
                           borderRadius: 10, border: `1.5px solid ${isCheapest ? "#BBF7D0" : "#F1F5F9"}`,
                           background: isCheapest ? "#F0FDF4" : i % 2 === 0 ? "#fff" : "#FAFAFA",
                         }}>
-                          <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 90px 90px 80px 55px", gap: 6, alignItems: "center" }}>
+                          <div className="stele-variant-row">
+                          <div className="stele-variant-top">
                           {/* Bild */}
                           <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                             {v.imageUrl
@@ -1712,13 +1713,17 @@ export default function Lieferanten() {
                             <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={attrLabel}>{attrLabel}</div>
                             <div style={{ fontSize: 10, color: "#94A3B8", fontFamily: "monospace", cursor: "help" }} title={`SKU: ${v.skuId}`}>…{v.skuId.slice(-8)}</div>
                           </div>
+                          </div>
+                          <div className="stele-variant-stats">
                           {/* Einkauf */}
-                          <div style={{ textAlign: "right" }}>
+                          <div className="stele-variant-stat">
+                            <div className="stele-variant-stat-label">Einkauf</div>
                             <span style={{ fontSize: 12, fontWeight: 800, color: isCheapest ? "#16A34A" : "#1D4ED8" }}>{v.price.toFixed(2)} €</span>
                             {isCheapest && <div style={{ fontSize: 9, color: "#16A34A", fontWeight: 700 }}>günstigst</div>}
                           </div>
                           {/* eBay Eingabe */}
-                          <div style={{ textAlign: "right" }}>
+                          <div className="stele-variant-stat">
+                            <div className="stele-variant-stat-label">eBay</div>
                             <input
                               type="number" step="0.01" min="0"
                               placeholder={`min. ${(v.price * 1.19 * (1 + (13 + adRate) / 100) + 0.54 + 1.6).toFixed(2)}`}
@@ -1732,15 +1737,18 @@ export default function Lieferanten() {
                             />
                           </div>
                           {/* Gewinn */}
-                          <div style={{ textAlign: "right" }}>
+                          <div className="stele-variant-stat">
+                            <div className="stele-variant-stat-label">Gewinn</div>
                             {varProfit !== null
                               ? <span style={{ fontSize: 12, fontWeight: 800, color: varProfit >= 1.6 ? "#16A34A" : varProfit >= 0 ? "#F59E0B" : "#DC2626" }}>{varProfit >= 0 ? "+" : ""}{varProfit.toFixed(2)} €</span>
                               : <span style={{ color: "#CBD5E1", fontSize: 11 }}>–</span>
                             }
                           </div>
                           {/* Lager */}
-                          <div style={{ textAlign: "right", fontSize: 11, color: v.stock === 0 ? "#DC2626" : "#64748B", fontWeight: v.stock === 0 ? 700 : 400 }}>
+                          <div className="stele-variant-stat" style={{ fontSize: 11, color: v.stock === 0 ? "#DC2626" : "#64748B", fontWeight: v.stock === 0 ? 700 : 400 }}>
+                            <div className="stele-variant-stat-label">Lager</div>
                             {v.stock !== undefined ? (v.stock === 0 ? "0 ❌" : v.stock) : "–"}
+                          </div>
                           </div>
                           </div>
                           {/* Herkunft / Zoll pro Variante — Versand ist zentral oben in der Preiskalkulation (P-69) */}

@@ -1041,7 +1041,7 @@ export default function Produkte() {
         )}
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+        <div className="stele-grid-4" style={{ gap: 10, marginBottom: 20 }}>
           {[
             { label: "Gesamt", value: stats.total, color: "#8B5CF6", bg: "#F5F3FF" },
             { label: "eBay aktiv", value: stats.listed, color: "#16A34A", bg: "#F0FDF4" },

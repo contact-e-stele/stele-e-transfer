@@ -305,3 +305,85 @@
     display: none;
   }
 }
+
+/* ---- Responsive Grid-Layouts (P-76 Phase 2) ---- */
+.stele-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.stele-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.stele-grid-4 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+}
+
+@media (max-width: 768px) {
+  .stele-grid-3,
+  .stele-grid-4 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .stele-grid-2,
+  .stele-grid-3,
+  .stele-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Responsive Varianten-Preistabelle (P-76 Phase 3) ---- */
+.stele-variant-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.stele-variant-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.stele-variant-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 2 1 300px;
+  justify-content: flex-end;
+}
+
+.stele-variant-stat {
+  flex: 1 1 64px;
+  min-width: 64px;
+  text-align: right;
+}
+
+.stele-variant-stat-label {
+  display: none;
+  font-size: 9px;
+  font-weight: 700;
+  color: #94A3B8;
+  text-transform: uppercase;
+  text-align: right;
+}
+
+@media (max-width: 480px) {
+  .stele-variant-header {
+    display: none !important;
+  }
+  .stele-variant-stat-label {
+    display: block;
+  }
+  .stele-variant-stats {
+    justify-content: space-between;
+  }
+}

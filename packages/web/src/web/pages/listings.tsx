@@ -657,7 +657,7 @@ export default function Listings() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 20 }}>
+        <div className="stele-grid-4" style={{ gap: 8, marginBottom: 20 }}>
           {[
             { label: "Gesamt", value: listings.length, color: "#8B5CF6", bg: "#F5F3FF", icon: <Package size={16} color="#8B5CF6" /> },
             { label: "Verknüpft", value: linked, color: "#16A34A", bg: "#F0FDF4", icon: <Link2 size={16} color="#16A34A" /> },
@@ -749,7 +749,7 @@ export default function Listings() {
         {/* Erweiterte Filter Panel */}
         {showAdvanced && (
           <div style={{ background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <div className="stele-grid-3" style={{ gap: 12 }}>
               {/* Verkäufe */}
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Verkäufe</div>

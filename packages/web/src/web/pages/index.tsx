@@ -468,7 +468,7 @@ export default function Index() {
               <span style={{ fontWeight: 700, fontSize: 16, color: bewertung.color }}>{bewertung.label}</span>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+            <div className="stele-grid-2" style={{ gap: 12, marginBottom: 16 }}>
               <div style={{ background: "#fff", borderRadius: 16, padding: 18, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
                   <Euro size={16} color="#3B82F6" />
@@ -659,7 +659,7 @@ export default function Index() {
           {priceCheckResult && (
             <div>
               {/* Zusammenfassung */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+              <div className="stele-grid-3" style={{ gap: 8, marginBottom: 14 }}>
                 {[
                   { label: "Geprüft", value: priceCheckResult.results.filter(r => r.status !== "skipped").length, color: "#8B5CF6", bg: "#F5F3FF" },
                   { label: "Geändert", value: priceCheckResult.results.filter(r => r.status === "changed").length, color: "#F59E0B", bg: "#FFFBEB" },
