@@ -1,6 +1,8 @@
 // AliExpress URL Scraper — DS API (primary, instant) + Playwright fallback + HTML fallbacks
 // Priority: 1) AliExpress DS API (aliexpress.ds.product.get) → 2) Playwright → 3) HTML
 
+import { getFreightCost } from './aliexpress-api';
+
 // Attribut-Namen die NICHT als Varianten-Gruppe gespeichert werden sollen
 const VARIANT_ATTR_BLACKLIST = new Set([
   'Ships From', 'ships from', 'Ship From', 'Versandort', 'Herstellungsland',
@@ -322,7 +324,15 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
 
     const seller = detail.ae_store_info?.store_name || '';
 
-    console.log(`[DS API] Erfolg: "${title.slice(0, 40)}" | ${variantPrices.length} Varianten | ${price} | shipsFrom=${shipsFrom}`);
+    // Versandkosten (P-69) — dieser DS-API-Pfad lief bislang ohne Frachtabfrage, obwohl er
+    // in der Praxis häufig der tatsächlich erfolgreiche Pfad ist (getAliProductByApi schlägt
+    // pro Produkt öfter fehl, z.B. SHIP_TO_COUNTRY_PROHIBITED, und scrapeAliExpressUrl landet
+    // dann hier). Ohne diese Abfrage blieb Versand für alle darüber importierten Produkte leer.
+    const shippingCost = variantPrices.length > 0
+      ? await getFreightCost(productId, variantPrices[0].skuId, accessToken)
+      : undefined;
+
+    console.log(`[DS API] Erfolg: "${title.slice(0, 40)}" | ${variantPrices.length} Varianten | ${price} | shipsFrom=${shipsFrom} | Versand: ${shippingCost ?? 'unbekannt'}`);
 
     return {
       title,
@@ -338,6 +348,7 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
       gpsr: undefined, // DS API liefert kein HTML — GPSR kommt aus HTML-Scraper falls DS API nicht reicht
       reviewCount,
       rating,
+      shippingCost,
     };
   } catch (e) {
     console.log(`[DS API] Fehler: ${e}`);
