@@ -225,7 +225,7 @@ export default function Bestellungen() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+        <div className="stele-grid-4" style={{ gap: 8, marginBottom: 8 }}>
           {[
             { label: "Gesamt", value: stats.total, color: "#8B5CF6", bg: "#F5F3FF", icon: <Package size={16} color="#8B5CF6" /> },
             { label: "Offen", value: stats.open, color: "#DC2626", bg: "#FEF2F2", icon: <Clock size={16} color="#DC2626" /> },

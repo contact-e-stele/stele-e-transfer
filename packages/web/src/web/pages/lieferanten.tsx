@@ -1519,7 +1519,7 @@ export default function Lieferanten() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Preiskalkulation</span>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div className="stele-grid-2" style={{ gap: 10, marginBottom: 10 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Einkauf (€)</label>
                   <input type="number" step="0.01" placeholder="0.00" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} style={{
@@ -1635,7 +1635,7 @@ export default function Lieferanten() {
                   borderRadius: 12, padding: "14px 16px",
                   border: `1.5px solid ${gewinn >= 0 ? "#BBF7D0" : "#FECACA"}`,
                 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+                  <div className="stele-grid-3" style={{ gap: 8, textAlign: "center" }}>
                     {[
                       { label: `Gebühr (${13 + adRate}%)`, value: `−${ebayFee.toFixed(2)} €`, color: "#64748B" },
                       { label: "Gewinn", value: `${gewinn >= 0 ? "+" : ""}${gewinn.toFixed(2)} €`, color: gewinn >= 0 ? "#16A34A" : "#DC2626" },
