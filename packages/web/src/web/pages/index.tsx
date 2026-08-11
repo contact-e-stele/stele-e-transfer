@@ -241,7 +241,7 @@ export default function Index() {
         </div>
 
         {/* Eingabe-Card mit Ampel */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 16, alignItems: "flex-start" }}>
+        <div className="stele-preise-row" style={{ marginBottom: 16 }}>
           {/* Felder */}
           <div style={{
             flex: 1, background: "#fff", borderRadius: 20, padding: 24,
