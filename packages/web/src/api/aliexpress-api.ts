@@ -267,7 +267,7 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
 // logistics_info_dto enthält nur delivery_time/ship_to_country). Versandpreis kommt
 // über die separate Dropshipper-Methode aliexpress.ds.freight.query, die pro SKU
 // die vom Käufer zu zahlende Versandoption(en) inkl. Preis zurückgibt.
-async function getFreightCost(productId: string, skuId: string, accessToken: string): Promise<number | undefined> {
+export async function getFreightCost(productId: string, skuId: string, accessToken: string): Promise<number | undefined> {
   try {
     const params: Record<string, string> = {
       app_key: APP_KEY,
