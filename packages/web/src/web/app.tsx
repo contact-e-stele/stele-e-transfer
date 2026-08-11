@@ -11,75 +11,99 @@ import Einstellungen from "./pages/einstellungen";
 import Login from "./pages/login";
 import { Provider } from "./components/provider";
 import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
-import { LogOut } from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
+
+// Reihenfolge: Preise → Suche → Import → Produkte → Listings → Retouren
+const NAV_TABS = [
+  { path: "/",            label: "💰",  title: "Preise"    },
+  { path: "/suche",       label: "🔍",  title: "Suche"     },
+  { path: "/lieferanten", label: "📦",  title: "Import"    },
+  { path: "/produkte",    label: "🗂️",  title: "Produkte" },
+  { path: "/listings",    label: "🛒",  title: "Listings"  },
+  { path: "/bestellungen", label: "📬", title: "Bestell."  },
+  { path: "/retouren",    label: "🔄",  title: "Retouren"  },
+  { path: "/einstellungen", label: "⚙️", title: "Einst."  },
+];
 
 function TabNav() {
   const [location, setLocation] = useLocation();
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  const tabBase: React.CSSProperties = {
-    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-    padding: "9px 10px", borderRadius: 10, border: "none",
-    fontSize: 12, fontWeight: 600, cursor: "pointer",
-    fontFamily: "'Poppins', sans-serif", transition: "all 0.2s",
-    flex: 1,
-  };
+  // Drawer bei Routenwechsel schließen
+  useEffect(() => {
+    setIsDrawerOpen(false);
+  }, [location]);
 
-  const activeTab: React.CSSProperties = {
-    ...tabBase,
-    background: "#fff",
-    color: "#0F172A",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
-  };
+  // Drawer per Escape schließen
+  useEffect(() => {
+    if (!isDrawerOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDrawerOpen]);
 
-  const inactiveTab: React.CSSProperties = {
-    ...tabBase,
-    background: "transparent",
-    color: "#64748B",
-  };
-
-  // Reihenfolge: Preise → Suche → Import → Produkte → Listings → Retouren
-  const tabs = [
-    { path: "/",            label: "💰",  title: "Preise"    },
-    { path: "/suche",       label: "🔍",  title: "Suche"     },
-    { path: "/lieferanten", label: "📦",  title: "Import"    },
-    { path: "/produkte",    label: "🗂️",  title: "Produkte" },
-    { path: "/listings",    label: "🛒",  title: "Listings"  },
-    { path: "/bestellungen", label: "📬", title: "Bestell."  },
-    { path: "/retouren",    label: "🔄",  title: "Retouren"  },
-    { path: "/einstellungen", label: "⚙️", title: "Einst."  },
-  ];
+  const activeTitle = NAV_TABS.find(t => t.path === location)?.title ?? "Menü";
 
   return (
-    <div style={{
-      position: "sticky", top: 0, zIndex: 100,
-      background: "#F1F5F9",
-      padding: "8px",
-      borderBottom: "1px solid #E2E8F0",
-    }}>
-      <div style={{
-        maxWidth: 1100, margin: "0 auto",
-        display: "flex", gap: 4,
-        background: "#E2E8F0",
-        borderRadius: 14, padding: 4,
-      }}>
-        {tabs.map(tab => (
+    <div className="stele-tabnav">
+      <div className="stele-tabnav-inner">
+        <div className="stele-tabnav-row">
+          {NAV_TABS.map(tab => (
+            <button
+              key={tab.path}
+              className={`stele-tab${location === tab.path ? " active" : ""}`}
+              onClick={() => setLocation(tab.path)}
+              title={tab.title}
+            >
+              <span>{tab.label}</span>
+              <span className="stele-tab-label">{tab.title}</span>
+            </button>
+          ))}
+        </div>
+        <button
+          className="stele-hamburger-btn"
+          onClick={() => setIsDrawerOpen(true)}
+          aria-expanded={isDrawerOpen}
+          aria-label="Menü öffnen"
+        >
+          <Menu size={16} />
+          <span>{activeTitle}</span>
+        </button>
+      </div>
+      <div className="stele-tab-version">v1.0</div>
+
+      <div
+        className={`stele-drawer-overlay${isDrawerOpen ? " open" : ""}`}
+        onClick={() => setIsDrawerOpen(false)}
+        aria-hidden="true"
+      />
+      <nav
+        className={`stele-drawer${isDrawerOpen ? " open" : ""}`}
+        aria-hidden={!isDrawerOpen}
+      >
+        <div className="stele-drawer-header">
+          <span>Menü</span>
+          <button
+            className="stele-drawer-close"
+            onClick={() => setIsDrawerOpen(false)}
+            aria-label="Menü schließen"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        {NAV_TABS.map(tab => (
           <button
             key={tab.path}
-            style={location === tab.path ? activeTab : inactiveTab}
+            className={`stele-drawer-item${location === tab.path ? " active" : ""}`}
             onClick={() => setLocation(tab.path)}
-            title={tab.title}
           >
-            <span>{tab.label}</span>
-            <span style={{ fontSize: 11 }}>{tab.title}</span>
+            <span className="stele-drawer-item-icon">{tab.label}</span>
+            <span>{tab.title}</span>
           </button>
         ))}
-      </div>
-      <div style={{ textAlign: "center", marginTop: 3 }}>
-        <span style={{
-          fontSize: 9, fontWeight: 700, color: "#94A3B8", letterSpacing: 1,
-          fontFamily: "monospace",
-        }}>v1.0</span>
-      </div>
+      </nav>
     </div>
   );
 }
