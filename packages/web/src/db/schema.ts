@@ -40,6 +40,8 @@ export const products = sqliteTable('products', {
   gpsrCity: text('gpsr_city'),               // PLZ + Stadt
   gpsrEmail: text('gpsr_email'),             // E-Mail
   gpsrPhone: text('gpsr_phone'),             // Telefon
+  manualPdfUrl: text('manual_pdf_url'),       // Handbuch/Zertifikat-Upload — nie automatisch befüllt, nur manuell
+  certificationNote: text('certification_note'), // Freitext-Notiz zu Zertifizierungen (z.B. OEKO-TEX/REACH) — nie automatisch befüllt
   handlingTimeDays: integer('handling_time_days').default(10), // Bearbeitungszeit in Tagen (eBay Fulfillment Policy)
   shipsFrom: text('ships_from'),       // Versandland (z.B. 'DE', 'China') — gesetzt beim AliExpress Import
   createdAt: text('created_at').default(sql`(datetime('now'))`),

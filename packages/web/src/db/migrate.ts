@@ -34,6 +34,9 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN gpsr_city TEXT`,
   `ALTER TABLE products ADD COLUMN gpsr_email TEXT`,
   `ALTER TABLE products ADD COLUMN gpsr_phone TEXT`,
+  // Handbuch/Zertifikat-Upload + Freitextnotiz — rein manuell, kein Automatismus (GPSR/Handbuch-Vereinfachung)
+  `ALTER TABLE products ADD COLUMN manual_pdf_url TEXT`,
+  `ALTER TABLE products ADD COLUMN certification_note TEXT`,
   // Preis-Historie Tabelle
   `CREATE TABLE IF NOT EXISTS price_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
