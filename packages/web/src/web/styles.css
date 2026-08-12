@@ -193,8 +193,11 @@
   font-family: monospace;
 }
 
-/* Tablet: Icons-only, Text-Labels ausblenden */
-@media (max-width: 768px) {
+/* Tablet: Icons-only, Text-Labels ausblenden.
+   1200px statt vormals 768px (iPad-Portrait-Breite) — Android-Tablets liegen im
+   CSS-Viewport oft bei 800-1280px und fielen mit 768px fälschlich in die
+   Desktop-Kategorie (volle Icon+Text-Labels, dadurch abgeschnittene Tabs). */
+@media (max-width: 1200px) {
   .stele-tab-label {
     display: none;
   }
