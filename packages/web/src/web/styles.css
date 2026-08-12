@@ -193,21 +193,11 @@
   font-family: monospace;
 }
 
-/* Tablet: Icons-only, Text-Labels ausblenden.
-   1200px statt vormals 768px (iPad-Portrait-Breite) — Android-Tablets liegen im
-   CSS-Viewport oft bei 800-1280px und fielen mit 768px fälschlich in die
-   Desktop-Kategorie (volle Icon+Text-Labels, dadurch abgeschnittene Tabs). */
+/* Tablet + Handy: Tab-Zeile durch Hamburger ersetzen, Drawer verfügbar.
+   Bei reinen Icons (vormals ab 1200px) wurden 8 Tabs auf Tablet-Breite zu klein
+   und schwer erkennbar — daher einheitlich Hamburger+Drawer bis 1200px, wie
+   zuvor nur für Handy (480px). Volle Icon+Text-Labels bleiben Desktop (>1200px) vorbehalten. */
 @media (max-width: 1200px) {
-  .stele-tab-label {
-    display: none;
-  }
-  .stele-tab {
-    gap: 0;
-  }
-}
-
-/* Handy: Tab-Zeile durch Hamburger ersetzen, Drawer verfügbar */
-@media (max-width: 480px) {
   .stele-tabnav-row {
     display: none;
   }
@@ -301,8 +291,8 @@
   border-left-color: #8B5CF6;
 }
 
-/* Ab Tablet aufwärts wird der Drawer nicht benötigt */
-@media (min-width: 481px) {
+/* Ab Desktop-Breite wird der Drawer nicht benötigt */
+@media (min-width: 1201px) {
   .stele-drawer-overlay,
   .stele-drawer {
     display: none;
