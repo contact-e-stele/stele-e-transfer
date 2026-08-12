@@ -2007,6 +2007,8 @@ const app = new Hono()
       if ('gpsrCity'    in body) allowed.gpsrCity    = body.gpsrCity    as string | null;
       if ('gpsrEmail'   in body) allowed.gpsrEmail   = body.gpsrEmail   as string | null;
       if ('gpsrPhone'   in body) allowed.gpsrPhone   = body.gpsrPhone   as string | null;
+      if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
+      if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
       if (Object.keys(allowed).length === 0) return c.json({ error: 'Keine bekannten Felder' }, 400);
       allowed.updatedAt = new Date().toISOString();

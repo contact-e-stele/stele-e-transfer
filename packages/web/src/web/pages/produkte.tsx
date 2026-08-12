@@ -8,6 +8,7 @@ import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
   TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye, ShieldCheck, Edit2,
+  FileText, Upload,
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
@@ -58,6 +59,8 @@ interface Product {
   gpsrCity: string | null;
   gpsrEmail: string | null;
   gpsrPhone: string | null;
+  manualPdfUrl: string | null;
+  certificationNote: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -404,8 +407,38 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
   const [phone, setPhone] = useState(product.gpsrPhone ?? "");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [pdfUrl, setPdfUrl] = useState(product.manualPdfUrl ?? "");
+  const [certNote, setCertNote] = useState(product.certificationNote ?? "");
+  const [uploading, setUploading] = useState(false);
 
   const hasFallback = !product.gpsrName;
+
+  const handlePdfUpload = async (file: File) => {
+    setUploading(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch("/api/upload-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, filename: `handbuch-${product.id}` }),
+      });
+      const data = await res.json() as { url?: string; error?: string };
+      if (data.url) {
+        setPdfUrl(data.url);
+      } else {
+        alert("Upload fehlgeschlagen: " + (data.error ?? "unbekannt"));
+      }
+    } catch (e) {
+      alert("Upload fehlgeschlagen: " + String(e));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -420,6 +453,8 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
           gpsrCity: city.trim() || null,
           gpsrEmail: email.trim() || null,
           gpsrPhone: phone.trim() || null,
+          manualPdfUrl: pdfUrl.trim() || null,
+          certificationNote: certNote.trim() || null,
         }),
       });
       if (res.ok) {
@@ -528,6 +563,57 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
               onChange={e => setPhone(e.target.value)}
               placeholder="z.B. +49 611 12345"
               style={fieldStyle}
+            />
+          </div>
+        </div>
+
+        {/* Handbuch / Zertifizierung — rein manuell, nie automatisch befüllt */}
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1.5px solid #F1F5F9" }}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: "#0F172A", display: "flex", alignItems: "center", gap: 6 }}>
+            <FileText size={15} color="#0EA5E9" /> Handbuch / Zertifizierungsnachweis
+          </h3>
+
+          {!pdfUrl && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6, marginBottom: 10,
+              background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10,
+              padding: "8px 12px", fontSize: 11, fontWeight: 700, color: "#92400E",
+            }}>
+              <AlertTriangle size={13} /> Unverifiziert — kein Handbuch/Nachweis hochgeladen
+            </div>
+          )}
+
+          {pdfUrl && (
+            <a href={pdfUrl} target="_blank" rel="noreferrer" style={{
+              display: "flex", alignItems: "center", gap: 6, marginBottom: 10,
+              background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10,
+              padding: "8px 12px", fontSize: 12, fontWeight: 700, color: "#166534", textDecoration: "none",
+            }}>
+              <CheckCircle size={13} /> Datei hochgeladen — ansehen
+            </a>
+          )}
+
+          <label style={{
+            display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 10,
+            padding: "8px 14px", borderRadius: 10, background: "#F8FAFC", color: "#0F172A",
+            fontSize: 12, fontWeight: 700, fontFamily: "inherit", border: "1.5px solid #E2E8F0", cursor: "pointer",
+          }}>
+            {uploading ? <Loader size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Upload size={13} />}
+            {pdfUrl ? "Datei ersetzen" : "Handbuch/Nachweis hochladen (PDF/Bild)"}
+            <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) handlePdfUpload(f); }} />
+          </label>
+
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>
+              Zertifizierungsnotiz (z.B. OEKO-TEX/REACH) — wird nie automatisch befüllt
+            </label>
+            <textarea
+              value={certNote}
+              onChange={e => setCertNote(e.target.value)}
+              placeholder="z.B. OEKO-TEX Zertifikat liegt vor, Nr. ..., geprüft am ..."
+              rows={3}
+              style={{ ...fieldStyle, resize: "vertical" }}
             />
           </div>
         </div>
