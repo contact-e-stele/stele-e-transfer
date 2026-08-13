@@ -1655,6 +1655,19 @@ export default function Lieferanten() {
             {product && (product.variantPrices ?? []).length > 0 && (() => {
               const vp = product.variantPrices!;
               const minP = Math.min(...vp.map(v => v.price));
+              // P-75: Gleiche Formel wie der Einzel-Varianten-Button unten (inkl. P-74 ,95-Rundung) —
+              // hier einmal extrahiert, damit "Alle übernehmen" und Einzel-Button garantiert identisch rechnen.
+              const recommendedFor = (v: VariantPrice): number => {
+                const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
+                const versandV = parseFloat(shippingCost.replace(",", ".")) || 0;
+                const sendungswertV = v.price + versandV;
+                const zollManuellV = parseFloat((variantZollManuell[v.skuId] ?? "").replace(",", ".")) || 0;
+                const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
+                const wahrerEinkaufV = v.price + versandV + zollV;
+                const feeRate = (13 + adRate) / 100 * 1.19;
+                const rawMinV = (wahrerEinkaufV + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate);
+                return roundToNearest95(rawMinV);
+              };
               return (
                 <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
@@ -1666,6 +1679,24 @@ export default function Lieferanten() {
                       {vp.length} Varianten · ab {minP.toFixed(2)} €
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVariantEbayPrices(prev => {
+                        const next = { ...prev };
+                        vp.forEach(v => { next[v.skuId] = recommendedFor(v).toFixed(2); });
+                        return next;
+                      });
+                    }}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+                      gap: 8, padding: "10px 0", borderRadius: 10, border: "1.5px solid #BBF7D0",
+                      background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 13,
+                      cursor: "pointer", fontFamily: "inherit", marginBottom: 14,
+                    }}
+                  >
+                    <TrendingDown size={15} /> Alle Preisvorschläge übernehmen (≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn)
+                  </button>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {/* Header */}
                     <div className="stele-variant-header" style={{ display: "grid", gridTemplateColumns: "40px 1fr 120px 80px 80px 70px", gap: 8, padding: "0 8px", alignItems: "center" }}>
@@ -1814,13 +1845,7 @@ export default function Lieferanten() {
                             <button
                               type="button"
                               onClick={() => {
-                                // Gleiche Formel wie beim Einzelprodukt, aber mit wahrerEinkaufV (inkl. Versand + Zoll dieser Variante).
-                                // P-74: auf die nächste ,95-Endung runden (auch abrunden möglich) — bewusst
-                                // knapp unter dem rechnerischen Mindestpreis möglich, da manuell ausgelöst.
-                                const feeRate = (13 + adRate) / 100 * 1.19;
-                                const rawMinV = (wahrerEinkaufV + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate);
-                                const recommendedV = roundToNearest95(rawMinV);
-                                setVariantEbayPrices(prev => ({ ...prev, [v.skuId]: recommendedV.toFixed(2) }));
+                                setVariantEbayPrices(prev => ({ ...prev, [v.skuId]: recommendedFor(v).toFixed(2) }));
                               }}
                               style={{
                                 fontSize: 10, fontWeight: 700, color: "#16A34A", background: "#F0FDF4",
