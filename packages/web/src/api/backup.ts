@@ -99,6 +99,8 @@ async function generateCodeZip(): Promise<Buffer> {
     'packages/web/tsconfig.json',
     'packages/web/drizzle.config.ts',
     'packages/web/vite.config.ts',
+    'docs/ARCHITECTURE.md', // P-33: aktuelle Architektur-Doku, damit AGENT-RESTORE.md darauf verweisen kann statt Fakten zu duplizieren
+    'P-UEBERSICHT.md',
   ];
   for (const rel of rootFiles) {
     const full = path.join(rootDir, rel);
@@ -156,86 +158,20 @@ eBay API: Trading API + Inventory API (OAuth User Token)
 
 ---
 
-## ARCHITEKTUR
+## ARCHITEKTUR, DATENBANK-SCHEMA, INTEGRATIONEN, BEKANNTE SCHWACHSTELLEN
 
-\`\`\`
-stele-app/
-├── packages/
-│   └── web/
-│       ├── src/
-│       │   ├── server.ts          ← Hono Server Entry Point
-│       │   ├── db/
-│       │   │   ├── index.ts       ← Turso DB Connection
-│       │   │   └── schema.ts      ← Drizzle Schema (products, priceHistory)
-│       │   ├── api/
-│       │   │   ├── index.ts       ← alle API-Routes registriert
-│       │   │   ├── aliexpress.ts  ← AliExpress Scraper (ScrapingAnt)
-│       │   │   ├── aliexpress-api.ts ← AliExpress DS API (OAuth)
-│       │   │   ├── ebay.ts        ← eBay Listing API
-│       │   │   ├── price-monitor.ts ← Preis-Überwachung Cron
-│       │   │   ├── backup.ts      ← dieser Backup-Service
-│       │   │   ├── backup-cron.ts ← Backup CLI runner
-│       │   │   ├── mailer.ts      ← Resend E-Mail Wrapper
-│       │   │   └── auth.ts        ← Login (einfaches Passwort-Auth)
-│       │   └── web/
-│       │       ├── pages/
-│       │       │   ├── dashboard.tsx   ← Tab 1: Übersicht
-│       │       │   ├── lieferanten.tsx ← Tab 2: AliExpress Produkt importieren
-│       │       │   ├── produkte.tsx    ← Tab 3: Produktverwaltung
-│       │       │   ├── listings.tsx    ← Tab 4: eBay Listings
-│       │       │   ├── einstellungen.tsx ← Tab 6: API-Keys etc.
-│       │       │   ├── suche.tsx       ← AliExpress Suche
-│       │       │   ├── retouren.tsx    ← Retouren-Workflow
-│       │       │   └── autods.tsx      ← AutoDS CSV Export
-│       │       └── App.tsx / main.tsx / index.html
-│       ├── package.json
-│       ├── tsconfig.json
-│       ├── vite.config.ts
-│       └── drizzle.config.ts
-└── package.json
-\`\`\`
-
----
-
-## DATENBANK-SCHEMA
-
-### Tabelle: products
-\`\`\`sql
-CREATE TABLE products (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  asin             TEXT NOT NULL UNIQUE,     -- intern: ali_<timestamp>
-  source_url       TEXT,                      -- AliExpress URL
-  amazon_url       TEXT NOT NULL,             -- legacy alias für source_url
-  title            TEXT NOT NULL,             -- Original AliExpress Titel
-  generated_title  TEXT NOT NULL,             -- KI-generierter eBay Titel (≤80 Zeichen)
-  html_description TEXT NOT NULL,             -- HTML für eBay Vorlage
-  bullets          TEXT NOT NULL,             -- JSON Array: Bullet Points
-  variants         TEXT NOT NULL,             -- JSON Array: [{name, values[]}]
-  description      TEXT,
-  images           TEXT,                      -- JSON Array: Bild-URLs
-  buy_price        REAL,                      -- Einkaufspreis €
-  sell_price       REAL,                      -- Verkaufspreis €
-  last_price_check TEXT,                      -- ISO datetime
-  price_changed    INTEGER DEFAULT 0,         -- 0=nein, 1=ja (Boolean)
-  specs            TEXT,                      -- JSON Object: Produktspezifikationen
-  ebay_listing_id  TEXT,
-  ebay_status      TEXT DEFAULT 'none',       -- none | listed | error
-  ebay_error       TEXT,
-  created_at       TEXT DEFAULT (datetime('now')),
-  updated_at       TEXT DEFAULT (datetime('now'))
-);
-\`\`\`
-
-### Tabelle: price_history
-\`\`\`sql
-CREATE TABLE price_history (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_id  INTEGER NOT NULL,
-  price       REAL NOT NULL,
-  source      TEXT DEFAULT 'aliexpress',
-  checked_at  TEXT DEFAULT (datetime('now'))
-);
-\`\`\`
+> Diese Angaben standen früher hier hart einprogrammiert und sind mit der Zeit veraltet und
+> widersprüchlich zum echten Code geworden (siehe Repo-Thema P-33 — genau diese Datei war der
+> Auslöser). Um das nicht zu wiederholen, verweist diese Anleitung ab sofort auf die gepflegte
+> Doku statt Fakten zu duplizieren:
+>
+> **→ \`docs/ARCHITECTURE.md\`** (liegt im beiliegenden Code-ZIP unter genau diesem Pfad)
+>
+> Dort stehen: Architektur-Diagramm, alle Backend-Routen/Frontend-Tabs, DB-Schema, externe
+> Integrationen (eBay, AliExpress, Google Drive, Resend, Gemini), Auth-Modell und bekannte
+> Schwachstellen — mit Datumsstempel des letzten manuellen Updates.
+>
+> Aktuelle Feature-Historie/Roadmap: \`P-UEBERSICHT.md\` (ebenfalls im Code-ZIP).
 
 ---
 
@@ -309,148 +245,14 @@ git push origin main
 
 ---
 
-## WICHTIGE BUSINESS-LOGIK
+## FALLSTRICK — HONO basePath('api')
 
-### Preisformel (eBay)
-\`\`\`
-Gebühren = 18% (13% eBay + 5% Anzeigen)
-Mindestgewinn = 1,60€
-sellPrice = buyPrice / (1 - 0.18) + 1.60
-\`\`\`
+- Hono ist mit .basePath('api') konfiguriert — jede Route ist unter /api/xyz erreichbar, NICHT unter /xyz
+- server.ts leitet nur /api/* und /backup/* an Hono weiter — neue Non-API-Routen brauchen dort einen eigenen Eintrag
+- GitHub Actions Cron ruft /api/backup/run und /api/orders/check auf (mit X-Backup-Key Header, nicht Session-Cookie)
 
-### AliExpress → eBay Workflow
-1. URL in "Lieferanten"-Tab eingeben
-2. ScrapingAnt scrapt AliExpress Seite
-3. Gemini generiert Titel (≤80 Zeichen) + HTML-Beschreibung + Bullets
-4. Benutzer prüft + bearbeitet Varianten manuell (Scraper liefert oft keine Varianten)
-5. "Bei eBay listen" → eBay Inventory API + Offer erstellen
-6. Preis-Cron (täglich) prüft AliExpress-Preis → passt eBay-Preis an
-
-### eBay Listing Details
-- Kategorie: wird per eBay API automatisch vorgeschlagen
-- Merchant Location: wird automatisch erstellt ("default", Wiesbaden)
-- Pflichtaspekte: werden per eBay getItemAspectsForCategory API befüllt
-- Varianten-Mapping: farbe→Rahmenfarbe, größe→Größe etc. (VARIANT_GROUP_MAP in ebay.ts)
-
-### Backup-Email
-- Von: onboarding@resend.dev
-- An: contact@stele-e-transfer.com
-- 2x täglich: 15:00, 23:35 Uhr
-
----
-
-## EXTERNE DIENSTE & ACCOUNTS
-
-| Dienst | URL | Zweck |
-|--------|-----|-------|
-| Render | render.com | Hosting/Deploy |
-| Turso | app.turso.tech | Datenbank |
-| Resend | resend.com | E-Mail |
-| ScrapingAnt | scrapingant.com | AliExpress Scraping |
-| Google AI Studio | aistudio.google.com | Gemini API |
-| eBay Developer | developer.ebay.com | eBay API |
-| AliExpress Open Platform | open.aliexpress.com | DS API |
-
----
-
-## BEKANNTE PROBLEME (Stand Backup-Datum)
-
-1. **AliExpress Scraper** — Bot-Schutz blockiert Server-IPs → Varianten oft leer → User trägt manuell ein
-2. **shipsFrom-Detection** — Scraper kann Versandort nicht lesen → TODO nach Go-Live
-3. **AliExpress DS API** — OAuth access_token noch nicht eingerichtet (ALIEXPRESS_ACCESS_TOKEN in Render setzen)
-
----
-
-## BEKANNTE FALLSTRICKE — Fehler die uns im Kreis drehen
-
-> Immer zuerst lesen bevor Änderungen gemacht werden!
-
-### HONO basePath('api') — ALLE API-Routen laufen unter /api/...
-- Hono ist mit .basePath('api') konfiguriert
-- Jede Route app.get('/xyz', ...) ist unter /api/xyz erreichbar — NICHT unter /xyz
-- Beispiel: /backup/test ist FALSCH, /api/backup/test ist RICHTIG
-- GitHub Actions Cron ruft /api/backup/run auf
-- server.ts leitet nur /api/* und /backup/* an Hono weiter
-
-### Template Literals in backup.ts — Backticks NICHT escapen
-- Die generateAgentRestoreMd() Funktion ist ein Template Literal
-- Der schliessende Backtick am Ende DARF NICHT escaped werden (sonst schliesst der String nie)
-- Symptom: Build lokal OK, aber Render crasht mit exit status 1
-
-### server.ts routing — Nur /api/* geht an Hono (Standard)
-- Standardmaessig nur: if (url.pathname.startsWith('/api')) an Hono
-- Neue Non-API-Routen in Hono brauchen auch Eintrag in server.ts
-- Aktuell: /api und /backup werden weitergeleitet
-
-### AliExpress Suche — shipFromCountry NICHT in Suchergebnissen
-- ScrapingAnt scrapt de.aliexpress.com Suchergebnisse
-- shipFromCountry ist in Suchergebnis-Items NICHT enthalten
-- EU-Filter nur beim Import via ds.product.get moeglich
-
-### AliExpress affiliate.product.query — PERMANENT BLOCKIERT
-- Fehler: InsufficientPermission
-- Nicht fixbar ohne neue AliExpress App-Genehmigung
-- Alternative: ScrapingAnt HTML-Scraping (deployed, funktioniert)
-
-### price-monitor.ts — shipsFrom-Fix noch offen
-- Wenn Scrape fehlschlaegt: shipsFrom=unbekannt → Produkt wird faelschlich uebersprungen
-- Fix: Nur ueberspringen wenn shipsFrom BESTAETIGT = China, nicht bei unbekannt
-
----
-
-## KI-KONTEXT — Integrations-Status & TODOs
-
-> Dieser Abschnitt hält den KI-Kontext zwischen Sessions aktuell.
-> Stand: \${isoDate}
-
-### API-Integrations Status
-
-| Integration | Status | Hinweis |
-|-------------|--------|---------|
-| eBay Trading/Inventory API | ✅ funktioniert | OAuth User Token, Listings erstellen OK |
-| AliExpress DS API \`ds.product.get\` | ✅ funktioniert | Produktdetails per product_id abrufbar |
-| AliExpress DS API \`ds.category.get\` | ✅ funktioniert | Kategorien abrufbar |
-| AliExpress DS API \`ds.recommend.feed.get\` | ⚠️ liefert 0 Ergebnisse | API antwortet, aber leere Liste |
-| AliExpress Affiliate \`affiliate.product.query\` | ❌ BLOCKIERT | InsufficientPermission — nicht fixbar ohne neue AliExpress-Genehmigung |
-| AliExpress Suche (ScrapingAnt) | ✅ deployed | Scrapt de.aliexpress.com, extrahiert itemList JSON, 60 Produkte/Suche |
-| ScrapingAnt API | ✅ aktiv | Key in Render ENV, für AliExpress HTML-Scraping |
-| Gemini API (Google) | ✅ funktioniert | Titel + HTML-Beschreibung + Bullets generieren |
-| Resend Email | ✅ funktioniert | contact@stele-e-transfer.com, Backup-Emails laufen |
-| Turso DB | ✅ funktioniert | libSQL, Drizzle ORM, tägl. Backup |
-
-### Wichtige Erkenntnisse
-
-- **ScrapingAnt Suche**: shipFromCountry NICHT in Suchergebnissen — nur via \`ds.product.get\` beim Import prüfbar
-- **AliExpress OAuth**: \`ALIEXPRESS_ACCESS_TOKEN\` muss in Render gesetzt werden für DS API
-- **AliExpress App Key**: \`535690\` — App Status: Online (seit 01.06.2026)
-- **Ecomsniper**: gekündigt (2026-06-13) — nicht mehr nutzen
-- **AutoDS**: gekündigt (2026-06-28) — nicht mehr nutzen
-- **Go-Live**: erreicht am 2026-06-29 ✅
-
-### Aktuelle TODOs (nach Go-Live)
-
-1. **Preisaktualisierung** — Cron-Job: AliExpress-Preis täglich prüfen → DB updaten → eBay-Preis anpassen
-2. **Vorschau-Modal editierbar** — Produkte-Tab: Titel-Input + Bullets-Textarea + Speichern → PATCH /products/:id
-3. **shipsFrom-Fix in price-monitor.ts** — nur bestätigte China-Produkte überspringen, nicht wenn Scrape fehlgeschlagen
-4. **ALIEXPRESS_ACCESS_TOKEN** — in Render.com setzen → DS API vollständig nutzen
-5. **eBay Kat-ID Workflow** — Kategorie-ID aus eBay Breadcrumb (_sacat=XXXXX) manuell eintragen
-6. **EU-Lager-Filter** — Suche/Import nur EU-Lager (DE + AT + CH + FR + NL + PL + CZ + BE + LU)
-
-### Abonnements
-
-| Tool | Status |
-|------|--------|
-| AutoDS Starter 400 | ❌ gekündigt (2026-06-28) |
-| Ecomsniper | ❌ gekündigt (2026-06-13) |
-| ScrapingAnt | ✅ aktiv |
-| Trackerbot | ✅ aktiv |
-
-### Letzte wichtige Commits
-
-- \`a6d0605\` — AliExpress Suche via ScrapingAnt scraping (2026-06-30)
-- \`3ee2e93\` — Suche-Tab Fallback UI (externe Links bei API-Fehler)
-- \`8ff6b9c\` — AliExpress Affiliate API Integration
-- \`99364ea\` — ALL Default-Einstellungen
+Alles Weitere (Business-Logik, Preisformel, Integrations-Status, TODOs, bekannte Probleme)
+siehe \`docs/ARCHITECTURE.md\` im Code-ZIP — wird dort gepflegt statt hier dupliziert.
 
 ---
 
