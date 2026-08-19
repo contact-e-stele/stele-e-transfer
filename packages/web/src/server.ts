@@ -1,6 +1,7 @@
 import app from "./api";
 import { startBackupScheduler } from "./api/backup";
 import { startPriceMonitor } from "./api/price-monitor";
+import { startOrderNotifier } from "./api/order-notifier";
 import { runMigrations } from "./db/migrate";
 import { runStartupCheck } from "./startup-check";
 
@@ -59,6 +60,9 @@ startBackupScheduler();
 
 // Preisüberwachung: alle 8h AliExpress-Preise prüfen, erster Check nach 2 Min (P-23)
 startPriceMonitor();
+
+// Neue-Bestellung-Benachrichtigung: alle 120 Min, 8–22 Uhr Berlin-Zeit
+startOrderNotifier();
 
 function getStaticFilePath(pathname: string) {
   const cleanPath = decodeURIComponent(pathname)

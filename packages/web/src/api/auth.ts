@@ -12,9 +12,10 @@ const SESSION_COOKIE = 'stele_session';
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 Tage
 
-// Separater Key für automatisierte Backup-Aufrufe (GitHub Actions Cron) —
+// Separater Key für automatisierte Backup-/Bestell-Check-Aufrufe (GitHub Actions Cron) —
 // der Cron-Call kann kein Browser-Session-Cookie mitschicken.
 const BACKUP_API_KEY = process.env.BACKUP_API_KEY || '';
+const CRON_KEY_PATHS = ['/backup/run', '/orders/check'];
 
 if (!SESSION_SECRET) {
   console.error('[auth] SESSION_SECRET ist nicht gesetzt — Login/Session-Prüfung ist deaktiviert und alle API-Aufrufe werden mit 500 abgelehnt, bis die Variable in Render gesetzt ist.');
@@ -65,9 +66,9 @@ export const authRouter = new Hono()
 
 // Prüft das signierte Session-Cookie bei JEDEM API-Aufruf — kein Cookie/ungültig = 401.
 export async function authMiddleware(c: Context, next: Next) {
-  // Automatisierter Backup-Trigger: eigener Key statt Session-Cookie, nur für /backup/run.
+  // Automatisierter Cron-Trigger (Backup, Bestell-Check): eigener Key statt Session-Cookie.
   // Alle anderen Routen bleiben unverändert hinter der normalen Session-Prüfung.
-  if (BACKUP_API_KEY && c.req.path.endsWith('/backup/run')) {
+  if (BACKUP_API_KEY && CRON_KEY_PATHS.some(p => c.req.path.endsWith(p))) {
     if (c.req.header('x-backup-key') === BACKUP_API_KEY) {
       await next();
       return;

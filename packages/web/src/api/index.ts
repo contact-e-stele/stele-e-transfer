@@ -921,6 +921,18 @@ const app = new Hono()
     }
   })
 
+  // ─── Neue-Bestellung-Benachrichtigung auslösen (GitHub Actions Cron, siehe order-notifier.ts) ────
+  .get('/orders/check', async (c) => {
+    try {
+      const { checkAndNotifyNewOrders } = await import('./order-notifier');
+      const force = c.req.query('force') === '1';
+      const result = await checkAndNotifyNewOrders({ force });
+      return c.json({ ok: true, ...result }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
+
   // ─── Bestellungs-Zusatzinfos speichern (AliExpress-Bestellnummer, Rechnung-URL, manuell versendet) ──
   .patch('/order-notes/:ebayOrderId', async (c) => {
     const ebayOrderId = c.req.param('ebayOrderId');
