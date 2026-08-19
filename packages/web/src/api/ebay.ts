@@ -1606,3 +1606,149 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
   return results;
 }
 
+// ─── Retouren (Post-Order API) ─────────────────────────────────────────────────
+// Doku-Hinweis: "This method is not supported in the Sandbox environment" —
+// im Sandbox-Modus (EBAY_SANDBOX=true) schlägt der Call daher erwartungsgemäß fehl.
+//
+// Feldpfade unten sind gegen die offizielle eBay-Referenz für
+// GET /post-order/v2/return/{returnId} geprüft. Für /return/search (Liste) ist
+// die exakte Response-Form (Wrapper-Key, evtl. abweichende Feldnamen) nicht
+// verifiziert — daher wird hier bewusst tolerant geparst: unbekannte/fehlende
+// Felder führen zu sinnvollen Fallbacks statt zu einem Absturz.
+
+export type ReturnStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED' | 'REFUNDED';
+
+export interface EbayReturn {
+  returnId: string;
+  orderId: string;
+  itemTitle: string;
+  itemImage: string | null;
+  buyerName: string;
+  reason: string;
+  status: ReturnStatus;
+  createdAt: string;
+  amount: number;
+  currency: string;
+}
+
+// Bekannte Rückgabegründe (summary.creationInfo.reason) — unbekannte Werte werden
+// stattdessen lesbar aus dem Rohwert generiert (Unterstriche → Leerzeichen, Title Case).
+const RETURN_REASON_LABELS: Record<string, string> = {
+  NO_LONGER_NEED_ITEM: 'Kein Bedarf mehr',
+  ORDERED_WRONG_ITEM: 'Falschen Artikel bestellt',
+  ITEM_DEFECTIVE: 'Artikel defekt',
+  ITEM_NOT_AS_DESCRIBED: 'Entspricht nicht der Beschreibung',
+  ITEM_DAMAGED: 'Artikel beschädigt',
+  ARRIVED_TOO_LATE: 'Zu spät angekommen',
+  MISSING_PARTS: 'Teile fehlen',
+  WRONG_ITEM_SENT: 'Falscher Artikel gesendet',
+  BETTER_PRICE_AVAILABLE: 'Besserer Preis gefunden',
+  ITEM_DOES_NOT_FIT: 'Passt nicht',
+  QUALITY_NOT_SATISFACTORY: 'Qualität nicht zufriedenstellend',
+  ITEM_NOT_RECEIVED: 'Artikel nicht erhalten',
+};
+
+// Bekannte Rückgabe-Kategorien (summary.creationInfo.reasonType)
+const RETURN_REASON_TYPE_LABELS: Record<string, string> = {
+  REMORSE: 'Käuferreue',
+  SNAD: 'Entspricht nicht der Beschreibung',
+  MONEY_BACK: 'Geld-zurück-Garantie',
+};
+
+function humanizeEnum(raw: string): string {
+  return raw.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function mapReturnReason(reason?: string, reasonType?: string): string {
+  const reasonLabel = reason ? (RETURN_REASON_LABELS[reason] ?? humanizeEnum(reason)) : undefined;
+  const typeLabel = reasonType ? (RETURN_REASON_TYPE_LABELS[reasonType] ?? humanizeEnum(reasonType)) : undefined;
+  if (reasonLabel && typeLabel && reasonLabel !== typeLabel) return `${reasonLabel} (${typeLabel})`;
+  return reasonLabel ?? typeLabel ?? 'Kein Grund angegeben';
+}
+
+// summary.state / summary.status → unser 4-Werte-Enum. Nur ein Beispielwert
+// ("CLOSED") war aus der Doku bekannt — daher per Schlüsselwort-Suche statt
+// exakter Enum-Liste, mit sicherem Fallback auf OPEN bei unbekanntem Wert.
+function mapReturnStatus(state?: string, status?: string, hasActualRefund?: boolean): ReturnStatus {
+  if (hasActualRefund) return 'REFUNDED';
+  const raw = (status || state || '').toUpperCase();
+  if (!raw) return 'OPEN';
+  if (raw.includes('REFUND')) return 'REFUNDED';
+  if (raw.includes('PROGRESS') || raw.includes('PENDING') || raw.includes('ESCALAT') || raw.includes('WAIT') || raw.includes('REVIEW')) return 'IN_PROGRESS';
+  if (raw.includes('CLOSED') || raw.includes('COMPLETE')) return 'CLOSED';
+  if (raw.includes('OPEN')) return 'OPEN';
+  return 'OPEN'; // unbekannt → sichtbar für Prüfung statt versteckt
+}
+
+interface RawReturnMember {
+  returnId?: string;
+  orderId?: string;
+  buyerLoginName?: string;
+  state?: string;
+  status?: string;
+  creationDate?: string;
+  creationInfo?: {
+    reason?: string;
+    reasonType?: string;
+    creationDate?: string;
+    item?: { itemId?: string; transactionId?: string; returnQuantity?: number; itemTitle?: string };
+  };
+  itemDetail?: { itemPicUrl?: string };
+  sellerTotalRefund?: { estimatedRefundAmount?: { value?: string; currency?: string }; actualRefundAmount?: { value?: string; currency?: string } };
+  buyerTotalRefund?: { estimatedRefundAmount?: { value?: string; currency?: string }; actualRefundAmount?: { value?: string; currency?: string } };
+}
+
+function mapRawReturn(r: RawReturnMember): EbayReturn {
+  const refundBlock = r.buyerTotalRefund ?? r.sellerTotalRefund;
+  const actual = refundBlock?.actualRefundAmount;
+  const estimated = refundBlock?.estimatedRefundAmount;
+  const chosenAmount = actual ?? estimated;
+
+  return {
+    returnId: r.returnId ?? '',
+    orderId: r.orderId ?? '',
+    itemTitle: r.creationInfo?.item?.itemTitle ?? 'Unbekanntes Produkt',
+    itemImage: r.itemDetail?.itemPicUrl ?? null,
+    buyerName: r.buyerLoginName ?? 'Unbekannt',
+    reason: mapReturnReason(r.creationInfo?.reason, r.creationInfo?.reasonType),
+    status: mapReturnStatus(r.state, r.status, !!actual?.value && parseFloat(actual.value) > 0),
+    createdAt: r.creationDate ?? r.creationInfo?.creationDate ?? new Date().toISOString(),
+    amount: parseFloat(chosenAmount?.value ?? '0'),
+    currency: chosenAmount?.currency ?? 'EUR',
+  };
+}
+
+export async function searchReturns(): Promise<EbayReturn[]> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `${BASE_URL}/post-order/v2/return/search?limit=50`,
+    {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_DE',
+      },
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`eBay Return-Search fehlgeschlagen: ${res.status} ${text.slice(0, 300)}`);
+  }
+  const data = await res.json() as { members?: RawReturnMember[]; returns?: RawReturnMember[] };
+  const members = data.members ?? data.returns ?? [];
+  if (!Array.isArray(members)) {
+    console.error('[eBay Returns] Unerwartete Response-Form, Keys:', Object.keys(data as object));
+    return [];
+  }
+  const results: EbayReturn[] = [];
+  for (const m of members) {
+    try {
+      results.push(mapRawReturn(m));
+    } catch (e) {
+      console.error('[eBay Returns] Konnte einzelnen Return nicht mappen:', e);
+    }
+  }
+  console.log(`[eBay Returns] Total returns fetched: ${results.length}`);
+  return results;
+}
+

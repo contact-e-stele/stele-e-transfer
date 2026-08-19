@@ -170,7 +170,7 @@ function ReturnCard({
 
           {/* Status ändern */}
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 6 }}>Status ändern</div>
+            <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 6 }}>Status ändern (nur intern — wirkt sich nicht auf eBay aus)</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {(["OPEN", "IN_PROGRESS", "CLOSED"] as Return["status"][]).map(s => (
                 <button
@@ -244,10 +244,10 @@ function ReturnCard({
             }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: "#92400E" }}>
-                  💸 Rückerstattung auslösen
+                  💸 Rückerstattung auslösen (nur intern)
                 </div>
                 <div style={{ fontSize: 11, color: "#B45309" }}>
-                  {ret.amount.toFixed(2)} {ret.currency} an {ret.buyerName}
+                  {ret.amount.toFixed(2)} {ret.currency} an {ret.buyerName} — wirkt sich nicht auf eBay aus
                 </div>
               </div>
               <button
@@ -284,7 +284,7 @@ function ReturnCard({
               color: "#065F46",
               fontWeight: 600,
             }}>
-              ✅ Bereits erstattet
+              ✅ Nur intern als erstattet markiert
             </div>
           )}
         </div>
@@ -335,7 +335,7 @@ export default function Retouren() {
   const handleStatusChange = (id: string, status: Return["status"]) => {
     const updated = returns.map(r => r.returnId === id ? { ...r, status } : r);
     saveReturns(updated);
-    showToast(`Status auf "${STATUS_LABELS[status]}" gesetzt`);
+    showToast(`Status nur intern auf "${STATUS_LABELS[status]}" gesetzt — wirkt sich nicht auf eBay aus`);
   };
 
   const handleNote = (id: string, note: string) => {
@@ -348,18 +348,11 @@ export default function Retouren() {
     const ret = returns.find(r => r.returnId === id);
     if (!ret) return;
 
-    try {
-      const res = await fetch(`/api/ebay/returns/${id}/refund`, { method: "POST" });
-      if (!res.ok) throw new Error();
-      const updated = returns.map(r => r.returnId === id ? { ...r, status: "REFUNDED" as const } : r);
-      saveReturns(updated);
-      showToast(`✅ ${ret.amount.toFixed(2)} € erstattet`);
-    } catch {
-      // Demo-Modus: lokal markieren
-      const updated = returns.map(r => r.returnId === id ? { ...r, status: "REFUNDED" as const } : r);
-      saveReturns(updated);
-      showToast(`✅ ${ret.amount.toFixed(2)} € erstattet (Demo)`);
-    }
+    // Löst bewusst KEINE echte eBay-Rückerstattung aus — nur lokale Markierung.
+    await fetch(`/api/ebay/returns/${id}/refund`, { method: "POST" }).catch(() => {});
+    const updated = returns.map(r => r.returnId === id ? { ...r, status: "REFUNDED" as const } : r);
+    saveReturns(updated);
+    showToast(`${ret.amount.toFixed(2)} € nur intern als erstattet markiert — wirkt sich nicht auf eBay aus`);
   };
 
   const filtered = filter === "ALL" ? returns : returns.filter(r => r.status === filter);

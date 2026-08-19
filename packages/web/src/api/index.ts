@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
@@ -2092,70 +2092,17 @@ const app = new Hono()
   // ─── eBay Retouren ───────────────────────────────────────────────────────────
   .get('/ebay/returns', async (c) => {
     try {
-      const token = await (await import('./ebay')).getAccessToken();
-      const res = await fetch(
-        'https://api.ebay.com/post-order/v2/return?limit=50&status=OPEN,IN_PROGRESS',
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json',
-            'X-EBAY-C-MARKETPLACE-ID': 'EBAY_DE',
-          },
-        }
-      );
-      if (!res.ok) throw new Error(`eBay Returns API: ${res.status}`);
-      const data = await res.json() as {
-        returns?: Array<{
-          returnId: string;
-          orderId: string;
-          title?: string;
-          buyerLoginName?: string;
-          reason?: { reasonDescription?: string };
-          state?: { name?: string };
-          creationDate?: string;
-          returnedItemPrice?: { value?: string; currency?: string };
-        }>;
-      };
-      const mapped = (data.returns ?? []).map(r => ({
-        returnId: r.returnId,
-        orderId: r.orderId,
-        itemTitle: r.title ?? 'Unbekanntes Produkt',
-        buyerName: r.buyerLoginName ?? 'Unbekannt',
-        reason: r.reason?.reasonDescription ?? 'Kein Grund angegeben',
-        status: (r.state?.name ?? 'OPEN') as 'OPEN' | 'IN_PROGRESS' | 'CLOSED' | 'REFUNDED',
-        createdAt: r.creationDate ?? new Date().toISOString(),
-        amount: parseFloat(r.returnedItemPrice?.value ?? '0'),
-        currency: r.returnedItemPrice?.currency ?? 'EUR',
-      }));
-      return c.json(mapped, 200);
+      const returns = await searchReturns();
+      return c.json(returns, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 503);
     }
   })
-  .post('/ebay/returns/:returnId/refund', async (c) => {
-    const returnId = c.req.param('returnId');
-    try {
-      const token = await (await import('./ebay')).getAccessToken();
-      const res = await fetch(
-        `https://api.ebay.com/post-order/v2/return/${returnId}/issue_refund`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'X-EBAY-C-MARKETPLACE-ID': 'EBAY_DE',
-          },
-          body: JSON.stringify({ refundDetail: { itemizedRefundDetail: [] } }),
-        }
-      );
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Refund failed: ${res.status} ${text}`);
-      }
-      return c.json({ success: true }, 200);
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
+  // Löst bewusst KEINEN echten eBay-Refund aus (Post-Order issue_refund bewegt echtes Geld).
+  // Schreibfunktionen bleiben vorerst rein lokal — Client markiert den Return im
+  // localStorage als erstattet, dieser Endpoint bestätigt das nur.
+  .post('/ebay/returns/:returnId/refund', (c) => {
+    return c.json({ success: true, local: true, message: 'Nur lokal markiert — wirkt sich nicht auf eBay aus' }, 200);
   })
 
   // ─── Alle Preise aktualisieren (Batch) ───────────────────────────────────────
