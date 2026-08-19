@@ -1512,6 +1512,8 @@ export interface EbayOrder {
   }>;
   shippingAddress: {
     fullName: string;
+    addressLine1: string;
+    addressLine2: string | null;
     city: string;
     postalCode: string;
     countryCode: string;
@@ -1553,7 +1555,10 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
         }>;
         fulfillmentStartInstructions?: Array<{
           shippingStep?: {
-            shipTo?: { fullName?: string; contactAddress?: { city?: string; postalCode?: string; countryCode?: string } };
+            shipTo?: {
+              fullName?: string;
+              contactAddress?: { addressLine1?: string; addressLine2?: string; city?: string; postalCode?: string; countryCode?: string };
+            };
           };
         }>;
         fulfillmentHrefs?: string[];
@@ -1581,6 +1586,8 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
         })),
         shippingAddress: shipTo ? {
           fullName: shipTo.fullName ?? '',
+          addressLine1: shipTo.contactAddress?.addressLine1 ?? '',
+          addressLine2: shipTo.contactAddress?.addressLine2 ?? null,
           city: shipTo.contactAddress?.city ?? '',
           postalCode: shipTo.contactAddress?.postalCode ?? '',
           countryCode: shipTo.contactAddress?.countryCode ?? '',

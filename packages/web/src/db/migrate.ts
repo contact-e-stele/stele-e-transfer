@@ -88,6 +88,8 @@ const migrations = [
   `ALTER TABLE order_notes ADD COLUMN aliexpress_invoice_url TEXT`,
   // Tatsaechlicher Einkaufspreis laut Rechnung (manuell) - hat Vorrang vor automatischem DB-Match
   `ALTER TABLE order_notes ADD COLUMN manual_buy_price REAL`,
+  // Zeitpunkt der "neue Bestellung"-Benachrichtigungsmail — verhindert Doppel-Mails bei wiederholten Checks
+  `ALTER TABLE order_notes ADD COLUMN notification_sent_at TEXT`,
   // Kategorie fuer manuell gespeicherte Shops (feste Auswahlliste, siehe shared/constants.ts SHOP_CATEGORIES)
   `ALTER TABLE trusted_suppliers ADD COLUMN category TEXT`,
   // Compliance-Prüfung für Lieferanten (P-66 Schritt 1) — noch kein Import-Gate
