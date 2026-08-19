@@ -2,6 +2,10 @@
 
 Monorepo: Bun workspaces + Turborepo.
 
+> Für die vollständige, code-verifizierte Architektur-Übersicht (Diagramm, Backend-Routen,
+> Frontend-Tabs, externe Integrationen, bekannte Schwachstellen) siehe
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 ## Project Structure
 
 ```
