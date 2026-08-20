@@ -40,6 +40,8 @@ interface ScrapedProduct {
   reviewCount?: number | null; // Anzahl Bewertungen — nur verfügbar wenn DS-API genutzt wurde
   rating?: number | null;      // Durchschnittliche Sternebewertung 0-5 — nur verfügbar wenn DS-API genutzt wurde
   shippingCost?: number | null; // Versandkosten laut AliExpress (P-69) — nur verfügbar wenn DS-API genutzt wurde
+  gpsr?: { name: string; address: string; email: string; phone: string; productId?: string }; // EU-Verantwortlicher, aus AliExpress-HTML gescraped
+  gpsrRaw?: string | null; // manuell/vorbefüllter Rohtext für den GPSR-Block in der Beschreibung
 }
 
 // P-73: Bewertungs-Ampel — kombiniert Anzahl UND Sternebewertung, schlechterer Wert gewinnt
@@ -267,7 +269,7 @@ export default function Lieferanten() {
   // Manuelles Shop-Formular (statt automatischem Scraping — zuverlässiger)
   const [manualShopUrl, setManualShopUrl] = useState("");
   const [manualShopName, setManualShopName] = useState("");
-  const [manualShopCategory, setManualShopCategory] = useState(SHOP_CATEGORIES[0]);
+  const [manualShopCategory, setManualShopCategory] = useState<typeof SHOP_CATEGORIES[number]>(SHOP_CATEGORIES[0]);
   const [manualShopSaving, setManualShopSaving] = useState(false);
   const [manualShopError, setManualShopError] = useState("");
   const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
@@ -864,7 +866,7 @@ export default function Lieferanten() {
             />
             <select
               value={manualShopCategory}
-              onChange={(e) => setManualShopCategory(e.target.value)}
+              onChange={(e) => setManualShopCategory(e.target.value as typeof SHOP_CATEGORIES[number])}
               style={{ padding: "10px 12px", fontSize: 13, border: "1.5px solid #E2E8F0", borderRadius: 10, outline: "none", fontFamily: "inherit", background: "#fff" }}
             >
               {SHOP_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}

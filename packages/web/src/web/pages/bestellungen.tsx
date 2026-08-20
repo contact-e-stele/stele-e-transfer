@@ -3,6 +3,7 @@
  * Tracking-Eingabe folgt als nächster Schritt separat.
  */
 import { useState, useEffect, useCallback } from "react";
+import type { JSX } from "react";
 import {
   Package, RefreshCw, Loader, Search, Truck, CheckCircle, Clock,
   FileText, Download, User, MapPin, CreditCard, ExternalLink,
