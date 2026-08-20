@@ -1606,6 +1606,73 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
   return results;
 }
 
+// ─── Sendungsverfolgung an eBay übermitteln (Fulfillment API) ─────────────────
+// Nutzt denselben sell.fulfillment-Scope wie getAllOrders() — kein neuer Scope nötig.
+//
+// eBays shippingCarrierCode-Enum ist von hier aus nicht gegen die Live-Doku verifizierbar
+// (developer.ebay.com nicht erreichbar). Bekannte Standard-Carrier werden auf ihren
+// vermutlichen eBay-Code gemappt (mittlere-hohe Zuversicht, aber nicht 100% verifiziert);
+// alles andere fällt sicher auf den universellen Fallback "OTHER" — lieber ein von eBay
+// akzeptierter generischer Code als eine geratene, möglicherweise abgelehnte Kennung.
+const CARRIER_CODE_MAP: Record<string, string> = {
+  'DHL': 'DHL',
+  'DPD': 'DPD',
+  'GLS': 'GLS',
+  'HERMES': 'HERMES',
+  'UPS': 'UPS',
+  'FEDEX': 'FEDEX',
+};
+
+export function mapCarrierToEbayCode(carrier: string): string {
+  return CARRIER_CODE_MAP[carrier.trim().toUpperCase()] ?? 'OTHER';
+}
+
+// Line-Items einer einzelnen Bestellung holen — leichter als die komplette
+// getAllOrders()-Liste zu scannen, wenn nur eine Bestellung gebraucht wird.
+async function getOrderLineItems(orderId: string): Promise<Array<{ lineItemId: string; quantity: number }>> {
+  const token = await getAccessToken();
+  const res = await fetch(`${BASE_URL}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}`, {
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`eBay Order-Lookup fehlgeschlagen: ${res.status} ${text.slice(0, 300)}`);
+  }
+  const data = await res.json() as { lineItems?: Array<{ lineItemId: string; quantity?: number }> };
+  const lineItems = data.lineItems ?? [];
+  if (lineItems.length === 0) throw new Error(`Keine Line-Items für Bestellung ${orderId} gefunden`);
+  return lineItems.map(li => ({ lineItemId: li.lineItemId, quantity: li.quantity ?? 1 }));
+}
+
+export async function createShippingFulfillment(orderId: string, trackingNumber: string, carrier: string): Promise<void> {
+  const token = await getAccessToken();
+  const lineItems = await getOrderLineItems(orderId);
+  const shippingCarrierCode = mapCarrierToEbayCode(carrier);
+
+  const body = {
+    lineItems,
+    shippedDate: new Date().toISOString(),
+    shippingCarrierCode,
+    trackingNumber,
+  };
+
+  const res = await fetch(`${BASE_URL}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}/shipping_fulfillment`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const resText = await res.text();
+  console.log(`[eBay] createShippingFulfillment ${orderId} (${shippingCarrierCode} / ${trackingNumber}):`, res.status, resText.slice(0, 500));
+
+  if (!res.ok) {
+    throw new Error(`eBay Fulfillment-Übermittlung fehlgeschlagen: ${res.status} ${resText.slice(0, 300)}`);
+  }
+}
+
 // ─── Retouren (Post-Order API) ─────────────────────────────────────────────────
 // Doku-Hinweis: "This method is not supported in the Sandbox environment" —
 // im Sandbox-Modus (EBAY_SANDBOX=true) schlägt der Call daher erwartungsgemäß fehl.
