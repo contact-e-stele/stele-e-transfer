@@ -29,10 +29,12 @@ automatisiert und sichert sich selbst per E-Mail-Backup.
 | E-Mail | Resend API (Fallback: Gmail SMTP via nodemailer) |
 | KI | Google Gemini API (Titel/Beschreibung), Fallback-Textbausteine ohne KI |
 
-Das Repo enthält zusätzlich `packages/mobile` (Expo) und `packages/desktop` (Electron) —
-beide sind **unbenutztes Sandbox-Template-Gerüst** (Paketname noch `@template/mobile` /
-`@template/desktop`, `mobile/app/` hat nur `_layout.tsx` + `index.tsx`). Sie sind nicht Teil
-des produktiven Systems und werden in diesem Dokument nicht weiter behandelt.
+Das Repo enthält zusätzlich `packages/desktop` (Electron) — **unbenutztes Sandbox-
+Template-Gerüst** (Paketname noch `@template/desktop`), nicht Teil des produktiven
+Systems und wird in diesem Dokument nicht weiter behandelt.
+`packages/mobile` (Expo) war ebenfalls unbenutztes Template-Gerüst (0 Commits seit dem
+initialen Scaffold, keine echte Store-Konfiguration, kein CI-Build) und wurde am
+2026-08-20 komplett aus dem Repo entfernt.
 
 ---
 

@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "cd packages/web && bunx vite",
     "dev:desktop": "cd packages/desktop && bunx vite",
-    "dev:mobile": "cd packages/mobile && bunx expo start",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
     "db:generate": "turbo db:generate",
