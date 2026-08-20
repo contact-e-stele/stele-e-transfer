@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
@@ -959,6 +959,8 @@ const app = new Hono()
         markShipped?: boolean; // true = jetzt als versendet markieren (lokal, manuell)
         internalNote?: string;
         manualBuyPrice?: number | null; // tatsaechlicher Einkaufspreis laut Rechnung
+        trackingNumber?: string;
+        carrier?: string;
       };
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
@@ -971,11 +973,26 @@ const app = new Hono()
       if (body.internalNote !== undefined) update.internalNote = body.internalNote || null;
       if (body.markShipped) update.shippedAt = new Date().toISOString();
       if (body.manualBuyPrice !== undefined) update.manualBuyPrice = body.manualBuyPrice;
+      if (body.trackingNumber !== undefined) update.trackingNumber = body.trackingNumber || null;
+      if (body.carrier !== undefined) update.carrier = body.carrier || null;
 
       await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
         .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });
 
-      return c.json({ ok: true }, 200);
+      // eBay-Übermittlung NUR bei explizitem gemeinsamem Speichern von Sendungsnummer + Carrier
+      // durch den Nutzer — kein Auto-Trigger. Lokal ist zu diesem Zeitpunkt bereits gespeichert,
+      // ein eBay-Fehler hier darf das nicht als Erfolg überdecken (P-36-Prinzip).
+      let ebayResult: { submitted: boolean; error?: string } | undefined;
+      if (body.trackingNumber?.trim() && body.carrier?.trim()) {
+        try {
+          await createShippingFulfillment(ebayOrderId, body.trackingNumber.trim(), body.carrier.trim());
+          ebayResult = { submitted: true };
+        } catch (e) {
+          ebayResult = { submitted: false, error: String(e) };
+        }
+      }
+
+      return c.json({ ok: true, ...(ebayResult ? { ebay: ebayResult } : {}) }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }

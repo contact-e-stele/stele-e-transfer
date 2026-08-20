@@ -38,12 +38,18 @@ interface Order {
     invoiceGeneratedAt: string | null;
     invoicePath: string | null;
     trackingNumber: string | null;
+    carrier: string | null;
     shippedAt: string | null;
     aliexpressOrderId: string | null;
     aliexpressInvoiceUrl: string | null;
     manualBuyPrice: number | null;
   } | null;
 }
+
+// Dropdown-Werte für den Carrier — Zuordnung zum eBay-shippingCarrierCode passiert
+// serverseitig (ebay.ts: mapCarrierToEbayCode). "Sonstige" fällt sicher auf eBays
+// universellen Fallback "OTHER" zurück.
+const CARRIER_OPTIONS = ["DHL", "DPD", "GLS", "Hermes", "UPS", "FedEx", "Sonstige / AliExpress Standard"];
 
 type FilterMode = "all" | "open" | "shipped";
 
@@ -84,16 +90,24 @@ export default function Bestellungen() {
   const [savingNote, setSavingNote] = useState<string | null>(null); // orderId
   const [uploadingInvoice, setUploadingInvoice] = useState<string | null>(null); // orderId
   const [markingShipped, setMarkingShipped] = useState<string | null>(null); // orderId
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 4000);
+  };
 
   const saveOrderNote = async (orderId: string, body: Record<string, unknown>) => {
     setSavingNote(orderId);
     try {
-      await fetch(`/api/order-notes/${orderId}`, {
+      const res = await fetch(`/api/order-notes/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const data = await res.json().catch(() => null) as { ok?: boolean; ebay?: { submitted: boolean; error?: string } } | null;
       await load(true);
+      return data;
     } finally {
       setSavingNote(null);
     }
@@ -102,6 +116,25 @@ export default function Bestellungen() {
   const handleAliIdSave = (orderId: string) => {
     saveOrderNote(orderId, { aliexpressOrderId: aliIdInput.trim() || null });
     setEditingAliId(null);
+  };
+
+  // Sendungsnummer + Carrier — bei gemeinsamem Speichern wird automatisch an eBay übermittelt
+  const [editingTracking, setEditingTracking] = useState<string | null>(null); // orderId
+  const [trackingNumberInput, setTrackingNumberInput] = useState("");
+  const [carrierInput, setCarrierInput] = useState(CARRIER_OPTIONS[0]);
+
+  const handleTrackingSave = async (orderId: string) => {
+    const trackingNumber = trackingNumberInput.trim();
+    const carrier = carrierInput.trim();
+    const data = await saveOrderNote(orderId, { trackingNumber: trackingNumber || null, carrier: carrier || null });
+    setEditingTracking(null);
+    if (!trackingNumber || !carrier) {
+      showToast("Gespeichert (unvollständig — für eBay-Übermittlung werden Sendungsnummer UND Carrier benötigt)");
+    } else if (data?.ebay?.submitted) {
+      showToast(`✅ Sendungsnummer gespeichert und an eBay übermittelt (${carrier})`);
+    } else {
+      showToast(`⚠️ Lokal gespeichert, aber NICHT an eBay übermittelt — Fehler: ${data?.ebay?.error ?? "unbekannt"}`);
+    }
   };
 
   const [editingBuyPrice, setEditingBuyPrice] = useState<string | null>(null); // orderId
@@ -203,6 +236,16 @@ export default function Bestellungen() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F8FAFC", fontFamily: "'Poppins', sans-serif", padding: "24px 16px" }}>
+      {toast && (
+        <div style={{
+          position: "fixed", top: 70, left: "50%", transform: "translateX(-50%)",
+          background: "#1E293B", color: "#fff", borderRadius: 10,
+          padding: "10px 20px", fontSize: 13, fontWeight: 600, zIndex: 999,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.2)", maxWidth: "90vw", textAlign: "center",
+        }}>
+          {toast}
+        </div>
+      )}
       <div style={{ maxWidth: 780, margin: "0 auto" }}>
 
         {/* Header */}
@@ -410,6 +453,46 @@ export default function Bestellungen() {
                   >
                     <FileText size={11} />
                     {order.localNote?.aliexpressOrderId ? `AliExpress-Bestellnr.: ${order.localNote.aliexpressOrderId}` : "AliExpress-Bestellnummer eintragen"}
+                  </button>
+                )}
+                {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
+              </div>
+
+              {/* Sendungsnummer — wird bei Speichern automatisch an eBay übermittelt */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                {editingTracking === order.orderId ? (
+                  <>
+                    <input
+                      autoFocus
+                      value={trackingNumberInput}
+                      onChange={e => setTrackingNumberInput(e.target.value)}
+                      placeholder="Sendungsnummer"
+                      style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1.5px solid #0EA5E9", outline: "none", fontFamily: "inherit", width: 160 }}
+                    />
+                    <select
+                      value={carrierInput}
+                      onChange={e => setCarrierInput(e.target.value)}
+                      style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1.5px solid #0EA5E9", outline: "none", fontFamily: "inherit", background: "#fff" }}
+                    >
+                      {CARRIER_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <button onClick={() => handleTrackingSave(order.orderId)} style={{ background: "#0EA5E9", color: "#fff", border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>
+                      <CheckCircle size={11} />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setEditingTracking(order.orderId);
+                      setTrackingNumberInput(order.localNote?.trackingNumber ?? "");
+                      setCarrierInput(order.localNote?.carrier ?? CARRIER_OPTIONS[0]);
+                    }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", fontSize: 11, color: order.localNote?.trackingNumber ? "#0EA5E9" : "#94A3B8", fontFamily: "inherit", padding: 0 }}
+                  >
+                    <Truck size={11} />
+                    {order.localNote?.trackingNumber
+                      ? `Sendung: ${order.localNote.carrier ?? "?"} ${order.localNote.trackingNumber}`
+                      : "Sendungsnummer eintragen (→ eBay)"}
                   </button>
                 )}
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
