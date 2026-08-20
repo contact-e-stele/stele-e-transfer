@@ -52,6 +52,7 @@ interface Product {
   ebayStatus: string;
   ebayError: string | null;
   ebayCategory: string | null;
+  adRate: number | null; // Anzeigentarif % (Promoted Listings)
   ean: string | null;
   handlingTimeDays: number | null;
   gpsrName: string | null;
@@ -1245,28 +1246,33 @@ export default function Produkte() {
                     <span style={{ fontSize: 10, fontFamily: "monospace", background: "#F1F5F9", padding: "2px 6px", borderRadius: 5, color: "#475569" }}>
                       {product.asin}
                     </span>
-                    {product.skuId && (
-                      <span
-                        onClick={() => {
-                          navigator.clipboard.writeText(product.skuId).then(() => {
-                            setCopiedSku(product.id);
-                            setTimeout(() => setCopiedSku(null), 1800);
-                          });
-                        }}
-                        title="SKU kopieren"
-                        style={{
-                          fontSize: 10, fontFamily: "monospace",
-                          background: copiedSku === product.id ? "#DCFCE7" : "#F8FAFC",
-                          color: copiedSku === product.id ? "#16A34A" : "#94A3B8",
-                          padding: "2px 6px", borderRadius: 5,
-                          cursor: "pointer", border: "1px solid #E2E8F0",
-                          transition: "all 0.2s",
-                          userSelect: "none",
-                        }}
-                      >
-                        {copiedSku === product.id ? "✓ Kopiert" : `SKU: ${product.skuId}`}
-                      </span>
-                    )}
+                    {(() => {
+                      // Echte eBay-SKU (siehe api/index.ts: `stele-${product.id}`) — es gibt kein
+                      // eigenes DB-Feld dafür, sie wird immer aus der Produkt-ID abgeleitet.
+                      const skuId = `stele-${product.id}`;
+                      return (
+                        <span
+                          onClick={() => {
+                            navigator.clipboard.writeText(skuId).then(() => {
+                              setCopiedSku(product.id);
+                              setTimeout(() => setCopiedSku(null), 1800);
+                            });
+                          }}
+                          title="SKU kopieren"
+                          style={{
+                            fontSize: 10, fontFamily: "monospace",
+                            background: copiedSku === product.id ? "#DCFCE7" : "#F8FAFC",
+                            color: copiedSku === product.id ? "#16A34A" : "#94A3B8",
+                            padding: "2px 6px", borderRadius: 5,
+                            cursor: "pointer", border: "1px solid #E2E8F0",
+                            transition: "all 0.2s",
+                            userSelect: "none",
+                          }}
+                        >
+                          {copiedSku === product.id ? "✓ Kopiert" : `SKU: ${skuId}`}
+                        </span>
+                      );
+                    })()}
                     <StatusBadge status={product.ebayStatus} listingId={product.ebayListingId} />
                     {product.priceChanged && (
                       <span style={{ fontSize: 11, background: "#FFFBEB", color: "#92400E", padding: "2px 8px", borderRadius: 6, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>

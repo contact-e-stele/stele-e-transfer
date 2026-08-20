@@ -3,9 +3,10 @@
  * Tracking-Eingabe folgt als nächster Schritt separat.
  */
 import { useState, useEffect, useCallback } from "react";
+import type { JSX } from "react";
 import {
   Package, RefreshCw, Loader, Search, Truck, CheckCircle, Clock,
-  FileText, Download, User, MapPin, CreditCard,
+  FileText, Download, User, MapPin, CreditCard, ExternalLink,
 } from "lucide-react";
 
 interface OrderLineItem {
@@ -31,6 +32,8 @@ interface Order {
   nettoEinkauf: number | null;
   nettoErgebnis: number | null;
   nettoQuelle: "manuell" | "automatisch" | null;
+  aliexpressUrl: string | null;
+  ebayListingUrl: string | null;
   localNote: {
     invoiceGeneratedAt: string | null;
     invoicePath: string | null;
@@ -427,6 +430,36 @@ export default function Bestellungen() {
                   {order.localNote?.invoicePath ? <Download size={11} /> : <FileText size={11} />}
                   {order.localNote?.invoicePath ? "Rechnung herunterladen" : "Rechnung erzeugen"}
                 </a>
+
+                {order.aliexpressUrl && (
+                  <a
+                    href={order.aliexpressUrl}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#FFF7ED", color: "#C2410C",
+                      fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit",
+                      border: "1px solid #FED7AA",
+                    }}
+                  >
+                    <ExternalLink size={11} /> Zum AliExpress-Artikel
+                  </a>
+                )}
+
+                {order.ebayListingUrl && (
+                  <a
+                    href={order.ebayListingUrl}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#F5F3FF", color: "#6D28D9",
+                      fontSize: 11, fontWeight: 700, textDecoration: "none", fontFamily: "inherit",
+                      border: "1px solid #DDD6FE",
+                    }}
+                  >
+                    <ExternalLink size={11} /> Zum eBay-Listing
+                  </a>
+                )}
 
                 {order.localNote?.aliexpressInvoiceUrl ? (
                   <>
