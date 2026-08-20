@@ -769,6 +769,8 @@ const app = new Hono()
         asin: schema.products.asin,
         buyPrice: schema.products.buyPrice,
         shipsFrom: schema.products.shipsFrom,
+        sourceUrl: schema.products.sourceUrl,
+        ebayListingId: schema.products.ebayListingId,
       }).from(schema.products).all();
       const productById = new Map(allProducts.map(p => [p.id, p]));
       const productByAsin = new Map(
@@ -795,10 +797,22 @@ const app = new Hono()
       const merged = (orders as import('./ebay').EbayOrder[]).map(order => {
         const note = notesByOrderId.get(order.orderId) ?? null;
 
+        // Quell-Links (AliExpress-Artikel, eBay-Listing) — erstes Line-Item mit bekanntem
+        // Produkt-Match liefert die jeweilige Referenz; unabhängig voneinander gesucht,
+        // damit ein teilweise bekanntes Multi-Artikel-Order trotzdem beide Links zeigen kann.
+        let aliexpressUrl: string | null = null;
+        let ebayListingUrl: string | null = null;
+        for (const li of order.lineItems) {
+          const product = findProductForSku(li.sku);
+          if (!product) continue;
+          if (!aliexpressUrl && product.sourceUrl) aliexpressUrl = product.sourceUrl;
+          if (!ebayListingUrl && product.ebayListingId) ebayListingUrl = `https://www.ebay.de/itm/${product.ebayListingId}`;
+        }
+
         // Manuell eingetragener Einkaufspreis hat IMMER Vorrang (z.B. exakter Betrag laut AliExpress-Rechnung)
         if (note?.manualBuyPrice !== null && note?.manualBuyPrice !== undefined) {
           const netto = Math.round((order.total - note.manualBuyPrice) * 100) / 100;
-          return { ...order, localNote: note, nettoEinkauf: note.manualBuyPrice, nettoErgebnis: netto, nettoQuelle: 'manuell' as const };
+          return { ...order, localNote: note, nettoEinkauf: note.manualBuyPrice, nettoErgebnis: netto, nettoQuelle: 'manuell' as const, aliexpressUrl, ebayListingUrl };
         }
 
         // Fallback: automatischer Match über SKU/ASIN + Produkt-DB
@@ -816,6 +830,8 @@ const app = new Hono()
           nettoEinkauf: einkaufBekannt ? einkaufGesamt : null,
           nettoErgebnis: einkaufBekannt ? Math.round((order.total - einkaufGesamt) * 100) / 100 : null,
           nettoQuelle: einkaufBekannt ? ('automatisch' as const) : null,
+          aliexpressUrl,
+          ebayListingUrl,
         };
       });
 
