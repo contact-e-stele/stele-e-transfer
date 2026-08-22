@@ -980,6 +980,7 @@ const app = new Hono()
         trackingNumber?: string;
         carrier?: string;
         markCustomerNotified?: boolean; // P-85: Bewertungsbitte wurde manuell verschickt
+        markThankYouSent?: boolean; // P-86: Danke+Sendungsnummer-Entwurf wurde manuell verschickt
       };
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
@@ -995,6 +996,7 @@ const app = new Hono()
       if (body.trackingNumber !== undefined) update.trackingNumber = body.trackingNumber || null;
       if (body.carrier !== undefined) update.carrier = body.carrier || null;
       if (body.markCustomerNotified) update.customerNotifiedAt = new Date().toISOString();
+      if (body.markThankYouSent) update.thankYouSentAt = new Date().toISOString();
 
       await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
         .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });
@@ -1015,6 +1017,39 @@ const app = new Hono()
       return c.json({ ok: true, ...(ebayResult ? { ebay: ebayResult } : {}) }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
+    }
+  })
+  // ─── P-86: Danke+Sendungsnummer-Entwurf für gerade versandte Bestellungen ────
+  // V1: reiner Entwurf, KEIN Versand-Mechanismus (wie P-85) — der einmalige Live-Test von
+  // AddMemberMessageAAQToPartner wird separat besprochen, bevor hier automatisch gesendet wird.
+  // Kein Gmail nötig: der Auslöser ist rein, dass P-80 bereits erfolgreich eine trackingNumber
+  // gespeichert hat — läuft daher live bei jedem Aufruf, unabhängig vom Gmail-Verbindungsstatus.
+  .get('/thank-you-suggestions', async (c) => {
+    try {
+      const orders = await getAllOrders();
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const notes = await db.select().from(schema.orderNotes).all();
+      const noteByOrderId = new Map(notes.map(n => [n.ebayOrderId, n]));
+
+      const suggestions: Array<{ orderId: string; draftText: string }> = [];
+      for (const o of orders) {
+        const note = noteByOrderId.get(o.orderId);
+        if (!note?.trackingNumber || note.thankYouSentAt) continue;
+
+        const buyerName = o.shippingAddress?.fullName || o.buyerUsername;
+        const itemTitle = o.lineItems.length === 1 ? o.lineItems[0].title : null;
+        const orderPhrase = itemTitle ? `Ihre Bestellung "${itemTitle}"` : 'Ihre Bestellung bei uns';
+        const draftText = `Hallo ${buyerName}, vielen Dank für ${orderPhrase}! Ihre Sendung ist unterwegs — Sendungsnummer: ${note.trackingNumber} (${note.carrier ?? 'Sonstige'}). Bei Fragen sind wir jederzeit für Sie da.\n\nViele Grüße, Stele E-Transfer`;
+
+        suggestions.push({ orderId: o.orderId, draftText });
+      }
+
+      return c.json({ suggestions }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 503);
     }
   })
 

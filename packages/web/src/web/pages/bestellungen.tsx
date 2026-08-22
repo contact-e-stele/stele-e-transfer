@@ -44,6 +44,7 @@ interface Order {
     aliexpressInvoiceUrl: string | null;
     manualBuyPrice: number | null;
     customerNotifiedAt: string | null;
+    thankYouSentAt: string | null;
   } | null;
 }
 
@@ -100,6 +101,11 @@ export default function Bestellungen() {
   const [reviewSuggestions, setReviewSuggestions] = useState<Record<string, { draftText: string }>>({});
   const [expandedReviewDraft, setExpandedReviewDraft] = useState<string | null>(null); // orderId
   const [markingNotified, setMarkingNotified] = useState<string | null>(null); // orderId
+  // P-86: Danke+Sendungsnummer-Entwürfe für gerade versandte Bestellungen — orderId -> Entwurf.
+  // V1: reiner Entwurf, kein Versand-Mechanismus (wie P-85).
+  const [thankYouSuggestions, setThankYouSuggestions] = useState<Record<string, { draftText: string }>>({});
+  const [expandedThankYouDraft, setExpandedThankYouDraft] = useState<string | null>(null); // orderId
+  const [markingThankYouSent, setMarkingThankYouSent] = useState<string | null>(null); // orderId
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -254,6 +260,27 @@ export default function Bestellungen() {
     setMarkingNotified(null);
     setExpandedReviewDraft(null);
     showToast("Als erledigt markiert — wird für diesen Käufer nicht erneut vorgeschlagen");
+  };
+
+  // P-86: Danke+Sendungsnummer-Entwürfe laden — ebenfalls best-effort, kein Gmail nötig.
+  useEffect(() => {
+    fetch("/api/thank-you-suggestions")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const list = (d as { suggestions?: Array<{ orderId: string; draftText: string }> } | null)?.suggestions ?? [];
+        const map: Record<string, { draftText: string }> = {};
+        for (const s of list) map[s.orderId] = { draftText: s.draftText };
+        setThankYouSuggestions(map);
+      })
+      .catch(() => { /* still, keine Vorschläge */ });
+  }, []);
+
+  const handleMarkThankYouSent = async (orderId: string) => {
+    setMarkingThankYouSent(orderId);
+    await saveOrderNote(orderId, { markThankYouSent: true });
+    setMarkingThankYouSent(null);
+    setExpandedThankYouDraft(null);
+    showToast("Als erledigt markiert");
   };
 
   const filtered = orders.filter(o => {
@@ -617,6 +644,59 @@ export default function Bestellungen() {
                 )}
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
+
+              {/* P-86: Danke+Sendungsnummer-Entwurf, sobald P-80 erfolgreich eine trackingNumber
+                  gespeichert hat — reiner Text zum Kopieren, KEIN Versand-Mechanismus (V1, wie P-85).
+                  Der einmalige Live-Test von AddMemberMessageAAQToPartner folgt separat. */}
+              {!order.localNote?.thankYouSentAt && thankYouSuggestions[order.orderId] && (
+                <div style={{
+                  marginTop: 10, padding: "8px 12px", borderRadius: 8,
+                  background: "#F0FDF4", border: "1px solid #BBF7D0",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontSize: 11, color: "#15803D" }}>
+                      📦 Danke-Nachricht-Entwurf verfügbar (Sendungsnummer übermittelt)
+                    </span>
+                    <button
+                      onClick={() => setExpandedThankYouDraft(expandedThankYouDraft === order.orderId ? null : order.orderId)}
+                      style={{ background: "#15803D", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                    >
+                      {expandedThankYouDraft === order.orderId ? "Ausblenden" : "Text anzeigen"}
+                    </button>
+                  </div>
+                  {expandedThankYouDraft === order.orderId && (
+                    <div style={{ marginTop: 8 }}>
+                      <textarea
+                        readOnly
+                        value={thankYouSuggestions[order.orderId].draftText}
+                        style={{
+                          width: "100%", minHeight: 90, fontSize: 12, padding: 8, borderRadius: 6,
+                          border: "1px solid #BBF7D0", fontFamily: "inherit", resize: "vertical", background: "#fff",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(thankYouSuggestions[order.orderId].draftText);
+                            showToast("Text kopiert — jetzt selbst in eBays Kontakt-Käufer-Funktion einfügen");
+                          }}
+                          style={{ background: "#fff", color: "#15803D", border: "1px solid #BBF7D0", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          Kopieren
+                        </button>
+                        <button
+                          onClick={() => handleMarkThankYouSent(order.orderId)}
+                          disabled={markingThankYouSent === order.orderId}
+                          style={{ background: "#F0FDF4", color: "#15803D", border: "1px solid #BBF7D0", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: markingThankYouSent === order.orderId ? "not-allowed" : "pointer" }}
+                        >
+                          {markingThankYouSent === order.orderId ? "…" : "Erledigt"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Aktionen */}
               <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
