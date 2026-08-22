@@ -26,6 +26,7 @@ export default function Einstellungen() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [driveConnected, setDriveConnected] = useState<boolean | null>(null);
+  const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
 
   const loadStatus = useCallback(() => {
     setLoading(true);
@@ -38,6 +39,10 @@ export default function Einstellungen() {
       .then(r => r.json())
       .then(d => setDriveConnected((d as { connected?: boolean }).connected ?? false))
       .catch(() => setDriveConnected(false));
+    fetch("/api/gmail/status", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setGmailConnected((d as { connected?: boolean }).connected ?? false))
+      .catch(() => setGmailConnected(false));
   }, []);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
@@ -252,6 +257,35 @@ export default function Einstellungen() {
                 textDecoration: "none",
               }}>
                 Mit Google Drive verbinden
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Gmail (P-84) */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>📬</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Gmail</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
+          Für Sendungsnummer-Vorschläge im Bestellungen-Tab aus AliExpress-Logistik-Mails (nur Vorschlag, keine automatische Übermittlung).
+        </p>
+        {gmailConnected === null ? (
+          <span style={{ fontSize: 13, color: "#94A3B8" }}>Prüfe Status…</span>
+        ) : gmailConnected ? (
+          <span style={badge(true)}>✅ Verbunden</span>
+        ) : (
+          <div>
+            <span style={badge(false)}>⚠️ Nicht verbunden</span>
+            <div style={{ marginTop: 10 }}>
+              <a href="/api/gmail/auth" style={{
+                display: "inline-block", padding: "8px 16px", borderRadius: 8,
+                background: "#4285F4", color: "#fff", fontWeight: 700, fontSize: 13,
+                textDecoration: "none",
+              }}>
+                Mit Gmail verbinden
               </a>
             </div>
           </div>

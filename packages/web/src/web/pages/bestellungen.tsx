@@ -91,6 +91,9 @@ export default function Bestellungen() {
   const [uploadingInvoice, setUploadingInvoice] = useState<string | null>(null); // orderId
   const [markingShipped, setMarkingShipped] = useState<string | null>(null); // orderId
   const [toast, setToast] = useState<string | null>(null);
+  // P-84: Sendungsnummer-Vorschläge aus AliExpress-Logistik-Mails — orderId -> Vorschlag.
+  // Nur ein Vorschlag, kein Auto-Save; befüllt beim Bestätigen nur die vorhandenen P-80-Felder.
+  const [trackingSuggestions, setTrackingSuggestions] = useState<Record<string, { trackingNumber: string; carrier: string }>>({});
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -211,6 +214,20 @@ export default function Bestellungen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // P-84: Vorschläge laden — best-effort, bricht die Seite nicht falls Gmail nicht
+  // verbunden ist oder der Abgleich fehlschlägt (einfach keine Vorschläge anzeigen).
+  useEffect(() => {
+    fetch("/api/gmail/tracking-suggestions")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const list = (d as { suggestions?: Array<{ orderId: string; trackingNumber: string; carrier: string }> } | null)?.suggestions ?? [];
+        const map: Record<string, { trackingNumber: string; carrier: string }> = {};
+        for (const s of list) map[s.orderId] = { trackingNumber: s.trackingNumber, carrier: s.carrier };
+        setTrackingSuggestions(map);
+      })
+      .catch(() => { /* still, keine Vorschläge */ });
+  }, []);
 
   const filtered = orders.filter(o => {
     if (filter === "open" && isEffectivelyShipped(o)) return false;
@@ -457,6 +474,30 @@ export default function Bestellungen() {
                 )}
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
+
+              {/* P-84: Sendungsnummer-Vorschlag aus AliExpress-Logistik-Mail — nur Vorschlag, kein Auto-Save */}
+              {!order.localNote?.trackingNumber && editingTracking !== order.orderId && trackingSuggestions[order.orderId] && (
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                  marginTop: 10, padding: "8px 12px", borderRadius: 8,
+                  background: "#EFF6FF", border: "1px solid #BFDBFE",
+                }}>
+                  <span style={{ fontSize: 11, color: "#1D4ED8" }}>
+                    💡 Sendungsnummer erkannt: <strong>{trackingSuggestions[order.orderId].trackingNumber}</strong>
+                  </span>
+                  <button
+                    onClick={() => {
+                      const s = trackingSuggestions[order.orderId];
+                      setEditingTracking(order.orderId);
+                      setTrackingNumberInput(s.trackingNumber);
+                      setCarrierInput(s.carrier);
+                    }}
+                    style={{ background: "#1D4ED8", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                  >
+                    Übernehmen
+                  </button>
+                </div>
+              )}
 
               {/* Sendungsnummer — wird bei Speichern automatisch an eBay übermittelt */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
