@@ -322,6 +322,55 @@ function getAspectDefaultsForCategory(categoryId?: string): Record<string, strin
 // Cache: categoryId → Pflichtaspekte (Name → erster erlaubter Wert oder null)
 const aspectCache = new Map<string, Record<string, string | null>>();
 
+// Cache: categoryId → ALLE Aspekte der Kategorie (ungefiltert, auch nicht als "required"
+// markierte) — P-90: eBay meldet manche Aspekte (z.B. "Produktart") nicht als required, verlangt
+// sie aber bei Variation-Listings trotzdem beim publish. Für die Selbstheilung brauchen wir dann
+// die erlaubten Werte auch für nicht-required Aspekte, sonst raten wir mit ungültigem Freitext.
+const rawAspectsCache = new Map<string, Array<{
+  localizedAspectName: string;
+  aspectConstraint?: { aspectRequired?: boolean };
+  aspectValues?: Array<{ localizedValue: string }>;
+}>>();
+
+async function getRawAspectsForCategory(categoryId: string, token: string): Promise<Array<{
+  localizedAspectName: string;
+  aspectConstraint?: { aspectRequired?: boolean };
+  aspectValues?: Array<{ localizedValue: string }>;
+}>> {
+  if (rawAspectsCache.has(categoryId)) return rawAspectsCache.get(categoryId)!;
+  try {
+    const res = await fetch(
+      `${BASE_URL}/commerce/taxonomy/v1/category_tree/77/get_item_aspects_for_category?category_id=${categoryId}`,
+      { headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' } }
+    );
+    if (!res.ok) {
+      rawAspectsCache.set(categoryId, []);
+      return [];
+    }
+    const data = await res.json() as { aspects?: Array<{
+      localizedAspectName: string;
+      aspectConstraint?: { aspectRequired?: boolean };
+      aspectValues?: Array<{ localizedValue: string }>;
+    }> };
+    const list = data.aspects ?? [];
+    rawAspectsCache.set(categoryId, list);
+    return list;
+  } catch {
+    rawAspectsCache.set(categoryId, []);
+    return [];
+  }
+}
+
+// P-90: erlaubten Wert für einen konkreten Aspektnamen nachschlagen — auch wenn eBay ihn nicht
+// als "required" gemeldet hat. Liefert den ersten erlaubten Wert laut Taxonomy API, oder null
+// wenn der Aspekt Freitext ist (keine aspectValues-Liste) bzw. gar nicht existiert.
+async function getAspectAllowedValue(categoryId: string | undefined, aspectName: string, token: string): Promise<string | null> {
+  if (!categoryId) return null;
+  const all = await getRawAspectsForCategory(categoryId, token);
+  const match = all.find(a => a.localizedAspectName.toLowerCase() === aspectName.toLowerCase());
+  return match?.aspectValues?.[0]?.localizedValue ?? null;
+}
+
 // Cache: categoryId → VariationsEnabled
 const variationsEnabledCache = new Map<string, boolean>();
 
@@ -362,42 +411,20 @@ export const KNOWN_VARIATION_CATEGORIES: Record<string, string> = {
 async function getRequiredAspects(categoryId: string, token: string): Promise<Record<string, string | null>> {
   if (aspectCache.has(categoryId)) return aspectCache.get(categoryId)!;
 
-  try {
-    const res = await fetch(
-      `${BASE_URL}/commerce/taxonomy/v1/category_tree/77/get_item_aspects_for_category?category_id=${categoryId}`,
-      { headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' } }
-    );
-    if (!res.ok) {
-      console.log('[eBay] getItemAspectsForCategory failed:', res.status);
-      aspectCache.set(categoryId, {});
-      return {};
-    }
-    const data = await res.json() as {
-      aspects?: Array<{
-        localizedAspectName: string;
-        aspectConstraint?: { aspectRequired?: boolean };
-        aspectValues?: Array<{ localizedValue: string }>;
-      }>;
-    };
+  // Aspekte die wir bewusst NICHT setzen — würden als störende Dropdown-Variante erscheinen
+  const ASPECT_BLACKLIST = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
 
-    // Aspekte die wir bewusst NICHT setzen — würden als störende Dropdown-Variante erscheinen
-    const ASPECT_BLACKLIST = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
-
-    const required: Record<string, string | null> = {};
-    for (const aspect of data.aspects ?? []) {
-      if (aspect.aspectConstraint?.aspectRequired && !ASPECT_BLACKLIST.has(aspect.localizedAspectName)) {
-        // Ersten erlaubten Wert nehmen oder null
-        required[aspect.localizedAspectName] = aspect.aspectValues?.[0]?.localizedValue ?? null;
-      }
+  const all = await getRawAspectsForCategory(categoryId, token);
+  const required: Record<string, string | null> = {};
+  for (const aspect of all) {
+    if (aspect.aspectConstraint?.aspectRequired && !ASPECT_BLACKLIST.has(aspect.localizedAspectName)) {
+      // Ersten erlaubten Wert nehmen oder null
+      required[aspect.localizedAspectName] = aspect.aspectValues?.[0]?.localizedValue ?? null;
     }
-    console.log(`[eBay] Required aspects for category ${categoryId}:`, Object.keys(required));
-    aspectCache.set(categoryId, required);
-    return required;
-  } catch (e) {
-    console.error('[eBay] getItemAspectsForCategory error:', e);
-    aspectCache.set(categoryId, {});
-    return {};
   }
+  console.log(`[eBay] Required aspects for category ${categoryId}:`, Object.keys(required));
+  aspectCache.set(categoryId, required);
+  return required;
 }
 
 // Specs → eBay Aspekte (async, befüllt Pflichtfelder automatisch)
@@ -1157,7 +1184,13 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         const aspectName = match[1].trim();
         if (healedAspects.has(aspectName)) throw err; // schon versucht, kein Fortschritt → nicht erneut probieren
         healedAspects.add(aspectName);
-        console.log(`[eBay] Fehlendes Pflichtmerkmal "${aspectName}" erkannt — trage Fallback nach und versuche erneut...`);
+        // P-90 Nachbesserung: viele Aspekte (z.B. "Produktart") sind Auswahlfelder mit fester
+        // Werteliste — Freitext wie "Nicht angegeben" wird dafür genauso abgelehnt wie vorher bei
+        // EAN. Erst den tatsächlich erlaubten Wert der Kategorie nachschlagen (auch wenn eBay den
+        // Aspekt nicht als "required" gemeldet hatte), Freitext nur als letzter Ausweg.
+        const allowedValue = await getAspectAllowedValue(input.categoryId, aspectName, token);
+        const healFallback = allowedValue ?? (IDENTIFIER_ASPECT_NAMES.has(aspectName) ? 'Nicht zutreffend' : 'Nicht angegeben');
+        console.log(`[eBay] Fehlendes Pflichtmerkmal "${aspectName}" erkannt — trage "${healFallback}" nach und versuche erneut...`);
 
         for (const offerId of offerIds) {
           const getRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
@@ -1167,7 +1200,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
           const offerData = await getRes.json() as Record<string, unknown>;
           const specifics = offerData.itemSpecifics as { aspects?: Record<string, string[]> } | undefined;
           const aspectsCopy = { ...(specifics?.aspects ?? {}) };
-          if (!aspectsCopy[aspectName]) aspectsCopy[aspectName] = ['Nicht angegeben'];
+          if (!aspectsCopy[aspectName]) aspectsCopy[aspectName] = [healFallback];
           offerData.itemSpecifics = { aspects: aspectsCopy };
           await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
             method: 'PUT',
