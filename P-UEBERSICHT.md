@@ -30,6 +30,7 @@ Wird bei jeder neuen P-Nummer / jedem Status-Update aktualisiert. Backup zusätz
 | — | Shops manuell + Suche-Dropdown | Manuelles Shop-Formular (Link+Name+Kategorie), Dropdown im Suche-Tab |
 | — | GPSR-Handbuch/Zertifizierung-Upload | Upload läuft über `/api/upload-file` → Google Drive (lokaler Speicher nur Fallback) — löst die früher hier gelistete Idee |
 | — | Bestellbenachrichtigung per E-Mail | `order-notifier.ts` + stündlicher GitHub-Actions-Cron (`order-check.yml`) — benachrichtigt den Shop-Betreiber (nicht den Käufer) bei neuen eBay-Bestellungen, dedupliziert über `notificationSentAt` |
+| **P87** | PWA zeigt nach Update alte Inhalte | Kein Service Worker vorhanden (Prämisse "Caching-Problem durch SW" widerlegt) — Ursache war fehlender `Cache-Control`-Header: `index.html` konnte beliebig lange gecacht bleiben und zeigte dann auf längst ersetzte Vite-Asset-Hashes. Fix in `server.ts`: `index.html` immer `no-cache, no-store, must-revalidate`, `/assets/*` (hash-benannt) `immutable`-Langzeit-Cache |
 
 ## 🔧 Technische Wartung / Bugfixes (P-Nummern ohne eigenen Feature-Charakter)
 
@@ -73,4 +74,4 @@ P-Nummer nicht wieder 11 vergeben.
 - GPSR structured fields: `ae_store_info` liefert nur den Shop-Namen, Hersteller-Adressdaten werden nicht automatisch geparst — GPSR-Felder müssen weiterhin manuell im Produkte-Tab gepflegt werden
 
 ---
-*Letzte Aktualisierung: 2026-08-19 — abgeglichen gegen den tatsächlichen Code-Stand (P-33-Nachfolgearbeit)*
+*Letzte Aktualisierung: 2026-08-19 — P-87 (PWA-Cache-Fix) ergänzt*
