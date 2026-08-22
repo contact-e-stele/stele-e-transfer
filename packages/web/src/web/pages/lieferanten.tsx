@@ -512,12 +512,21 @@ export default function Lieferanten() {
       }
 
       // Varianten: alle vorselektieren + editierbare Kopie anlegen
+      // P-88: Bei nur einer Varianten-Gruppe ist der von AliExpress gelieferte Name unzuverlässig
+      // (oft pauschal "Color", auch wenn es z.B. um Größen/Sets wie "1PC-30x40CM" geht) — Standardname
+      // stattdessen "Varianten", vom Nutzer wie gewohnt frei umbenennbar. Bei mehreren Gruppen bleiben
+      // die AliExpress-Labels unverändert (dort in der Regel zuverlässiger).
+      const nonSkipGroupCount = (data.variants ?? []).filter(g => !isSkipVariantGroup(g.name)).length;
+      const namedVariants = (data.variants ?? []).map(g =>
+        nonSkipGroupCount === 1 && !isSkipVariantGroup(g.name) ? { ...g, name: "Varianten" } : g
+      );
+
       const initVariants: Record<string, string[]> = {};
-      for (const g of (data.variants ?? [])) {
+      for (const g of namedVariants) {
         initVariants[g.name] = [...g.values];
       }
       setSelectedVariants(initVariants);
-      setEditedVariants(data.variants ? data.variants.filter(g => !isSkipVariantGroup(g.name)).map(g => ({ name: g.name, values: [...g.values] })) : []);
+      setEditedVariants(namedVariants.filter(g => !isSkipVariantGroup(g.name)).map(g => ({ name: g.name, values: [...g.values] })));
       setEditingVariant({});
       // Preis vorausfüllen
       const p = parsePrice(data.price);
@@ -1273,6 +1282,27 @@ export default function Lieferanten() {
                         }}
                       >
                         Vorlage einfügen
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!navigator.clipboard?.readText) {
+                            alert("Dieser Browser unterstützt das Einfügen aus der Zwischenablage nicht — bitte manuell einfügen (Strg/Cmd+V) oder \"Vorlage einfügen\" nutzen.");
+                            return;
+                          }
+                          try {
+                            const text = await navigator.clipboard.readText();
+                            setGpsrHersteller(text);
+                          } catch {
+                            alert("Zugriff auf die Zwischenablage wurde verweigert — bitte im Browser erlauben oder den Text manuell mit Strg/Cmd+V einfügen.");
+                          }
+                        }}
+                        style={{
+                          background: "#2a2a2a", color: "#aaa", border: "1px solid #444",
+                          padding: "3px 10px", borderRadius: 4, fontSize: 10,
+                          cursor: "pointer", whiteSpace: "nowrap"
+                        }}
+                      >
+                        Aus Zwischenablage einfügen
                       </button>
                       {gpsrHersteller.trim() && (
                         <button
