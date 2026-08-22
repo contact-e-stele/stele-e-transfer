@@ -123,12 +123,13 @@ export interface TrackingEmailMatch {
   emailDate: string;
 }
 
-export function parseTrackingEmail(subject: string, bodyText: string): TrackingEmailMatch | null {
-  const subjectMatch = subject.match(/Packstück\s+(\S+)\s+hat die Abflugregion verlassen/i);
-  if (!subjectMatch) return null;
-  const trackingNumber = subjectMatch[1];
-
-  // "Versand nach:" + die nächsten 3 nicht-leeren Zeilen (Straße / Ort / Name+Telefon)
+// Gemeinsamer Block, der in beiden AliExpress-Logistik-Mail-Typen (P-84 "Abflugregion
+// verlassen" UND P-85 "wurde zugestellt") identisch vorkommt:
+//   Versand nach:
+//   {Straße}, {Hausnummer}
+//   {Ort}, {Bundesland}
+//   Evgenij Stele ({Telefonnummer})
+function parseVersandNachBlock(bodyText: string): { street: string; city: string; postalCode: string | null; phone: string | null } | null {
   const lines = bodyText.split(/\r?\n/).map(l => l.trim());
   const anchorIdx = lines.findIndex(l => /versand nach:?$/i.test(l));
   if (anchorIdx === -1) return null;
@@ -145,8 +146,36 @@ export function parseTrackingEmail(subject: string, bodyText: string): TrackingE
   const phone = phoneMatch ? phoneMatch[1].trim() : null;
 
   if (!streetLine || !city) return null;
+  return { street: streetLine, city, postalCode, phone };
+}
 
-  return { trackingNumber, street: streetLine, city, postalCode, phone, emailDate: '' };
+export function parseTrackingEmail(subject: string, bodyText: string): TrackingEmailMatch | null {
+  const subjectMatch = subject.match(/Packstück\s+(\S+)\s+hat die Abflugregion verlassen/i);
+  if (!subjectMatch) return null;
+  const address = parseVersandNachBlock(bodyText);
+  if (!address) return null;
+  return { trackingNumber: subjectMatch[1], ...address, emailDate: '' };
+}
+
+// ─── P-85: Zustellbestätigungs-Mail parsen ────────────────────────────────────
+// Betreff: "Paket {Sendungsnummer} wurde zugestellt" — bewusst NICHT die Vorstufe
+// "Paket {Sendungsnummer} wird zugestellt" (noch nicht final zugestellt). Die exakte
+// Wortformulierung "wurde zugestellt" in der Regex trifft "wird zugestellt" nicht.
+export interface DeliveryEmailMatch {
+  trackingNumber: string;
+  street: string;
+  city: string;
+  postalCode: string | null;
+  phone: string | null;
+  emailDate: string;
+}
+
+export function parseDeliveryEmail(subject: string, bodyText: string): DeliveryEmailMatch | null {
+  const subjectMatch = subject.match(/Paket\s+(\S+)\s+wurde zugestellt/i);
+  if (!subjectMatch) return null;
+  const address = parseVersandNachBlock(bodyText);
+  if (!address) return null;
+  return { trackingNumber: subjectMatch[1], ...address, emailDate: '' };
 }
 
 // ─── Base64url-MIME-Payload → Klartext ────────────────────────────────────────
@@ -186,12 +215,18 @@ function findHtmlBodyAsText(part: GmailMessagePart): string | null {
   return null;
 }
 
-// ─── Kürzlich eingegangene Logistik-Mails suchen + parsen ────────────────────
-export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEmailMatch[]> {
+// ─── Gmail durchsuchen + jede Treffer-Mail mit dem übergebenen Parser auswerten ─
+// Gemeinsame Grundlage für P-84 (Abflug) und P-85 (Zustellung) — beide unterscheiden
+// sich nur in Suchbegriff und Parser-Funktion.
+async function searchAndParseEmails<T extends { emailDate: string }>(
+  subjectPhrase: string,
+  days: number,
+  parser: (subject: string, bodyText: string) => T | null
+): Promise<T[]> {
   const token = await getGmailAccessToken();
   if (!token) throw new Error('Gmail nicht verbunden');
 
-  const q = `from:transaction@notice.aliexpress.com subject:"hat die Abflugregion verlassen" newer_than:${days}d`;
+  const q = `from:transaction@notice.aliexpress.com subject:"${subjectPhrase}" newer_than:${days}d`;
   const listRes = await fetch(`${GMAIL_API}/messages?q=${encodeURIComponent(q)}&maxResults=50`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -200,7 +235,7 @@ export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEma
     throw new Error(`Gmail-Suche fehlgeschlagen: ${listRes.status} ${text.slice(0, 300)}`);
   }
   const listData = await listRes.json() as { messages?: Array<{ id: string }> };
-  const results: TrackingEmailMatch[] = [];
+  const results: T[] = [];
 
   for (const { id } of listData.messages ?? []) {
     const msgRes = await fetch(`${GMAIL_API}/messages/${id}?format=full`, {
@@ -216,13 +251,23 @@ export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEma
     const bodyText = findPlainTextBody(msg.payload) ?? findHtmlBodyAsText(msg.payload);
     if (!bodyText) continue;
 
-    const parsed = parseTrackingEmail(subject, bodyText);
+    const parsed = parser(subject, bodyText);
     if (!parsed) continue;
     parsed.emailDate = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : '';
     results.push(parsed);
   }
 
   return results;
+}
+
+// ─── Kürzlich eingegangene Logistik-Mails suchen + parsen ────────────────────
+export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEmailMatch[]> {
+  return searchAndParseEmails('hat die Abflugregion verlassen', days, parseTrackingEmail);
+}
+
+// ─── P-85: Kürzlich eingegangene Zustellbestätigungen suchen + parsen ─────────
+export async function searchRecentDeliveryEmails(days = 14): Promise<DeliveryEmailMatch[]> {
+  return searchAndParseEmails('wurde zugestellt', days, parseDeliveryEmail);
 }
 
 // ─── Adressabgleich ────────────────────────────────────────────────────────────
@@ -240,7 +285,9 @@ const lastDigits = (s: string, n: number) => s.replace(/\D/g, '').slice(-n);
 // true wenn Straße+Ort (Pflicht) und — falls beide Seiten eine Telefonnummer haben — auch
 // die Telefonnummer übereinstimmt. Telefon ist nur eine ZUSÄTZLICHE Bestätigung, kein
 // Ausschlusskriterium, wenn eine der beiden Seiten keine Nummer liefert.
-export function addressMatchesEmail(addr: MatchableAddress, email: TrackingEmailMatch): boolean {
+// Nimmt sowohl TrackingEmailMatch (P-84) als auch DeliveryEmailMatch (P-85) an — beide
+// haben dieselbe Adress-Form.
+export function addressMatchesEmail(addr: MatchableAddress, email: { street: string; city: string; phone: string | null }): boolean {
   const emailStreetNorm = normalizeAddressText(email.street);
   const emailCityNorm = normalizeAddressText(email.city);
   const emailHouseNr = email.street.match(/\d+/)?.[0] ?? '';
