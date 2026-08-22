@@ -5,7 +5,7 @@ import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '.
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
-import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, addressMatchesEmail } from './gmail';
+import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail } from './gmail';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
@@ -979,6 +979,7 @@ const app = new Hono()
         manualBuyPrice?: number | null; // tatsaechlicher Einkaufspreis laut Rechnung
         trackingNumber?: string;
         carrier?: string;
+        markCustomerNotified?: boolean; // P-85: Bewertungsbitte wurde manuell verschickt
       };
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
@@ -993,6 +994,7 @@ const app = new Hono()
       if (body.manualBuyPrice !== undefined) update.manualBuyPrice = body.manualBuyPrice;
       if (body.trackingNumber !== undefined) update.trackingNumber = body.trackingNumber || null;
       if (body.carrier !== undefined) update.carrier = body.carrier || null;
+      if (body.markCustomerNotified) update.customerNotifiedAt = new Date().toISOString();
 
       await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
         .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });
@@ -1383,6 +1385,74 @@ const app = new Hono()
         if (matches.length === 1) {
           suggestions.push({ orderId: matches[0].orderId, trackingNumber: email.trackingNumber, carrier: 'Sonstige / AliExpress Standard' });
         }
+      }
+
+      return c.json({ suggestions }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 503);
+    }
+  })
+  // ─── P-85: Bewertungsbitte-Entwürfe aus AliExpress-Zustellbestätigungen ─────
+  // V1: reiner Entwurf, KEIN Versand-Mechanismus. Matching primär exakt über die
+  // bereits gespeicherte trackingNumber (P-80/P-84), Adressabgleich (P-84) nur als
+  // Fallback falls keine/keine eindeutige trackingNumber vorliegt. 3 Tage Verzögerung
+  // nach dem E-Mail-Datum, max. 1 Vorschlag pro Käufer innerhalb 30 Tagen
+  // (customerNotifiedAt — bisher ungenutzte Spalte, wird erst gesetzt wenn der Nutzer
+  // "Erledigt" bestätigt, nicht schon beim bloßen Anzeigen/Kopieren).
+  .get('/gmail/review-request-suggestions', async (c) => {
+    try {
+      const emails = await searchRecentDeliveryEmails(14);
+      if (emails.length === 0) return c.json({ suggestions: [] }, 200);
+
+      const orders = await getAllOrders();
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const notes = await db.select().from(schema.orderNotes).all();
+      const noteByOrderId = new Map(notes.map(n => [n.ebayOrderId, n]));
+
+      // Letzter customerNotifiedAt-Zeitpunkt je Käufer, über alle seine Bestellungen hinweg
+      const lastNotifiedByBuyer = new Map<string, number>();
+      for (const o of orders) {
+        const notifiedAt = noteByOrderId.get(o.orderId)?.customerNotifiedAt;
+        if (!notifiedAt) continue;
+        const ts = new Date(notifiedAt).getTime();
+        const prev = lastNotifiedByBuyer.get(o.buyerUsername);
+        if (!prev || ts > prev) lastNotifiedByBuyer.set(o.buyerUsername, ts);
+      }
+
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      const suggestions: Array<{ orderId: string; buyerUsername: string; draftText: string }> = [];
+      for (const email of emails) {
+        if (!email.emailDate) continue;
+        if (now - new Date(email.emailDate).getTime() < THREE_DAYS_MS) continue; // noch nicht 3 Tage her
+
+        const byTracking = orders.filter(o => {
+          const tn = noteByOrderId.get(o.orderId)?.trackingNumber;
+          return tn && tn.trim().toLowerCase() === email.trackingNumber.trim().toLowerCase();
+        });
+        let matched: typeof orders[number] | null = null;
+        if (byTracking.length === 1) {
+          matched = byTracking[0];
+        } else if (byTracking.length === 0) {
+          const byAddress = orders.filter(o => o.shippingAddress && addressMatchesEmail(o.shippingAddress, email));
+          if (byAddress.length === 1) matched = byAddress[0];
+        }
+        if (!matched) continue;
+
+        if (noteByOrderId.get(matched.orderId)?.customerNotifiedAt) continue; // schon erledigt
+        const lastNotified = lastNotifiedByBuyer.get(matched.buyerUsername);
+        if (lastNotified && now - lastNotified < THIRTY_DAYS_MS) continue; // Käufer erst kürzlich angefragt
+
+        const itemTitle = matched.lineItems.length === 1 ? matched.lineItems[0].title : null;
+        const orderPhrase = itemTitle ? `Ihre Bestellung "${itemTitle}"` : 'Ihre Bestellung bei uns';
+        const draftText = `Hallo, wir hoffen, dass ${orderPhrase} gut bei Ihnen angekommen ist und Ihren Erwartungen entspricht. Über eine kurze Bewertung würden wir uns sehr freuen — das hilft uns und anderen Käufern weiter. Sollte etwas nicht in Ordnung sein, melden Sie sich gerne direkt bei uns, wir kümmern uns umgehend darum. Vielen Dank für Ihren Einkauf!\n\nViele Grüße, Stele E-Transfer`;
+
+        suggestions.push({ orderId: matched.orderId, buyerUsername: matched.buyerUsername, draftText });
       }
 
       return c.json({ suggestions }, 200);

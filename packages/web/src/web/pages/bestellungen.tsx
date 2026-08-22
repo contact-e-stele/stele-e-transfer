@@ -43,6 +43,7 @@ interface Order {
     aliexpressOrderId: string | null;
     aliexpressInvoiceUrl: string | null;
     manualBuyPrice: number | null;
+    customerNotifiedAt: string | null;
   } | null;
 }
 
@@ -94,6 +95,11 @@ export default function Bestellungen() {
   // P-84: Sendungsnummer-Vorschläge aus AliExpress-Logistik-Mails — orderId -> Vorschlag.
   // Nur ein Vorschlag, kein Auto-Save; befüllt beim Bestätigen nur die vorhandenen P-80-Felder.
   const [trackingSuggestions, setTrackingSuggestions] = useState<Record<string, { trackingNumber: string; carrier: string }>>({});
+  // P-85: Bewertungsbitte-Entwürfe aus AliExpress-Zustellbestätigungen — orderId -> Entwurf.
+  // Reiner Text zum Kopieren, kein Versand-Mechanismus.
+  const [reviewSuggestions, setReviewSuggestions] = useState<Record<string, { draftText: string }>>({});
+  const [expandedReviewDraft, setExpandedReviewDraft] = useState<string | null>(null); // orderId
+  const [markingNotified, setMarkingNotified] = useState<string | null>(null); // orderId
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -228,6 +234,27 @@ export default function Bestellungen() {
       })
       .catch(() => { /* still, keine Vorschläge */ });
   }, []);
+
+  // P-85: Bewertungsbitte-Entwürfe laden — ebenfalls best-effort.
+  useEffect(() => {
+    fetch("/api/gmail/review-request-suggestions")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const list = (d as { suggestions?: Array<{ orderId: string; draftText: string }> } | null)?.suggestions ?? [];
+        const map: Record<string, { draftText: string }> = {};
+        for (const s of list) map[s.orderId] = { draftText: s.draftText };
+        setReviewSuggestions(map);
+      })
+      .catch(() => { /* still, keine Vorschläge */ });
+  }, []);
+
+  const handleMarkNotified = async (orderId: string) => {
+    setMarkingNotified(orderId);
+    await saveOrderNote(orderId, { markCustomerNotified: true });
+    setMarkingNotified(null);
+    setExpandedReviewDraft(null);
+    showToast("Als erledigt markiert — wird für diesen Käufer nicht erneut vorgeschlagen");
+  };
 
   const filtered = orders.filter(o => {
     if (filter === "open" && isEffectivelyShipped(o)) return false;
@@ -496,6 +523,58 @@ export default function Bestellungen() {
                   >
                     Übernehmen
                   </button>
+                </div>
+              )}
+
+              {/* P-85: Bewertungsbitte-Entwurf aus AliExpress-Zustellbestätigung — reiner Text zum
+                  Kopieren, KEIN Versand-Mechanismus. Erst "Erledigt" markiert die Bestellung. */}
+              {!order.localNote?.customerNotifiedAt && reviewSuggestions[order.orderId] && (
+                <div style={{
+                  marginTop: 10, padding: "8px 12px", borderRadius: 8,
+                  background: "#F5F3FF", border: "1px solid #DDD6FE",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontSize: 11, color: "#6D28D9" }}>
+                      ⭐ Bewertungsbitte-Entwurf verfügbar (Zustellung erkannt)
+                    </span>
+                    <button
+                      onClick={() => setExpandedReviewDraft(expandedReviewDraft === order.orderId ? null : order.orderId)}
+                      style={{ background: "#6D28D9", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                    >
+                      {expandedReviewDraft === order.orderId ? "Ausblenden" : "Text anzeigen"}
+                    </button>
+                  </div>
+                  {expandedReviewDraft === order.orderId && (
+                    <div style={{ marginTop: 8 }}>
+                      <textarea
+                        readOnly
+                        value={reviewSuggestions[order.orderId].draftText}
+                        style={{
+                          width: "100%", minHeight: 110, fontSize: 12, padding: 8, borderRadius: 6,
+                          border: "1px solid #DDD6FE", fontFamily: "inherit", resize: "vertical", background: "#fff",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(reviewSuggestions[order.orderId].draftText);
+                            showToast("Text kopiert — jetzt selbst in eBays Kontakt-Käufer-Funktion einfügen");
+                          }}
+                          style={{ background: "#fff", color: "#6D28D9", border: "1px solid #DDD6FE", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          Kopieren
+                        </button>
+                        <button
+                          onClick={() => handleMarkNotified(order.orderId)}
+                          disabled={markingNotified === order.orderId}
+                          style={{ background: "#F5F3FF", color: "#6D28D9", border: "1px solid #DDD6FE", borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: markingNotified === order.orderId ? "not-allowed" : "pointer" }}
+                        >
+                          {markingNotified === order.orderId ? "…" : "Erledigt (nicht mehr vorschlagen)"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
