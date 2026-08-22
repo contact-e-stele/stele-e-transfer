@@ -1517,6 +1517,7 @@ export interface EbayOrder {
     city: string;
     postalCode: string;
     countryCode: string;
+    phone: string | null;
   } | null;
   trackingNumber: string | null;
   carrier: string | null;
@@ -1558,6 +1559,7 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
             shipTo?: {
               fullName?: string;
               contactAddress?: { addressLine1?: string; addressLine2?: string; city?: string; postalCode?: string; countryCode?: string };
+              primaryPhone?: { phoneNumber?: string };
             };
           };
         }>;
@@ -1591,6 +1593,7 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
           city: shipTo.contactAddress?.city ?? '',
           postalCode: shipTo.contactAddress?.postalCode ?? '',
           countryCode: shipTo.contactAddress?.countryCode ?? '',
+          phone: shipTo.primaryPhone?.phoneNumber ?? null,
         } : null,
         trackingNumber: null, // wird separat aus Fulfillment-Details geladen, falls benötigt
         carrier: null,

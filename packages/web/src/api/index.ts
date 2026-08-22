@@ -5,6 +5,7 @@ import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '.
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
+import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, addressMatchesEmail } from './gmail';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
@@ -478,6 +479,23 @@ const app = new Hono()
         <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff;font-family:Montserrat,sans-serif">
           <h2 style="color:#4285F4">✅ Google Drive erfolgreich verbunden!</h2>
           <p>Ab sofort werden Backups, Bilder und Rechnungen automatisch auf Google Drive gesichert.</p>
+          <br>
+          <a href="/" style="color:#4285F4;font-weight:bold">→ Zurück zur App</a>
+        </body></html>
+      `);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .get('/gmail/callback', async (c) => {
+    const code = c.req.query('code');
+    if (!code) return c.json({ error: 'Kein Code von Google' }, 400);
+    try {
+      await handleGmailCallback(code);
+      return c.html(`
+        <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff;font-family:Montserrat,sans-serif">
+          <h2 style="color:#4285F4">✅ Gmail erfolgreich verbunden!</h2>
+          <p>Ab sofort können erkannte Sendungsnummern aus AliExpress-Logistik-Mails im Bestellungen-Tab vorgeschlagen werden.</p>
           <br>
           <a href="/" style="color:#4285F4;font-weight:bold">→ Zurück zur App</a>
         </body></html>
@@ -1328,6 +1346,49 @@ const app = new Hono()
   .get('/drive/status', async (c) => {
     const connected = await isDriveConnected();
     return c.json({ connected }, 200);
+  })
+  .get('/gmail/auth', (c) => {
+    const state = Math.random().toString(36).slice(2);
+    const url = getGmailOAuthUrl(state);
+    return c.redirect(url);
+  })
+  .get('/gmail/status', async (c) => {
+    const connected = await isGmailConnected();
+    return c.json({ connected }, 200);
+  })
+  // ─── P-84: Sendungsnummer-Vorschläge aus AliExpress-Logistik-Mails ───────────
+  // Liest live (kein Hintergrund-Job, keine gespeicherten Vorschläge) — nur Ergebnis bei
+  // GENAU EINEM eindeutigen Adress-Treffer unter den offenen Bestellungen. Kein Auto-Save,
+  // die Werte werden im Frontend nur in die bestehenden P-80-Felder vorausgefüllt.
+  .get('/gmail/tracking-suggestions', async (c) => {
+    try {
+      const emails = await searchRecentTrackingEmails(14);
+      if (emails.length === 0) return c.json({ suggestions: [] }, 200);
+
+      const orders = await getAllOrders();
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const notes = await db.select().from(schema.orderNotes).all();
+      const trackingByOrderId = new Map(notes.map(n => [n.ebayOrderId, n.trackingNumber]));
+      const openOrders = orders.filter(o => o.shippingAddress && !trackingByOrderId.get(o.orderId));
+
+      const suggestions: Array<{ orderId: string; trackingNumber: string; carrier: string }> = [];
+      for (const email of emails) {
+        const matches = openOrders.filter(o => addressMatchesEmail(o.shippingAddress!, email));
+
+        // Nur bei GENAU EINEM eindeutigen Treffer einen Vorschlag liefern — bei 0 oder
+        // mehreren Treffern bewusst nichts vorschlagen (P-84-Sicherheitsprinzip).
+        if (matches.length === 1) {
+          suggestions.push({ orderId: matches[0].orderId, trackingNumber: email.trackingNumber, carrier: 'Sonstige / AliExpress Standard' });
+        }
+      }
+
+      return c.json({ suggestions }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 503);
+    }
   })
   // Beliebiges Text-/Markdown-Dokument nach Drive sichern (z.B. P-UEBERSICHT.md) → Ordner APP/STELE-DS-APP/Backups
   .post('/drive/upload-doc', async (c) => {
