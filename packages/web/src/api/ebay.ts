@@ -939,18 +939,21 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 
   // 1. Pro Kombination: Inventory Item anlegen
   const variantSkus: string[] = [];
-  const variantSkuCombos: Array<{ sku: string; combo: Record<string, string> }> = [];
+  const variantSkuCombos: Array<{ sku: string; combo: Record<string, string>; aspects: Record<string, string[]> }> = [];
   for (const combo of combos) {
     const suffix = Object.values(combo).map(slugify).filter(Boolean).join('-');
     const varSku = `${input.sku}-${suffix}`;
     variantSkus.push(varSku);
-    variantSkuCombos.push({ sku: varSku, combo });
 
     // Varianten-Aspekte: gefilterte Basis-Aspekte + spezifischer Kombo-Wert (1 Wert pro Variante)
     const variantAspects = {
       ...baseAspectsFiltered,
       ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [mapVariantGroupName(k), [v]])),
     };
+    // P-89: dieselben Aspekte (inkl. EAN-Sentinel aus P-71) auch für den weiter unten erstellten
+    // Offer mitnehmen — nur ins Inventory Item zu schreiben reicht nicht, eBay validiert beim
+    // publish_by_inventory_item_group die Merkmale am Offer (siehe itemSpecifics in createOffer()).
+    variantSkuCombos.push({ sku: varSku, combo, aspects: variantAspects });
 
     // Varianten-Foto: aus variantPrices das passende Bild für diese Kombination suchen
     const comboValsLower = Object.values(combo).map(v => v.toLowerCase());
@@ -1045,7 +1048,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const gpsr = buildGpsrBlock(input.gpsr);
 
   const offerIds: string[] = [];
-  for (const { sku: varSku, combo: varCombo } of variantSkuCombos) {
+  for (const { sku: varSku, combo: varCombo, aspects: varAspects } of variantSkuCombos) {
     // Pro-Variante Preis: attrs-Werte aus combo mit variantPrices.attrs matchen
     const comboValues = Object.values(varCombo).map(v => v.toLowerCase());
     const varPriceEntry = input.variantPrices?.find(vp => {
@@ -1072,6 +1075,11 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         fulfillmentPolicyId: varFulfillmentPolicyId,
         paymentPolicyId: policies.paymentPolicyId,
         returnPolicyId: policies.returnPolicyId,
+      },
+      // P-89: Artikelmerkmale (inkl. EAN-Sentinel) direkt im Offer — eBay verlangt es beim
+      // publish_by_inventory_item_group, das Inventory Item allein reicht nicht (siehe createOffer()).
+      itemSpecifics: {
+        aspects: varAspects,
       },
       productSafety: gpsr,
     };
