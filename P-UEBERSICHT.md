@@ -33,6 +33,7 @@ Wird bei jeder neuen P-Nummer / jedem Status-Update aktualisiert. Backup zusätz
 | **P87** | PWA zeigt nach Update alte Inhalte | Kein Service Worker vorhanden (Prämisse "Caching-Problem durch SW" widerlegt) — Ursache war fehlender `Cache-Control`-Header: `index.html` konnte beliebig lange gecacht bleiben und zeigte dann auf längst ersetzte Vite-Asset-Hashes. Fix in `server.ts`: `index.html` immer `no-cache, no-store, must-revalidate`, `/assets/*` (hash-benannt) `immutable`-Langzeit-Cache |
 | **P88** | Standard-Varianten-Gruppenname | Import-Tab: bei genau einer Varianten-Gruppe wird der von AliExpress gelieferte Name (oft pauschal "Color", auch bei Größen/Sets) beim Scrapen durch "Varianten" ersetzt — bei mehreren Gruppen unverändert. Nutzer kann wie bisher frei umbenennen |
 | — | GPSR "Aus Zwischenablage einfügen" | Import-Tab: neuer Button neben "Vorlage einfügen"/"Löschen", liest `navigator.clipboard.readText()` und ersetzt das GPSR-Textfeld direkt (kein manuelles Löschen des Platzhaltertexts mehr nötig); klare Fehlermeldung bei verweigerter Berechtigung/fehlender Unterstützung |
+| **P89** | EAN-Fehler (25002) bei Varianten-Listings behoben | `listOnEbayWithVariants()` schrieb den EAN/GTIN-Sentinel (P-71 Ursache 2) nur ins Inventory Item, nie in den zugehörigen Offer (`itemSpecifics` fehlte dort komplett, anders als im Einzelartikel-Pfad `createOffer()`) — eBay validiert beim `publish_by_inventory_item_group` aber den Offer, nicht das Inventory Item, daher Fehler unabhängig von Kategorie/Sentinel-Wert. Fix: dieselben Aspekte (inkl. EAN) jetzt auch im Varianten-Offer-Body. Mit gemocktem Live-Aufruf der echten Funktion verifiziert (Test schlägt am alten Code exakt an dieser Stelle fehl, besteht am neuen) |
 
 ## 🔧 Technische Wartung / Bugfixes (P-Nummern ohne eigenen Feature-Charakter)
 
@@ -76,4 +77,4 @@ P-Nummer nicht wieder 11 vergeben.
 - GPSR structured fields: `ae_store_info` liefert nur den Shop-Namen, Hersteller-Adressdaten werden nicht automatisch geparst — GPSR-Felder müssen weiterhin manuell im Produkte-Tab gepflegt werden
 
 ---
-*Letzte Aktualisierung: 2026-08-19 — P-87 (PWA-Cache-Fix), P-88 (Varianten-Gruppenname) + GPSR-Zwischenablage ergänzt*
+*Letzte Aktualisierung: 2026-08-22 — P-87 (PWA-Cache-Fix), P-88 (Varianten-Gruppenname) + GPSR-Zwischenablage, P-89 (EAN-Fehler Varianten-Listings) ergänzt*
