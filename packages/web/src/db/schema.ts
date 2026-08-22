@@ -100,7 +100,8 @@ export const orderNotes = sqliteTable('order_notes', {
   trackingNumber: text('tracking_number'),
   carrier: text('carrier'),                    // z.B. DHL, Deutsche Post, Hermes, DPD
   shippedAt: text('shipped_at'),                // manuell gesetzt (lokaler Status, unabhaengig von eBay Fulfillment)
-  customerNotifiedAt: text('customer_notified_at'),
+  customerNotifiedAt: text('customer_notified_at'), // P-85: Bewertungsbitte als "erledigt" bestätigt
+  thankYouSentAt: text('thank_you_sent_at'),         // P-86: Danke+Sendungsnummer-Entwurf als "erledigt" bestätigt
   notificationSentAt: text('notification_sent_at'), // Zeitpunkt der internen "neue Bestellung"-Benachrichtigungsmail (dedupliziert wiederholte Checks)
   internalNote: text('internal_note'),
   invoiceGeneratedAt: text('invoice_generated_at'), // automatische Rechnungs-Generierung (P13)
