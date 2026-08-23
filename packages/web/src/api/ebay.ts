@@ -373,37 +373,50 @@ async function getAspectAllowedValue(categoryId: string | undefined, aspectName:
 
 // P-91: Generischer Retry-Wrapper für JEDEN Publish-Aufruf (Einzelartikel wie Varianten-Gruppe) —
 // eBays Taxonomy-API meldet nicht zuverlässig jeden tatsächlich benötigten Aspekt als "required"
-// (P-89: EAN, P-90: "Produktart", vermutlich nicht die letzten Fälle). Statt für jeden neu
+// (P-89: EAN, P-90/P-92: "Produktart", vermutlich nicht die letzten Fälle). Statt für jeden neu
 // auftauchenden Aspektnamen einen eigenen Sonderfall zu schreiben, liest dieser Loop eBays
-// deutsche Fehlermeldung ("Das Artikelmerkmal X fehlt") aus, schlägt den echten von eBay
-// erlaubten Wert für X nach (auch wenn X nicht als required gemeldet wurde) und trägt ihn bei
-// allen betroffenen Offers nach, bevor erneut publisht wird. Bis zu 5 verschiedene fehlende
-// Aspekte werden so automatisch behoben.
+// deutsche Fehlermeldung ("Das Artikelmerkmal X fehlt") aus und probiert der Reihe nach mehrere
+// Kandidatenwerte für X durch, bis publish() klappt oder die Kandidaten ausgehen.
 async function publishWithAspectHealing(
   offerIds: string[],
   categoryId: string | undefined,
   token: string,
   publish: () => Promise<string>,
 ): Promise<string> {
-  const healedAspects = new Set<string>();
-  const MAX_ASPECT_HEALS = 5;
+  // P-92: aspectName → Index des zuletzt versuchten Kandidatenwerts. War vorher ein Set (ein
+  // Versuch pro Aspekt, dann aufgeben) — Bug: wenn der EINE Fallback-Wert von eBay abgelehnt
+  // wurde (z.B. Freitext bei einem Auswahlfeld ohne bekannte erlaubte Werte), kam derselbe
+  // Fehlertext beim nächsten Versuch zurück und der Loop gab sofort auf, statt einen anderen
+  // Wert zu probieren. Jetzt: mehrere Kandidaten pro Aspekt, erst aufgeben wenn alle durch sind.
+  const attemptedIndex = new Map<string, number>();
+  const MAX_TOTAL_ATTEMPTS = 8; // harte Obergrenze über alle Aspekte+Kandidaten zusammen
 
-  for (let attempt = 0; attempt <= MAX_ASPECT_HEALS; attempt++) {
+  for (let attempt = 0; attempt <= MAX_TOTAL_ATTEMPTS; attempt++) {
     try {
       return await publish();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const match = msg.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/);
-      if (!match || attempt === MAX_ASPECT_HEALS) throw err;
+      if (!match || attempt === MAX_TOTAL_ATTEMPTS) throw err;
       const aspectName = match[1].trim();
-      if (healedAspects.has(aspectName)) throw err; // schon versucht, kein Fortschritt → nicht erneut probieren
-      healedAspects.add(aspectName);
 
       // Aspekte sind oft Auswahlfelder mit fester Werteliste — Freitext wie "Nicht angegeben"
-      // wird dafür abgelehnt (P-90-Nachbesserung). Erst den echten erlaubten Wert nachschlagen.
+      // wird dafür abgelehnt (P-90). Erst den echten erlaubten Wert nachschlagen; kennt die
+      // Taxonomy-API keinen, "Sonstige" probieren (in vielen eBay-Auswahlfeldern als Catch-all
+      // vorhanden) bevor als letzter Ausweg Freitext kommt.
       const allowedValue = await getAspectAllowedValue(categoryId, aspectName, token);
-      const healFallback = allowedValue ?? (IDENTIFIER_ASPECT_NAMES.has(aspectName) ? 'Nicht zutreffend' : 'Nicht angegeben');
-      console.log(`[eBay] Fehlendes Pflichtmerkmal "${aspectName}" erkannt — trage "${healFallback}" nach und versuche erneut...`);
+      const candidates = [...new Set([
+        allowedValue,
+        IDENTIFIER_ASPECT_NAMES.has(aspectName) ? 'Nicht zutreffend' : null,
+        'Sonstige',
+        'Nicht angegeben',
+      ].filter((v): v is string => !!v))];
+
+      const nextIndex = (attemptedIndex.get(aspectName) ?? -1) + 1;
+      if (nextIndex >= candidates.length) throw err; // alle Kandidaten für diesen Aspekt durch, kein Fortschritt mehr möglich
+      attemptedIndex.set(aspectName, nextIndex);
+      const healFallback = candidates[nextIndex];
+      console.log(`[eBay] Fehlendes Pflichtmerkmal "${aspectName}" — Versuch ${nextIndex + 1}/${candidates.length}: trage "${healFallback}" nach und versuche erneut...`);
 
       for (const offerId of offerIds) {
         const getRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
@@ -413,7 +426,9 @@ async function publishWithAspectHealing(
         const offerData = await getRes.json() as Record<string, unknown>;
         const specifics = offerData.itemSpecifics as { aspects?: Record<string, string[]> } | undefined;
         const aspectsCopy = { ...(specifics?.aspects ?? {}) };
-        if (!aspectsCopy[aspectName]) aspectsCopy[aspectName] = [healFallback];
+        // Immer überschreiben, nicht nur setzen wenn leer — ein vorheriger Kandidat für denselben
+        // Aspekt kann bereits (falsch) gesetzt sein und muss ersetzt werden.
+        aspectsCopy[aspectName] = [healFallback];
         offerData.itemSpecifics = { aspects: aspectsCopy };
         await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
           method: 'PUT',
