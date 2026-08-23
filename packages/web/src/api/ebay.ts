@@ -371,6 +371,79 @@ async function getAspectAllowedValue(categoryId: string | undefined, aspectName:
   return match?.aspectValues?.[0]?.localizedValue ?? null;
 }
 
+// P-91: Generischer Retry-Wrapper für JEDEN Publish-Aufruf (Einzelartikel wie Varianten-Gruppe) —
+// eBays Taxonomy-API meldet nicht zuverlässig jeden tatsächlich benötigten Aspekt als "required"
+// (P-89: EAN, P-90: "Produktart", vermutlich nicht die letzten Fälle). Statt für jeden neu
+// auftauchenden Aspektnamen einen eigenen Sonderfall zu schreiben, liest dieser Loop eBays
+// deutsche Fehlermeldung ("Das Artikelmerkmal X fehlt") aus, schlägt den echten von eBay
+// erlaubten Wert für X nach (auch wenn X nicht als required gemeldet wurde) und trägt ihn bei
+// allen betroffenen Offers nach, bevor erneut publisht wird. Bis zu 5 verschiedene fehlende
+// Aspekte werden so automatisch behoben.
+async function publishWithAspectHealing(
+  offerIds: string[],
+  categoryId: string | undefined,
+  token: string,
+  publish: () => Promise<string>,
+): Promise<string> {
+  const healedAspects = new Set<string>();
+  const MAX_ASPECT_HEALS = 5;
+
+  for (let attempt = 0; attempt <= MAX_ASPECT_HEALS; attempt++) {
+    try {
+      return await publish();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const match = msg.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/);
+      if (!match || attempt === MAX_ASPECT_HEALS) throw err;
+      const aspectName = match[1].trim();
+      if (healedAspects.has(aspectName)) throw err; // schon versucht, kein Fortschritt → nicht erneut probieren
+      healedAspects.add(aspectName);
+
+      // Aspekte sind oft Auswahlfelder mit fester Werteliste — Freitext wie "Nicht angegeben"
+      // wird dafür abgelehnt (P-90-Nachbesserung). Erst den echten erlaubten Wert nachschlagen.
+      const allowedValue = await getAspectAllowedValue(categoryId, aspectName, token);
+      const healFallback = allowedValue ?? (IDENTIFIER_ASPECT_NAMES.has(aspectName) ? 'Nicht zutreffend' : 'Nicht angegeben');
+      console.log(`[eBay] Fehlendes Pflichtmerkmal "${aspectName}" erkannt — trage "${healFallback}" nach und versuche erneut...`);
+
+      for (const offerId of offerIds) {
+        const getRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!getRes.ok) continue;
+        const offerData = await getRes.json() as Record<string, unknown>;
+        const specifics = offerData.itemSpecifics as { aspects?: Record<string, string[]> } | undefined;
+        const aspectsCopy = { ...(specifics?.aspects ?? {}) };
+        if (!aspectsCopy[aspectName]) aspectsCopy[aspectName] = [healFallback];
+        offerData.itemSpecifics = { aspects: aspectsCopy };
+        await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+          body: JSON.stringify(offerData),
+        }).catch(() => {});
+      }
+    }
+  }
+  throw new Error('publishWithAspectHealing: unerreichbar');
+}
+
+// P-91: eBays Roh-Fehlertext (oft ein ganzer JSON-Blob) in eine für Menschen lesbare Meldung
+// umwandeln — wird angezeigt, wenn selbst publishWithAspectHealing() aufgibt (Aspekt ohne
+// sinnvollen Fallback-Wert, oder ein anderer Fehlergrund). Exportiert, damit der API-Layer
+// (index.ts) sie auf jede eBay-Listing-Fehlermeldung anwenden kann, bevor sie im Frontend landet.
+export function prettifyEbayError(rawMessage: string): string {
+  const aspectMatch = rawMessage.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/);
+  if (aspectMatch) {
+    return `eBay-Pflichtfeld "${aspectMatch[1].trim()}" fehlt und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen oder eBay-Kategorie prüfen.`;
+  }
+  // Generische eBay-Fehlerbeschreibung aus dem JSON extrahieren, statt den rohen Blob zu zeigen
+  const longMessageMatch = rawMessage.match(/"longMessage"\s*:\s*"([^"]{5,300})"/)
+    ?? rawMessage.match(/"message"\s*:\s*"([^"]{5,300})"/);
+  if (longMessageMatch && longMessageMatch[1] !== 'A user error has occurred.' && longMessageMatch[1] !== 'A user error has occurred') {
+    return `eBay-Fehler: ${longMessageMatch[1]}`;
+  }
+  return rawMessage;
+}
+
 // Cache: categoryId → VariationsEnabled
 const variationsEnabledCache = new Map<string, boolean>();
 
@@ -1163,60 +1236,10 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   if (offerIds.length === 0) throw new Error('Keine Offers erstellt');
   console.log(`[eBay] Publishing variant group ${groupSku} with ${offerIds.length} offers...`);
 
-  // P-90: eBays Taxonomy-API (getRequiredAspects) markiert nicht jedes Kategorie-Pflichtmerkmal
-  // zuverlässig als "required" — dasselbe Muster wie bei EAN (P-89), nur mit anderem Merkmalsnamen
-  // (z.B. "Produktart"). Statt für jedes neu auftauchende Merkmal einen eigenen Sonderfall zu
-  // schreiben, heilt dieser Loop den Fehler generisch: eBays deutsche Fehlermeldung nennt das
-  // fehlende Merkmal beim Namen ("Das Artikelmerkmal X fehlt") — Name extrahieren, allen Offers
-  // einen sicheren Fallback-Wert für X nachtragen, erneut publishen. Bis zu 5 verschiedene fehlende
-  // Merkmale werden so automatisch behoben, bevor aufgegeben wird.
-  const healedAspects = new Set<string>();
-  const MAX_ASPECT_HEALS = 5;
-
-  async function publishWithAspectHealing(): Promise<string> {
-    for (let attempt = 0; attempt <= MAX_ASPECT_HEALS; attempt++) {
-      try {
-        return await publishOfferByInventoryItemGroup(groupSku);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const match = msg.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/);
-        if (!match || attempt === MAX_ASPECT_HEALS) throw err;
-        const aspectName = match[1].trim();
-        if (healedAspects.has(aspectName)) throw err; // schon versucht, kein Fortschritt → nicht erneut probieren
-        healedAspects.add(aspectName);
-        // P-90 Nachbesserung: viele Aspekte (z.B. "Produktart") sind Auswahlfelder mit fester
-        // Werteliste — Freitext wie "Nicht angegeben" wird dafür genauso abgelehnt wie vorher bei
-        // EAN. Erst den tatsächlich erlaubten Wert der Kategorie nachschlagen (auch wenn eBay den
-        // Aspekt nicht als "required" gemeldet hatte), Freitext nur als letzter Ausweg.
-        const allowedValue = await getAspectAllowedValue(input.categoryId, aspectName, token);
-        const healFallback = allowedValue ?? (IDENTIFIER_ASPECT_NAMES.has(aspectName) ? 'Nicht zutreffend' : 'Nicht angegeben');
-        console.log(`[eBay] Fehlendes Pflichtmerkmal "${aspectName}" erkannt — trage "${healFallback}" nach und versuche erneut...`);
-
-        for (const offerId of offerIds) {
-          const getRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
-          if (!getRes.ok) continue;
-          const offerData = await getRes.json() as Record<string, unknown>;
-          const specifics = offerData.itemSpecifics as { aspects?: Record<string, string[]> } | undefined;
-          const aspectsCopy = { ...(specifics?.aspects ?? {}) };
-          if (!aspectsCopy[aspectName]) aspectsCopy[aspectName] = [healFallback];
-          offerData.itemSpecifics = { aspects: aspectsCopy };
-          await fetch(`${BASE_URL}/sell/inventory/v1/offer/${offerId}`, {
-            method: 'PUT',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
-            body: JSON.stringify(offerData),
-          }).catch(() => {});
-        }
-      }
-    }
-    throw new Error('publishWithAspectHealing: unerreichbar');
-  }
-
   // Versuche publish — bei Fehler 25005 (Kategorie unterstützt keine Varianten) → Fallback-Kategorien
   const VARIATION_CATEGORY_FALLBACKS = ['83595', '66471', '179779', '26395'];
   try {
-    return await publishWithAspectHealing();
+    return await publishWithAspectHealing(offerIds, input.categoryId, token, () => publishOfferByInventoryItemGroup(groupSku));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!msg.includes('25005')) throw err;
@@ -1250,7 +1273,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         }
       }
       try {
-        const listingId = await publishOfferByInventoryItemGroup(groupSku);
+        const listingId = await publishWithAspectHealing(offerIds, fallbackCat, token, () => publishOfferByInventoryItemGroup(groupSku));
         console.log(`[eBay] Erfolgreich mit Fallback-Kategorie ${fallbackCat}: listingId=${listingId}`);
         return listingId;
       } catch (e2: unknown) {
@@ -1280,7 +1303,10 @@ export async function listOnEbay(input: EbayListingInput): Promise<string> {
   await deleteExistingOffers(input.sku);
   await createOrUpdateInventoryItem(input);
   const offerId = await createOffer(input);
-  const listingId = await publishOffer(offerId);
+  // P-91: dieselbe Selbstheilung wie im Varianten-Pfad — auch Einzelartikel-Listings können an
+  // einem Aspekt scheitern, den eBays Taxonomy-API nicht als "required" gemeldet hat.
+  const token = await getAccessToken();
+  const listingId = await publishWithAspectHealing([offerId], input.categoryId, token, () => publishOffer(offerId));
   return listingId;
 }
 
