@@ -1180,6 +1180,112 @@ const app = new Hono()
     }
   })
 
+  // ─── P-27/P-28: Varianten-Preisprüfung (Audit, rein lesend, KEIN eBay-Write) ─────
+  // Deckt genau die Produkte ab, die recalculate-preview oben bewusst ausschließt
+  // (variantCount > 1 || variantGroupCount > 0). Scraped pro Produkt frisch bei
+  // AliExpress, matched die Varianten über die stabile skuId gegen den zuletzt
+  // gespeicherten Stand (variantPrices) und berechnet den korrekten Preis je Variante.
+  // "isLoss"/"belowMinMargin" schätzen den Gewinn beim ZULETZT bekannten eBay-Verkaufspreis
+  // mit dem NEUEN Einkaufspreis — echtes Live-Auslesen pro Varianten-Offer würde eine
+  // eindeutige Zuordnung skuId→eBay-SKU brauchen, die es aktuell nicht gibt (siehe Notiz
+  // in der Response). Kein automatischer eBay-Write — reine Diagnose für die Dauerlösung.
+  .get('/ebay/listings/recalculate-preview-variants', async (c) => {
+    try {
+      const { calcSellPrice, isChinaShipping } = await import('./price-monitor');
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
+      const dbProducts = await db.select().from(schema.products).all();
+
+      const candidates = dbProducts.filter(p => {
+        if (p.ebayStatus !== 'listed' || !p.sourceUrl) return false;
+        let variantCount = 0;
+        try { variantCount = p.variantPrices ? (JSON.parse(p.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
+        let variantGroupCount = 0;
+        try { variantGroupCount = p.variants ? (JSON.parse(p.variants) as unknown[]).length : 0; } catch { /* ignore */ }
+        return variantCount > 1 || variantGroupCount > 0;
+      });
+
+      const DIFF_THRESHOLD = 0.30; // € Einkaufspreis-Differenz, ab der eine Variante gemeldet wird
+
+      type VariantFinding = {
+        productId: number; title: string; skuId: string; attrs: Record<string, string>;
+        oldBuyPrice: number; newBuyPrice: number; buyPriceDiffPct: number;
+        lastKnownSellPrice: number; correctSellPrice: number;
+        estimatedProfitAtLastKnownPrice: number; isLoss: boolean; belowMinMargin: boolean;
+      };
+      const findings: VariantFinding[] = [];
+      const scrapeErrors: Array<{ productId: number; title: string; error: string }> = [];
+
+      for (const product of candidates) {
+        let oldVariantPrices: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
+        try { oldVariantPrices = product.variantPrices ? JSON.parse(product.variantPrices) : []; } catch { /* ignore */ }
+        if (oldVariantPrices.length === 0) continue;
+
+        let fresh;
+        try { fresh = await scrapeAliExpressUrl(product.sourceUrl!); } catch { fresh = null; }
+        if (!fresh || fresh.variantPrices.length === 0) {
+          scrapeErrors.push({ productId: product.id, title: product.generatedTitle || product.title, error: 'AliExpress-Scrape fehlgeschlagen oder keine Varianten zurückgegeben' });
+          continue;
+        }
+
+        const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+        const versand = product.shippingCost ?? 0;
+        const adRate = product.adRate ?? 0;
+        const feeRate = (13 + adRate) / 100 * 1.19;
+
+        for (const freshVariant of fresh.variantPrices) {
+          const oldMatch = oldVariantPrices.find(v => v.skuId === freshVariant.skuId);
+          if (!oldMatch) continue; // neue Variante ohne bekannten Vorher-Preis — kein Vergleich möglich
+          const oldBuyPrice = oldMatch.price;
+          const newBuyPrice = freshVariant.price;
+          const buyDiff = newBuyPrice - oldBuyPrice;
+          if (Math.abs(buyDiff) < DIFF_THRESHOLD) continue;
+
+          const lastKnownSellPrice = calcSellPrice(oldBuyPrice, versand, zoll, adRate);
+          const correctSellPrice = calcSellPrice(newBuyPrice, versand, zoll, adRate);
+
+          // Gewinn, WENN der zuletzt berechnete Verkaufspreis auf eBay noch aktiv ist
+          // (plausibel — die automatische Varianten-Preiskorrektur war bis zum P-89-Fix defekt)
+          // aber mit dem NEUEN, echten Einkaufspreis gerechnet wird:
+          const estimatedProfitAtLastKnownPrice = Math.round(
+            (lastKnownSellPrice - lastKnownSellPrice * feeRate - newBuyPrice - versand - zoll - 0.45 * 1.19) * 100
+          ) / 100;
+
+          findings.push({
+            productId: product.id,
+            title: product.generatedTitle || product.title,
+            skuId: freshVariant.skuId,
+            attrs: freshVariant.attrs ?? {},
+            oldBuyPrice, newBuyPrice,
+            buyPriceDiffPct: Math.round((buyDiff / oldBuyPrice) * 1000) / 10,
+            lastKnownSellPrice, correctSellPrice,
+            estimatedProfitAtLastKnownPrice,
+            isLoss: estimatedProfitAtLastKnownPrice < 0,
+            belowMinMargin: estimatedProfitAtLastKnownPrice < MIN_GEWINN_EUR,
+          });
+        }
+      }
+
+      findings.sort((a, b) => a.estimatedProfitAtLastKnownPrice - b.estimatedProfitAtLastKnownPrice);
+
+      return c.json({
+        findings,
+        total: findings.length,
+        lossCount: findings.filter(f => f.isLoss).length,
+        belowMinMarginCount: findings.filter(f => f.belowMinMargin).length,
+        candidatesChecked: candidates.length,
+        scrapeErrors,
+        note: 'lastKnownSellPrice ist der zuletzt aus dem gespeicherten Einkaufspreis berechnete Verkaufspreis, NICHT zwingend der aktuell live auf eBay stehende Preis (echtes Live-Auslesen pro Varianten-Offer ist ohne eindeutige skuId→eBay-SKU-Zuordnung aktuell nicht möglich) — Schätzung, keine Garantie.',
+      }, 200);
+    } catch (e) {
+      console.error('[recalculate-preview-variants]', e);
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
   // ─── Vom Nutzer bestätigte Preise anwenden (P-8) ─────────────────────────────
   .post('/ebay/listings/recalculate-apply', async (c) => {
     try {
