@@ -656,42 +656,35 @@ const app = new Hono()
     if (!body.price || body.price <= 0) return c.json({ error: 'Ungültiger Preis' }, 400);
 
     try {
-      const token = await (await import('./ebay')).getAccessToken();
-      const xml = `<?xml version="1.0" encoding="utf-8"?>
-<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
-  <InventoryStatus>
-    <ItemID>${itemId}</ItemID>
-    <StartPrice>${body.price.toFixed(2)}</StartPrice>
-  </InventoryStatus>
-</ReviseInventoryStatusRequest>`;
-
-      const res = await fetch('https://api.ebay.com/ws/api.dll', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/xml',
-          'X-EBAY-API-SITEID': '77',
-          'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
-          'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus',
-          'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
-        },
-        body: xml,
-      });
-
-      const text = await res.text();
-      const hasError = text.includes('<Ack>Failure</Ack>');
-      if (hasError) {
-        const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Unbekannter Fehler';
-        return c.json({ error: errMsg }, 400);
-      }
-
-      // Auch in DB aktualisieren wenn Produkt verknüpft
+      // P-89-Fix: Trading-API ReviseInventoryStatus mit bloßer ItemID (ohne SKU) schlägt bei
+      // Varianten-Listings immer mit eBays Fehler "Bestandseinheiten ... müssen zur Verfügung
+      // gestellt werden" fehl. Erst Inventory API (mit korrekten Einzel-SKUs, auch für Varianten)
+      // versuchen, Trading API nur als Fallback für Nicht-Varianten-Listings — gleiches Muster
+      // wie bereits in updateEbayPriceInventory()/updateEbayPriceTrading() und recalculate-apply.
+      const { updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
       const dbProduct = await db.select().from(schema.products)
         .where(eq(schema.products.ebayListingId, itemId)).get();
+
+      let ok = false;
+      let error: string | undefined;
+      if (dbProduct) {
+        ok = await updateEbayPriceInventory(dbProduct.id, body.price);
+      }
+      if (!ok) {
+        const tradingResult = await updateEbayPriceTrading(itemId, body.price);
+        ok = tradingResult.ok;
+        error = tradingResult.error;
+      }
+
+      if (!ok) {
+        return c.json({ error: error ?? 'Preis-Update fehlgeschlagen (Inventory + Trading API)' }, 400);
+      }
+
+      // Auch in DB aktualisieren wenn Produkt verknüpft
       if (dbProduct) {
         await db.update(schema.products).set({ sellPrice: body.price, lastPriceCheck: new Date().toISOString() }).where(eq(schema.products.ebayListingId, itemId));
       }
