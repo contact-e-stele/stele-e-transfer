@@ -4,7 +4,7 @@
 import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl } from './aliexpress';
-import { getAccessToken, hasVariations } from './ebay';
+import { getAccessToken, hasVariations, getInventoryItemGroupSkus } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
@@ -43,6 +43,40 @@ function parsePrice(raw: string): number {
 
 const EBAY_API_BASE = 'https://api.ebay.com';
 
+// Holt das Offer zu einer EXAKTEN SKU und setzt dessen Preis (Inventory API).
+// eBays "sku"-Query-Parameter bei GET /offer ist ein exakter Match — kein Präfix-/Wildcard-Filter.
+async function updateOfferPriceBySku(sku: string, newPrice: number, token: string): Promise<boolean> {
+  const res = await fetch(
+    `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!res.ok) return false;
+  const data = await res.json() as { offers?: Array<{ offerId: string; sku: string }> };
+  const offers = data.offers ?? [];
+  if (offers.length === 0) return false;
+
+  let anyOk = false;
+  for (const offer of offers) {
+    const patchRes = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Language': 'de-DE',
+      },
+      body: JSON.stringify({
+        sku: offer.sku,
+        marketplaceId: 'EBAY_DE',
+        pricingSummary: {
+          price: { value: newPrice.toFixed(2), currency: 'EUR' },
+        },
+      }),
+    });
+    if (patchRes.ok || patchRes.status === 204) anyOk = true;
+  }
+  return anyOk;
+}
+
 // eBay Preis über Inventory API updaten (für neue Listings die über Inventory API erstellt wurden)
 // Sucht Offer per SKU und updated pricingSummary
 export async function updateEbayPriceInventory(productId: number, newPrice: number): Promise<boolean> {
@@ -50,82 +84,27 @@ export async function updateEbayPriceInventory(productId: number, newPrice: numb
     const token = await getAccessToken();
     const sku = `stele-${productId}`;
 
-    // Varianten-SKU Pattern: stele-{id}-{suffix}
-    // Zuerst einfachen SKU probieren, dann mit Varianten-Prefix suchen
-    const skusToTry = [sku, `${sku}-GROUP`];
-
-    for (const trysku of skusToTry) {
-      const res = await fetch(
-        `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(trysku)}&marketplace_id=EBAY_DE`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      if (!res.ok) continue;
-
-      const data = await res.json() as { offers?: Array<{ offerId: string; sku: string }> };
-      const offers = data.offers ?? [];
-
-      if (offers.length > 0) {
-        // Update alle gefundenen Offers (bei Varianten gibt es mehrere)
-        let anyOk = false;
-        for (const offer of offers) {
-          const patchRes = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'Content-Language': 'de-DE',
-            },
-            body: JSON.stringify({
-              sku: offer.sku,
-              marketplaceId: 'EBAY_DE',
-              pricingSummary: {
-                price: { value: newPrice.toFixed(2), currency: 'EUR' },
-              },
-            }),
-          });
-          if (patchRes.ok || patchRes.status === 204) anyOk = true;
-        }
-
-        // Publish ist bei bereits aktiven Listings nicht nötig — Preis-Update ist sofort aktiv
-        if (anyOk) {
-          console.log(`[PriceMonitor] ✅ Inventory API: ${sku} → ${newPrice.toFixed(2)}€ (${offers.length} Offers)`);
-          return true;
-        }
-      }
+    // 1. Einzelartikel-Listing: SKU direkt versuchen
+    if (await updateOfferPriceBySku(sku, newPrice, token)) {
+      console.log(`[PriceMonitor] ✅ Inventory API: ${sku} → ${newPrice.toFixed(2)}€`);
+      return true;
     }
 
-    // Varianten: SKU-Pattern stele-{id}-* per Prefix suchen
-    const varRes = await fetch(
-      `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku + '-')}&marketplace_id=EBAY_DE&limit=50`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (varRes.ok) {
-      const varData = await varRes.json() as { offers?: Array<{ offerId: string; sku: string }> };
-      const varOffers = (varData.offers ?? []).filter(o => o.sku.startsWith(sku + '-'));
-      if (varOffers.length > 0) {
-        let anyOk = false;
-        for (const offer of varOffers) {
-          const patchRes = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'Content-Language': 'de-DE',
-            },
-            body: JSON.stringify({
-              sku: offer.sku,
-              marketplaceId: 'EBAY_DE',
-              pricingSummary: {
-                price: { value: newPrice.toFixed(2), currency: 'EUR' },
-              },
-            }),
-          });
-          if (patchRes.ok || patchRes.status === 204) anyOk = true;
-        }
-        if (anyOk) {
-          console.log(`[PriceMonitor] ✅ Inventory API (Varianten): ${sku}-* → ${newPrice.toFixed(2)}€`);
-          return true;
-        }
+    // 2. Varianten-Listing: echte Varianten-SKUs aus der Inventory-Item-Group lesen statt zu
+    // erraten/per Präfix zu suchen — ein früherer Versuch mit "sku=stele-{id}-" (Präfix) lieferte
+    // wegen des exakten Match-Verhaltens der eBay-API IMMER 0 Treffer und schlug damit für jedes
+    // Varianten-Produkt still fehl (Ursache für die von der Preiskorrektur ausgeschlossenen
+    // Varianten-Artikel).
+    const groupSku = `${sku}-GROUP`;
+    const variantSkus = await getInventoryItemGroupSkus(groupSku, token);
+    if (variantSkus.length > 0) {
+      let anyOk = false;
+      for (const varSku of variantSkus) {
+        if (await updateOfferPriceBySku(varSku, newPrice, token)) anyOk = true;
+      }
+      if (anyOk) {
+        console.log(`[PriceMonitor] ✅ Inventory API (Varianten): ${groupSku} → ${newPrice.toFixed(2)}€ (${variantSkus.length} SKUs)`);
+        return true;
       }
     }
 

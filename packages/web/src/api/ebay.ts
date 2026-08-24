@@ -975,7 +975,7 @@ export async function deleteInventoryItemGroup(groupKey: string): Promise<void> 
 // Werten generiert (z.B. "-01-3PCS") und ändern sich, wenn sich Varianten-Werte oder die
 // slugify()-Logik ändern — eine hartcodierte Liste (z.B. "-SET1".."-SET4") trifft die realen
 // SKUs oft gar nicht, wodurch alte Offers aus fehlgeschlagenen Vorversuchen liegen bleiben.
-async function getInventoryItemGroupSkus(groupKey: string, token: string): Promise<string[]> {
+export async function getInventoryItemGroupSkus(groupKey: string, token: string): Promise<string[]> {
   const res = await fetch(
     `${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
     { headers: { 'Authorization': `Bearer ${token}` } }
