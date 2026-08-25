@@ -150,7 +150,11 @@ export default function Listings() {
   const [editSaveMsg, setEditSaveMsg] = useState("");
 
   // ─── Preise neu berechnen (P-8) ────────────────────────────────────────────
-  interface RecalcRow { itemId: string; title: string; oldPrice: number; newPrice: number; diff: number }
+  interface RecalcRow {
+    itemId: string; title: string; oldPrice: number; newPrice: number; diff: number;
+    isVariant?: boolean;
+    variantBreakdown?: Array<{ attrs: Record<string, string>; buyPrice: number; correctSellPrice: number }>;
+  }
   const [recalcOpen, setRecalcOpen] = useState(false);
   const [recalcLoading, setRecalcLoading] = useState(false);
   const [recalcPreview, setRecalcPreview] = useState<RecalcRow[]>([]);
@@ -158,6 +162,7 @@ export default function Listings() {
   const [recalcApplying, setRecalcApplying] = useState(false);
   const [recalcError, setRecalcError] = useState<string | null>(null);
   const [recalcResultMsg, setRecalcResultMsg] = useState<string | null>(null);
+  const [expandedVariantRow, setExpandedVariantRow] = useState<string | null>(null);
 
   const handleRecalcOpen = async () => {
     setRecalcOpen(true);
@@ -581,25 +586,48 @@ export default function Listings() {
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
                     {recalcPreview.map(row => (
-                      <div key={row.itemId} style={{
-                        display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
-                        borderRadius: 8, border: "1px solid #F1F5F9", background: "#FAFAFA",
-                      }}>
-                        <button type="button" onClick={() => toggleRecalcSelect(row.itemId)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0 }}>
-                          {recalcSelected.has(row.itemId) ? <CheckSquare size={16} color="#6366F1" /> : <Square size={16} color="#CBD5E1" />}
-                        </button>
-                        <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "#0F172A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.title}>
-                          {row.title}
+                      <div key={row.itemId} style={{ borderRadius: 8, border: "1px solid #F1F5F9", background: "#FAFAFA" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px" }}>
+                          <button type="button" onClick={() => toggleRecalcSelect(row.itemId)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0 }}>
+                            {recalcSelected.has(row.itemId) ? <CheckSquare size={16} color="#6366F1" /> : <Square size={16} color="#CBD5E1" />}
+                          </button>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, color: "#0F172A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.title}>
+                              {row.title}
+                            </div>
+                            {row.isVariant && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedVariantRow(prev => prev === row.itemId ? null : row.itemId)}
+                                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 10, fontWeight: 700, color: "#6366F1" }}
+                              >
+                                {row.variantBreakdown?.length ?? 0} Varianten · Einheitspreis (höchster Mindestpreis) — {expandedVariantRow === row.itemId ? "Details verbergen" : "Details zeigen"}
+                              </button>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#94A3B8", flexShrink: 0 }}>{row.oldPrice.toFixed(2)} €</div>
+                          <div style={{ fontSize: 12, color: "#94A3B8", flexShrink: 0 }}>→</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", flexShrink: 0 }}>{row.newPrice.toFixed(2)} €</div>
+                          <div style={{
+                            fontSize: 11, fontWeight: 700, flexShrink: 0, minWidth: 52, textAlign: "right",
+                            color: row.diff > 0 ? "#16A34A" : row.diff < 0 ? "#DC2626" : "#94A3B8",
+                          }}>
+                            {row.diff > 0 ? "+" : ""}{row.diff.toFixed(2)} €
+                          </div>
                         </div>
-                        <div style={{ fontSize: 12, color: "#94A3B8", flexShrink: 0 }}>{row.oldPrice.toFixed(2)} €</div>
-                        <div style={{ fontSize: 12, color: "#94A3B8", flexShrink: 0 }}>→</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: "#0F172A", flexShrink: 0 }}>{row.newPrice.toFixed(2)} €</div>
-                        <div style={{
-                          fontSize: 11, fontWeight: 700, flexShrink: 0, minWidth: 52, textAlign: "right",
-                          color: row.diff > 0 ? "#16A34A" : row.diff < 0 ? "#DC2626" : "#94A3B8",
-                        }}>
-                          {row.diff > 0 ? "+" : ""}{row.diff.toFixed(2)} €
-                        </div>
+                        {row.isVariant && expandedVariantRow === row.itemId && row.variantBreakdown && (
+                          <div style={{ padding: "0 10px 10px 34px", display: "flex", flexDirection: "column", gap: 3 }}>
+                            {row.variantBreakdown.map((v, i) => (
+                              <div key={i} style={{ display: "flex", gap: 8, fontSize: 11, color: "#64748B" }}>
+                                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {Object.values(v.attrs).join(" / ") || "(ohne Attribute)"}
+                                </span>
+                                <span>EK {v.buyPrice.toFixed(2)} €</span>
+                                <span style={{ fontWeight: 700, color: "#0F172A" }}>Mindest-VK {v.correctSellPrice.toFixed(2)} €</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
