@@ -99,6 +99,9 @@ const migrations = [
   `ALTER TABLE trusted_suppliers ADD COLUMN compliance_status TEXT DEFAULT 'ungeprueft'`,
   `ALTER TABLE trusted_suppliers ADD COLUMN compliance_docs_verified_at TEXT`,
   `ALTER TABLE trusted_suppliers ADD COLUMN compliance_notes TEXT`,
+  // P-88: manuelles Eingabefeld für eBay-Pflichtfelder, die die Selbstheilung (P-91/92) nicht befüllen konnte
+  `ALTER TABLE products ADD COLUMN ebay_missing_aspect TEXT`,
+  `ALTER TABLE products ADD COLUMN manual_aspects TEXT`,
 ];
 
 export async function runMigrations() {

@@ -29,6 +29,8 @@ export const products = sqliteTable('products', {
   ebayListingId: text('ebay_listing_id'),
   ebayStatus: text('ebay_status').default('none'), // none | listed | error
   ebayError: text('ebay_error'),
+  ebayMissingAspect: text('ebay_missing_aspect'), // P-88: exakter Feldname aus dem letzten 25002-Fehler (z.B. "Produktart"), fürs manuelle Eingabefeld
+  manualAspects: text('manual_aspects'),          // P-88: JSON {"Produktart":"Tasche"} — vom Nutzer nachgetragene Pflichtfelder, überschreiben Auto-Heal
   ebayCategory: text('ebay_category'),           // manuell gesetzte eBay Kategorie-ID
   ean: text('ean'),                              // EAN/GTIN Barcode — meist manuell gepflegt, AliExpress liefert i.d.R. keine echte EAN
   variantContents: text('variant_contents'), // JSON: {"SET1":"10 kleine + 10 große","SET2":"..."}
