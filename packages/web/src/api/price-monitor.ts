@@ -43,9 +43,53 @@ function parsePrice(raw: string): number {
 
 const EBAY_API_BASE = 'https://api.ebay.com';
 
+// ─── P-27/P-28: Varianten-fähige Preisprüfung ─────────────────────────────────
+
+export interface VariantPriceRow {
+  skuId: string;
+  attrs: Record<string, string>;
+  buyPrice: number;
+  correctSellPrice: number;
+}
+
+// Liest die gespeicherten (oder frisch übergebenen) Varianten-Einkaufspreise eines Produkts
+// und berechnet für JEDE Variante einzeln den nach aktueller Formel korrekten Verkaufspreis —
+// unabhängig davon, ob sich der Einkaufspreis geändert hat (erkennt so auch reine
+// Formel-/Konstanten-Änderungen wie die China-Zoll-Einführung, P-89).
+export function computeVariantPriceRows(
+  variantPricesJson: string | null,
+  shippingCost: number | null,
+  shipsFrom: string | null,
+  adRate: number | null
+): VariantPriceRow[] {
+  let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
+  try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
+  const versand = shippingCost ?? 0;
+  const zoll = isChinaShipping(shipsFrom) ? CHINA_ZOLL_EUR : 0;
+  const rate = adRate ?? 5;
+  return raw
+    .filter(v => typeof v.price === 'number' && v.price > 0)
+    .map(v => ({
+      skuId: v.skuId,
+      attrs: v.attrs ?? {},
+      buyPrice: v.price,
+      correctSellPrice: calcSellPrice(v.price, versand, zoll, rate),
+    }));
+}
+
+// Sicherer EINHEITSPREIS, falls für eine Varianten-Gruppe nur ein einzelner Preis gesetzt
+// werden kann/soll: das Maximum aller Varianten-Mindestpreise — NICHT das Minimum. Ein
+// Einheitspreis unterhalb des teuersten Varianten-Mindestpreises würde genau DIESE Variante
+// mit Verlust verkaufen (Lektion aus der manuellen id=75-Korrektur, wo "niedrigster Preis"
+// fälschlich als "sicher" bezeichnet wurde).
+export function safeUniformVariantPrice(rows: VariantPriceRow[]): number | null {
+  if (rows.length === 0) return null;
+  return Math.max(...rows.map(r => r.correctSellPrice));
+}
+
 // Holt das Offer zu einer EXAKTEN SKU und setzt dessen Preis (Inventory API).
 // eBays "sku"-Query-Parameter bei GET /offer ist ein exakter Match — kein Präfix-/Wildcard-Filter.
-async function updateOfferPriceBySku(sku: string, newPrice: number, token: string): Promise<boolean> {
+export async function updateOfferPriceBySku(sku: string, newPrice: number, token: string): Promise<boolean> {
   const res = await fetch(
     `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
     { headers: { 'Authorization': `Bearer ${token}` } }
@@ -207,15 +251,60 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       if (!newBuyPrice || newBuyPrice <= 0) { errors++; return; }
 
       const oldBuyPrice = product.buyPrice ?? 0;
-      const priceDiff = Math.abs(newBuyPrice - oldBuyPrice);
-      const priceChanged = priceDiff > 0.01;
+      const buyPriceDiff = Math.abs(newBuyPrice - oldBuyPrice);
+      if (buyPriceDiff > 0.01) {
+        await db.insert(schema.priceHistory).values({ productId: product.id, price: newBuyPrice, source: 'aliexpress' });
+      }
 
-      await db.insert(schema.priceHistory).values({ productId: product.id, price: newBuyPrice, source: 'aliexpress' });
+      // P-27/P-28: der Soll-Preis wird bei JEDEM Lauf aus dem aktuellen Einkaufspreis neu
+      // berechnet und mit dem gespeicherten Ist-Preis verglichen — nicht mehr nur ausgelöst,
+      // wenn sich der AliExpress-Preis geändert hat. So werden auch reine Formel-/Konstanten-
+      // Änderungen (z.B. die China-Zoll-Einführung) erkannt, selbst wenn der Einkaufspreis
+      // seither stabil war (genau das führte bei 19 Produkten zu nie korrigierten Preisen).
+      let variantCount = 0;
+      try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
+      let variantGroupCount = 0;
+      try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
+      const hasVariants = variantCount > 1 || variantGroupCount > 0;
 
-      if (priceChanged) {
-        const newSellPrice = calcSellPrice(newBuyPrice, versand, zoll, adRate);
-        const isAlert = priceDiff >= ALERT_THRESHOLD;
-        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}`);
+      if (hasVariants) {
+        // P-13/P-14 galt bisher als Ausschluss für Varianten-Produkte — jetzt werden sie
+        // geprüft, aber NIE automatisch an eBay gepusht (Sicherheitsprinzip, Anforderung 4):
+        // frische Varianten-Einkaufspreise werden gespeichert und ein Alert-Flag gesetzt,
+        // die eigentliche Preisänderung läuft ausschließlich über die vom Menschen bestätigte
+        // Vorschau im Listings-Tab ("Preise neu berechnen").
+        const freshVariantPricesJson = data.variantPrices.length > 0
+          ? JSON.stringify(data.variantPrices.map(v => ({ skuId: v.skuId, attrs: v.attrs, price: v.price })))
+          : product.variantPrices;
+        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, data.shipsFrom ?? product.shipsFrom, adRate);
+        const safePrice = safeUniformVariantPrice(rows);
+        const deviates = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
+
+        if (deviates || buyPriceDiff > 0.01) {
+          console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}" (Varianten): gespeicherter VK=${product.sellPrice ?? '–'} vs. sicherer Soll-VK=${safePrice ?? '–'}${deviates ? ' ⚠️ Abweichung' : ''}`);
+          await db.update(schema.products).set({
+            buyPrice: newBuyPrice,
+            variantPrices: freshVariantPricesJson,
+            lastPriceCheck: new Date().toISOString(),
+            priceChanged: deviates,
+            updatedAt: new Date().toISOString(),
+          }).where(eq(schema.products.id, product.id));
+          updated++;
+        } else {
+          await db.update(schema.products).set({
+            lastPriceCheck: new Date().toISOString(),
+            priceChanged: false,
+            updatedAt: new Date().toISOString(),
+          }).where(eq(schema.products.id, product.id));
+        }
+        return;
+      }
+
+      const newSellPrice = calcSellPrice(newBuyPrice, versand, zoll, adRate);
+      const isAlert = product.sellPrice == null || Math.abs(newSellPrice - product.sellPrice) >= ALERT_THRESHOLD;
+
+      if (isAlert || buyPriceDiff > 0.01) {
+        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€, VK ${product.sellPrice ?? '–'}→${newSellPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}`);
 
         // DB aktualisieren
         await db.update(schema.products).set({
@@ -227,7 +316,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         }).where(eq(schema.products.id, product.id));
         updated++;
 
-        // eBay Listing Preis automatisch aktualisieren (falls verknüpft)
+        // eBay Listing Preis automatisch aktualisieren (falls verknüpft) — nur Nicht-Varianten-
+        // Produkte, unverändertes bestehendes Verhalten (kein neuer automatischer Write hier).
         if (product.ebayListingId && product.ebayStatus === 'listed') {
           console.log(`[PriceMonitor] ${product.id}: eBay Listing ${product.ebayListingId} — aktualisiere auf ${newSellPrice.toFixed(2)}€`);
           // Erst Inventory API versuchen (neue Listings), dann Trading API als Fallback
@@ -243,6 +333,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         }
       } else {
         await db.update(schema.products).set({
+          buyPrice: newBuyPrice,
           lastPriceCheck: new Date().toISOString(),
           priceChanged: false,
           updatedAt: new Date().toISOString()

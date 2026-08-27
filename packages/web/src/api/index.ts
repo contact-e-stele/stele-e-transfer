@@ -1116,10 +1116,12 @@ const app = new Hono()
     }
   })
 
-  // ─── Preise mit korrigierter Formel neu berechnen (P-8) — nur Vorschau, keine Änderung ──
+  // ─── Preise mit korrigierter Formel neu berechnen (P-8, P-27/P-28) — nur Vorschau ───────
+  // Varianten-Produkte (früher per P-13/P-14 komplett ausgeschlossen) erscheinen jetzt mit
+  // eigener Zeile pro Variante (isVariant:true, variantBreakdown) — Anforderung 1 + 3.
   .get('/ebay/listings/recalculate-preview', async (c) => {
     try {
-      const { calcSellPrice, isChinaShipping } = await import('./price-monitor');
+      const { calcSellPrice, isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1143,23 +1145,40 @@ const app = new Hono()
       // Mindest-Differenz, unter der ein Preis-Update keinen Sinn ergibt (P-11)
       const DIFF_THRESHOLD = 0.50;
 
-      const preview: Array<{ itemId: string; title: string; oldPrice: number; newPrice: number; diff: number }> = [];
+      type PreviewRow = {
+        itemId: string; title: string; oldPrice: number; newPrice: number; diff: number;
+        isVariant: boolean;
+        variantBreakdown?: Array<{ attrs: Record<string, string>; buyPrice: number; correctSellPrice: number }>;
+      };
+      const preview: PreviewRow[] = [];
       for (const listing of listings) {
         const product = dbByListingId.get(listing.itemId);
-        if (!product || product.ebayStatus !== 'listed' || product.buyPrice == null) continue;
+        if (!product || product.ebayStatus !== 'listed') continue;
 
-        // P-13/P-14: Varianten-Produkte ausschließen — buyPrice ist bei Multi-Varianten-Listings
-        // nicht zuverlässig (nur eine von mehreren Varianten), und ein einzelner neuer Preis
-        // würde beim Anwenden alle Varianten-Offers auf denselben Wert überschreiben.
-        // variantPrices.length > 1 allein reicht nicht: manche Listings haben auf eBay-Seite
-        // einen Variations-Block, obwohl lokal nur eine Preis-Zeile erfasst ist — deshalb
-        // zusätzlich das variants-Gruppen-Feld prüfen (siehe P-14-Diagnose).
         let variantCount = 0;
         try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
         let variantGroupCount = 0;
         try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
-        if (variantCount > 1 || variantGroupCount > 0) continue;
+        const isVariant = variantCount > 1 || variantGroupCount > 0;
 
+        if (isVariant) {
+          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
+          const newPrice = safeUniformVariantPrice(rows);
+          if (newPrice == null) continue;
+          const oldPrice = listing.currentPrice;
+          const diff = Math.round((newPrice - oldPrice) * 100) / 100;
+          if (Math.abs(diff) < DIFF_THRESHOLD) continue;
+
+          preview.push({
+            itemId: listing.itemId,
+            title: product.generatedTitle || listing.title,
+            oldPrice, newPrice, diff, isVariant: true,
+            variantBreakdown: rows.map(r => ({ attrs: r.attrs, buyPrice: r.buyPrice, correctSellPrice: r.correctSellPrice })),
+          });
+          continue;
+        }
+
+        if (product.buyPrice == null) continue;
         const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? 0;
@@ -1169,18 +1188,22 @@ const app = new Hono()
 
         if (Math.abs(diff) < DIFF_THRESHOLD) continue;
 
-        preview.push({ itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff });
+        preview.push({ itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff, isVariant: false });
       }
       preview.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
 
-      return c.json({ preview, total: preview.length }, 200);
+      return c.json({
+        preview,
+        total: preview.length,
+        note: 'Bei Varianten-Produkten (isVariant:true) ist newPrice ein sicherer EINHEITSPREIS — das Maximum aller Varianten-Mindestpreise (variantBreakdown zeigt die Details je Variante). Echte Preisdifferenzierung pro einzelner Variante ist eine mögliche spätere Erweiterung.',
+      }, 200);
     } catch (e) {
       console.error('[recalculate-preview]', e);
       return c.json({ error: String(e) }, 500);
     }
   })
 
-  // ─── Vom Nutzer bestätigte Preise anwenden (P-8) ─────────────────────────────
+  // ─── Vom Nutzer bestätigte Preise anwenden (P-8, P-27/P-28) ──────────────────────────────
   .post('/ebay/listings/recalculate-apply', async (c) => {
     try {
       const body = await c.req.json() as { itemIds: string[] };
@@ -1188,7 +1211,7 @@ const app = new Hono()
         return c.json({ error: 'Keine itemIds übergeben' }, 400);
       }
 
-      const { calcSellPrice, isChinaShipping, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
+      const { calcSellPrice, isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1201,20 +1224,39 @@ const app = new Hono()
 
       for (const itemId of body.itemIds) {
         const product = byListingId.get(itemId);
-        if (!product || product.buyPrice == null) {
-          results.push({ itemId, ok: false, error: 'Produkt nicht gefunden oder kein Einkaufspreis' });
+        if (!product) {
+          results.push({ itemId, ok: false, error: 'Produkt nicht gefunden' });
           continue;
         }
 
-        const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
-        const versand = product.shippingCost ?? 0;
-        const adRate = product.adRate ?? 0;
-        const newPrice = calcSellPrice(product.buyPrice, versand, zoll, adRate);
+        let variantCount = 0;
+        try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
+        let variantGroupCount = 0;
+        try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
+        const isVariant = variantCount > 1 || variantGroupCount > 0;
+
+        let newPrice: number | null;
+        if (isVariant) {
+          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
+          newPrice = safeUniformVariantPrice(rows);
+        } else {
+          newPrice = product.buyPrice != null
+            ? calcSellPrice(product.buyPrice, product.shippingCost ?? 0, isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0, product.adRate ?? 0)
+            : null;
+        }
+        if (newPrice == null) {
+          results.push({ itemId, ok: false, error: 'Kein Einkaufspreis vorhanden' });
+          continue;
+        }
         const oldPrice = product.sellPrice ?? undefined;
 
+        // Varianten-Listings: NUR über die Inventory API (setzt jede exakte Varianten-SKU
+        // einzeln) — die Trading API kennt keine Varianten-Preise (P-14/P-89) und wird hier
+        // bewusst nicht als Fallback versucht, um keinen aussichtslosen/irreführenden Request
+        // zu senden.
         let ok = await updateEbayPriceInventory(product.id, newPrice);
         let tradingError: string | undefined;
-        if (!ok) {
+        if (!ok && !isVariant) {
           const tradingResult = await updateEbayPriceTrading(itemId, newPrice);
           ok = tradingResult.ok;
           tradingError = tradingResult.error;
@@ -1228,7 +1270,7 @@ const app = new Hono()
           }).where(eq(schema.products.id, product.id));
           results.push({ itemId, ok: true, oldPrice, newPrice });
         } else {
-          results.push({ itemId, ok: false, oldPrice, error: tradingError ?? 'eBay-Update fehlgeschlagen (Inventory + Trading API)' });
+          results.push({ itemId, ok: false, oldPrice, error: tradingError ?? 'eBay-Update fehlgeschlagen (Inventory API' + (isVariant ? ', Trading API für Varianten nicht unterstützt' : ' + Trading API') + ')' });
         }
         await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
       }
