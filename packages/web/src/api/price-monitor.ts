@@ -6,7 +6,7 @@ import * as schema from '../db/schema';
 import { scrapeAliExpressUrl } from './aliexpress';
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR } from '../shared/constants';
 
 const MIN_GEWINN = MIN_GEWINN_EUR; // Mindestgewinn € (zentral in shared/constants.ts)
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
@@ -22,10 +22,13 @@ export function roundUpToX95(price: number): number {
 
 // Gleiche Formel wie in lieferanten.tsx (Mindestpreis-Button):
 // feeRate = (13% eBay + adRate%) × 1.19 MwSt
-// sellPrice = (buyPrice + versand + zoll + MIN_GEWINN + 0.45€ Bestellgebühr × 1.19 MwSt) / (1 - feeRate)
+// sellPrice = (buyPrice + versand + zoll + MIN_GEWINN + PRICE_SAFETY_BUFFER + 0.45€ Bestellgebühr × 1.19 MwSt) / (1 - feeRate)
+// PRICE_SAFETY_BUFFER_EUR (P-27/P-28): der Preis liegt bewusst über der exakten Gewinn-
+// Untergrenze, damit kleine, kurzzeitig unentdeckte Preis-Drift erstmal nur weniger Gewinn
+// statt echten Verlust bedeutet.
 export function calcSellPrice(buyPrice: number, versand: number, zoll: number, adRate: number): number {
   const feeRate = (13 + adRate) / 100 * 1.19;
-  const minPrice = ((buyPrice + versand + zoll + MIN_GEWINN + 0.45 * 1.19) / (1 - feeRate));
+  const minPrice = ((buyPrice + versand + zoll + MIN_GEWINN + PRICE_SAFETY_BUFFER_EUR + 0.45 * 1.19) / (1 - feeRate));
   return roundUpToX95(minPrice);
 }
 
