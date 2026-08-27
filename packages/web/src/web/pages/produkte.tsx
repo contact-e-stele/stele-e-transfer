@@ -66,6 +66,30 @@ interface Product {
   updatedAt: string;
 }
 
+// Relative Zeitangabe für die letzte Preisprüfung (P-27/P-28) — identische Logik wie in listings.tsx
+function timeAgo(iso: string | null): string {
+  if (!iso) return "nie geprüft";
+  const d = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return "nie geprüft";
+  const diffMs = Date.now() - d.getTime();
+  const diffH = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffH < 1) return "gerade eben";
+  if (diffH < 24) return `vor ${diffH} Std.`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD === 1) return "vor 1 Tag";
+  return `vor ${diffD} Tagen`;
+}
+
+function priceCheckColor(iso: string | null): string {
+  if (!iso) return "#94A3B8";
+  const d = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return "#94A3B8";
+  const diffDays = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24);
+  if (diffDays > 14) return "#DC2626";
+  if (diffDays > 7) return "#F59E0B";
+  return "#16A34A";
+}
+
 function StatusBadge({ status, listingId }: { status: string; listingId: string | null }) {
   const map: Record<string, { bg: string; color: string; icon: React.ReactNode; label: string }> = {
     none: { bg: "#F1F5F9", color: "#64748B", icon: <Clock size={11} />, label: "Nicht gelistet" },
@@ -1701,12 +1725,15 @@ export default function Produkte() {
                 </div>
               )}
 
-              {product.lastPriceCheck && (
-                <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 8 }}>
-                  Letzte Preisprüfung: {new Date(product.lastPriceCheck).toLocaleString("de-DE")}
-                  {" · "}Erstellt: {new Date(product.createdAt).toLocaleString("de-DE")}
-                </div>
-              )}
+              <div style={{ fontSize: 10, fontWeight: 600, color: priceCheckColor(product.lastPriceCheck), marginTop: 8, display: "flex", alignItems: "center", gap: 4 }}>
+                <RefreshCw size={9} color={priceCheckColor(product.lastPriceCheck)} />
+                Preis geprüft: {timeAgo(product.lastPriceCheck)}
+                {product.lastPriceCheck && (
+                  <span style={{ color: "#CBD5E1", fontWeight: 400 }}>
+                    {" · "}Erstellt: {new Date(product.createdAt).toLocaleString("de-DE")}
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}

@@ -15,6 +15,14 @@ export const CHINA_ZOLL_EUR = 4.00;
 // Geaendert von 1,60€ auf 2,00€ am 2026-07-14 auf Wunsch des Users
 export const MIN_GEWINN_EUR = 2.00;
 
+// Sicherheitspuffer (€) über dem reinen Mindestgewinn (P-27/P-28, hinzugefuegt 2026-08-27):
+// Der berechnete Mindestpreis ist NICHT mehr die exakte Gewinn-Untergrenze, sondern liegt um
+// diesen Betrag darueber. Kleine, kurzzeitig unentdeckte Preis-Drift (z.B. zwischen zwei
+// Preis-Check-Laeufen) fuehrt dadurch erstmal nur zu etwas weniger Gewinn statt sofort zu
+// echtem Verlust. Wird zentral in calcSellPrice() (price-monitor.ts) sowie in den identischen
+// Formel-Kopien in lieferanten.tsx (Mindestpreis-Buttons) addiert.
+export const PRICE_SAFETY_BUFFER_EUR = 1.50;
+
 // Feste Kategorieliste fuer manuell gespeicherte Shops ("Meine Shops")
 // Dient nur der Uebersicht im Suche-Tab-Dropdown (z.B. um zu wissen, wo man zuerst nachschauen sollte)
 export const SHOP_CATEGORIES = [

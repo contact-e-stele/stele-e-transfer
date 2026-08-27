@@ -5,7 +5,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategories, type RegulatedCategory } from "../../shared/regulated-categories";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
@@ -1566,11 +1566,11 @@ export default function Lieferanten() {
                     {einkauf > 0 && (
                       <button
                         onClick={() => {
-                          // Empfohlener Mindestpreis: (einkauf + versand + zoll + Mindestgewinn) / (1 - (13+adRate)/100*1.19)
+                          // Empfohlener Mindestpreis: (einkauf + versand + zoll + Mindestgewinn + Sicherheitspuffer) / (1 - (13+adRate)/100*1.19)
                           const feeRate = (13 + adRate) / 100 * 1.19;
                           const chinaZoll = (shipsFromInfo && isChinaShipping(shipsFromInfo.country)) ? CHINA_ZOLL_EUR : 0;
                           const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
-                          const recommended = Math.ceil(((einkauf + versand + chinaZoll + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                          const recommended = Math.ceil(((einkauf + versand + chinaZoll + MIN_GEWINN_EUR + PRICE_SAFETY_BUFFER_EUR + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
                           setEbayPrice(recommended.toFixed(2));
                         }}
                         style={{
@@ -1578,8 +1578,9 @@ export default function Lieferanten() {
                           border: "1px solid #BBF7D0", borderRadius: 6, padding: "2px 8px", cursor: "pointer",
                           fontFamily: "inherit",
                         }}
+                        title={`Enthält ${PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Sicherheitspuffer über dem Mindestgewinn`}
                       >
-                        ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn →
+                        ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn (+{PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Puffer) →
                       </button>
                     )}
                   </div>
@@ -1697,7 +1698,7 @@ export default function Lieferanten() {
                 const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
                 const wahrerEinkaufV = v.price + versandV + zollV;
                 const feeRate = (13 + adRate) / 100 * 1.19;
-                const rawMinV = (wahrerEinkaufV + MIN_GEWINN_EUR + 0.45 * 1.19) / (1 - feeRate);
+                const rawMinV = (wahrerEinkaufV + MIN_GEWINN_EUR + PRICE_SAFETY_BUFFER_EUR + 0.45 * 1.19) / (1 - feeRate);
                 return roundToNearest95(rawMinV);
               };
               return (
@@ -1727,7 +1728,7 @@ export default function Lieferanten() {
                       cursor: "pointer", fontFamily: "inherit", marginBottom: 14,
                     }}
                   >
-                    <TrendingDown size={15} /> Alle Preisvorschläge übernehmen (≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn)
+                    <TrendingDown size={15} /> Alle Preisvorschläge übernehmen (≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn +{PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Puffer)
                   </button>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {/* Header */}
@@ -1884,8 +1885,9 @@ export default function Lieferanten() {
                                 border: "1px solid #BBF7D0", borderRadius: 6, padding: "2px 8px", cursor: "pointer",
                                 fontFamily: "inherit",
                               }}
+                              title={`Enthält ${PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Sicherheitspuffer über dem Mindestgewinn`}
                             >
-                              ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ →
+                              ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ +{PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ →
                             </button>
                           </div>
                         </div>
