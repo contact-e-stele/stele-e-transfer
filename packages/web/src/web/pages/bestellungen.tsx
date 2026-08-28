@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { JSX } from "react";
 import {
   Package, RefreshCw, Loader, Search, Truck, CheckCircle, Clock,
-  FileText, Download, User, MapPin, CreditCard, ExternalLink,
+  FileText, Download, User, MapPin, CreditCard, ExternalLink, Clipboard,
 } from "lucide-react";
 
 interface OrderLineItem {
@@ -26,7 +26,15 @@ interface Order {
   total: number;
   currency: string;
   lineItems: OrderLineItem[];
-  shippingAddress: { fullName: string; city: string; postalCode: string; countryCode: string } | null;
+  shippingAddress: {
+    fullName: string;
+    addressLine1: string;
+    addressLine2: string | null;
+    city: string;
+    postalCode: string;
+    countryCode: string;
+    phone: string | null;
+  } | null;
   trackingNumber: string | null;
   carrier: string | null;
   nettoEinkauf: number | null;
@@ -60,6 +68,124 @@ function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+// P-90: Personalisierte Version des Bestellabwicklungs-Workflows für "Workflow kopieren".
+// Grundgerüst (Rolle, Schritte 1-6, Effizienz-Hinweis) 1:1 vom Nutzer übernommen — nur die
+// Bestelldaten oben eingefügt und die Links in Schritt 2/3 direkt mit den echten URLs ergänzt,
+// damit der Text ohne weiteres Nachschlagen sofort einsatzbereit ist.
+function buildWorkflowText(order: Order): string {
+  const addr = order.shippingAddress;
+  const addressBlock = addr
+    ? [
+        addr.fullName,
+        addr.addressLine1,
+        addr.addressLine2 ?? null,
+        `${addr.postalCode} ${addr.city}`,
+        addr.countryCode,
+        addr.phone ? `Tel.: ${addr.phone}` : null,
+      ].filter(Boolean).join("\n")
+    : "⚠️ Keine Lieferadresse in der App hinterlegt — bitte direkt in eBay nachsehen.";
+
+  const itemsBlock = order.lineItems
+    .map(li => `   - ${li.title}${li.sku ? ` (SKU: ${li.sku})` : ""} × ${li.quantity}`)
+    .join("\n");
+
+  const nettoBlock = order.nettoErgebnis != null
+    ? `${order.nettoErgebnis.toFixed(2)} ${order.currency} (${order.nettoQuelle === "manuell" ? "manuell erfasster Einkaufspreis" : "automatisch aus Produkt-DB geschätzt"})`
+    : "noch nicht berechnet (kein bekannter Einkaufspreis)";
+
+  const hasAliOrderId = !!order.localNote?.aliexpressOrderId;
+  const hasTracking = !!order.localNote?.trackingNumber;
+  const duplicateWarning = (hasAliOrderId || hasTracking)
+    ? "⚠️⚠️ DUPLIKAT-WARNUNG — VOR DEM BESTELLEN PRÜFEN ⚠️⚠️\n" +
+      (hasAliOrderId ? `Bereits eingetragene AliExpress-Bestellnummer: ${order.localNote!.aliexpressOrderId}\n` : "") +
+      (hasTracking ? `Bereits eingetragene Sendungsnummer: ${order.localNote!.trackingNumber} (${order.localNote!.carrier ?? "Carrier unbekannt"})\n` : "") +
+      "→ Diese Bestellung wurde vermutlich schon bearbeitet! Erst gegenprüfen, ob wirklich noch etwas bei AliExpress bestellt werden muss, bevor irgendetwas in den Warenkorb gelegt wird."
+    : "Noch keine AliExpress-Bestellnummer oder Sendungsnummer eingetragen — vermutlich noch nicht bestellt.";
+
+  return `# Bestellabwicklungs-Workflow — stele-e-transfer
+Personalisiert für Bestellung ${order.orderId} · erzeugt ${new Date().toLocaleString("de-DE")}
+
+## 📋 Bestelldaten (diese konkrete Bestellung)
+- Bestellnummer: ${order.orderId}
+- Käufer: ${addr?.fullName ?? order.buyerUsername}
+- Artikel:
+${itemsBlock}
+- eBay-Verkaufspreis (Summe): ${order.total.toFixed(2)} ${order.currency}
+- Erwartete Netto-Marge: ${nettoBlock}
+- AliExpress-Quelle: ${order.aliexpressUrl ?? "kein Produkt-Match gefunden — bitte manuell auf AliExpress suchen"}
+- eBay-Listing: ${order.ebayListingUrl ?? "kein Link verfügbar"}
+- Lieferadresse:
+${addressBlock}
+
+${duplicateWarning}
+
+---
+
+**Verwendung:** Diesen kompletten Prompt bei einer neuen, offenen Bestellung in Claude (mit Chrome-/Browser-Zugriff) einfügen.
+
+---
+
+## Rolle
+
+Du hilfst mir, eine offene Bestellung im Dropshipping-Geschäft **stele-e-transfer** bis kurz vor dem Kauf bei AliExpress vorzubereiten. Du analysierst, vergleichst und bereitest alles vor — **die eigentliche Zahlung löse ausschließlich ich selbst manuell aus.**
+
+## Schritt 1 — Bestellung in der App analysieren
+
+1. Öffne \`stele-e-transfer.onrender.com/bestellungen\`
+2. Finde die Bestellung ${order.orderId} (siehe Bestelldaten oben — bereits erfasst)
+3. Produkt, Menge, Käufername, Netto-Erwartung: siehe Bestelldaten oben
+4. **Wichtiger Sicherheits-Check:** ${hasAliOrderId ? "Es ist bereits eine AliExpress-Bestellnummer eingetragen → STOPP, frag mich, ob das Produkt schon gekauft wurde (Duplikat-Kauf vermeiden)" : "Noch keine AliExpress-Bestellnummer eingetragen (siehe oben) — vermutlich unbedenklich, trotzdem kurz gegenprüfen"}
+
+## Schritt 2 — eBay-Bestellung gegenprüfen
+
+1. Klick auf den "Zum eBay-Listing"-Link (oder direkt in eBay Seller Hub) → ${order.ebayListingUrl ?? "kein Link vorhanden, manuell in eBay Seller Hub suchen"}
+2. Bestätige: exakte bestellte Variante, Menge, Verkaufspreis
+3. **Lieferadresse des Käufers exakt kopieren** (Straße, Hausnummer, PLZ, Ort, Land) — nicht abtippen, direkt kopieren, um Tippfehler zu vermeiden (siehe Adresse oben, zur eBay-Seite gegenprüfen)
+
+## Schritt 3 — AliExpress-Lieferant analysieren
+
+1. Klick auf "Zum AliExpress-Artikel" → ${order.aliexpressUrl ?? "kein Link vorhanden, manuell auf AliExpress suchen"}
+2. Prüf: aktueller Preis für die exakt richtige Variante (SKU-Abgleich, nicht nur Produkt)
+3. **Bewertungs-Check** (wie unsere App-Ampel): Sternebewertung + Anzahl Bewertungen — bei sehr wenigen/schlechten Bewertungen kurz mit mir Rücksprache halten
+4. Optional: 1-2 alternative Anbieter desselben Produkts suchen, falls spürbar günstiger UND ähnlich gut bewertet — sonst beim bekannten Lieferanten bleiben (Zuverlässigkeit vor kleiner Ersparnis)
+5. **Margen-Gegenprüfung:** Aktueller AliExpress-Preis + Versandkosten vs. eBay-Verkaufspreis (${order.total.toFixed(2)} ${order.currency}) — reicht die Marge noch (inkl. eBay-Gebühren, Zoll falls China-Versand)? **Falls die Marge zu gering/negativ ist → STOPP, mich informieren, bevor irgendetwas in den Warenkorb gelegt wird**
+
+## Schritt 4 — Bestellung bei AliExpress vorbereiten
+
+1. Richtige Variante auswählen, Menge eintragen
+2. Lieferadresse aus Schritt 2 eintragen (exakt, nochmal gegenlesen)
+3. Verfügbare Coupons/Rabatte prüfen und anwenden, falls vorhanden
+4. Versandmethode mit **Sendungsverfolgung** wählen (wichtig für unsere automatische Tracking-Übermittlung an eBay)
+5. Gesamtpreis (Ware + Versand) final notieren
+
+## Schritt 5 — STOPP vor der Zahlung
+
+**Nicht weitermachen.** Fass mir kurz zusammen:
+- Gewählter Lieferant + Variante + Preis
+- Lieferadresse (zur Kontrolle)
+- Gesamtkosten inkl. Versand
+- Erwartete Marge nach Abzug aller Kosten
+- Voraussichtliche Lieferzeit
+
+**Warte auf meine ausdrückliche Bestätigung**, bevor irgendein Zahlungsschritt ausgeführt wird. Keine Zahlungsdaten eingeben, keinen "Kaufen/Bezahlen"-Button klicken ohne meine Freigabe.
+
+---
+
+## Schritt 6 — Nach dem Kauf (von mir manuell bestätigt)
+
+Sobald ich Dir sage, dass der Kauf abgeschlossen ist:
+
+1. **AliExpress-Bestellnummer im Bestellungen-Tab eintragen** — nicht vergessen, sonst fehlt später die Zuordnung
+2. **AliExpress-Rechnung herunterladen und im Bestellungen-Tab hochladen** (für die Buchhaltung)
+3. **Sendungsnummer prüfen, aber nicht erzwingen:** Schau nach, ob AliExpress schon eine Sendungsnummer zeigt.
+   - **Falls ja:** direkt im Bestellungen-Tab eintragen (wird dann automatisch an eBay übermittelt)
+   - **Falls noch nicht verfügbar** (kommt oft erst nach 1-2 Tagen): **nicht warten, nicht blockieren** — einfach vermerken "Sendungsnummer folgt später", ich trage sie selbst nach, sobald sie da ist (oder unsere automatische Gmail-Erkennung findet sie von selbst)
+
+---
+
+*Effizienz-Hinweis für den Agenten: Arbeite die Schritte zügig und ohne unnötige Zwischenfragen ab — nur bei den explizit markierten STOPP-Punkten (Duplikat-Verdacht, zu geringe Marge, vor der Zahlung) tatsächlich anhalten und nachfragen. Je konsistenter der Ablauf, desto schneller und fehlerärmer wird er bei jeder weiteren Bestellung.*`;
 }
 
 function statusLabel(status: string): { label: string; color: string; bg: string; icon: JSX.Element } {
@@ -450,19 +576,47 @@ export default function Bestellungen() {
                     <div style={{ width: 40, height: 40, borderRadius: 6, background: "#F1F5F9", flexShrink: 0 }} />
                   )}
                   <div style={{ fontSize: 12, color: "#0F172A", fontWeight: 600 }}>
-                    {li.title.length > 60 ? li.title.slice(0, 60) + "…" : li.title}
+                    {li.title}
+                    {li.sku && <span style={{ color: "#94A3B8", fontWeight: 500 }}> ({li.sku})</span>}
                     <span style={{ color: "#94A3B8", fontWeight: 500 }}> · {li.quantity}×</span>
                   </div>
                 </div>
               ))}
 
               {/* Adresse + Datum + Betrag */}
-              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "#64748B" }}>
-                {order.shippingAddress && (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    <MapPin size={11} /> {order.shippingAddress.postalCode} {order.shippingAddress.city}
+              {/* Volle Lieferadresse + Telefon, mit einem Klick kopierbar (P-90) */}
+              {order.shippingAddress && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "6px 10px", background: "#F8FAFC", borderRadius: 8, fontSize: 11, color: "#475569" }}>
+                  <MapPin size={12} color="#94A3B8" style={{ flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>
+                    {order.shippingAddress.addressLine1}
+                    {order.shippingAddress.addressLine2 ? `, ${order.shippingAddress.addressLine2}` : ""}
+                    {", "}{order.shippingAddress.postalCode} {order.shippingAddress.city}
+                    {order.shippingAddress.countryCode ? `, ${order.shippingAddress.countryCode}` : ""}
+                    {order.shippingAddress.phone ? ` · Tel.: ${order.shippingAddress.phone}` : ""}
                   </span>
-                )}
+                  <button
+                    onClick={() => {
+                      const a = order.shippingAddress!;
+                      const text = [
+                        a.fullName, a.addressLine1, a.addressLine2 ?? null,
+                        `${a.postalCode} ${a.city}`, a.countryCode, a.phone ? `Tel.: ${a.phone}` : null,
+                      ].filter(Boolean).join("\n");
+                      navigator.clipboard.writeText(text);
+                      showToast("Adresse kopiert");
+                    }}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0,
+                      background: "none", border: "1px solid #E2E8F0", borderRadius: 6, padding: "3px 8px",
+                      fontSize: 10, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    <Clipboard size={10} /> Kopieren
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "#64748B" }}>
                 <span>Bestellt: {fmtDate(order.orderDate)}</span>
                 <span style={{ fontWeight: 700, color: "#0F172A" }}>{order.total.toFixed(2)} {order.currency}</span>
                 {order.nettoErgebnis !== null && (
@@ -700,6 +854,21 @@ export default function Bestellungen() {
 
               {/* Aktionen */}
               <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(buildWorkflowText(order));
+                    showToast("Workflow kopiert — jetzt in Claude einfügen");
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    padding: "6px 10px", borderRadius: 8, background: "#F8FAFC", color: "#475569",
+                    fontSize: 11, fontWeight: 700, border: "1px solid #E2E8F0", cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <Clipboard size={11} /> Workflow kopieren
+                </button>
+
                 <a
                   href={`/api/ebay/orders/${order.orderId}/invoice`}
                   target="_blank" rel="noopener noreferrer"
