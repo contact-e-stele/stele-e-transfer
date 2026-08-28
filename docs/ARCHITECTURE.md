@@ -209,7 +209,7 @@ bevor er den eigentlichen Endpunkt triggert.
 | `products` | Zentrale Produkttabelle | `shipsFrom`, `adRate`, `variantPrices`/`variantContents` (JSON), `gpsrName/Address/City/Email/Phone` (strukturiertes GPSR, aber **noch nicht automatisch befüllt** — siehe `task.md` TODO #1), `manualPdfUrl`, `certificationNote` |
 | `priceHistory` | Preisverlauf pro Produkt | `source`: `aliexpress` \| `manual` |
 | `appSettings` | Key-Value-Store | hält AliExpress-OAuth-Tokens (Access/Refresh/Expiry) |
-| `trustedSuppliers` | "Meine Shops" (manuell erfasste, EU-bestätigte AliExpress-Shops) | `complianceStatus` (P-66: `ungeprueft`/`geprueft`/`abgelehnt`) — **noch ohne Import-Gate**, nur Erfassung |
+| `trustedSuppliers` | "Meine Shops" (manuell erfasste, EU-bestätigte AliExpress-Shops) | `complianceStatus` (P-66: `ungeprueft`/`geprueft`/`abgelehnt`) — gate-relevant, siehe unten |
 | `orderNotes` | App-eigene Zusatzinfos zu eBay-Bestellungen | `manualBuyPrice` (hat Vorrang vor automatischem SKU-Match), `invoicePath`, `aliexpressOrderId` |
 
 Migrationen laufen automatisch beim Serverstart (`db/migrate.ts`, aufgerufen aus `server.ts`).
@@ -277,7 +277,11 @@ zusätzlich Funde aus Code-Kommentaren und dieser Code-Durchsuchung.
 - Preisformel (`calcSellPrice`) ist an zwei Stellen dupliziert (`price-monitor.ts` und `lieferanten.tsx`, laut Code-Kommentar "gleiche Formel") — Änderungsrisiko bei künftigen Anpassungen (z.B. die für Ende 2026 angekündigte EU-Handling-Fee, siehe `shared/constants.ts`).
 
 ### Compliance (P-66)
-- `trustedSuppliers.complianceStatus` wird erfasst, aber **es gibt noch kein Import-Gate**, das ungeprüfte Lieferanten blockiert — reine Datenerfassung bisher.
+- Import-Gate ist gebaut (`lieferanten.tsx`): `complianceBlocked = regulatedMatches.length > 0 && !supplierVerified` —
+  der Import wird nur blockiert, wenn Titel/Beschreibung auf eine regulierte Produktgruppe
+  (`shared/regulated-categories.ts`, Keyword-Matching) matchen **und** der zugeordnete Lieferant
+  nicht als `geprueft` markiert ist. Für alle anderen Produkte bleibt `complianceStatus` reine
+  Erfassung ohne Sperrwirkung — es ist kein pauschales "nur geprüfte Lieferanten"-Gate.
 
 ### GitHub-Actions-Abhängigkeit
 - Preis-Monitor, Order-Notifier und Backup-Scheduler laufen zwar in-process, sind aber auf Render Free Tier vom periodischen externen Aufwecken durch GitHub Actions abhängig (Kaltstart bei Inaktivität setzt In-Memory-Intervalle zurück).
@@ -287,7 +291,7 @@ zusätzlich Funde aus Code-Kommentaren und dieser Code-Durchsuchung.
 
 ### Dokumentation
 - **P-33 (dieses Dokument):** `backup.ts` verschickte bislang eine fest einprogrammierte, mit der Zeit driftende "Restore-Anleitung" — siehe Abschnitt 10.
-- **P-Nummerierung uneinheitlich:** `P-UEBERSICHT.md` ist als "einzige Quelle der Wahrheit" deklariert, listet aber nur bis P14 + benannte Ideen, während Code-Kommentare bereits P-15 bis P-75 referenzieren (u.a. P-66 Compliance-Gate, P-69 Versandkosten-Zentralisierung, P-73 Bewertungs-Ampel, P-74/75 Preisrundung) — diese Features sind gebaut, aber nicht in `P-UEBERSICHT.md` nachgetragen.
+- **P-11 ist doppelt vergeben:** einmal als offene Idee ("Promoted Listings/Anzeige-Rate"), einmal in einem Commit für die ,95-Preisrundung. Beide Verwendungen sind in `P-UEBERSICHT.md` dokumentiert statt eine stillschweigend zu überschreiben — bei der nächsten neuen P-Nummer nicht wieder 11 vergeben. (Stand 2026-08-19: `P-UEBERSICHT.md` wurde gegen den vollständigen Commit-Verlauf abgeglichen und ist wieder aktuell.)
 
 ---
 
