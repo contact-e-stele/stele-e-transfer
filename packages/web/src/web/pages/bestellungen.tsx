@@ -576,19 +576,47 @@ export default function Bestellungen() {
                     <div style={{ width: 40, height: 40, borderRadius: 6, background: "#F1F5F9", flexShrink: 0 }} />
                   )}
                   <div style={{ fontSize: 12, color: "#0F172A", fontWeight: 600 }}>
-                    {li.title.length > 60 ? li.title.slice(0, 60) + "…" : li.title}
+                    {li.title}
+                    {li.sku && <span style={{ color: "#94A3B8", fontWeight: 500 }}> ({li.sku})</span>}
                     <span style={{ color: "#94A3B8", fontWeight: 500 }}> · {li.quantity}×</span>
                   </div>
                 </div>
               ))}
 
               {/* Adresse + Datum + Betrag */}
-              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "#64748B" }}>
-                {order.shippingAddress && (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    <MapPin size={11} /> {order.shippingAddress.postalCode} {order.shippingAddress.city}
+              {/* Volle Lieferadresse + Telefon, mit einem Klick kopierbar (P-90) */}
+              {order.shippingAddress && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "6px 10px", background: "#F8FAFC", borderRadius: 8, fontSize: 11, color: "#475569" }}>
+                  <MapPin size={12} color="#94A3B8" style={{ flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>
+                    {order.shippingAddress.addressLine1}
+                    {order.shippingAddress.addressLine2 ? `, ${order.shippingAddress.addressLine2}` : ""}
+                    {", "}{order.shippingAddress.postalCode} {order.shippingAddress.city}
+                    {order.shippingAddress.countryCode ? `, ${order.shippingAddress.countryCode}` : ""}
+                    {order.shippingAddress.phone ? ` · Tel.: ${order.shippingAddress.phone}` : ""}
                   </span>
-                )}
+                  <button
+                    onClick={() => {
+                      const a = order.shippingAddress!;
+                      const text = [
+                        a.fullName, a.addressLine1, a.addressLine2 ?? null,
+                        `${a.postalCode} ${a.city}`, a.countryCode, a.phone ? `Tel.: ${a.phone}` : null,
+                      ].filter(Boolean).join("\n");
+                      navigator.clipboard.writeText(text);
+                      showToast("Adresse kopiert");
+                    }}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0,
+                      background: "none", border: "1px solid #E2E8F0", borderRadius: 6, padding: "3px 8px",
+                      fontSize: 10, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    <Clipboard size={10} /> Kopieren
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "#64748B" }}>
                 <span>Bestellt: {fmtDate(order.orderDate)}</span>
                 <span style={{ fontWeight: 700, color: "#0F172A" }}>{order.total.toFixed(2)} {order.currency}</span>
                 {order.nettoErgebnis !== null && (

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
@@ -782,6 +782,7 @@ const app = new Hono()
         shipsFrom: schema.products.shipsFrom,
         sourceUrl: schema.products.sourceUrl,
         ebayListingId: schema.products.ebayListingId,
+        variantPrices: schema.products.variantPrices,
       }).from(schema.products).all();
       const productById = new Map(allProducts.map(p => [p.id, p]));
       const productByAsin = new Map(
@@ -814,10 +815,37 @@ const app = new Hono()
         let aliexpressUrl: string | null = null;
         let ebayListingUrl: string | null = null;
         for (const li of order.lineItems) {
+          // eBay-Link zuerst PRIMÄR aus der eigenen legacyItemId der Bestellung bauen (P-90) —
+          // robuster als der SKU→Produkt-DB-Abgleich, der fehlschlägt, sobald das Produkt nicht
+          // (mehr) in unserer DB steht. DB-Abgleich bleibt Fallback für den Fall, dass eBay das
+          // Feld einmal nicht liefert.
+          if (!ebayListingUrl && li.legacyItemId) ebayListingUrl = `https://www.ebay.de/itm/${li.legacyItemId}`;
+
           const product = findProductForSku(li.sku);
           if (!product) continue;
-          if (!aliexpressUrl && product.sourceUrl) aliexpressUrl = product.sourceUrl;
           if (!ebayListingUrl && product.ebayListingId) ebayListingUrl = `https://www.ebay.de/itm/${product.ebayListingId}`;
+          if (aliexpressUrl || !product.sourceUrl) continue;
+
+          // Varianten-spezifischer AliExpress-Link (P-90/P-83-Ansatz): nur verlinken, wenn die
+          // bestellte Varianten-SKU sich EXAKT einem einzelnen variantPrices-Eintrag zuordnen
+          // lässt (gleiche slugify()-Kodierung wie beim Listing-Erstellen) — sonst lieber der
+          // allgemeine Produktlink als eine geratene, möglicherweise falsche Variante.
+          let matchedSkuId: string | null = null;
+          if (li.sku?.startsWith(`stele-${product.id}-`) && product.variantPrices) {
+            const suffix = li.sku.slice(`stele-${product.id}-`.length);
+            try {
+              const variants = JSON.parse(product.variantPrices) as Array<{ skuId: string; attrs?: Record<string, string> }>;
+              const candidates = variants.filter(v => {
+                const computedSuffix = Object.values(v.attrs ?? {}).map(slugify).filter(Boolean).join('-');
+                return computedSuffix === suffix;
+              });
+              if (candidates.length === 1) matchedSkuId = candidates[0].skuId;
+            } catch { /* ignore */ }
+          }
+
+          aliexpressUrl = matchedSkuId
+            ? `${product.sourceUrl}${product.sourceUrl.includes('?') ? '&' : '?'}sku_id=${matchedSkuId}`
+            : product.sourceUrl;
         }
 
         // Manuell eingetragener Einkaufspreis hat IMMER Vorrang (z.B. exakter Betrag laut AliExpress-Rechnung)

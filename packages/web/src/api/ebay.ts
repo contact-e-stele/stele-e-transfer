@@ -785,7 +785,7 @@ function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
   return result;
 }
 
-function slugify(s: string): string {
+export function slugify(s: string): string {
   return s.toUpperCase().replace(/[^A-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
 }
 
@@ -1509,6 +1509,7 @@ export interface EbayOrder {
     imageUrl: string | null;
     quantity: number;
     sku: string | null;
+    legacyItemId: string | null;
   }>;
   shippingAddress: {
     fullName: string;
@@ -1553,6 +1554,7 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
           image?: { imageUrl?: string };
           quantity?: number;
           sku?: string;
+          legacyItemId?: string;
         }>;
         fulfillmentStartInstructions?: Array<{
           shippingStep?: {
@@ -1585,6 +1587,10 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
           imageUrl: li.image?.imageUrl ?? null,
           quantity: li.quantity ?? 1,
           sku: li.sku ?? null,
+          // P-90: eBays eigene klassische Item-ID, direkt aus der Fulfillment API — robuster
+          // als der bisherige Weg über unseren internen SKU→Produkt-DB-Abgleich, der fehlschlägt
+          // sobald das Produkt nicht (mehr) in unserer DB steht.
+          legacyItemId: li.legacyItemId ?? null,
         })),
         shippingAddress: shipTo ? {
           fullName: shipTo.fullName ?? '',
