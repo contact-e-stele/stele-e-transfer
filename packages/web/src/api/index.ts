@@ -2222,7 +2222,10 @@ const app = new Hono()
       const extFromMime: Record<string, string> = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
       const ext = extFromMime[mime] ?? mime.split('/')[1]?.replace(/[^a-z0-9]/gi, '') ?? 'bin';
       const base64 = dataUrl.slice(match[0].length);
-      const name = (filename ?? `file-${Date.now()}`).replace(/[^a-z0-9_-]/gi, '_') + '.' + ext;
+      // P-93: Leerzeichen im Dateinamen bewusst erlaubt (z.B. "Aliexpress {Nr} Ebay {Nr}") —
+      // vorher wurden sie zu "_" — betrifft nur diesen einen gemeinsamen Upload-Endpunkt, kein
+      // Sicherheitsrisiko (Dateiname landet nie in einem Pfad-/Shell-Kontext, nur im Dateisystem).
+      const name = (filename ?? `file-${Date.now()}`).replace(/[^a-z0-9_ -]/gi, '_').trim() + '.' + ext;
       const buffer = Buffer.from(base64, 'base64');
 
       try {
@@ -2240,7 +2243,9 @@ const app = new Hono()
       const uploadsDir = `${import.meta.dir}/../../dist/uploads`;
       await Bun.write(`${uploadsDir}/${name}`, buffer);
       const baseUrl = process.env.PUBLIC_URL ?? 'https://stele-e-transfer.onrender.com';
-      return c.json({ url: `${baseUrl}/uploads/${name}` }, 200);
+      // Datei bleibt lesbar mit Leerzeichen benannt — nur die URL selbst muss kodiert werden
+      // (Leerzeichen sind dort ungültig), der Static-File-Server dekodiert beim Ausliefern zurück.
+      return c.json({ url: `${baseUrl}/uploads/${encodeURIComponent(name)}` }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
