@@ -18,21 +18,27 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-08-31, aktuelle Version: v1.5):**
+**Aktueller Zählerstand (Stand 2026-08-31, aktuelle Version: v1.6):**
 
-Seit v1.3 (PR #40, "bump to v1.3") waren es 10 größere PRs bis PR #50 — das ergab beim
-Nachzählen bereits 2 überfällige Bumps (v1.3→v1.4→v1.5, siehe Aufschlüsselung unten). Der
-Zähler für die nächste Erhöhung (→ v1.6) läuft ab PR #49:
+Zähler für die nächste Erhöhung (→ v1.7) läuft ab dem PR mit P-94 (Workflow-Text editierbar in
+der App, siehe unten) — noch keine Einträge:
 
 | # | PR | Zählt zu |
 |---|---|---|
-| 1 | #49 — P-90 Workflow-kopieren-Button + 4 Bestellkarten-Lücken | v1.6 |
-| 2 | #50 — Sicherheitspuffer vom Import-Preisvorschlag getrennt + Mindestgewinn-Auswahl | v1.6 |
 
-**→ Zähler: 2 von 4 seit v1.5.** Nach dem nächsten 2 größeren PRs (Nr. 3 und 4): Version auf
-v1.6 erhöhen, diese Tabelle leeren und den Zähler auf 0 zurücksetzen, hier den neuen Stand
-dokumentieren.
+**→ Zähler: 0 von 4 seit v1.6.**
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
-- v1.3 → v1.4: PR #41 (P-89 EAN-Fix), #42 (P-90 Self-Healing), #43 (P-90 Follow-up), #44 (P-91 universelle Heilung)
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
+- v1.5 → v1.6: PR #49 (P-90 Workflow-kopieren-Button + 4 Bestellkarten-Lücken), #50 (Sicherheitspuffer vom Import-Preisvorschlag getrennt + Mindestgewinn-Auswahl), #51 (P-93 Verfügbarkeits-Monitor), #52 (P-93 zweite Funktion — Dateinamensschema AliExpress-Rechnungen)
+
+## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
+
+Der Text für den "Workflow kopieren"-Button (Bestellungen-Tab) liegt seit P-94 nicht mehr fest
+im Code, sondern editierbar in der DB (`app_settings`, Key `workflow_template`) und im
+Einstellungen-Tab pflegbar. Startinhalt/Fallback: `packages/web/src/shared/workflow-template.ts`
+(`DEFAULT_WORKFLOW_TEMPLATE`).
+
+**Feste Regel bei jeder künftigen Aktualisierung dieses Texts (auch für Dich als Claude Code):**
+neue Version immer gegen die vorherige vergleichen, nur ergänzen/verbessern, niemals bestehende
+Punkte einfach löschen. Grundstruktur (Rolle, Schritte 1-6, Effizienz-Hinweis) bleibt erhalten.

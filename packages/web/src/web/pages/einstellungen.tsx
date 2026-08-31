@@ -27,6 +27,45 @@ export default function Einstellungen() {
   const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [driveConnected, setDriveConnected] = useState<boolean | null>(null);
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
+  // P-94: zentral gespeicherte, editierbare Vorlage für den "Workflow kopieren"-Text
+  const [workflowTemplate, setWorkflowTemplate] = useState<string>("");
+  const [workflowTemplateLoading, setWorkflowTemplateLoading] = useState(true);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateMsg, setTemplateMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const loadWorkflowTemplate = useCallback(() => {
+    setWorkflowTemplateLoading(true);
+    fetch("/api/settings/workflow-template", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setWorkflowTemplate((d as { template?: string }).template ?? ""))
+      .catch(() => setTemplateMsg({ ok: false, text: "Laden fehlgeschlagen — Netzwerkfehler" }))
+      .finally(() => setWorkflowTemplateLoading(false));
+  }, []);
+
+  useEffect(() => { loadWorkflowTemplate(); }, [loadWorkflowTemplate]);
+
+  const handleSaveWorkflowTemplate = async () => {
+    setSavingTemplate(true);
+    setTemplateMsg(null);
+    try {
+      const r = await fetch("/api/settings/workflow-template", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ template: workflowTemplate }),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      if (d.ok) {
+        setTemplateMsg({ ok: true, text: "Gespeichert ✓" });
+      } else {
+        setTemplateMsg({ ok: false, text: d.error || "Speichern fehlgeschlagen" });
+      }
+    } catch {
+      setTemplateMsg({ ok: false, text: "Netzwerkfehler beim Speichern" });
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
 
   const loadStatus = useCallback(() => {
     setLoading(true);
@@ -292,11 +331,62 @@ export default function Einstellungen() {
         )}
       </div>
 
+      {/* P-94: Bestellabwicklungs-Workflow-Text */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>🧭</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Bestellabwicklungs-Workflow</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 8px" }}>
+          Text, den der "Workflow kopieren"-Button im Bestellungen-Tab verwendet. Bestelldaten (Adresse, Artikel, Duplikat-Warnung) werden davon unabhängig weiterhin live pro Bestellung eingesetzt.
+        </p>
+        <p style={{ fontSize: 12, color: "#64748B", margin: "0 0 10px" }}>
+          Platzhalter: <code>{"{{ORDER_ID}}"}</code>, <code>{"{{EBAY_LISTING_URL}}"}</code>, <code>{"{{ALIEXPRESS_URL}}"}</code>, <code>{"{{ORDER_TOTAL}}"}</code>, <code>{"{{SICHERHEITS_CHECK}}"}</code> — werden beim Kopieren durch die echten Bestelldaten ersetzt.
+        </p>
+        <p style={{ fontSize: 12, color: "#B45309", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "6px 10px", margin: "0 0 10px" }}>
+          ⚠️ Feste Regel bei Änderungen (auch für Claude Code): neue Version immer gegen die vorherige vergleichen, nur ergänzen/verbessern, nie bestehende Punkte einfach löschen. Grundstruktur erhalten.
+        </p>
+        {workflowTemplateLoading ? (
+          <span style={{ fontSize: 13, color: "#94A3B8" }}>Lade…</span>
+        ) : (
+          <>
+            <textarea
+              value={workflowTemplate}
+              onChange={e => setWorkflowTemplate(e.target.value)}
+              rows={16}
+              style={{
+                width: "100%", boxSizing: "border-box", fontFamily: "ui-monospace, monospace",
+                fontSize: 12.5, lineHeight: 1.5, padding: 10, borderRadius: 8,
+                border: "1px solid #E2E8F0", color: "#1E293B", resize: "vertical",
+              }}
+            />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+              <button
+                onClick={handleSaveWorkflowTemplate}
+                disabled={savingTemplate}
+                style={{
+                  padding: "8px 16px", borderRadius: 8, background: "#1E293B", color: "#fff",
+                  fontWeight: 700, fontSize: 13, border: "none", cursor: savingTemplate ? "default" : "pointer",
+                  opacity: savingTemplate ? 0.6 : 1,
+                }}
+              >
+                {savingTemplate ? "Speichere…" : "Speichern"}
+              </button>
+              {templateMsg && (
+                <span style={{ fontSize: 12, fontWeight: 600, color: templateMsg.ok ? "#16A34A" : "#DC2626" }}>
+                  {templateMsg.text}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
       {/* App Info */}
       <div style={{ ...card, background: "#F8FAFC" }}>
         <div style={{ fontSize: 13, color: "#64748B" }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v1.5</span>
+            <span>Version</span><span style={{ fontWeight: 600, color: "#1E293B" }}>v1.6</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span>Shop</span><span style={{ fontWeight: 600, color: "#1E293B" }}>stele-e-transfer (eBay DE)</span>
