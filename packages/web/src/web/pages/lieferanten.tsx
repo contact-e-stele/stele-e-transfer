@@ -5,7 +5,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR, SHOP_CATEGORIES } from "../../shared/constants";
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategories, type RegulatedCategory } from "../../shared/regulated-categories";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
@@ -252,6 +252,13 @@ export default function Lieferanten() {
   const [adRate, setAdRate] = useState<number>(() => {
     const saved = localStorage.getItem("stele_ad_rate");
     return saved ? parseFloat(saved) : 5;
+  });
+  // Mindestgewinn beim initialen Import-Preisvorschlag — BEWUSST getrennt von
+  // PRICE_SAFETY_BUFFER_EUR (der bleibt nur der laufenden automatischen Preisprüfung
+  // vorbehalten, P-27/P-28), sonst wären Erst-Listings unnötig teuer/unwettbewerbsfähig.
+  const [minGewinn, setMinGewinn] = useState<number>(() => {
+    const saved = localStorage.getItem("stele_min_gewinn");
+    return saved ? parseFloat(saved) : MIN_GEWINN_EUR;
   });
   const [, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -1566,11 +1573,13 @@ export default function Lieferanten() {
                     {einkauf > 0 && (
                       <button
                         onClick={() => {
-                          // Empfohlener Mindestpreis: (einkauf + versand + zoll + Mindestgewinn + Sicherheitspuffer) / (1 - (13+adRate)/100*1.19)
+                          // Empfohlener Mindestpreis (initialer Import — OHNE PRICE_SAFETY_BUFFER_EUR,
+                          // der bleibt der laufenden automatischen Preisprüfung vorbehalten):
+                          // (einkauf + versand + zoll + Mindestgewinn) / (1 - (13+adRate)/100*1.19)
                           const feeRate = (13 + adRate) / 100 * 1.19;
                           const chinaZoll = (shipsFromInfo && isChinaShipping(shipsFromInfo.country)) ? CHINA_ZOLL_EUR : 0;
                           const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
-                          const recommended = Math.ceil(((einkauf + versand + chinaZoll + MIN_GEWINN_EUR + PRICE_SAFETY_BUFFER_EUR + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                          const recommended = Math.ceil(((einkauf + versand + chinaZoll + minGewinn + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
                           setEbayPrice(recommended.toFixed(2));
                         }}
                         style={{
@@ -1578,9 +1587,8 @@ export default function Lieferanten() {
                           border: "1px solid #BBF7D0", borderRadius: 6, padding: "2px 8px", cursor: "pointer",
                           fontFamily: "inherit",
                         }}
-                        title={`Enthält ${PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Sicherheitspuffer über dem Mindestgewinn`}
                       >
-                        ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn (+{PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Puffer) →
+                        ≥{minGewinn.toFixed(2).replace(".", ",")}€ Gewinn →
                       </button>
                     )}
                   </div>
@@ -1662,6 +1670,32 @@ export default function Lieferanten() {
                 </div>
               </div>
 
+              {/* Mindestgewinn beim Import (P-27/P-28-Folge) — bewusst ohne Sicherheitspuffer,
+                  der bleibt nur der laufenden automatischen Preisprüfung vorbehalten */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>
+                  Mindestgewinn beim Import (€)
+                </label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {[2, 3, 4].map(v => (
+                    <button
+                      key={v}
+                      onClick={() => { setMinGewinn(v); localStorage.setItem("stele_min_gewinn", String(v)); }}
+                      style={{
+                        padding: "7px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                        border: `2px solid ${minGewinn === v ? "#16A34A" : "#E2E8F0"}`,
+                        background: minGewinn === v ? "#F0FDF4" : "#F8FAFC",
+                        color: minGewinn === v ? "#16A34A" : "#64748B",
+                        cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+                      }}
+                    >{v}€</button>
+                  ))}
+                </div>
+                <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
+                  Gilt nur für den Preisvorschlag beim Import — die laufende automatische Preisprüfung nutzt zusätzlich einen eigenen Sicherheitspuffer (1,50€) gegen unentdeckte Preis-Drift.
+                </div>
+              </div>
+
               {verkauf > 0 && (
                 <div style={{
                   background: gewinn >= 0 ? "#F0FDF4" : "#FEF2F2",
@@ -1698,7 +1732,8 @@ export default function Lieferanten() {
                 const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
                 const wahrerEinkaufV = v.price + versandV + zollV;
                 const feeRate = (13 + adRate) / 100 * 1.19;
-                const rawMinV = (wahrerEinkaufV + MIN_GEWINN_EUR + PRICE_SAFETY_BUFFER_EUR + 0.45 * 1.19) / (1 - feeRate);
+                // OHNE PRICE_SAFETY_BUFFER_EUR beim initialen Import (siehe Einzelprodukt-Button oben)
+                const rawMinV = (wahrerEinkaufV + minGewinn + 0.45 * 1.19) / (1 - feeRate);
                 return roundToNearest95(rawMinV);
               };
               return (
@@ -1728,7 +1763,7 @@ export default function Lieferanten() {
                       cursor: "pointer", fontFamily: "inherit", marginBottom: 14,
                     }}
                   >
-                    <TrendingDown size={15} /> Alle Preisvorschläge übernehmen (≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ Gewinn +{PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Puffer)
+                    <TrendingDown size={15} /> Alle Preisvorschläge übernehmen (≥{minGewinn.toFixed(2).replace(".", ",")}€ Gewinn)
                   </button>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {/* Header */}
@@ -1885,9 +1920,8 @@ export default function Lieferanten() {
                                 border: "1px solid #BBF7D0", borderRadius: 6, padding: "2px 8px", cursor: "pointer",
                                 fontFamily: "inherit",
                               }}
-                              title={`Enthält ${PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ Sicherheitspuffer über dem Mindestgewinn`}
                             >
-                              ≥{MIN_GEWINN_EUR.toFixed(2).replace(".", ",")}€ +{PRICE_SAFETY_BUFFER_EUR.toFixed(2).replace(".", ",")}€ →
+                              ≥{minGewinn.toFixed(2).replace(".", ",")}€ →
                             </button>
                           </div>
                         </div>
