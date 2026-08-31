@@ -4,7 +4,7 @@
 import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl } from './aliexpress';
-import { getAccessToken, hasVariations, getInventoryItemGroupSkus } from './ebay';
+import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR } from '../shared/constants';
 
@@ -209,10 +209,10 @@ export async function updateEbayPriceTrading(itemId: string, newPrice: number): 
   }
 }
 
-export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number }> {
+export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number; stockUpdated: number }> {
   console.log('[PriceMonitor] Starte Preisüberwachung...');
 
-  let checked = 0, updated = 0, ebayUpdated = 0, errors = 0;
+  let checked = 0, updated = 0, ebayUpdated = 0, errors = 0, stockUpdated = 0;
 
   // Alle Produkte mit AliExpress-URL und buyPrice holen
   const products = await db.select().from(schema.products)
@@ -277,8 +277,39 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // die eigentliche Preisänderung läuft ausschließlich über die vom Menschen bestätigte
         // Vorschau im Listings-Tab ("Preise neu berechnen").
         const freshVariantPricesJson = data.variantPrices.length > 0
-          ? JSON.stringify(data.variantPrices.map(v => ({ skuId: v.skuId, attrs: v.attrs, price: v.price })))
+          ? JSON.stringify(data.variantPrices.map(v => ({ skuId: v.skuId, attrs: v.attrs, price: v.price, stock: v.stock })))
           : product.variantPrices;
+
+        // P-93: Verfügbarkeits-Sync — bei stock=0 einer Variante automatisch die eBay-Inventory-
+        // Item-Menge für GENAU diese Variante auf 0 setzen. Reine Tatsachen-Synchronisation (kein
+        // Preis-/Gewinn-Ermessen), daher anders als bei Preisänderungen OHNE Bestätigungs-Vorschau.
+        // Andere, weiterhin verfügbare Varianten bleiben unangetastet. Nur bei eindeutigem Match
+        // gegen die ECHTEN eBay-SKUs (getInventoryItemGroupSkus) — kein Raten.
+        if (product.ebayListingId && product.ebayStatus === 'listed') {
+          const outOfStock = data.variantPrices.filter(v => v.stock === 0);
+          if (outOfStock.length > 0) {
+            try {
+              const token = await getAccessToken();
+              const groupSku = `stele-${product.id}-GROUP`;
+              const realSkus = await getInventoryItemGroupSkus(groupSku, token);
+              for (const v of outOfStock) {
+                const suffix = Object.values(v.attrs ?? {}).map(slugify).filter(Boolean).join('-');
+                const candidateSku = `stele-${product.id}-${suffix}`;
+                if (!realSkus.includes(candidateSku)) continue; // kein eindeutiger Match — nichts unternehmen
+                const ok = await setInventoryItemQuantity(candidateSku, 0, token);
+                if (ok) {
+                  stockUpdated++;
+                  console.log(`[PriceMonitor] ${product.id}: Variante ${candidateSku} ausverkauft (stock=0) — eBay-Menge auf 0 gesetzt`);
+                } else {
+                  console.warn(`[PriceMonitor] ${product.id}: Menge für ${candidateSku} konnte nicht auf 0 gesetzt werden`);
+                }
+              }
+            } catch (e) {
+              console.warn(`[PriceMonitor] ${product.id}: Verfügbarkeits-Sync fehlgeschlagen:`, e);
+            }
+          }
+        }
+
         const rows = computeVariantPriceRows(freshVariantPricesJson, versand, data.shipsFrom ?? product.shipsFrom, adRate);
         const safePrice = safeUniformVariantPrice(rows);
         const deviates = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
@@ -355,8 +386,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
     await Promise.all(batch.map(p => checkOne(p)));
   }
 
-  console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, eBay-Updates: ${ebayUpdated}, Fehler: ${errors}`);
-  return { checked, updated, ebayUpdated, errors };
+  console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, eBay-Updates: ${ebayUpdated}, Fehler: ${errors}, Varianten auf Menge 0 gesetzt: ${stockUpdated}`);
+  return { checked, updated, ebayUpdated, errors, stockUpdated };
 }
 
 export function startPriceMonitor() {
