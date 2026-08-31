@@ -1456,6 +1456,37 @@ const app = new Hono()
     const connected = await isGmailConnected();
     return c.json({ connected }, 200);
   })
+  // ─── P-94: Editierbare Vorlage für den "Workflow kopieren"-Text (Bestellungen-Tab) ─────
+  // Gespeichert in app_settings (Key "workflow_template", bestehende Key-Value-Tabelle,
+  // sonst für OAuth-Tokens genutzt). Ohne gespeicherten Eintrag greift der Startinhalt aus
+  // shared/workflow-template.ts.
+  .get('/settings/workflow-template', async (c) => {
+    try {
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const row = await db.select().from(appSettings).where(eq(appSettings.key, 'workflow_template')).get();
+      const { DEFAULT_WORKFLOW_TEMPLATE } = await import('../shared/workflow-template');
+      return c.json({ template: row?.value ?? DEFAULT_WORKFLOW_TEMPLATE }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/workflow-template', async (c) => {
+    try {
+      const body = await c.req.json() as { template?: string };
+      if (typeof body.template !== 'string' || !body.template.trim()) {
+        return c.json({ error: 'template darf nicht leer sein' }, 400);
+      }
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const now = new Date().toISOString();
+      await db.insert(appSettings).values({ key: 'workflow_template', value: body.template, updatedAt: now })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value: body.template, updatedAt: now } });
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   // ─── P-84: Sendungsnummer-Vorschläge aus AliExpress-Logistik-Mails ───────────
   // Liest live (kein Hintergrund-Job, keine gespeicherten Vorschläge) — nur Ergebnis bei
   // GENAU EINEM eindeutigen Adress-Treffer unter den offenen Bestellungen. Kein Auto-Save,

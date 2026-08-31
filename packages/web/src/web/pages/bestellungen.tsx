@@ -8,6 +8,7 @@ import {
   Package, RefreshCw, Loader, Search, Truck, CheckCircle, Clock,
   FileText, Download, User, MapPin, CreditCard, ExternalLink, Clipboard,
 } from "lucide-react";
+import { DEFAULT_WORKFLOW_TEMPLATE, renderWorkflowTemplate } from "../../shared/workflow-template";
 
 interface OrderLineItem {
   lineItemId: string;
@@ -70,11 +71,12 @@ function fmtDate(iso: string): string {
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-// P-90: Personalisierte Version des Bestellabwicklungs-Workflows für "Workflow kopieren".
-// Grundgerüst (Rolle, Schritte 1-6, Effizienz-Hinweis) 1:1 vom Nutzer übernommen — nur die
-// Bestelldaten oben eingefügt und die Links in Schritt 2/3 direkt mit den echten URLs ergänzt,
-// damit der Text ohne weiteres Nachschlagen sofort einsatzbereit ist.
-function buildWorkflowText(order: Order): string {
+// P-90/P-94: Personalisierte Version des Bestellabwicklungs-Workflows für "Workflow kopieren".
+// Bestelldaten-Header + Duplikat-Warnung bleiben live berechnet (echte Bestelldaten, keine
+// editierbare Vorlage). Der Rest (Rolle, Schritte 1-6, Effizienz-Hinweis) kommt seit P-94 aus
+// der zentral in app_settings gespeicherten, im Einstellungen-Tab editierbaren Vorlage (`template`)
+// — Platzhalter siehe shared/workflow-template.ts.
+function buildWorkflowText(order: Order, template: string): string {
   const addr = order.shippingAddress;
   const addressBlock = addr
     ? [
@@ -104,7 +106,7 @@ function buildWorkflowText(order: Order): string {
       "→ Diese Bestellung wurde vermutlich schon bearbeitet! Erst gegenprüfen, ob wirklich noch etwas bei AliExpress bestellt werden muss, bevor irgendetwas in den Warenkorb gelegt wird."
     : "Noch keine AliExpress-Bestellnummer oder Sendungsnummer eingetragen — vermutlich noch nicht bestellt.";
 
-  return `# Bestellabwicklungs-Workflow — stele-e-transfer
+  const header = `# Bestellabwicklungs-Workflow — stele-e-transfer
 Personalisiert für Bestellung ${order.orderId} · erzeugt ${new Date().toLocaleString("de-DE")}
 
 ## 📋 Bestelldaten (diese konkrete Bestellung)
@@ -127,65 +129,19 @@ ${duplicateWarning}
 
 ---
 
-## Rolle
+`;
 
-Du hilfst mir, eine offene Bestellung im Dropshipping-Geschäft **stele-e-transfer** bis kurz vor dem Kauf bei AliExpress vorzubereiten. Du analysierst, vergleichst und bereitest alles vor — **die eigentliche Zahlung löse ausschließlich ich selbst manuell aus.**
+  const rendered = renderWorkflowTemplate(template, {
+    "{{ORDER_ID}}": order.orderId,
+    "{{EBAY_LISTING_URL}}": order.ebayListingUrl ?? "kein Link vorhanden, manuell in eBay Seller Hub suchen",
+    "{{ALIEXPRESS_URL}}": order.aliexpressUrl ?? "kein Link vorhanden, manuell auf AliExpress suchen",
+    "{{ORDER_TOTAL}}": `${order.total.toFixed(2)} ${order.currency}`,
+    "{{SICHERHEITS_CHECK}}": hasAliOrderId
+      ? "Es ist bereits eine AliExpress-Bestellnummer eingetragen → STOPP, frag mich, ob das Produkt schon gekauft wurde (Duplikat-Kauf vermeiden)"
+      : "Noch keine AliExpress-Bestellnummer eingetragen (siehe oben) — vermutlich unbedenklich, trotzdem kurz gegenprüfen",
+  });
 
-## Schritt 1 — Bestellung in der App analysieren
-
-1. Öffne \`stele-e-transfer.onrender.com/bestellungen\`
-2. Finde die Bestellung ${order.orderId} (siehe Bestelldaten oben — bereits erfasst)
-3. Produkt, Menge, Käufername, Netto-Erwartung: siehe Bestelldaten oben
-4. **Wichtiger Sicherheits-Check:** ${hasAliOrderId ? "Es ist bereits eine AliExpress-Bestellnummer eingetragen → STOPP, frag mich, ob das Produkt schon gekauft wurde (Duplikat-Kauf vermeiden)" : "Noch keine AliExpress-Bestellnummer eingetragen (siehe oben) — vermutlich unbedenklich, trotzdem kurz gegenprüfen"}
-
-## Schritt 2 — eBay-Bestellung gegenprüfen
-
-1. Klick auf den "Zum eBay-Listing"-Link (oder direkt in eBay Seller Hub) → ${order.ebayListingUrl ?? "kein Link vorhanden, manuell in eBay Seller Hub suchen"}
-2. Bestätige: exakte bestellte Variante, Menge, Verkaufspreis
-3. **Lieferadresse des Käufers exakt kopieren** (Straße, Hausnummer, PLZ, Ort, Land) — nicht abtippen, direkt kopieren, um Tippfehler zu vermeiden (siehe Adresse oben, zur eBay-Seite gegenprüfen)
-
-## Schritt 3 — AliExpress-Lieferant analysieren
-
-1. Klick auf "Zum AliExpress-Artikel" → ${order.aliexpressUrl ?? "kein Link vorhanden, manuell auf AliExpress suchen"}
-2. Prüf: aktueller Preis für die exakt richtige Variante (SKU-Abgleich, nicht nur Produkt)
-3. **Bewertungs-Check** (wie unsere App-Ampel): Sternebewertung + Anzahl Bewertungen — bei sehr wenigen/schlechten Bewertungen kurz mit mir Rücksprache halten
-4. Optional: 1-2 alternative Anbieter desselben Produkts suchen, falls spürbar günstiger UND ähnlich gut bewertet — sonst beim bekannten Lieferanten bleiben (Zuverlässigkeit vor kleiner Ersparnis)
-5. **Margen-Gegenprüfung:** Aktueller AliExpress-Preis + Versandkosten vs. eBay-Verkaufspreis (${order.total.toFixed(2)} ${order.currency}) — reicht die Marge noch (inkl. eBay-Gebühren, Zoll falls China-Versand)? **Falls die Marge zu gering/negativ ist → STOPP, mich informieren, bevor irgendetwas in den Warenkorb gelegt wird**
-
-## Schritt 4 — Bestellung bei AliExpress vorbereiten
-
-1. Richtige Variante auswählen, Menge eintragen
-2. Lieferadresse aus Schritt 2 eintragen (exakt, nochmal gegenlesen)
-3. Verfügbare Coupons/Rabatte prüfen und anwenden, falls vorhanden
-4. Versandmethode mit **Sendungsverfolgung** wählen (wichtig für unsere automatische Tracking-Übermittlung an eBay)
-5. Gesamtpreis (Ware + Versand) final notieren
-
-## Schritt 5 — STOPP vor der Zahlung
-
-**Nicht weitermachen.** Fass mir kurz zusammen:
-- Gewählter Lieferant + Variante + Preis
-- Lieferadresse (zur Kontrolle)
-- Gesamtkosten inkl. Versand
-- Erwartete Marge nach Abzug aller Kosten
-- Voraussichtliche Lieferzeit
-
-**Warte auf meine ausdrückliche Bestätigung**, bevor irgendein Zahlungsschritt ausgeführt wird. Keine Zahlungsdaten eingeben, keinen "Kaufen/Bezahlen"-Button klicken ohne meine Freigabe.
-
----
-
-## Schritt 6 — Nach dem Kauf (von mir manuell bestätigt)
-
-Sobald ich Dir sage, dass der Kauf abgeschlossen ist:
-
-1. **AliExpress-Bestellnummer im Bestellungen-Tab eintragen** — nicht vergessen, sonst fehlt später die Zuordnung
-2. **AliExpress-Rechnung herunterladen und im Bestellungen-Tab hochladen** (für die Buchhaltung)
-3. **Sendungsnummer prüfen, aber nicht erzwingen:** Schau nach, ob AliExpress schon eine Sendungsnummer zeigt.
-   - **Falls ja:** direkt im Bestellungen-Tab eintragen (wird dann automatisch an eBay übermittelt)
-   - **Falls noch nicht verfügbar** (kommt oft erst nach 1-2 Tagen): **nicht warten, nicht blockieren** — einfach vermerken "Sendungsnummer folgt später", ich trage sie selbst nach, sobald sie da ist (oder unsere automatische Gmail-Erkennung findet sie von selbst)
-
----
-
-*Effizienz-Hinweis für den Agenten: Arbeite die Schritte zügig und ohne unnötige Zwischenfragen ab — nur bei den explizit markierten STOPP-Punkten (Duplikat-Verdacht, zu geringe Marge, vor der Zahlung) tatsächlich anhalten und nachfragen. Je konsistenter der Ablauf, desto schneller und fehlerärmer wird er bei jeder weiteren Bestellung.*`;
+  return header + rendered;
 }
 
 function statusLabel(status: string): { label: string; color: string; bg: string; icon: JSX.Element } {
@@ -232,6 +188,17 @@ export default function Bestellungen() {
   const [thankYouSuggestions, setThankYouSuggestions] = useState<Record<string, { draftText: string }>>({});
   const [expandedThankYouDraft, setExpandedThankYouDraft] = useState<string | null>(null); // orderId
   const [markingThankYouSent, setMarkingThankYouSent] = useState<string | null>(null); // orderId
+  // P-94: zentral im Einstellungen-Tab gepflegte Vorlage für "Workflow kopieren" — bis zum
+  // ersten erfolgreichen Laden gilt der eingebaute Startinhalt als Fallback, damit der Button
+  // sofort funktioniert.
+  const [workflowTemplate, setWorkflowTemplate] = useState<string>(DEFAULT_WORKFLOW_TEMPLATE);
+
+  useEffect(() => {
+    fetch("/api/settings/workflow-template", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { if ((d as { template?: string }).template) setWorkflowTemplate((d as { template: string }).template); })
+      .catch(() => { /* Fallback bleibt der eingebaute Startinhalt */ });
+  }, []);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -861,7 +828,7 @@ export default function Bestellungen() {
               <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(buildWorkflowText(order));
+                    navigator.clipboard.writeText(buildWorkflowText(order, workflowTemplate));
                     showToast("Workflow kopiert — jetzt in Claude einfügen");
                   }}
                   style={{
