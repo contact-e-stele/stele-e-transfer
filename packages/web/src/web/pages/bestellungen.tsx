@@ -287,7 +287,7 @@ export default function Bestellungen() {
     setEditingBuyPrice(null);
   };
 
-  const handleInvoiceUpload = async (orderId: string, file: File) => {
+  const handleInvoiceUpload = async (orderId: string, aliexpressOrderId: string | null, file: File) => {
     setUploadingInvoice(orderId);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -296,10 +296,15 @@ export default function Bestellungen() {
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
+      // P-93: einheitliches Namensschema für die Buchhaltung — "Aliexpress {Ali-Bestellnr.} Ebay
+      // {eBay-Bestellnr.}", damit Rechnungen ohne Nachschlagen den beiden Bestellungen zuzuordnen
+      // sind. Fehlt die AliExpress-Bestellnummer noch (nicht eingetragen), "unbekannt" statt
+      // Upload zu blockieren — kann später über den Dateinamen nachvollzogen/korrigiert werden.
+      const filename = `Aliexpress ${aliexpressOrderId ?? "unbekannt"} Ebay ${orderId}`;
       const res = await fetch("/api/upload-file", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, filename: `aliexpress-rechnung-${orderId}` }),
+        body: JSON.stringify({ dataUrl, filename }),
       });
       const data = await res.json() as { url?: string; error?: string };
       if (data.url) {
@@ -930,7 +935,7 @@ export default function Bestellungen() {
                       {uploadingInvoice === order.orderId ? <Loader size={11} style={{ animation: "spin 1s linear infinite" }} /> : <FileText size={11} />}
                       Ersetzen
                       <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
-                        onChange={e => { const f = e.target.files?.[0]; if (f) handleInvoiceUpload(order.orderId, f); }} />
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleInvoiceUpload(order.orderId, order.localNote?.aliexpressOrderId ?? null, f); }} />
                     </label>
                   </>
                 ) : (
@@ -942,7 +947,7 @@ export default function Bestellungen() {
                     {uploadingInvoice === order.orderId ? <Loader size={11} style={{ animation: "spin 1s linear infinite" }} /> : <FileText size={11} />}
                     AliExpress-Rechnung hochladen
                     <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
-                      onChange={e => { const f = e.target.files?.[0]; if (f) handleInvoiceUpload(order.orderId, f); }} />
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleInvoiceUpload(order.orderId, order.localNote?.aliexpressOrderId ?? null, f); }} />
                   </label>
                 )}
 
