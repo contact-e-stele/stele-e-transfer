@@ -248,7 +248,7 @@ export interface EbayListingInput {
   imageUrls: string[];
   categoryId?: string;
   variantGroups?: VariantGroup[]; // für Variation Listings
-  variantPrices?: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }>; // pro-Variante Preise
+  variantPrices?: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; stock?: number }>; // pro-Variante Preise + Lagerbestand (P-93)
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
   ean?: string; // EAN/GTIN Barcode — falls vorhanden, sonst "Nicht zutreffend"
@@ -904,6 +904,18 @@ export function slugify(s: string): string {
   return s.toUpperCase().replace(/[^A-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
 }
 
+// P-93: echte Varianten-Stückzahl aus dem AliExpress-Scrape statt einer für alle Varianten
+// identischen Fantasiezahl. Obergrenze 999, da AliExpress bei manchen Artikeln unrealistisch
+// hohe Lagerbestände meldet (z.B. ~99.990) — eBay würde das unverändert übernehmen.
+// Fällt nur zurück auf `fallback`, wenn stock im Scrape ganz fehlt (Datenlücke) — ein
+// tatsächlicher Wert von 0 bleibt 0 (korrekt: Variante von Anfang an ausverkauft).
+const MAX_VARIANT_QUANTITY = 999;
+export function resolveVariantQuantity(stock: number | undefined, fallback: number): number {
+  return typeof stock === 'number' && !isNaN(stock)
+    ? Math.min(Math.max(Math.round(stock), 0), MAX_VARIANT_QUANTITY)
+    : fallback;
+}
+
 // Gruppennamen-Normalisierung für den VARIANT_GROUP_MAP-Lookup: Apostroph-Varianten
 // (´ ' ’ `) entfernen und übrige Sonderzeichen/Mehrfach-Leerzeichen glätten.
 // AliExpress liefert Gruppennamen wie "Set´s" — ohne das matcht z.B. 'set' nicht mehr,
@@ -983,6 +995,35 @@ export async function getInventoryItemGroupSkus(groupKey: string, token: string)
   if (!res.ok) return [];
   const data = await res.json() as { variantSKUs?: string[] };
   return data.variantSKUs ?? [];
+}
+
+// P-93: Verfügbarkeit einer einzelnen Varianten-SKU setzen (z.B. auf 0 bei ausverkauft).
+// WICHTIG: eBays PUT /sell/inventory/v1/inventory_item/{sku} ERSETZT das komplette Inventory
+// Item — ein PUT mit nur { availability: ... } würde Titel/Bilder/Aspekte löschen. Deshalb
+// erst das bestehende Item holen und nur das quantity-Feld darin ändern, bevor es komplett
+// zurückgeschrieben wird.
+export async function setInventoryItemQuantity(sku: string, quantity: number, token: string): Promise<boolean> {
+  const getRes = await fetch(
+    `${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!getRes.ok) return false;
+  const item = await getRes.json() as Record<string, unknown>;
+  const existingAvailability = (item.availability as Record<string, unknown> | undefined) ?? {};
+  const existingShipTo = (existingAvailability.shipToLocationAvailability as Record<string, unknown> | undefined) ?? {};
+  item.availability = {
+    ...existingAvailability,
+    shipToLocationAvailability: { ...existingShipTo, quantity },
+  };
+  const putRes = await fetch(
+    `${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+    {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+      body: JSON.stringify(item),
+    }
+  );
+  return putRes.ok || putRes.status === 204;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1080,9 +1121,10 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     const varImageUrls = (matchedVP as { imageUrl?: string } | undefined)?.imageUrl
       ? [(matchedVP as { imageUrl: string }).imageUrl, ...input.imageUrls.slice(0, 7)]
       : input.imageUrls;
+    const varQuantity = resolveVariantQuantity((matchedVP as { stock?: number } | undefined)?.stock, input.quantity);
 
     const varBody = {
-      availability: { shipToLocationAvailability: { quantity: input.quantity } },
+      availability: { shipToLocationAvailability: { quantity: varQuantity } },
       condition: input.condition,
       product: {
         title: input.title,
@@ -1173,13 +1215,14 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       return comboValues.every(cv => attrsVal.some(av => av.includes(cv) || cv.includes(av)));
     });
     const varPrice = varPriceEntry ? (varPriceEntry.ebayPrice ?? varPriceEntry.price ?? input.price) : input.price;
-    console.log(`[eBay] ${varSku} → combo=${JSON.stringify(varCombo)} priceEntry=${JSON.stringify(varPriceEntry)} → price=${varPrice}`);
+    const offerQuantity = resolveVariantQuantity(varPriceEntry?.stock, input.quantity);
+    console.log(`[eBay] ${varSku} → combo=${JSON.stringify(varCombo)} priceEntry=${JSON.stringify(varPriceEntry)} → price=${varPrice} qty=${offerQuantity}`);
 
     const offerBody = {
       sku: varSku,
       marketplaceId: 'EBAY_DE',
       format: 'FIXED_PRICE',
-      availableQuantity: input.quantity,
+      availableQuantity: offerQuantity,
       categoryId: input.categoryId ?? '79720',
       listingDescription: input.description,
       pricingSummary: {
