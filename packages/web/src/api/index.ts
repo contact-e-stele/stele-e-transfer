@@ -1771,7 +1771,7 @@ const app = new Hono()
 
   // ─── eBay Listing ────────────────────────────────────────────────────────────
   .post('/ebay/list', async (c) => {
-    const body = await c.req.json() as { productId?: number };
+    const body = await c.req.json() as { productId?: number; confirmUnknownStock?: boolean };
 
     if (!body.productId) {
       return c.json({ error: 'productId fehlt' }, 400);
@@ -1789,6 +1789,33 @@ const app = new Hono()
     // Duplikat-Schutz: Nicht doppelt listen wenn bereits aktiv auf eBay
     if (product.ebayStatus === 'listed' && product.ebayListingId) {
       return c.json({ error: `Artikel ist bereits auf eBay gelistet (Listing-ID: ${product.ebayListingId}). Zuerst beenden oder Status zurücksetzen.` }, 409);
+    }
+
+    // Bestands-Gate: Varianten ohne bekannten Lagerbestand würden sonst stillschweigend mit der
+    // festen Fallback-Menge (siehe unten, quantity: 3) gelistet — das ist Geld-/Bestandslogik und
+    // erfordert laut Standing-Regel eine explizite Bestätigung statt Automatismus. Nur bei echten
+    // Varianten-Produkten relevant (>1 Eintrag); ein einzelner Eintrag ohne stock ist meist ein
+    // Produkt ohne Varianten und nutzt ohnehin nur die feste quantity.
+    if (!body.confirmUnknownStock) {
+      const variantsForGate: Array<{ skuId?: string; attrs?: Record<string, string>; stock?: number }> = (() => {
+        try {
+          const parsed = JSON.parse(product.variantPrices ?? '[]');
+          return Array.isArray(parsed) ? parsed : [];
+        } catch { return []; }
+      })();
+      if (variantsForGate.length > 1) {
+        const unknownStockVariants = variantsForGate
+          .filter(v => typeof v.stock !== 'number')
+          .map(v => Object.values(v.attrs ?? {}).filter(Boolean).join(' / ') || v.skuId || 'Variante');
+        if (unknownStockVariants.length > 0) {
+          return c.json({
+            needsStockConfirmation: true,
+            unknownStockVariants,
+            fallbackQuantity: 3,
+            error: `${unknownStockVariants.length} von ${variantsForGate.length} Varianten haben keinen bekannten Lagerbestand — würden mit fester Menge 3 gelistet`,
+          }, 409);
+        }
+      }
     }
 
     // sellPrice Fallback: wenn nicht gesetzt, niedrigsten Varianten-Preis nehmen
@@ -2043,6 +2070,95 @@ const app = new Hono()
     } catch (e) {
       console.error('Price update error:', e);
       return c.json({ error: 'DB Fehler' }, 503);
+    }
+  })
+
+  // ─── Lagerbestand pro Variante aktualisieren ──────────────────────────────────
+  // Bewusst getrennt von /products/:id/price: reine Tatsachen-Synchronisation (Bestand),
+  // fasst keine Preise/Geldlogik an — nur der stock-Wert pro Variante wird per skuId gemerged,
+  // alle anderen Felder (price, ebayPrice, imageUrl, attrs) bleiben unangetastet. DS-API zuerst
+  // (liefert sku_available_stock zuverlässig, siehe aliexpress-api.ts), HTML-Scraper als Fallback.
+  // Ehrliches Ergebnis (P-36-Prinzip): meldet exakt wie viele Varianten einen Bestandswert
+  // bekommen haben, statt "ok" vorzutäuschen wenn nur ein Teil geklappt hat.
+  .post('/products/:id/refresh-stock', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
+      const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+      if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+      if (!product.sourceUrl || !product.sourceUrl.includes('aliexpress')) {
+        return c.json({ error: 'Kein AliExpress-Quelllink gespeichert — Bestand kann nicht automatisch geprüft werden' }, 400);
+      }
+
+      let currentVariants: Array<Record<string, unknown>> = [];
+      try {
+        const parsed = JSON.parse(product.variantPrices ?? '[]');
+        if (Array.isArray(parsed)) currentVariants = parsed;
+      } catch { /* ignore */ }
+      if (currentVariants.length === 0) {
+        return c.json({ error: 'Produkt hat keine gespeicherten Varianten' }, 400);
+      }
+
+      const productIdMatch = product.sourceUrl.match(/\/item\/(\d+)\.html/) || product.sourceUrl.match(/[?&]id=(\d+)/);
+      const aliProductId = productIdMatch?.[1];
+
+      let freshStockBySku: Record<string, number | undefined> = {};
+      let source: 'ds-api' | 'scraper' | null = null;
+
+      await ensureFreshAliToken();
+      const accessToken = await getAliAccessToken();
+      if (accessToken && aliProductId) {
+        const apiData = await getAliProductByApi(aliProductId, accessToken);
+        if (apiData) {
+          source = 'ds-api';
+          for (const v of apiData.variantPrices) freshStockBySku[v.skuId] = v.stock;
+        }
+      }
+      if (!source) {
+        try {
+          const scraped = await scrapeAliExpressUrl(product.sourceUrl);
+          if (scraped) {
+            source = 'scraper';
+            for (const v of scraped.variantPrices) freshStockBySku[v.skuId] = v.stock;
+          }
+        } catch { /* ignore, wird unten als Fehler behandelt */ }
+      }
+
+      if (!source) {
+        return c.json({ ok: false, error: 'Bestand konnte weder über die DS-API noch per Scraping abgerufen werden' }, 502);
+      }
+
+      let variantsWithStock = 0;
+      const merged = currentVariants.map(v => {
+        const skuId = String((v as { skuId?: string }).skuId ?? '');
+        const freshStock = freshStockBySku[skuId];
+        if (typeof freshStock === 'number') {
+          variantsWithStock++;
+          return { ...v, stock: freshStock };
+        }
+        return v; // kein frischer Wert gefunden — bestehenden Wert (inkl. evtl. vorhandenem "–") unangetastet lassen
+      });
+
+      await db.update(schema.products).set({
+        variantPrices: JSON.stringify(merged),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.products.id, id));
+
+      return c.json({
+        ok: true,
+        source,
+        variantsTotal: currentVariants.length,
+        variantsWithStock,
+      }, 200);
+    } catch (e) {
+      console.error('Refresh-stock error:', e);
+      return c.json({ ok: false, error: 'DB/API Fehler: ' + String(e) }, 503);
     }
   })
 
