@@ -261,6 +261,7 @@ export interface EbayListingInput {
     email: string;
     phone: string;
   };
+  manualAspects?: Record<string, string>; // P-88: vom Nutzer manuell nachgetragene Pflichtfelder (überschreiben Auto-Heal)
 }
 
 // Gender-Wert → eBay "Abteilung" normalisieren
@@ -371,6 +372,22 @@ async function getAspectAllowedValue(categoryId: string | undefined, aspectName:
   return match?.aspectValues?.[0]?.localizedValue ?? null;
 }
 
+// P-88: ALLE erlaubten Werte für einen Aspekt (nicht nur den ersten) — für das Dropdown im
+// manuellen Eingabefeld. Leeres Array = Freitextfeld (kein fester Wertekatalog bzw. Aspekt/Kategorie unbekannt).
+export async function getAspectAllowedValues(categoryId: string | undefined, aspectName: string, token: string): Promise<string[]> {
+  if (!categoryId) return [];
+  const all = await getRawAspectsForCategory(categoryId, token);
+  const match = all.find(a => a.localizedAspectName.toLowerCase() === aspectName.toLowerCase());
+  return match?.aspectValues?.map(v => v.localizedValue) ?? [];
+}
+
+// P-88: Extrahiert den exakten Feldnamen aus eBays "Das Artikelmerkmal X fehlt"-Fehlertext —
+// gemeinsam genutzt vom Selbstheilungs-Loop und von prettifyEbayError(), damit der Feldname 1:1
+// mit dem übereinstimmt, was im manuellen Eingabefeld (Frontend) angezeigt wird.
+export function extractMissingAspectName(rawMessage: string): string | null {
+  return rawMessage.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/)?.[1]?.trim() ?? null;
+}
+
 // P-91: Generischer Retry-Wrapper für JEDEN Publish-Aufruf (Einzelartikel wie Varianten-Gruppe) —
 // eBays Taxonomy-API meldet nicht zuverlässig jeden tatsächlich benötigten Aspekt als "required"
 // (P-89: EAN, P-90/P-92: "Produktart", vermutlich nicht die letzten Fälle). Statt für jeden neu
@@ -396,9 +413,8 @@ async function publishWithAspectHealing(
       return await publish();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      const match = msg.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/);
-      if (!match || attempt === MAX_TOTAL_ATTEMPTS) throw err;
-      const aspectName = match[1].trim();
+      const aspectName = extractMissingAspectName(msg);
+      if (!aspectName || attempt === MAX_TOTAL_ATTEMPTS) throw err;
 
       // Aspekte sind oft Auswahlfelder mit fester Werteliste — Freitext wie "Nicht angegeben"
       // wird dafür abgelehnt (P-90). Erst den echten erlaubten Wert nachschlagen; kennt die
@@ -446,9 +462,9 @@ async function publishWithAspectHealing(
 // sinnvollen Fallback-Wert, oder ein anderer Fehlergrund). Exportiert, damit der API-Layer
 // (index.ts) sie auf jede eBay-Listing-Fehlermeldung anwenden kann, bevor sie im Frontend landet.
 export function prettifyEbayError(rawMessage: string): string {
-  const aspectMatch = rawMessage.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/);
-  if (aspectMatch) {
-    return `eBay-Pflichtfeld "${aspectMatch[1].trim()}" fehlt und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen oder eBay-Kategorie prüfen.`;
+  const missingAspect = extractMissingAspectName(rawMessage);
+  if (missingAspect) {
+    return `eBay-Pflichtfeld "${missingAspect}" fehlt und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen oder eBay-Kategorie prüfen.`;
   }
   // Generische eBay-Fehlerbeschreibung aus dem JSON extrahieren, statt den rohen Blob zu zeigen
   const longMessageMatch = rawMessage.match(/"longMessage"\s*:\s*"([^"]{5,300})"/)
@@ -527,7 +543,8 @@ async function buildAspects(
   mpn?: string,
   categoryId?: string,
   token?: string,
-  ean?: string
+  ean?: string,
+  manualAspects?: Record<string, string>
 ): Promise<Record<string, string[]>> {
   // Key-Mapping: AliExpress Spec-Keys → eBay Aspekt-Namen (DE)
   const KEY_MAP: Record<string, string> = {
@@ -593,6 +610,13 @@ async function buildAspects(
   // Aspekt listet (eBays Produkt-Identifier-Prüfung greift teils unabhängig davon)
   if (ean?.trim()) aspects['EAN'] = [ean.trim()];
 
+  // P-88: manuell nachgetragene Werte haben immer Vorrang — unconditional override, auch über
+  // bereits gesetzte Auto-Heal-/Default-Werte hinweg, da der Nutzer sie gezielt für ein Feld
+  // eingegeben hat, das eBay zuvor als fehlend gemeldet hat.
+  for (const [name, val] of Object.entries(manualAspects ?? {})) {
+    if (val?.trim()) aspects[name] = [val.trim()];
+  }
+
   return aspects;
 }
 
@@ -612,7 +636,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       title: input.title,
       description: plainDesc,
       imageUrls: input.imageUrls,
-      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean),
+      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects),
       ...(input.ean?.trim() ? { gtin: input.ean.trim() } : {}),
     },
   };
@@ -723,7 +747,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   const fulfillmentPolicyId = input.handlingTimeDays != null
     ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
     : policies.fulfillmentPolicyId;
-  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean);
+  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
   const gpsrBlock = buildGpsrBlock(input.gpsr);
@@ -1079,7 +1103,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Pflichtaspekte einmal abrufen (gilt für alle Varianten)
   // Hinweis: input.ean ist genau EIN Wert pro Produkt (kein Feld pro Variante im Datenmodell) —
   // wird hier für alle Varianten übernommen; besser als der ungültige "Nicht angegeben"-Fallback.
-  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean);
+  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects);
 
   // Varianten-Aspekt-Namen (gemappt) — diese dürfen NICHT in baseAspects stecken
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler

@@ -51,6 +51,8 @@ interface Product {
   ebayListingId: string | null;
   ebayStatus: string;
   ebayError: string | null;
+  ebayMissingAspect: string | null; // P-88: exakter Feldname aus dem letzten 25002-Fehler
+  manualAspects: string | null; // P-88: JSON {"Produktart":"Tasche"}
   ebayCategory: string | null;
   adRate: number | null; // Anzeigentarif % (Promoted Listings)
   ean: string | null;
@@ -118,6 +120,72 @@ function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) 
           {margin > 15 ? <TrendingUp size={10} /> : <TrendingDown size={10} />} {margin.toFixed(1)}%
         </span>
       )}
+    </div>
+  );
+}
+
+// P-88: Eingabefeld für ein von eBay gemeldetes, fehlendes Pflichtfeld (z.B. "Produktart").
+// Lädt eBays erlaubte Werteliste für den Aspekt nach — gibt es eine, wird ein Dropdown gezeigt,
+// sonst ein Freitextfeld. Speichert in product.manualAspects (JSON), das buildAspects() beim
+// nächsten Listing-Versuch als Override mitschickt.
+function MissingAspectField({ product, onSaved }: { product: Product; onSaved: (manualAspects: Record<string, string>) => void }) {
+  const aspectName = product.ebayMissingAspect;
+  const [options, setOptions] = useState<string[] | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setOptions(null);
+    setSaved(false);
+    if (!aspectName) return;
+    let cancelled = false;
+    fetch(`/api/ebay/aspect-options/${product.id}?aspect=${encodeURIComponent(aspectName)}`)
+      .then(r => r.json())
+      .then((d: { values?: string[] }) => { if (!cancelled) setOptions(d.values ?? []); })
+      .catch(() => { if (!cancelled) setOptions([]); });
+    return () => { cancelled = true; };
+  }, [aspectName, product.id]);
+
+  if (!aspectName) return null;
+
+  const currentAspects: Record<string, string> = (() => {
+    try { return product.manualAspects ? JSON.parse(product.manualAspects) : {}; } catch { return {}; }
+  })();
+
+  const save = async (value: string) => {
+    if (!value.trim()) return;
+    const merged = { ...currentAspects, [aspectName]: value.trim() };
+    await fetch(`/api/products/${product.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manualAspects: merged }),
+    });
+    setSaved(true);
+    onSaved(merged);
+  };
+
+  return (
+    <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 700, whiteSpace: "nowrap" }}>Fehlt: {aspectName}</span>
+      {options === null ? (
+        <span style={{ fontSize: 10, color: "#94A3B8" }}>lade erlaubte Werte…</span>
+      ) : options.length > 0 ? (
+        <select
+          defaultValue={currentAspects[aspectName] ?? ""}
+          onChange={(e) => { if (e.currentTarget.value) save(e.currentTarget.value); }}
+          style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A", fontFamily: "inherit" }}
+        >
+          <option value="">– auswählen –</option>
+          {options.map(v => <option key={v} value={v}>{v}</option>)}
+        </select>
+      ) : (
+        <input
+          defaultValue={currentAspects[aspectName] ?? ""}
+          placeholder="Wert eingeben"
+          onBlur={(e) => save(e.currentTarget.value)}
+          style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A", width: 140, fontFamily: "inherit" }}
+        />
+      )}
+      {saved && <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓ gespeichert — beim nächsten Listen-Versuch mitgeschickt</span>}
     </div>
   );
 }
@@ -1769,10 +1837,16 @@ export default function Produkte() {
               {product.ebayError && !listingResult && (
                 <div style={{ fontSize: 11, color: "#DC2626", background: "#FEF2F2", padding: "6px 10px", borderRadius: 6, marginTop: 8 }}>
                   {product.ebayError.slice(0, 120)}
+                  {product.ebayMissingAspect && (
+                    <MissingAspectField
+                      product={product}
+                      onSaved={(manualAspects) => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, manualAspects: JSON.stringify(manualAspects) } : p))}
+                    />
+                  )}
                   <button
                     onClick={async () => {
                       await fetch(`/api/products/${product.id}/reset-error`, { method: 'POST' });
-                      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayStatus: 'none', ebayError: null } : p));
+                      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayStatus: 'none', ebayError: null, ebayMissingAspect: null } : p));
                     }}
                     style={{ display: 'block', marginTop: 6, padding: '3px 10px', fontSize: 11, background: '#DC2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
                   >

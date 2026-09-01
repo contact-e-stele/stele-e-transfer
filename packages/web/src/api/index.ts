@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -1759,7 +1759,7 @@ const app = new Hono()
     if (!effectiveSellPrice) return c.json({ error: 'Kein Verkaufspreis gesetzt — bitte VK Preis eintragen' }, 400);
 
     // Alten Fehler-Status zurücksetzen
-    await db.update(schema.products).set({ ebayStatus: 'none', ebayError: null }).where(eq(schema.products.id, body.productId));
+    await db.update(schema.products).set({ ebayStatus: 'none', ebayError: null, ebayMissingAspect: null }).where(eq(schema.products.id, body.productId));
 
     // Bilder parsen
     const images: string[] = (() => { try { return JSON.parse(product.images ?? '[]') as string[]; } catch { return []; } })();
@@ -1861,6 +1861,14 @@ const app = new Hono()
         phone:   product.gpsrPhone   ?? '+4915904826737',
       } : undefined;
 
+      // P-88: manuell nachgetragene Pflichtfelder (aus einem vorherigen fehlgeschlagenen Versuch)
+      const manualAspects: Record<string, string> | undefined = (() => {
+        try {
+          const parsed = product.manualAspects ? JSON.parse(product.manualAspects) as Record<string, string> : undefined;
+          return parsed && Object.keys(parsed).length > 0 ? parsed : undefined;
+        } catch { return undefined; }
+      })();
+
       const listingId = await listOnEbay({
         sku: `stele-${product.id}`,
         title: (product.generatedTitle ?? product.title).slice(0, 80),
@@ -1878,12 +1886,14 @@ const app = new Hono()
         adRate: product.adRate ?? 5,
         handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
+        manualAspects,
       });
 
       await db.update(schema.products).set({
         ebayListingId: listingId,
         ebayStatus: 'listed',
         ebayError: null,
+        ebayMissingAspect: null,
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, body.productId));
 
@@ -1892,14 +1902,39 @@ const app = new Hono()
       const rawMsg = e instanceof Error ? e.message : String(e);
       // P-91: lesbare Meldung fürs Frontend statt des rohen eBay-JSON-Blobs
       const msg = prettifyEbayError(rawMsg);
+      // P-88: exakter Feldname (falls 25002/Aspekt-Fehler) fürs manuelle Eingabefeld im Frontend
+      const missingAspect = extractMissingAspectName(rawMsg);
 
       await db.update(schema.products).set({
         ebayStatus: 'error',
         ebayError: msg,
+        ebayMissingAspect: missingAspect,
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, body.productId));
 
       return c.json({ error: msg }, 500);
+    }
+  })
+
+  // ─── P-88: erlaubte Werte für ein fehlendes Pflichtfeld (für Dropdown im manuellen Eingabefeld) ──
+  .get('/ebay/aspect-options/:id', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    const aspectName = c.req.query('aspect');
+    if (isNaN(id) || !aspectName) return c.json({ error: 'id/aspect fehlt' }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+      if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+
+      const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
+      const token = await getAccessToken();
+      const values = await getAspectAllowedValues(categoryId ?? undefined, aspectName, token);
+      return c.json({ values }, 200);
+    } catch (e) {
+      return c.json({ error: 'eBay-Anfrage fehlgeschlagen' }, 503);
     }
   })
 
@@ -2367,6 +2402,10 @@ const app = new Hono()
       if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
       if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
+      if ('manualAspects' in body) {
+        const val = body.manualAspects as Record<string, string> | null;
+        allowed.manualAspects = val && Object.keys(val).length > 0 ? JSON.stringify(val) : null;
+      }
       if (Object.keys(allowed).length === 0) return c.json({ error: 'Keine bekannten Felder' }, 400);
       allowed.updatedAt = new Date().toISOString();
       await db.update(schema.products).set(allowed).where(eq(schema.products.id, id));
@@ -2408,6 +2447,7 @@ const app = new Hono()
       await db.update(schema.products).set({
         ebayStatus: 'none',
         ebayError: null,
+        ebayMissingAspect: null,
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, id));
       return c.json({ ok: true }, 200);
