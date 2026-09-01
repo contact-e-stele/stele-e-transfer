@@ -3,84 +3,13 @@ import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
-import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
+import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
 import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail } from './gmail';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
-
-// ─── AliExpress Token Helper ──────────────────────────────────────────────────
-// Liest Token aus DB (app_settings) oder Env-Variable als Fallback
-async function getAliAccessToken(): Promise<string | null> {
-  // 1) DB first (gespeichert nach OAuth-Login) — dieser Token ist aktuell!
-  try {
-    const { db } = await import('../db/index');
-    const { appSettings } = await import('../db/schema');
-    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_access_token')).get();
-    if (row?.value) return row.value;  // Neuer Token aus DB hat Vorrang
-  } catch { /* DB nicht verfügbar */ }
-  // 2) Fallback: Env-Variable (Backup, z.B. manuell in Render gesetzt)
-  if (process.env.ALIEXPRESS_ACCESS_TOKEN) return process.env.ALIEXPRESS_ACCESS_TOKEN;
-  return null;
-}
-
-async function saveAliTokens(accessToken: string, refreshToken: string, expiresAt: number): Promise<void> {
-  try {
-    const { db } = await import('../db/index');
-    const { appSettings } = await import('../db/schema');
-    const now = new Date().toISOString();
-    await db.insert(appSettings).values({ key: 'aliexpress_access_token', value: accessToken, updatedAt: now })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: accessToken, updatedAt: now } });
-    await db.insert(appSettings).values({ key: 'aliexpress_refresh_token', value: refreshToken, updatedAt: now })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: refreshToken, updatedAt: now } });
-    await db.insert(appSettings).values({ key: 'aliexpress_token_expires', value: String(expiresAt), updatedAt: now })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: String(expiresAt), updatedAt: now } });
-    console.log('[AliExpress OAuth] Tokens in DB gespeichert ✓');
-  } catch (e) {
-    console.error('[AliExpress OAuth] Token-Speicherung in DB fehlgeschlagen:', e);
-  }
-}
-
-// P-2: Vor jedem getAliProductByApi()-Aufruf prüfen ob der Access-Token in <3 Tagen abläuft
-// und ihn vorab per Refresh-Token erneuern — sonst würde ein Import-Batch (check-all-prices)
-// mitten im Lauf durch einen abgelaufenen Token abbrechen. Schlägt der Refresh fehl, wird NICHT
-// blockiert: mit dem alten Token weitergemacht, Fehler nur geloggt (Ablauf-/Speicherlogik analog
-// zum bestehenden OAuth-Callback/saveAliTokens).
-const ALI_TOKEN_REFRESH_MARGIN_SEC = 3 * 24 * 60 * 60; // 3 Tage
-
-async function ensureFreshAliToken(): Promise<void> {
-  try {
-    const { db } = await import('../db/index');
-    const { appSettings } = await import('../db/schema');
-    const expRow = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_token_expires')).get();
-    if (!expRow?.value) return; // kein bekannter Ablauf (z.B. nur Env-Token) — nichts zu tun
-
-    const expiresAt = Number(expRow.value);
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (expiresAt - nowSec >= ALI_TOKEN_REFRESH_MARGIN_SEC) return; // noch lange genug gültig
-
-    const refRow = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_refresh_token')).get();
-    if (!refRow?.value) {
-      console.warn('[AliExpress] Access-Token läuft in <3 Tagen ab, aber kein Refresh-Token in DB — kann nicht automatisch erneuert werden');
-      return;
-    }
-
-    console.log(`[AliExpress] Access-Token läuft in ${Math.round((expiresAt - nowSec) / 3600)}h ab — erneuere automatisch vor Produktabruf...`);
-    const refreshed = await refreshAliToken(refRow.value);
-    if (!refreshed) {
-      console.warn('[AliExpress] Automatischer Token-Refresh fehlgeschlagen — mache mit altem Token weiter');
-      return;
-    }
-
-    const newExpiresAt = Math.floor(Date.now() / 1000) + refreshed.expires_in;
-    await saveAliTokens(refreshed.access_token, refreshed.refresh_token, newExpiresAt); // AliExpress rotiert den Refresh-Token bei jedem Refresh
-    console.log('[AliExpress] Access-Token automatisch erneuert ✓');
-  } catch (e) {
-    console.warn('[AliExpress] Token-Ablauf-Prüfung fehlgeschlagen — mache mit altem Token weiter:', e);
-  }
-}
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
