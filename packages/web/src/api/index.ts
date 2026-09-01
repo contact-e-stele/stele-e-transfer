@@ -3,84 +3,13 @@ import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
-import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi } from './aliexpress-api';
+import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
 import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail } from './gmail';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
-
-// ─── AliExpress Token Helper ──────────────────────────────────────────────────
-// Liest Token aus DB (app_settings) oder Env-Variable als Fallback
-async function getAliAccessToken(): Promise<string | null> {
-  // 1) DB first (gespeichert nach OAuth-Login) — dieser Token ist aktuell!
-  try {
-    const { db } = await import('../db/index');
-    const { appSettings } = await import('../db/schema');
-    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_access_token')).get();
-    if (row?.value) return row.value;  // Neuer Token aus DB hat Vorrang
-  } catch { /* DB nicht verfügbar */ }
-  // 2) Fallback: Env-Variable (Backup, z.B. manuell in Render gesetzt)
-  if (process.env.ALIEXPRESS_ACCESS_TOKEN) return process.env.ALIEXPRESS_ACCESS_TOKEN;
-  return null;
-}
-
-async function saveAliTokens(accessToken: string, refreshToken: string, expiresAt: number): Promise<void> {
-  try {
-    const { db } = await import('../db/index');
-    const { appSettings } = await import('../db/schema');
-    const now = new Date().toISOString();
-    await db.insert(appSettings).values({ key: 'aliexpress_access_token', value: accessToken, updatedAt: now })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: accessToken, updatedAt: now } });
-    await db.insert(appSettings).values({ key: 'aliexpress_refresh_token', value: refreshToken, updatedAt: now })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: refreshToken, updatedAt: now } });
-    await db.insert(appSettings).values({ key: 'aliexpress_token_expires', value: String(expiresAt), updatedAt: now })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: String(expiresAt), updatedAt: now } });
-    console.log('[AliExpress OAuth] Tokens in DB gespeichert ✓');
-  } catch (e) {
-    console.error('[AliExpress OAuth] Token-Speicherung in DB fehlgeschlagen:', e);
-  }
-}
-
-// P-2: Vor jedem getAliProductByApi()-Aufruf prüfen ob der Access-Token in <3 Tagen abläuft
-// und ihn vorab per Refresh-Token erneuern — sonst würde ein Import-Batch (check-all-prices)
-// mitten im Lauf durch einen abgelaufenen Token abbrechen. Schlägt der Refresh fehl, wird NICHT
-// blockiert: mit dem alten Token weitergemacht, Fehler nur geloggt (Ablauf-/Speicherlogik analog
-// zum bestehenden OAuth-Callback/saveAliTokens).
-const ALI_TOKEN_REFRESH_MARGIN_SEC = 3 * 24 * 60 * 60; // 3 Tage
-
-async function ensureFreshAliToken(): Promise<void> {
-  try {
-    const { db } = await import('../db/index');
-    const { appSettings } = await import('../db/schema');
-    const expRow = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_token_expires')).get();
-    if (!expRow?.value) return; // kein bekannter Ablauf (z.B. nur Env-Token) — nichts zu tun
-
-    const expiresAt = Number(expRow.value);
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (expiresAt - nowSec >= ALI_TOKEN_REFRESH_MARGIN_SEC) return; // noch lange genug gültig
-
-    const refRow = await db.select().from(appSettings).where(eq(appSettings.key, 'aliexpress_refresh_token')).get();
-    if (!refRow?.value) {
-      console.warn('[AliExpress] Access-Token läuft in <3 Tagen ab, aber kein Refresh-Token in DB — kann nicht automatisch erneuert werden');
-      return;
-    }
-
-    console.log(`[AliExpress] Access-Token läuft in ${Math.round((expiresAt - nowSec) / 3600)}h ab — erneuere automatisch vor Produktabruf...`);
-    const refreshed = await refreshAliToken(refRow.value);
-    if (!refreshed) {
-      console.warn('[AliExpress] Automatischer Token-Refresh fehlgeschlagen — mache mit altem Token weiter');
-      return;
-    }
-
-    const newExpiresAt = Math.floor(Date.now() / 1000) + refreshed.expires_in;
-    await saveAliTokens(refreshed.access_token, refreshed.refresh_token, newExpiresAt); // AliExpress rotiert den Refresh-Token bei jedem Refresh
-    console.log('[AliExpress] Access-Token automatisch erneuert ✓');
-  } catch (e) {
-    console.warn('[AliExpress] Token-Ablauf-Prüfung fehlgeschlagen — mache mit altem Token weiter:', e);
-  }
-}
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
@@ -1771,7 +1700,7 @@ const app = new Hono()
 
   // ─── eBay Listing ────────────────────────────────────────────────────────────
   .post('/ebay/list', async (c) => {
-    const body = await c.req.json() as { productId?: number };
+    const body = await c.req.json() as { productId?: number; confirmUnknownStock?: boolean };
 
     if (!body.productId) {
       return c.json({ error: 'productId fehlt' }, 400);
@@ -1789,6 +1718,33 @@ const app = new Hono()
     // Duplikat-Schutz: Nicht doppelt listen wenn bereits aktiv auf eBay
     if (product.ebayStatus === 'listed' && product.ebayListingId) {
       return c.json({ error: `Artikel ist bereits auf eBay gelistet (Listing-ID: ${product.ebayListingId}). Zuerst beenden oder Status zurücksetzen.` }, 409);
+    }
+
+    // Bestands-Gate: Varianten ohne bekannten Lagerbestand würden sonst stillschweigend mit der
+    // festen Fallback-Menge (siehe unten, quantity: 3) gelistet — das ist Geld-/Bestandslogik und
+    // erfordert laut Standing-Regel eine explizite Bestätigung statt Automatismus. Nur bei echten
+    // Varianten-Produkten relevant (>1 Eintrag); ein einzelner Eintrag ohne stock ist meist ein
+    // Produkt ohne Varianten und nutzt ohnehin nur die feste quantity.
+    if (!body.confirmUnknownStock) {
+      const variantsForGate: Array<{ skuId?: string; attrs?: Record<string, string>; stock?: number }> = (() => {
+        try {
+          const parsed = JSON.parse(product.variantPrices ?? '[]');
+          return Array.isArray(parsed) ? parsed : [];
+        } catch { return []; }
+      })();
+      if (variantsForGate.length > 1) {
+        const unknownStockVariants = variantsForGate
+          .filter(v => typeof v.stock !== 'number')
+          .map(v => Object.values(v.attrs ?? {}).filter(Boolean).join(' / ') || v.skuId || 'Variante');
+        if (unknownStockVariants.length > 0) {
+          return c.json({
+            needsStockConfirmation: true,
+            unknownStockVariants,
+            fallbackQuantity: 3,
+            error: `${unknownStockVariants.length} von ${variantsForGate.length} Varianten haben keinen bekannten Lagerbestand — würden mit fester Menge 3 gelistet`,
+          }, 409);
+        }
+      }
     }
 
     // sellPrice Fallback: wenn nicht gesetzt, niedrigsten Varianten-Preis nehmen
@@ -2043,6 +1999,95 @@ const app = new Hono()
     } catch (e) {
       console.error('Price update error:', e);
       return c.json({ error: 'DB Fehler' }, 503);
+    }
+  })
+
+  // ─── Lagerbestand pro Variante aktualisieren ──────────────────────────────────
+  // Bewusst getrennt von /products/:id/price: reine Tatsachen-Synchronisation (Bestand),
+  // fasst keine Preise/Geldlogik an — nur der stock-Wert pro Variante wird per skuId gemerged,
+  // alle anderen Felder (price, ebayPrice, imageUrl, attrs) bleiben unangetastet. DS-API zuerst
+  // (liefert sku_available_stock zuverlässig, siehe aliexpress-api.ts), HTML-Scraper als Fallback.
+  // Ehrliches Ergebnis (P-36-Prinzip): meldet exakt wie viele Varianten einen Bestandswert
+  // bekommen haben, statt "ok" vorzutäuschen wenn nur ein Teil geklappt hat.
+  .post('/products/:id/refresh-stock', async (c) => {
+    const id = parseInt(c.req.param('id'));
+    if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
+      const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+      if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+      if (!product.sourceUrl || !product.sourceUrl.includes('aliexpress')) {
+        return c.json({ error: 'Kein AliExpress-Quelllink gespeichert — Bestand kann nicht automatisch geprüft werden' }, 400);
+      }
+
+      let currentVariants: Array<Record<string, unknown>> = [];
+      try {
+        const parsed = JSON.parse(product.variantPrices ?? '[]');
+        if (Array.isArray(parsed)) currentVariants = parsed;
+      } catch { /* ignore */ }
+      if (currentVariants.length === 0) {
+        return c.json({ error: 'Produkt hat keine gespeicherten Varianten' }, 400);
+      }
+
+      const productIdMatch = product.sourceUrl.match(/\/item\/(\d+)\.html/) || product.sourceUrl.match(/[?&]id=(\d+)/);
+      const aliProductId = productIdMatch?.[1];
+
+      let freshStockBySku: Record<string, number | undefined> = {};
+      let source: 'ds-api' | 'scraper' | null = null;
+
+      await ensureFreshAliToken();
+      const accessToken = await getAliAccessToken();
+      if (accessToken && aliProductId) {
+        const apiData = await getAliProductByApi(aliProductId, accessToken);
+        if (apiData) {
+          source = 'ds-api';
+          for (const v of apiData.variantPrices) freshStockBySku[v.skuId] = v.stock;
+        }
+      }
+      if (!source) {
+        try {
+          const scraped = await scrapeAliExpressUrl(product.sourceUrl);
+          if (scraped) {
+            source = 'scraper';
+            for (const v of scraped.variantPrices) freshStockBySku[v.skuId] = v.stock;
+          }
+        } catch { /* ignore, wird unten als Fehler behandelt */ }
+      }
+
+      if (!source) {
+        return c.json({ ok: false, error: 'Bestand konnte weder über die DS-API noch per Scraping abgerufen werden' }, 502);
+      }
+
+      let variantsWithStock = 0;
+      const merged = currentVariants.map(v => {
+        const skuId = String((v as { skuId?: string }).skuId ?? '');
+        const freshStock = freshStockBySku[skuId];
+        if (typeof freshStock === 'number') {
+          variantsWithStock++;
+          return { ...v, stock: freshStock };
+        }
+        return v; // kein frischer Wert gefunden — bestehenden Wert (inkl. evtl. vorhandenem "–") unangetastet lassen
+      });
+
+      await db.update(schema.products).set({
+        variantPrices: JSON.stringify(merged),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.products.id, id));
+
+      return c.json({
+        ok: true,
+        source,
+        variantsTotal: currentVariants.length,
+        variantsWithStock,
+      }, 200);
+    } catch (e) {
+      console.error('Refresh-stock error:', e);
+      return c.json({ ok: false, error: 'DB/API Fehler: ' + String(e) }, 503);
     }
   })
 

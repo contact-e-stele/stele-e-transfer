@@ -3,7 +3,8 @@
 
 import { db } from '../db/index';
 import * as schema from '../db/schema';
-import { scrapeAliExpressUrl } from './aliexpress';
+import { scrapeAliExpressUrl, type ScrapedProduct } from './aliexpress';
+import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR } from '../shared/constants';
@@ -231,11 +232,27 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
     try {
       checked++;
 
-      let data = null;
-      try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
+      // Root-Cause-Fix (Bestands-Untersuchung stele-136): DS-API zuerst versuchen — liefert
+      // sku_available_stock zuverlässig pro Variante (siehe aliexpress-api.ts), während der
+      // HTML-Scraper das nur teilweise/inkonsistent tut. Gleiches Muster wie bereits in
+      // /aliexpress/scrape und /products/check-all-prices (index.ts) — hier nachgezogen, damit
+      // auch der automatische 8h-Hintergrund-Job zuverlässig Bestand bekommt.
+      let data: ScrapedProduct | AliProductData | null = null;
+      const productIdMatch = url.match(/\/item\/(\d+)\.html/) || url.match(/[?&]id=(\d+)/);
+      const aliProductId = productIdMatch?.[1];
+      if (aliProductId) {
+        try {
+          await ensureFreshAliToken();
+          const accessToken = await getAliAccessToken();
+          if (accessToken) data = await getAliProductByApi(aliProductId, accessToken);
+        } catch { /* ignore, fällt auf Scraper zurück */ }
+      }
       if (!data) {
-        // Einmal retry
         try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
+        if (!data) {
+          // Einmal retry
+          try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
+        }
       }
       if (!data) { errors++; return; }
 

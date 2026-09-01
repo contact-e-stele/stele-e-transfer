@@ -699,6 +699,8 @@ export default function Produkte() {
   const [search, setSearch] = useState("");
   const [showListed, setShowListed] = useState(false);
   const [checkingPrice, setCheckingPrice] = useState<number | null>(null);
+  const [refreshingStock, setRefreshingStock] = useState<number | null>(null);
+  const [stockRefreshMsg, setStockRefreshMsg] = useState<{ id: number; text: string } | null>(null);
   const [listingProduct, setListingProduct] = useState<number | null>(null);
   const [listingResult, setListingResult] = useState<{ id: number; success: boolean; msg: string } | null>(null);
   const [locationMsg, setLocationMsg] = useState("");
@@ -771,6 +773,33 @@ export default function Produkte() {
     }
   };
 
+  // Lagerbestand pro Variante aktualisieren (getrennt von checkPrice — reine Bestandsdaten,
+  // keine Preislogik). Meldet ehrlich, wie viele Varianten tatsächlich einen Wert bekommen haben.
+  const refreshStock = async (product: Product) => {
+    setRefreshingStock(product.id);
+    setStockRefreshMsg(null);
+    try {
+      const res = await fetch(`/api/products/${product.id}/refresh-stock`, { method: "POST" });
+      const data = await res.json() as {
+        ok?: boolean; source?: string; variantsTotal?: number; variantsWithStock?: number; error?: string;
+      };
+      if (data.ok) {
+        setStockRefreshMsg({
+          id: product.id,
+          text: `Bestand aktualisiert (${data.source}): ${data.variantsWithStock}/${data.variantsTotal} Varianten`,
+        });
+        load();
+      } else {
+        setStockRefreshMsg({ id: product.id, text: data.error ?? "Bestand konnte nicht aktualisiert werden" });
+      }
+    } catch (e) {
+      setStockRefreshMsg({ id: product.id, text: e instanceof Error ? e.message : "Netzwerkfehler" });
+    } finally {
+      setRefreshingStock(null);
+      setTimeout(() => setStockRefreshMsg(null), 6000);
+    }
+  };
+
   const saveTitle = async (productId: number) => {
     const t = titleInput.trim();
     if (!t) return;
@@ -835,16 +864,30 @@ export default function Produkte() {
     }
   };
 
-  const listOnEbay = async (product: Product) => {
+  const listOnEbay = async (product: Product, confirmUnknownStock = false) => {
     setListingProduct(product.id);
     setListingResult(null);
     try {
       const res = await fetch("/api/ebay/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId: product.id }),
+        body: JSON.stringify({ productId: product.id, confirmUnknownStock }),
       });
-      const data = await res.json() as { listingId?: string; success?: boolean; error?: string };
+      const data = await res.json() as {
+        listingId?: string; success?: boolean; error?: string;
+        needsStockConfirmation?: boolean; unknownStockVariants?: string[]; fallbackQuantity?: number;
+      };
+      if (data.needsStockConfirmation) {
+        setListingProduct(null);
+        const list = (data.unknownStockVariants ?? []).map(v => `– ${v}`).join("\n");
+        const proceed = confirm(
+          `${data.unknownStockVariants?.length ?? 0} Variante(n) ohne bekannten Lagerbestand:\n\n${list}\n\n` +
+          `Diese würden mit fester Menge ${data.fallbackQuantity ?? 3} gelistet, statt dem echten Bestand. ` +
+          `Vorher "Lager aktualisieren" klicken empfohlen.\n\nTrotzdem jetzt mit Menge ${data.fallbackQuantity ?? 3} fortfahren?`
+        );
+        if (proceed) await listOnEbay(product, true);
+        return;
+      }
       if (data.success && data.listingId) {
         setListingResult({ id: product.id, success: true, msg: `eBay Listing erstellt: #${data.listingId}` });
         load();
@@ -1355,6 +1398,19 @@ export default function Produkte() {
                         : <RefreshCw size={11} />}
                       Preis prüfen
                     </button>
+                    <button onClick={() => refreshStock(product)} disabled={refreshingStock === product.id} title="Echten Lagerbestand pro Variante von AliExpress abrufen" style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#F1F5F9", color: "#475569",
+                      fontSize: 11, fontWeight: 700, border: "none", cursor: "pointer", fontFamily: "inherit",
+                    }}>
+                      {refreshingStock === product.id
+                        ? <Loader size={11} style={{ animation: "spin 1s linear infinite" }} />
+                        : <Package size={11} />}
+                      Lager aktualisieren
+                    </button>
+                    {stockRefreshMsg?.id === product.id && (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>{stockRefreshMsg.text}</span>
+                    )}
                   </>
                 )}
                 {product.ebayStatus !== "listed" && (
