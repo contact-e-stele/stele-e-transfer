@@ -3,6 +3,14 @@
 Feature-/Roadmap-Übersicht: `P-UEBERSICHT.md`. Architektur-Details: `docs/ARCHITECTURE.md`.
 Session-Scratchpad für offene Arbeit: `task.md`.
 
+## Immer manuell bestätigen lassen (Regel seit 2026-09-01)
+
+Unabhängig davon, was der Auto-Modus sonst automatisch ausführen würde: bei
+**Geld-/Preis-Logik** (Preisformel, Margen, Gebühren, Zölle etc.), **DB-Migrationen** und
+**Auth/Sicherheit** (Login, Sessions, Tokens, Berechtigungen) immer explizit beim Nutzer
+nachfragen, bevor umgesetzt/gemergt/deployed wird — auch wenn die Aufgabe sonst klar und
+risikoarm erscheint.
+
 ## Automatische Versionsnummer-Erhöhung (Regel seit 2026-08-31)
 
 Nach jedem **4. größeren gemergten Update/PR** seit der letzten Versionserhöhung wird die
