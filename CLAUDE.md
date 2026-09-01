@@ -26,15 +26,16 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-08-31, aktuelle Version: v1.6):**
-
-Zähler für die nächste Erhöhung (→ v1.7) läuft ab dem PR mit P-94 (Workflow-Text editierbar in
-der App, siehe unten) — noch keine Einträge:
+**Aktueller Zählerstand (Stand 2026-09-01, aktuelle Version: v1.6):**
 
 | # | PR | Zählt zu |
 |---|---|---|
+| 1 | #53+#54 — P-94 Workflow-Text editierbar in der App (zwei PRs wegen Merge-Timing, eine Aufgabe) | v1.7 |
+| 2 | #56 — Lagerbestand pro Variante: "Lager aktualisieren"-Button + DS-API-first im 8h-Job | v1.7 |
 
-**→ Zähler: 0 von 4 seit v1.6.**
+(#55 zählt nicht — reine Doku-Änderung, keine funktionale Änderung.)
+
+**→ Zähler: 2 von 4 seit v1.6.**
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
