@@ -17,6 +17,14 @@
 // Punkte (Duplikat-Sicherheits-Check, SKU-genauer Preisvergleich, alternative Anbieter,
 // Effizienz-Hinweis) blieben erhalten, nur neu einsortiert.
 //
+// P-94-Update (2026-09-01, nach erstem kompletten Live-Durchlauf Bestellung 10-15108-86230):
+// Schritt 3 um Variante-nicht-automatisch-ausgewählt-Hinweis und Stückzahl-/Niedrigbestand-
+// Check ergänzt; Schritt 7 Rechnungs-Zeile um "Herunterladen" (statt "E-Mail senden")-Hinweis
+// erweitert. Bestehende Punkte unverändert, nur ergänzt. ACHTUNG: greift live erst, sobald
+// jemand die Vorlage im Einstellungen-Tab neu speichert (oder erstmals speichert) — solange
+// ein gespeicherter app_settings-Eintrag existiert, liefert GET weiter dessen Inhalt statt
+// dieses aktualisierten Startinhalts (siehe Kommentar oben, Zeile 4-5).
+//
 // Platzhalter, die beim Kopieren einer konkreten Bestellung ersetzt werden:
 //   {{ORDER_ID}}           — eBay-Bestellnummer
 //   {{EBAY_LISTING_URL}}   — Link zum eBay-Listing (oder Hinweistext, falls keiner bekannt)
@@ -53,9 +61,11 @@ Du hilfst mir, eine offene Bestellung im Dropshipping-Geschäft **stele-e-transf
 ## Schritt 3 — AliExpress-Lieferant analysieren
 
 1. Klick auf "Zum AliExpress-Artikel" → {{ALIEXPRESS_URL}}
-2. Prüf: aktueller Preis für die exakt richtige Variante (SKU-Abgleich, nicht nur Produkt)
-3. **Bewertungs-Check** (wie unsere App-Ampel): Sternebewertung + Anzahl Bewertungen — bei sehr wenigen/schlechten Bewertungen kurz mit mir Rücksprache halten
-4. Optional: 1-2 alternative Anbieter desselben Produkts suchen, falls spürbar günstiger UND ähnlich gut bewertet — sonst beim bekannten Lieferanten bleiben (Zuverlässigkeit vor kleiner Ersparnis)
+2. Falls die Seite beim Öffnen des Links nicht automatisch auf der bestellten Variante landet, aktiv im Bildauswahlbereich die passende Variante anklicken und den Preis danach neu prüfen — der Link führt nicht immer zuverlässig zur richtigen Variante.
+3. Prüf: aktueller Preis für die exakt richtige Variante (SKU-Abgleich, nicht nur Produkt)
+4. Verfügbare Stückzahl prüfen (steht meist bei der Mengenauswahl, z.B. "Nur noch X übrig"). Bei sehr niedrigem Bestand (weniger als 5 Stück) kurz Rücksprache halten, bevor gekauft wird.
+5. **Bewertungs-Check** (wie unsere App-Ampel): Sternebewertung + Anzahl Bewertungen — bei sehr wenigen/schlechten Bewertungen kurz mit mir Rücksprache halten
+6. Optional: 1-2 alternative Anbieter desselben Produkts suchen, falls spürbar günstiger UND ähnlich gut bewertet — sonst beim bekannten Lieferanten bleiben (Zuverlässigkeit vor kleiner Ersparnis)
 
 ## Schritt 4 — Vor dem Checkout
 
@@ -90,7 +100,7 @@ Sobald ich Dir sage, dass der Kauf abgeschlossen ist:
 
 □ **AliExpress-Bestellnummer im Bestellungen-Tab eintragen** — nicht vergessen, sonst fehlt später die Zuordnung
 □ **eBay-Notiz anlegen:** Bestellseite → "Einzelheiten zum Kauf" → "Weitere Aktionen" → "Notiz hinzufügen" → AliExpress-Bestellnr. als Text (über die normale eBay-Weboberfläche, nicht per API)
-□ **AliExpress-Rechnung herunterladen und im Bestellungen-Tab hochladen** (für die Buchhaltung)
+□ **AliExpress-Rechnung herunterladen und im Bestellungen-Tab hochladen** (für die Buchhaltung) — beim Rechnungs-Download bietet AliExpress oft zwei Optionen ("Herunterladen" und "E-Mail senden") — immer "Herunterladen" wählen, die Datei muss lokal vorliegen, um sie ins Bestellungen-Tab hochzuladen
 □ **Kundennachricht per eBay-Nachricht senden:** "Ware wird verpackt, Lieferadresse geprüft, Sendungsnummer folgt nach Versand"
 
 ## Schritt 8 — Als verschickt markieren
