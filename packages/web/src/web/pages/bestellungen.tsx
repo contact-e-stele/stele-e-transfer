@@ -183,6 +183,9 @@ export default function Bestellungen() {
   // P-85: Bewertungsbitte-Entwürfe aus AliExpress-Zustellbestätigungen — orderId -> Entwurf.
   // Reiner Text zum Kopieren, kein Versand-Mechanismus.
   const [reviewSuggestions, setReviewSuggestions] = useState<Record<string, { draftText: string; source: "email" | "zeit-schaetzung" }>>({});
+  // P-99: Bestellungen, die sehr lange ohne jede Zustellmail unterwegs sind — Warnhinweis statt
+  // Bewertungsbitte-Vorschlag (evtl. verlorene Sendung, bitte manuell prüfen).
+  const [lostShipmentWarnings, setLostShipmentWarnings] = useState<Record<string, { daysSinceShipped: number }>>({});
   const [expandedReviewDraft, setExpandedReviewDraft] = useState<string | null>(null); // orderId
   const [markingNotified, setMarkingNotified] = useState<string | null>(null); // orderId
   // P-86: Danke+Sendungsnummer-Entwürfe für gerade versandte Bestellungen — orderId -> Entwurf.
@@ -358,17 +361,24 @@ export default function Bestellungen() {
       .catch(() => { /* still, keine Vorschläge */ });
   }, []);
 
-  // P-85/P-96: Bewertungsbitte-Entwürfe laden — ebenfalls best-effort. "source" unterscheidet
-  // eine per AliExpress-Mail bestätigte Zustellung von einer reinen Zeit-Schätzung (P-96-Fallback,
-  // wenn 21+ Tage seit "Als verschickt markieren" vergangen sind, aber keine Mail gefunden wurde).
+  // P-85/P-96/P-97: Bewertungsbitte-Entwürfe laden — ebenfalls best-effort. "source" unterscheidet
+  // eine per AliExpress-Mail bestätigte Zustellung von einer reinen Zeit-Schätzung (P-97-Fallback,
+  // wenn 11+ Tage seit "Als verschickt markieren" vergangen sind, aber keine Mail gefunden wurde).
+  // P-99: zusätzlich "warnings" — sehr lange ohne jede Zustellmail unterwegs, evtl. verloren.
   useEffect(() => {
     fetch("/api/gmail/review-request-suggestions")
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        const list = (d as { suggestions?: Array<{ orderId: string; draftText: string; source?: "email" | "zeit-schaetzung" }> } | null)?.suggestions ?? [];
+        const body = d as { suggestions?: Array<{ orderId: string; draftText: string; source?: "email" | "zeit-schaetzung" }>; warnings?: Array<{ orderId: string; daysSinceShipped: number }> } | null;
+        const list = body?.suggestions ?? [];
         const map: Record<string, { draftText: string; source: "email" | "zeit-schaetzung" }> = {};
         for (const s of list) map[s.orderId] = { draftText: s.draftText, source: s.source ?? "email" };
         setReviewSuggestions(map);
+
+        const warningList = body?.warnings ?? [];
+        const warningMap: Record<string, { daysSinceShipped: number }> = {};
+        for (const w of warningList) warningMap[w.orderId] = { daysSinceShipped: w.daysSinceShipped };
+        setLostShipmentWarnings(warningMap);
       })
       .catch(() => { /* still, keine Vorschläge */ });
   }, []);
@@ -697,6 +707,17 @@ export default function Bestellungen() {
                   >
                     Übernehmen
                   </button>
+                </div>
+              )}
+
+              {/* P-99: Sendung ungewöhnlich lange ohne jede Zustellmail unterwegs — Warnhinweis
+                  statt Bewertungsbitte-Vorschlag, da eine verlorene Sendung sonst fälschlich als
+                  "wahrscheinlich zugestellt" behandelt würde. Reiner Hinweis, keine Aktion nötig. */}
+              {!order.localNote?.customerNotifiedAt && lostShipmentWarnings[order.orderId] && (
+                <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "#FFF7ED", border: "1px solid #FED7AA" }}>
+                  <span style={{ fontSize: 11, color: "#C2410C", fontWeight: 700 }}>
+                    ⚠️ Sendung seit {lostShipmentWarnings[order.orderId].daysSinceShipped} Tagen unterwegs, noch keine Zustellbestätigung gefunden — bitte manuell bei eBay/Sendungsnummer prüfen, evtl. verloren
+                  </span>
                 </div>
               )}
 
