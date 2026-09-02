@@ -1450,18 +1450,23 @@ const app = new Hono()
       return c.json({ error: String(e) }, 503);
     }
   })
-  // ─── P-85: Bewertungsbitte-Entwürfe aus AliExpress-Zustellbestätigungen ─────
+  // ─── P-85/P-96: Bewertungsbitte-Entwürfe aus Zustellungs-Signalen ───────────
   // V1: reiner Entwurf, KEIN Versand-Mechanismus. Matching primär exakt über die
   // bereits gespeicherte trackingNumber (P-80/P-84), Adressabgleich (P-84) nur als
   // Fallback falls keine/keine eindeutige trackingNumber vorliegt. 3 Tage Verzögerung
   // nach dem E-Mail-Datum, max. 1 Vorschlag pro Käufer innerhalb 30 Tagen
   // (customerNotifiedAt — bisher ungenutzte Spalte, wird erst gesetzt wenn der Nutzer
   // "Erledigt" bestätigt, nicht schon beim bloßen Anzeigen/Kopieren).
+  //
+  // P-96: eBay liefert keinen Zustellstatus per API (recherchiert, siehe gmail.ts-Kommentar) —
+  // Erkennung bleibt bei AliExpress-Zustellmails (jetzt breiter erkannt, siehe
+  // parseDeliveryEmail()), ERGÄNZT um einen Zeit-Fallback: wenn 21+ Tage nach dem lokal per
+  // "Als verschickt markieren" gesetzten shippedAt noch keine Mail gefunden + noch keine
+  // Bewertungsbitte verschickt wurde, wird trotzdem ein Vorschlag erzeugt (source:
+  // "zeit-schaetzung" statt "email") — damit Zustellungen, für die AliExpress keine (erkennbare)
+  // Mail schickt, nicht mehr komplett unsichtbar bleiben. Reiner Vorschlag, keine Automatik.
   .get('/gmail/review-request-suggestions', async (c) => {
     try {
-      const emails = await searchRecentDeliveryEmails(14);
-      if (emails.length === 0) return c.json({ suggestions: [] }, 200);
-
       const orders = await getAllOrders();
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
@@ -1481,10 +1486,29 @@ const app = new Hono()
       }
 
       const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+      const TWENTYONE_DAYS_MS = 21 * 24 * 60 * 60 * 1000;
       const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
       const now = Date.now();
 
-      const suggestions: Array<{ orderId: string; buyerUsername: string; draftText: string }> = [];
+      const buildDraft = (matched: typeof orders[number]): string => {
+        const itemTitle = matched.lineItems.length === 1 ? matched.lineItems[0].title : null;
+        const orderPhrase = itemTitle ? `Ihre Bestellung "${itemTitle}"` : 'Ihre Bestellung bei uns';
+        return `Hallo, wir hoffen, dass ${orderPhrase} gut bei Ihnen angekommen ist und Ihren Erwartungen entspricht. Über eine kurze Bewertung würden wir uns sehr freuen — das hilft uns und anderen Käufern weiter. Sollte etwas nicht in Ordnung sein, melden Sie sich gerne direkt bei uns, wir kümmern uns umgehend darum. Vielen Dank für Ihren Einkauf!\n\nViele Grüße, Stele E-Transfer`;
+      };
+      const canSuggest = (matched: typeof orders[number]): boolean => {
+        if (noteByOrderId.get(matched.orderId)?.customerNotifiedAt) return false; // schon erledigt
+        const lastNotified = lastNotifiedByBuyer.get(matched.buyerUsername);
+        if (lastNotified && now - lastNotified < THIRTY_DAYS_MS) return false; // Käufer erst kürzlich angefragt
+        return true;
+      };
+
+      const suggestions: Array<{ orderId: string; buyerUsername: string; draftText: string; source: 'email' | 'zeit-schaetzung' }> = [];
+      const suggestedOrderIds = new Set<string>();
+
+      // 1) Primär: AliExpress-Zustellmail gefunden (siehe parseDeliveryEmail() für P-96-Verbreiterung)
+      // Eigener try/catch: falls Gmail nicht verbunden/erreichbar ist, soll der Zeit-Fallback
+      // (Schritt 2) trotzdem laufen — das ist ja gerade der Sinn dieses Fallbacks.
+      const emails = await searchRecentDeliveryEmails().catch(() => []);
       for (const email of emails) {
         if (!email.emailDate) continue;
         if (now - new Date(email.emailDate).getTime() < THREE_DAYS_MS) continue; // noch nicht 3 Tage her
@@ -1500,17 +1524,22 @@ const app = new Hono()
           const byAddress = orders.filter(o => o.shippingAddress && addressMatchesEmail(o.shippingAddress, email));
           if (byAddress.length === 1) matched = byAddress[0];
         }
-        if (!matched) continue;
+        if (!matched || !canSuggest(matched)) continue;
 
-        if (noteByOrderId.get(matched.orderId)?.customerNotifiedAt) continue; // schon erledigt
-        const lastNotified = lastNotifiedByBuyer.get(matched.buyerUsername);
-        if (lastNotified && now - lastNotified < THIRTY_DAYS_MS) continue; // Käufer erst kürzlich angefragt
+        suggestions.push({ orderId: matched.orderId, buyerUsername: matched.buyerUsername, draftText: buildDraft(matched), source: 'email' });
+        suggestedOrderIds.add(matched.orderId);
+      }
 
-        const itemTitle = matched.lineItems.length === 1 ? matched.lineItems[0].title : null;
-        const orderPhrase = itemTitle ? `Ihre Bestellung "${itemTitle}"` : 'Ihre Bestellung bei uns';
-        const draftText = `Hallo, wir hoffen, dass ${orderPhrase} gut bei Ihnen angekommen ist und Ihren Erwartungen entspricht. Über eine kurze Bewertung würden wir uns sehr freuen — das hilft uns und anderen Käufern weiter. Sollte etwas nicht in Ordnung sein, melden Sie sich gerne direkt bei uns, wir kümmern uns umgehend darum. Vielen Dank für Ihren Einkauf!\n\nViele Grüße, Stele E-Transfer`;
+      // 2) Zeit-Fallback (P-96): kein Mail-Treffer, aber lange genug seit "Als verschickt markieren"
+      for (const order of orders) {
+        if (suggestedOrderIds.has(order.orderId)) continue;
+        const shippedAt = noteByOrderId.get(order.orderId)?.shippedAt;
+        if (!shippedAt) continue; // ohne bekannten Versandzeitpunkt keine verlässliche Schätzung
+        if (now - new Date(shippedAt).getTime() < TWENTYONE_DAYS_MS) continue;
+        if (!canSuggest(order)) continue;
 
-        suggestions.push({ orderId: matched.orderId, buyerUsername: matched.buyerUsername, draftText });
+        suggestions.push({ orderId: order.orderId, buyerUsername: order.buyerUsername, draftText: buildDraft(order), source: 'zeit-schaetzung' });
+        suggestedOrderIds.add(order.orderId);
       }
 
       return c.json({ suggestions }, 200);

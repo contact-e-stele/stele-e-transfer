@@ -157,10 +157,16 @@ export function parseTrackingEmail(subject: string, bodyText: string): TrackingE
   return { trackingNumber: subjectMatch[1], ...address, emailDate: '' };
 }
 
-// ─── P-85: Zustellbestätigungs-Mail parsen ────────────────────────────────────
-// Betreff: "Paket {Sendungsnummer} wurde zugestellt" — bewusst NICHT die Vorstufe
-// "Paket {Sendungsnummer} wird zugestellt" (noch nicht final zugestellt). Die exakte
-// Wortformulierung "wurde zugestellt" in der Regex trifft "wird zugestellt" nicht.
+// ─── P-85/P-96: Zustellbestätigungs-Mail parsen ───────────────────────────────
+// P-96: eBay liefert keinen abfragbaren Zustellstatus per API (recherchiert — Sell Fulfillment
+// API kennt nur, was wir selbst als Tracking eintragen; ein echter "DELIVERED"-Status existiert
+// nur in der Post-Order-Return-API für Käufer-RÜCKSENDUNGEN, nicht für die ursprüngliche
+// Lieferung). Einzige verfügbare Quelle bleibt die AliExpress-Mail — aber die bisherige Regex
+// verlangte exakt die Wortfolge "wurde zugestellt" im Betreff, was echte Zustellungen verpasst
+// hat, wenn AliExpress abweichend formuliert (z.B. "wurde erfolgreich zugestellt", "ist
+// zugestellt worden"). Jetzt breiter: "Paket X" gefolgt von "zugestellt" irgendwo in den
+// nächsten ~40 Zeichen — weiterhin AUSGESCHLOSSEN bleibt die Vorstufe "wird ... zugestellt"
+// (noch nicht final), die separat geprüft wird.
 export interface DeliveryEmailMatch {
   trackingNumber: string;
   street: string;
@@ -171,7 +177,8 @@ export interface DeliveryEmailMatch {
 }
 
 export function parseDeliveryEmail(subject: string, bodyText: string): DeliveryEmailMatch | null {
-  const subjectMatch = subject.match(/Paket\s+(\S+)\s+wurde zugestellt/i);
+  if (/\bwird\b[^.\n]{0,40}?\bzugestellt\b/i.test(subject)) return null; // "wird (X) zugestellt" = noch nicht final
+  const subjectMatch = subject.match(/Paket\s+(\S+)[^.\n]{0,40}?\bzugestellt\b/i);
   if (!subjectMatch) return null;
   const address = parseVersandNachBlock(bodyText);
   if (!address) return null;
@@ -265,9 +272,13 @@ export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEma
   return searchAndParseEmails('hat die Abflugregion verlassen', days, parseTrackingEmail);
 }
 
-// ─── P-85: Kürzlich eingegangene Zustellbestätigungen suchen + parsen ─────────
-export async function searchRecentDeliveryEmails(days = 14): Promise<DeliveryEmailMatch[]> {
-  return searchAndParseEmails('wurde zugestellt', days, parseDeliveryEmail);
+// ─── P-85/P-96: Kürzlich eingegangene Zustellbestätigungen suchen + parsen ────
+// P-96: Gmail-Suchbegriff von der exakten Phrase "wurde zugestellt" auf das einzelne Wort
+// "zugestellt" verbreitert (holt serverseitig auch andere Formulierungen + die noch-nicht-
+// zugestellt-Vorstufe "wird zugestellt" — Filterung übernimmt parseDeliveryEmail()). Zeitfenster
+// von 14 auf 30 Tage erhöht, da Zustellungen bei Auslandsversand oft erst nach 2+ Wochen kommen.
+export async function searchRecentDeliveryEmails(days = 30): Promise<DeliveryEmailMatch[]> {
+  return searchAndParseEmails('zugestellt', days, parseDeliveryEmail);
 }
 
 // ─── Adressabgleich ────────────────────────────────────────────────────────────

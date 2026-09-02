@@ -180,7 +180,7 @@ export default function Bestellungen() {
   const [trackingSuggestions, setTrackingSuggestions] = useState<Record<string, { trackingNumber: string; carrier: string }>>({});
   // P-85: Bewertungsbitte-Entwürfe aus AliExpress-Zustellbestätigungen — orderId -> Entwurf.
   // Reiner Text zum Kopieren, kein Versand-Mechanismus.
-  const [reviewSuggestions, setReviewSuggestions] = useState<Record<string, { draftText: string }>>({});
+  const [reviewSuggestions, setReviewSuggestions] = useState<Record<string, { draftText: string; source: "email" | "zeit-schaetzung" }>>({});
   const [expandedReviewDraft, setExpandedReviewDraft] = useState<string | null>(null); // orderId
   const [markingNotified, setMarkingNotified] = useState<string | null>(null); // orderId
   // P-86: Danke+Sendungsnummer-Entwürfe für gerade versandte Bestellungen — orderId -> Entwurf.
@@ -339,14 +339,16 @@ export default function Bestellungen() {
       .catch(() => { /* still, keine Vorschläge */ });
   }, []);
 
-  // P-85: Bewertungsbitte-Entwürfe laden — ebenfalls best-effort.
+  // P-85/P-96: Bewertungsbitte-Entwürfe laden — ebenfalls best-effort. "source" unterscheidet
+  // eine per AliExpress-Mail bestätigte Zustellung von einer reinen Zeit-Schätzung (P-96-Fallback,
+  // wenn 21+ Tage seit "Als verschickt markieren" vergangen sind, aber keine Mail gefunden wurde).
   useEffect(() => {
     fetch("/api/gmail/review-request-suggestions")
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        const list = (d as { suggestions?: Array<{ orderId: string; draftText: string }> } | null)?.suggestions ?? [];
-        const map: Record<string, { draftText: string }> = {};
-        for (const s of list) map[s.orderId] = { draftText: s.draftText };
+        const list = (d as { suggestions?: Array<{ orderId: string; draftText: string; source?: "email" | "zeit-schaetzung" }> } | null)?.suggestions ?? [];
+        const map: Record<string, { draftText: string; source: "email" | "zeit-schaetzung" }> = {};
+        for (const s of list) map[s.orderId] = { draftText: s.draftText, source: s.source ?? "email" };
         setReviewSuggestions(map);
       })
       .catch(() => { /* still, keine Vorschläge */ });
@@ -688,7 +690,9 @@ export default function Bestellungen() {
                 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                     <span style={{ fontSize: 11, color: "#6D28D9" }}>
-                      ⭐ Bewertungsbitte-Entwurf verfügbar (Zustellung erkannt)
+                      ⭐ Bewertungsbitte-Entwurf verfügbar ({reviewSuggestions[order.orderId].source === "zeit-schaetzung"
+                        ? "wahrscheinlich zugestellt — Zeitschätzung, bitte prüfen"
+                        : "Zustellung per Mail erkannt"})
                     </span>
                     <button
                       onClick={() => setExpandedReviewDraft(expandedReviewDraft === order.orderId ? null : order.orderId)}
