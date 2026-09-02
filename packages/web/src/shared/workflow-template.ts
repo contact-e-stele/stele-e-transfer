@@ -6,8 +6,8 @@
 //
 // WICHTIGE REGEL für jede künftige Aktualisierung dieses Texts (auch für Claude Code):
 // Neue Version immer gegen die vorherige vergleichen, nur ergänzen/verbessern, niemals
-// bestehende Punkte einfach löschen. Grundstruktur (Rolle, Schritte 1-11, Effizienz-Hinweis)
-// bleibt erhalten.
+// bestehende Punkte einfach löschen. Grundstruktur (Rolle, Phase 0, Schritte 1-11,
+// Effizienz-Hinweis) bleibt erhalten.
 //
 // P-94-Update (2026-08-31): um die vollständige, vom Nutzer zusammengeführte Checkliste
 // erweitert (Coins/Coupons/Cashback/Choice-Listing vor dem Checkout, manuelle eBay-Notiz
@@ -24,6 +24,14 @@
 // jemand die Vorlage im Einstellungen-Tab neu speichert (oder erstmals speichert) — solange
 // ein gespeicherter app_settings-Eintrag existiert, liefert GET weiter dessen Inhalt statt
 // dieses aktualisierten Startinhalts (siehe Kommentar oben, Zeile 4-5).
+//
+// P-94-Update (2026-09-02): neue "Phase 0 — Session-Start-Rundgang" VOR Schritt 1 ergänzt —
+// systematischer Blick über alle offenen Bestellungen (neu/versendet-ohne-Tracking/zugestellt-
+// laut-eBay-ohne-Bewertungsbitte-Entwurf), bevor die einzelne Bestellung unten bearbeitet wird.
+// Nutzt bewusst den eBay Seller Hub für den Zustellstatus (siehe P-96: eBay liefert das nicht
+// per API, aber im Seller-Hub-UI ist der echte Carrier-Status sichtbar — zuverlässiger als
+// unsere Gmail-Auswertung). Bestehende Punkte unverändert, nur ergänzt. Greift live erst nach
+// erneutem Speichern im Einstellungen-Tab (siehe Hinweis oben).
 //
 // Platzhalter, die beim Kopieren einer konkreten Bestellung ersetzt werden:
 //   {{ORDER_ID}}           — eBay-Bestellnummer
@@ -44,6 +52,17 @@ export const DEFAULT_WORKFLOW_TEMPLATE = `## Rolle
 Du hilfst mir, eine offene Bestellung im Dropshipping-Geschäft **stele-e-transfer** bis kurz vor dem Kauf bei AliExpress vorzubereiten. Du analysierst, vergleichst und bereitest alles vor — **die eigentliche Zahlung löse ausschließlich ich selbst manuell aus.**
 
 ⚠️ Bestell-Workflow – bitte Schritt für Schritt abarbeiten:
+
+## Phase 0 — Session-Start-Rundgang
+
+Bevor Du Dich der einzelnen Bestellung unten widmest: einmal systematisch über alle offenen Bestellungen im Bestellungen-Tab drüberschauen.
+
+1. **Offene neue Bestellungen** — welche warten noch auf den Kauf bei AliExpress (wie die unten)?
+2. **Versendet ohne Sendungsnummer** — welche sind als verschickt markiert, aber es fehlt noch die Sendungsnummer?
+3. **Sendungsnummer vorhanden** — Zustellstatus über eBay Seller Hub prüfen (zuverlässiger als unsere Gmail-Auswertung, da echter DHL-Status direkt bei eBay)
+4. **Bei eBay-bestätigter Zustellung ohne vorhandenen Bewertungsbitte-Entwurf**: Entwurf ansehen/erzeugen und mit mir durchgehen
+
+Am Ende kurz zusammenfassen, wie viele Bestellungen in welcher Kategorie stehen — erst danach mit der eigentlichen Bearbeitung der Bestellung unten beginnen.
 
 ## Schritt 1 — Bestellung in der App & bei eBay gegenprüfen
 
