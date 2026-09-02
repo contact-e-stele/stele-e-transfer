@@ -54,6 +54,8 @@ interface Order {
     manualBuyPrice: number | null;
     customerNotifiedAt: string | null;
     thankYouSentAt: string | null;
+    trackingEbaySubmitted: boolean | null; // P-98: true/false = bekanntes Ergebnis, null = unbekannt/Altbestand
+    trackingEbaySubmittedError: string | null;
   } | null;
 }
 
@@ -181,6 +183,9 @@ export default function Bestellungen() {
   // P-85: Bewertungsbitte-Entwürfe aus AliExpress-Zustellbestätigungen — orderId -> Entwurf.
   // Reiner Text zum Kopieren, kein Versand-Mechanismus.
   const [reviewSuggestions, setReviewSuggestions] = useState<Record<string, { draftText: string; source: "email" | "zeit-schaetzung" }>>({});
+  // P-99: Bestellungen, die sehr lange ohne jede Zustellmail unterwegs sind — Warnhinweis statt
+  // Bewertungsbitte-Vorschlag (evtl. verlorene Sendung, bitte manuell prüfen).
+  const [lostShipmentWarnings, setLostShipmentWarnings] = useState<Record<string, { daysSinceShipped: number }>>({});
   const [expandedReviewDraft, setExpandedReviewDraft] = useState<string | null>(null); // orderId
   const [markingNotified, setMarkingNotified] = useState<string | null>(null); // orderId
   // P-86: Danke+Sendungsnummer-Entwürfe für gerade versandte Bestellungen — orderId -> Entwurf.
@@ -242,6 +247,23 @@ export default function Bestellungen() {
       showToast(`✅ Sendungsnummer gespeichert und an eBay übermittelt (${carrier})`);
     } else {
       showToast(`⚠️ Lokal gespeichert, aber NICHT an eBay übermittelt — Fehler: ${data?.ebay?.error ?? "unbekannt"}`);
+    }
+  };
+
+  // P-98: erneuter Übermittlungsversuch mit der bereits gespeicherten Sendungsnummer/Carrier —
+  // für Bestellungen, bei denen trackingEbaySubmitted===false ist (eBay hat den letzten Versuch
+  // abgelehnt). Kein erneutes Eintippen nötig, PATCH-Route versucht den eBay-Call erneut, sobald
+  // beide Felder mitgeschickt werden.
+  const handleRetryEbaySubmit = async (orderId: string) => {
+    const order = orders.find(o => o.orderId === orderId);
+    const trackingNumber = order?.localNote?.trackingNumber;
+    const carrier = order?.localNote?.carrier;
+    if (!trackingNumber || !carrier) return;
+    const data = await saveOrderNote(orderId, { trackingNumber, carrier });
+    if (data?.ebay?.submitted) {
+      showToast(`✅ Erneuter Versuch erfolgreich — an eBay übermittelt (${carrier})`);
+    } else {
+      showToast(`⚠️ Erneuter Versuch fehlgeschlagen — Fehler: ${data?.ebay?.error ?? "unbekannt"}`);
     }
   };
 
@@ -339,17 +361,24 @@ export default function Bestellungen() {
       .catch(() => { /* still, keine Vorschläge */ });
   }, []);
 
-  // P-85/P-96: Bewertungsbitte-Entwürfe laden — ebenfalls best-effort. "source" unterscheidet
-  // eine per AliExpress-Mail bestätigte Zustellung von einer reinen Zeit-Schätzung (P-96-Fallback,
-  // wenn 21+ Tage seit "Als verschickt markieren" vergangen sind, aber keine Mail gefunden wurde).
+  // P-85/P-96/P-97: Bewertungsbitte-Entwürfe laden — ebenfalls best-effort. "source" unterscheidet
+  // eine per AliExpress-Mail bestätigte Zustellung von einer reinen Zeit-Schätzung (P-97-Fallback,
+  // wenn 11+ Tage seit "Als verschickt markieren" vergangen sind, aber keine Mail gefunden wurde).
+  // P-99: zusätzlich "warnings" — sehr lange ohne jede Zustellmail unterwegs, evtl. verloren.
   useEffect(() => {
     fetch("/api/gmail/review-request-suggestions")
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        const list = (d as { suggestions?: Array<{ orderId: string; draftText: string; source?: "email" | "zeit-schaetzung" }> } | null)?.suggestions ?? [];
+        const body = d as { suggestions?: Array<{ orderId: string; draftText: string; source?: "email" | "zeit-schaetzung" }>; warnings?: Array<{ orderId: string; daysSinceShipped: number }> } | null;
+        const list = body?.suggestions ?? [];
         const map: Record<string, { draftText: string; source: "email" | "zeit-schaetzung" }> = {};
         for (const s of list) map[s.orderId] = { draftText: s.draftText, source: s.source ?? "email" };
         setReviewSuggestions(map);
+
+        const warningList = body?.warnings ?? [];
+        const warningMap: Record<string, { daysSinceShipped: number }> = {};
+        for (const w of warningList) warningMap[w.orderId] = { daysSinceShipped: w.daysSinceShipped };
+        setLostShipmentWarnings(warningMap);
       })
       .catch(() => { /* still, keine Vorschläge */ });
   }, []);
@@ -681,6 +710,17 @@ export default function Bestellungen() {
                 </div>
               )}
 
+              {/* P-99: Sendung ungewöhnlich lange ohne jede Zustellmail unterwegs — Warnhinweis
+                  statt Bewertungsbitte-Vorschlag, da eine verlorene Sendung sonst fälschlich als
+                  "wahrscheinlich zugestellt" behandelt würde. Reiner Hinweis, keine Aktion nötig. */}
+              {!order.localNote?.customerNotifiedAt && lostShipmentWarnings[order.orderId] && (
+                <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "#FFF7ED", border: "1px solid #FED7AA" }}>
+                  <span style={{ fontSize: 11, color: "#C2410C", fontWeight: 700 }}>
+                    ⚠️ Sendung seit {lostShipmentWarnings[order.orderId].daysSinceShipped} Tagen unterwegs, noch keine Zustellbestätigung gefunden — bitte manuell bei eBay/Sendungsnummer prüfen, evtl. verloren
+                  </span>
+                </div>
+              )}
+
               {/* P-85: Bewertungsbitte-Entwurf aus AliExpress-Zustellbestätigung — reiner Text zum
                   Kopieren, KEIN Versand-Mechanismus. Erst "Erledigt" markiert die Bestellung. */}
               {!order.localNote?.customerNotifiedAt && reviewSuggestions[order.orderId] && (
@@ -774,6 +814,28 @@ export default function Bestellungen() {
                 )}
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
+
+              {/* P-98: persistente Warnung statt nur Toast — eBay hat die zuletzt versuchte
+                  Sendungsnummer-Übermittlung nachweislich abgelehnt (trackingEbaySubmitted===false).
+                  Bleibt sichtbar, bis erfolgreich erneut übermittelt oder die Sendungsnummer
+                  manuell geändert wird — nicht wie der alte 4-Sekunden-Toast leicht zu verpassen. */}
+              {order.localNote?.trackingNumber && order.localNote?.trackingEbaySubmitted === false && (
+                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA" }}>
+                  <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700 }}>
+                    ⚠️ eBay hat die Sendungsnummer NICHT bestätigt — Käufer hat vermutlich keine Versandbenachrichtigung mit Tracking erhalten
+                  </div>
+                  {order.localNote.trackingEbaySubmittedError && (
+                    <div style={{ fontSize: 10, color: "#991B1B", marginTop: 2 }}>{order.localNote.trackingEbaySubmittedError.slice(0, 200)}</div>
+                  )}
+                  <button
+                    onClick={() => handleRetryEbaySubmit(order.orderId)}
+                    disabled={savingNote === order.orderId}
+                    style={{ marginTop: 6, background: "#DC2626", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: savingNote === order.orderId ? "not-allowed" : "pointer" }}
+                  >
+                    Erneut an eBay übermitteln
+                  </button>
+                </div>
+              )}
 
               {/* P-86: Danke+Sendungsnummer-Entwurf, sobald P-80 erfolgreich eine trackingNumber
                   gespeichert hat — reiner Text zum Kopieren, KEIN Versand-Mechanismus (V1, wie P-85).

@@ -954,6 +954,13 @@ const app = new Hono()
       // eBay-Übermittlung NUR bei explizitem gemeinsamem Speichern von Sendungsnummer + Carrier
       // durch den Nutzer — kein Auto-Trigger. Lokal ist zu diesem Zeitpunkt bereits gespeichert,
       // ein eBay-Fehler hier darf das nicht als Erfolg überdecken (P-36-Prinzip).
+      //
+      // P-98: das Ergebnis (Erfolg/Fehler) wird jetzt zusätzlich PERSISTENT in
+      // tracking_ebay_submitted/tracking_ebay_submitted_error gespeichert — vorher gab es dafür
+      // nur einen 4-Sekunden-Toast im Frontend, danach sah eine fehlgeschlagene Übermittlung in
+      // der DB exakt so aus wie eine erfolgreiche (trackingNumber war so oder so gesetzt). Das
+      // führte dazu, dass P-86 ("Danke-Nachricht, Sendungsnummer übermittelt") einen Erfolg
+      // vortäuschte, obwohl eBay den Call abgelehnt hatte (Live-Fund: Bestellung Engel).
       let ebayResult: { submitted: boolean; error?: string } | undefined;
       if (body.trackingNumber?.trim() && body.carrier?.trim()) {
         try {
@@ -962,6 +969,11 @@ const app = new Hono()
         } catch (e) {
           ebayResult = { submitted: false, error: String(e) };
         }
+        await db.update(schema.orderNotes).set({
+          trackingEbaySubmitted: ebayResult.submitted,
+          trackingEbaySubmittedError: ebayResult.error ?? null,
+          updatedAt: new Date().toISOString(),
+        }).where(eq(schema.orderNotes.ebayOrderId, ebayOrderId));
       }
 
       return c.json({ ok: true, ...(ebayResult ? { ebay: ebayResult } : {}) }, 200);
@@ -974,6 +986,13 @@ const app = new Hono()
   // AddMemberMessageAAQToPartner wird separat besprochen, bevor hier automatisch gesendet wird.
   // Kein Gmail nötig: der Auslöser ist rein, dass P-80 bereits erfolgreich eine trackingNumber
   // gespeichert hat — läuft daher live bei jedem Aufruf, unabhängig vom Gmail-Verbindungsstatus.
+  //
+  // P-98: zusätzlich ausgeschlossen, wenn tracking_ebay_submitted bekanntermaßen false ist (eBay
+  // hat den letzten Übermittlungsversuch abgelehnt) — vorher wurde hier fälschlich "erfolgreich
+  // übermittelt" suggeriert, obwohl eBay die Sendungsnummer nie erhalten hatte (Live-Fund
+  // Bestellung Engel). Bewusst NICHT ausgeschlossen bei NULL (unbekannt/Altbestand von vor
+  // diesem Fix) — sonst würden alle bisherigen, tatsächlich erfolgreichen Übermittlungen
+  // plötzlich fälschlich als fehlgeschlagen behandelt.
   .get('/thank-you-suggestions', async (c) => {
     try {
       const orders = await getAllOrders();
@@ -987,7 +1006,7 @@ const app = new Hono()
       const suggestions: Array<{ orderId: string; draftText: string }> = [];
       for (const o of orders) {
         const note = noteByOrderId.get(o.orderId);
-        if (!note?.trackingNumber || note.thankYouSentAt) continue;
+        if (!note?.trackingNumber || note.thankYouSentAt || note.trackingEbaySubmitted === false) continue;
 
         const buyerName = o.shippingAddress?.fullName || o.buyerUsername;
         const itemTitle = o.lineItems.length === 1 ? o.lineItems[0].title : null;
@@ -1460,11 +1479,15 @@ const app = new Hono()
   //
   // P-96: eBay liefert keinen Zustellstatus per API (recherchiert, siehe gmail.ts-Kommentar) —
   // Erkennung bleibt bei AliExpress-Zustellmails (jetzt breiter erkannt, siehe
-  // parseDeliveryEmail()), ERGÄNZT um einen Zeit-Fallback: wenn 21+ Tage nach dem lokal per
-  // "Als verschickt markieren" gesetzten shippedAt noch keine Mail gefunden + noch keine
+  // parseDeliveryEmail()), ERGÄNZT um einen Zeit-Fallback: wenn (P-97: 11+) Tage nach dem lokal
+  // per "Als verschickt markieren" gesetzten shippedAt noch keine Mail gefunden + noch keine
   // Bewertungsbitte verschickt wurde, wird trotzdem ein Vorschlag erzeugt (source:
   // "zeit-schaetzung" statt "email") — damit Zustellungen, für die AliExpress keine (erkennbare)
   // Mail schickt, nicht mehr komplett unsichtbar bleiben. Reiner Vorschlag, keine Automatik.
+  //
+  // P-99: zusätzliches `warnings`-Array in der Response — Bestellungen, die sehr lange (siehe
+  // POSSIBLY_LOST_MS unten) ohne jede Zustellmail unterwegs sind, bekommen STATT eines
+  // Bewertungsbitte-Vorschlags einen Hinweis zum manuellen Prüfen (evtl. verlorene Sendung).
   .get('/gmail/review-request-suggestions', async (c) => {
     try {
       const orders = await getAllOrders();
@@ -1486,7 +1509,25 @@ const app = new Hono()
       }
 
       const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-      const TWENTYONE_DAYS_MS = 21 * 24 * 60 * 60 * 1000;
+      // P-97: von 21 auf 11 Tage gesenkt — Live-Fund zeigte 8 tatsächlich zugestellte Bestellungen
+      // (laut eBay Seller Hub 2-8 Tage nach Zustellung), für die der alte 21-Tage-Zeitfallback
+      // noch Wochen zu spät gegriffen hätte. eBay bietet keinen Zustellstatus per API (siehe P-96)
+      // und Seller-Hub-Scraping wurde bewusst NICHT umgesetzt (Login-Session mit vollem
+      // Kontozugriff + eBay-ToS-Risiko + Wartungsaufwand, siehe P-97-Diskussion) — 11 Tage ist ein
+      // risikofreier Kompromiss, deckt die beobachteten Fälle ab, bleibt aber vorsichtig genug für
+      // die längeren AliExpress-Versandzeiten (siehe P-99-Schutz gegen nie-zugestellte Sendungen).
+      const ELEVEN_DAYS_MS = 11 * 24 * 60 * 60 * 1000;
+      // P-99: Live-Fund zeigte 2 Bestellungen, die laut eBay seit Juni (~3 Monate) durchgehend
+      // NUR "Etikett erstellt"/"Scan - Versanddienstleister" zeigen, nie "Zugestellt" — der
+      // 11-Tage-Zeitfallback hätte dafür trotzdem eine Bewertungsbitte vorgeschlagen, unpassend
+      // bei einer möglicherweise verlorenen Sendung. Da wir eBays echten Zustellstatus nicht
+      // abfragen können (siehe P-96/P-97), nutzen wir ein Ersatzsignal: deutlich länger als die
+      // normale Lieferzeit unterwegs (Nutzer-Feedback: bisher war jede Sendung nach 10-12 Tagen
+      // da) UND nie eine Zustellmail gefunden → statt eines Bewertungsbitte-Vorschlags einen
+      // Warnhinweis zum manuellen Prüfen zeigen. 25 Tage = gut das Doppelte der beobachteten
+      // Normal-Zeit, lässt also Luft für einzelne legitim langsamere Sendungen, schlägt aber lange
+      // vor den ~3 Monaten der beiden Live-Fälle an. Bei Bedarf leicht nachjustierbar.
+      const POSSIBLY_LOST_MS = 25 * 24 * 60 * 60 * 1000;
       const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
       const now = Date.now();
 
@@ -1503,6 +1544,7 @@ const app = new Hono()
       };
 
       const suggestions: Array<{ orderId: string; buyerUsername: string; draftText: string; source: 'email' | 'zeit-schaetzung' }> = [];
+      const warnings: Array<{ orderId: string; buyerUsername: string; daysSinceShipped: number }> = [];
       const suggestedOrderIds = new Set<string>();
 
       // 1) Primär: AliExpress-Zustellmail gefunden (siehe parseDeliveryEmail() für P-96-Verbreiterung)
@@ -1530,19 +1572,26 @@ const app = new Hono()
         suggestedOrderIds.add(matched.orderId);
       }
 
-      // 2) Zeit-Fallback (P-96): kein Mail-Treffer, aber lange genug seit "Als verschickt markieren"
+      // 2) Zeit-Fallback (P-96/P-97): kein Mail-Treffer, aber lange genug seit "Als verschickt
+      // markieren". P-99: bei sehr langer Wartezeit ohne jede Zustellmail (POSSIBLY_LOST_MS)
+      // stattdessen eine Warnung statt eines Bewertungsbitte-Vorschlags — siehe Kommentar oben.
       for (const order of orders) {
         if (suggestedOrderIds.has(order.orderId)) continue;
         const shippedAt = noteByOrderId.get(order.orderId)?.shippedAt;
         if (!shippedAt) continue; // ohne bekannten Versandzeitpunkt keine verlässliche Schätzung
-        if (now - new Date(shippedAt).getTime() < TWENTYONE_DAYS_MS) continue;
+        const elapsedMs = now - new Date(shippedAt).getTime();
+        if (elapsedMs < ELEVEN_DAYS_MS) continue;
         if (!canSuggest(order)) continue;
 
-        suggestions.push({ orderId: order.orderId, buyerUsername: order.buyerUsername, draftText: buildDraft(order), source: 'zeit-schaetzung' });
+        if (elapsedMs >= POSSIBLY_LOST_MS) {
+          warnings.push({ orderId: order.orderId, buyerUsername: order.buyerUsername, daysSinceShipped: Math.floor(elapsedMs / (24 * 60 * 60 * 1000)) });
+        } else {
+          suggestions.push({ orderId: order.orderId, buyerUsername: order.buyerUsername, draftText: buildDraft(order), source: 'zeit-schaetzung' });
+        }
         suggestedOrderIds.add(order.orderId);
       }
 
-      return c.json({ suggestions }, 200);
+      return c.json({ suggestions, warnings }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 503);
     }
