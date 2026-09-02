@@ -33,6 +33,13 @@
 // unsere Gmail-Auswertung). Bestehende Punkte unverändert, nur ergänzt. Greift live erst nach
 // erneutem Speichern im Einstellungen-Tab (siehe Hinweis oben).
 //
+// P-94-Update (2026-09-02, Nachtrag nach Live-Test): Schritt 10 um den expliziten
+// "NIEMALS automatisch versenden"-Sicherheitshinweis erweitert (Entwurf immer erst mit dem
+// Nutzer durchgehen, genau wie beim Zahlungs-STOPP in Schritt 6) — dieser Text war laut
+// Nutzer-Rückmeldung bereits einmal als Ziel formuliert, aber nie im Code-Startinhalt gelandet
+// (git-Historie dieser Datei bestätigt: kein früherer Commit enthielt ihn). Sonst nichts
+// verändert, insbesondere Phase 0 unangetastet.
+//
 // Platzhalter, die beim Kopieren einer konkreten Bestellung ersetzt werden:
 //   {{ORDER_ID}}           — eBay-Bestellnummer
 //   {{EBAY_LISTING_URL}}   — Link zum eBay-Listing (oder Hinweistext, falls keiner bekannt)
@@ -132,7 +139,7 @@ Sobald die echte Sendungsnummer vorliegt: im Bestellungen-Tab eintragen (App üb
 
 ## Schritt 10 — Zustellung erkannt
 
-Bewertungsbitte-Entwurf wird erstellt, ich bestätige/versende selbst.
+Zustellung erkannt, aber noch keine Bewertung vom Käufer abgegeben: Eine freundliche, höfliche Erinnerungs-/Bewertungsbitte-Nachricht als ENTWURF vorbereiten — NIEMALS automatisch versenden. Den fertigen Text immer zuerst mit mir durchgehen und auf meine ausdrückliche Freigabe warten, genau wie beim Zahlungs-STOPP in Schritt 6. Erst nach meiner Bestätigung den Versand auslösen.
 
 ## Schritt 11 — Abschließend
 
