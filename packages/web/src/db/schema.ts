@@ -101,6 +101,12 @@ export const orderNotes = sqliteTable('order_notes', {
   ebayOrderId: text('ebay_order_id').notNull().unique(),
   trackingNumber: text('tracking_number'),
   carrier: text('carrier'),                    // z.B. DHL, Deutsche Post, Hermes, DPD
+  // P-98: persistiert, ob eBay die Sendungsnummer tatsächlich bestätigt hat — getrennt von
+  // trackingNumber selbst, das schon vor dem eBay-Versuch lokal gespeichert wird. NULL = noch nie
+  // versucht ODER Altbestand von vor diesem Fix (kein rückwirkendes Raten). true/false = Ergebnis
+  // des letzten tatsächlichen Übermittlungsversuchs.
+  trackingEbaySubmitted: integer('tracking_ebay_submitted', { mode: 'boolean' }),
+  trackingEbaySubmittedError: text('tracking_ebay_submitted_error'),
   shippedAt: text('shipped_at'),                // manuell gesetzt (lokaler Status, unabhaengig von eBay Fulfillment)
   customerNotifiedAt: text('customer_notified_at'), // P-85: Bewertungsbitte als "erledigt" bestätigt
   thankYouSentAt: text('thank_you_sent_at'),         // P-86: Danke+Sendungsnummer-Entwurf als "erledigt" bestätigt

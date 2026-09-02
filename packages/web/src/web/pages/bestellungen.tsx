@@ -54,6 +54,8 @@ interface Order {
     manualBuyPrice: number | null;
     customerNotifiedAt: string | null;
     thankYouSentAt: string | null;
+    trackingEbaySubmitted: boolean | null; // P-98: true/false = bekanntes Ergebnis, null = unbekannt/Altbestand
+    trackingEbaySubmittedError: string | null;
   } | null;
 }
 
@@ -242,6 +244,23 @@ export default function Bestellungen() {
       showToast(`✅ Sendungsnummer gespeichert und an eBay übermittelt (${carrier})`);
     } else {
       showToast(`⚠️ Lokal gespeichert, aber NICHT an eBay übermittelt — Fehler: ${data?.ebay?.error ?? "unbekannt"}`);
+    }
+  };
+
+  // P-98: erneuter Übermittlungsversuch mit der bereits gespeicherten Sendungsnummer/Carrier —
+  // für Bestellungen, bei denen trackingEbaySubmitted===false ist (eBay hat den letzten Versuch
+  // abgelehnt). Kein erneutes Eintippen nötig, PATCH-Route versucht den eBay-Call erneut, sobald
+  // beide Felder mitgeschickt werden.
+  const handleRetryEbaySubmit = async (orderId: string) => {
+    const order = orders.find(o => o.orderId === orderId);
+    const trackingNumber = order?.localNote?.trackingNumber;
+    const carrier = order?.localNote?.carrier;
+    if (!trackingNumber || !carrier) return;
+    const data = await saveOrderNote(orderId, { trackingNumber, carrier });
+    if (data?.ebay?.submitted) {
+      showToast(`✅ Erneuter Versuch erfolgreich — an eBay übermittelt (${carrier})`);
+    } else {
+      showToast(`⚠️ Erneuter Versuch fehlgeschlagen — Fehler: ${data?.ebay?.error ?? "unbekannt"}`);
     }
   };
 
@@ -774,6 +793,28 @@ export default function Bestellungen() {
                 )}
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
+
+              {/* P-98: persistente Warnung statt nur Toast — eBay hat die zuletzt versuchte
+                  Sendungsnummer-Übermittlung nachweislich abgelehnt (trackingEbaySubmitted===false).
+                  Bleibt sichtbar, bis erfolgreich erneut übermittelt oder die Sendungsnummer
+                  manuell geändert wird — nicht wie der alte 4-Sekunden-Toast leicht zu verpassen. */}
+              {order.localNote?.trackingNumber && order.localNote?.trackingEbaySubmitted === false && (
+                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA" }}>
+                  <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700 }}>
+                    ⚠️ eBay hat die Sendungsnummer NICHT bestätigt — Käufer hat vermutlich keine Versandbenachrichtigung mit Tracking erhalten
+                  </div>
+                  {order.localNote.trackingEbaySubmittedError && (
+                    <div style={{ fontSize: 10, color: "#991B1B", marginTop: 2 }}>{order.localNote.trackingEbaySubmittedError.slice(0, 200)}</div>
+                  )}
+                  <button
+                    onClick={() => handleRetryEbaySubmit(order.orderId)}
+                    disabled={savingNote === order.orderId}
+                    style={{ marginTop: 6, background: "#DC2626", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: savingNote === order.orderId ? "not-allowed" : "pointer" }}
+                  >
+                    Erneut an eBay übermitteln
+                  </button>
+                </div>
+              )}
 
               {/* P-86: Danke+Sendungsnummer-Entwurf, sobald P-80 erfolgreich eine trackingNumber
                   gespeichert hat — reiner Text zum Kopieren, KEIN Versand-Mechanismus (V1, wie P-85).

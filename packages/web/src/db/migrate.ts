@@ -102,6 +102,10 @@ const migrations = [
   // P-88: manuelles Eingabefeld für eBay-Pflichtfelder, die die Selbstheilung (P-91/92) nicht befüllen konnte
   `ALTER TABLE products ADD COLUMN ebay_missing_aspect TEXT`,
   `ALTER TABLE products ADD COLUMN manual_aspects TEXT`,
+  // P-98: persistiertes Ergebnis der eBay-Sendungsnummer-Übermittlung, getrennt vom lokalen
+  // tracking_number-Feld — vermeidet, dass ein fehlgeschlagener eBay-Call als Erfolg erscheint
+  `ALTER TABLE order_notes ADD COLUMN tracking_ebay_submitted INTEGER`,
+  `ALTER TABLE order_notes ADD COLUMN tracking_ebay_submitted_error TEXT`,
 ];
 
 export async function runMigrations() {

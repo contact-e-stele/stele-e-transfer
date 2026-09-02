@@ -954,6 +954,13 @@ const app = new Hono()
       // eBay-Übermittlung NUR bei explizitem gemeinsamem Speichern von Sendungsnummer + Carrier
       // durch den Nutzer — kein Auto-Trigger. Lokal ist zu diesem Zeitpunkt bereits gespeichert,
       // ein eBay-Fehler hier darf das nicht als Erfolg überdecken (P-36-Prinzip).
+      //
+      // P-98: das Ergebnis (Erfolg/Fehler) wird jetzt zusätzlich PERSISTENT in
+      // tracking_ebay_submitted/tracking_ebay_submitted_error gespeichert — vorher gab es dafür
+      // nur einen 4-Sekunden-Toast im Frontend, danach sah eine fehlgeschlagene Übermittlung in
+      // der DB exakt so aus wie eine erfolgreiche (trackingNumber war so oder so gesetzt). Das
+      // führte dazu, dass P-86 ("Danke-Nachricht, Sendungsnummer übermittelt") einen Erfolg
+      // vortäuschte, obwohl eBay den Call abgelehnt hatte (Live-Fund: Bestellung Engel).
       let ebayResult: { submitted: boolean; error?: string } | undefined;
       if (body.trackingNumber?.trim() && body.carrier?.trim()) {
         try {
@@ -962,6 +969,11 @@ const app = new Hono()
         } catch (e) {
           ebayResult = { submitted: false, error: String(e) };
         }
+        await db.update(schema.orderNotes).set({
+          trackingEbaySubmitted: ebayResult.submitted,
+          trackingEbaySubmittedError: ebayResult.error ?? null,
+          updatedAt: new Date().toISOString(),
+        }).where(eq(schema.orderNotes.ebayOrderId, ebayOrderId));
       }
 
       return c.json({ ok: true, ...(ebayResult ? { ebay: ebayResult } : {}) }, 200);
@@ -974,6 +986,13 @@ const app = new Hono()
   // AddMemberMessageAAQToPartner wird separat besprochen, bevor hier automatisch gesendet wird.
   // Kein Gmail nötig: der Auslöser ist rein, dass P-80 bereits erfolgreich eine trackingNumber
   // gespeichert hat — läuft daher live bei jedem Aufruf, unabhängig vom Gmail-Verbindungsstatus.
+  //
+  // P-98: zusätzlich ausgeschlossen, wenn tracking_ebay_submitted bekanntermaßen false ist (eBay
+  // hat den letzten Übermittlungsversuch abgelehnt) — vorher wurde hier fälschlich "erfolgreich
+  // übermittelt" suggeriert, obwohl eBay die Sendungsnummer nie erhalten hatte (Live-Fund
+  // Bestellung Engel). Bewusst NICHT ausgeschlossen bei NULL (unbekannt/Altbestand von vor
+  // diesem Fix) — sonst würden alle bisherigen, tatsächlich erfolgreichen Übermittlungen
+  // plötzlich fälschlich als fehlgeschlagen behandelt.
   .get('/thank-you-suggestions', async (c) => {
     try {
       const orders = await getAllOrders();
@@ -987,7 +1006,7 @@ const app = new Hono()
       const suggestions: Array<{ orderId: string; draftText: string }> = [];
       for (const o of orders) {
         const note = noteByOrderId.get(o.orderId);
-        if (!note?.trackingNumber || note.thankYouSentAt) continue;
+        if (!note?.trackingNumber || note.thankYouSentAt || note.trackingEbaySubmitted === false) continue;
 
         const buyerName = o.shippingAddress?.fullName || o.buyerUsername;
         const itemTitle = o.lineItems.length === 1 ? o.lineItems[0].title : null;
