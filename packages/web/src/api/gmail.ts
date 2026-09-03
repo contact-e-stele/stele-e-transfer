@@ -319,3 +319,34 @@ export function addressMatchesEmail(addr: MatchableAddress, email: { street: str
   }
   return true;
 }
+
+// P-84-Nachbesserung (Live-Fund 2026-09-03, Bestellungen Hoffmann/Engel): AliExpress liefert im
+// "Ort"-Feld der Logistik-Mails bei kleineren Gemeinden manchmal den übergeordneten LANDKREIS
+// statt der tatsächlichen Gemeinde (bestätigt an zwei echten Fällen: "Suedwestpfalz" statt
+// "Eppenbrunn", "Vogelsbergkreis" statt "Alsfeld-Liederbach") — die strikte Ortsprüfung oben
+// schlägt dann fehl, obwohl Straße+Hausnummer eindeutig übereinstimmen. Das führt NICHT zu einer
+// falschen automatischen Zuordnung (addressMatchesEmail liefert dann einfach 0 Treffer, P-84s
+// Sicherheitsprinzip greift), sondern dazu, dass der automatische Vorschlag komplett ausbleibt und
+// stattdessen riskante manuelle Eingabe nötig wird — bei zwei nahezu identischen Bestellungen
+// (hier: gleicher Artikel, nur andere Varianten-Packgröße) genau das Risiko, das zur
+// Fehlzuordnung geführt hat. Bewusst NUR als Fallback gedacht (Straße+Hausnummer allein ist kein
+// hinreichendes Kriterium, da Straßennamen sich wiederholen können) — an den Aufrufstellen erst
+// genutzt, wenn addressMatchesEmail() 0 Treffer liefert, und auch dann nur übernommen, wenn genau
+// EIN eindeutiger Treffer übrigbleibt (gleiches "0 oder mehrere → nichts vorschlagen"-Prinzip).
+export function addressMatchesEmailByStreetOnly(addr: MatchableAddress, email: { street: string; phone: string | null }): boolean {
+  const emailStreetNorm = normalizeAddressText(email.street);
+  const emailHouseNr = email.street.match(/\d+/)?.[0] ?? '';
+  const emailPhoneTail = email.phone ? lastDigits(email.phone, 8) : null;
+
+  const orderStreetNorm = normalizeAddressText(`${addr.addressLine1} ${addr.addressLine2 ?? ''}`);
+  const houseNrMatches = emailHouseNr ? orderStreetNorm.includes(emailHouseNr) : true;
+  const streetNameOnly = emailStreetNorm.replace(/\s*\d+\s*$/, '').trim();
+  const orderStreetNameOnly = orderStreetNorm.replace(/\s*\d+\s*$/, '').trim();
+  const streetMatches = houseNrMatches && (orderStreetNorm.includes(streetNameOnly) || emailStreetNorm.includes(orderStreetNameOnly));
+
+  if (!streetMatches) return false;
+  if (emailPhoneTail && addr.phone) {
+    return lastDigits(addr.phone, 8) === emailPhoneTail;
+  }
+  return true;
+}
