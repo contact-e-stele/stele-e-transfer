@@ -114,6 +114,17 @@ export async function isGmailConnected(): Promise<boolean> {
 //   {Straße}, {Hausnummer}
 //   {Ort}, {Bundesland}
 //   Evgenij Stele ({Telefonnummer})
+//
+// P-106-Nachbesserung (Live-Fund 2026-09-03, Bestellung Hoffmann): AliExpress verschickt
+// dieselben Mail-Typen je nach Bestellung auf DEUTSCH ODER ENGLISCH (Locale offenbar pro
+// Bestellung verschieden, nicht pro Konto — bestätigt an zwei echten Fällen: Hoffmanns
+// komplette Mail-Kette auf Englisch "Package X: left the departure region" / "Package X has
+// been delivered" / Anschriftsblock "Ship to", Engels Kette auf Deutsch wie oben beschrieben).
+// Bisher wurden NUR die deutschen Formulierungen erkannt — die englischen Mails wurden von
+// Betreff-Regex UND Adress-Anker ("Versand nach:") komplett verpasst, mit echtem Produktiv-HTML
+// verifiziert (parseDeliveryEmail() lieferte null für Hoffmanns echte "has been delivered"-Mail).
+// Jetzt beide Sprachvarianten unterstützt, sowohl bei den Regex als auch beim serverseitigen
+// Gmail-Suchbegriff (siehe searchAndParseEmails() unten).
 export interface TrackingEmailMatch {
   trackingNumber: string;
   street: string;       // "Straße, Hausnummer" — unnormalisiert, wie in der Mail
@@ -131,7 +142,7 @@ export interface TrackingEmailMatch {
 //   Evgenij Stele ({Telefonnummer})
 function parseVersandNachBlock(bodyText: string): { street: string; city: string; postalCode: string | null; phone: string | null } | null {
   const lines = bodyText.split(/\r?\n/).map(l => l.trim());
-  const anchorIdx = lines.findIndex(l => /versand nach:?$/i.test(l));
+  const anchorIdx = lines.findIndex(l => /^(versand nach|ship to):?$/i.test(l));
   if (anchorIdx === -1) return null;
   const nextLines = lines.slice(anchorIdx + 1).filter(l => l.length > 0).slice(0, 3);
   if (nextLines.length < 3) return null;
@@ -150,7 +161,9 @@ function parseVersandNachBlock(bodyText: string): { street: string; city: string
 }
 
 export function parseTrackingEmail(subject: string, bodyText: string): TrackingEmailMatch | null {
-  const subjectMatch = subject.match(/Packstück\s+(\S+)\s+hat die Abflugregion verlassen/i);
+  const subjectMatch =
+    subject.match(/Packstück\s+(\S+)\s+hat die Abflugregion verlassen/i) ??
+    subject.match(/Package\s+([^\s:]+):?\s*(?:has\s+)?left the departure\s+(?:region|country)/i);
   if (!subjectMatch) return null;
   const address = parseVersandNachBlock(bodyText);
   if (!address) return null;
@@ -178,7 +191,10 @@ export interface DeliveryEmailMatch {
 
 export function parseDeliveryEmail(subject: string, bodyText: string): DeliveryEmailMatch | null {
   if (/\bwird\b[^.\n]{0,40}?\bzugestellt\b/i.test(subject)) return null; // "wird (X) zugestellt" = noch nicht final
-  const subjectMatch = subject.match(/Paket\s+(\S+)[^.\n]{0,40}?\bzugestellt\b/i);
+  if (/\bis out for delivery\b/i.test(subject)) return null; // EN-Vorstufe, analog "wird zugestellt"
+  const subjectMatch =
+    subject.match(/Paket\s+(\S+)[^.\n]{0,40}?\bzugestellt\b/i) ??
+    subject.match(/Package\s+([^\s:]+)[^.\n]{0,40}?\bdelivered\b/i);
   if (!subjectMatch) return null;
   const address = parseVersandNachBlock(bodyText);
   if (!address) return null;
@@ -226,14 +242,17 @@ function findHtmlBodyAsText(part: GmailMessagePart): string | null {
 // Gemeinsame Grundlage für P-84 (Abflug) und P-85 (Zustellung) — beide unterscheiden
 // sich nur in Suchbegriff und Parser-Funktion.
 async function searchAndParseEmails<T extends { emailDate: string }>(
-  subjectPhrase: string,
+  subjectPhrases: string[],
   days: number,
   parser: (subject: string, bodyText: string) => T | null
 ): Promise<T[]> {
   const token = await getGmailAccessToken();
   if (!token) throw new Error('Gmail nicht verbunden');
 
-  const q = `from:transaction@notice.aliexpress.com subject:"${subjectPhrase}" newer_than:${days}d`;
+  // P-106: mehrere Sprachvarianten als OR-Gruppe (Gmail-Suchsyntax) — AliExpress verschickt je
+  // nach Bestellung Deutsch oder Englisch, siehe Kommentar bei parseTrackingEmail() oben.
+  const subjectQuery = subjectPhrases.map(p => (p.includes(' ') ? `"${p}"` : p)).join(' OR ');
+  const q = `from:transaction@notice.aliexpress.com subject:(${subjectQuery}) newer_than:${days}d`;
   const listRes = await fetch(`${GMAIL_API}/messages?q=${encodeURIComponent(q)}&maxResults=50`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -269,7 +288,7 @@ async function searchAndParseEmails<T extends { emailDate: string }>(
 
 // ─── Kürzlich eingegangene Logistik-Mails suchen + parsen ────────────────────
 export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEmailMatch[]> {
-  return searchAndParseEmails('hat die Abflugregion verlassen', days, parseTrackingEmail);
+  return searchAndParseEmails(['Abflugregion verlassen', 'left the departure'], days, parseTrackingEmail);
 }
 
 // ─── P-85/P-96: Kürzlich eingegangene Zustellbestätigungen suchen + parsen ────
@@ -278,7 +297,7 @@ export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEma
 // zugestellt-Vorstufe "wird zugestellt" — Filterung übernimmt parseDeliveryEmail()). Zeitfenster
 // von 14 auf 30 Tage erhöht, da Zustellungen bei Auslandsversand oft erst nach 2+ Wochen kommen.
 export async function searchRecentDeliveryEmails(days = 30): Promise<DeliveryEmailMatch[]> {
-  return searchAndParseEmails('zugestellt', days, parseDeliveryEmail);
+  return searchAndParseEmails(['zugestellt', 'delivered'], days, parseDeliveryEmail);
 }
 
 // ─── Adressabgleich ────────────────────────────────────────────────────────────
