@@ -67,7 +67,7 @@ Bevor Du Dich der einzelnen Bestellung unten widmest: einmal systematisch über 
 1. **Offene neue Bestellungen** — welche warten noch auf den Kauf bei AliExpress (wie die unten)?
 2. **Versendet ohne Sendungsnummer** — welche sind als verschickt markiert, aber es fehlt noch die Sendungsnummer?
 3. **Sendungsnummer vorhanden** — Zustellstatus über eBay Seller Hub prüfen (zuverlässiger als unsere Gmail-Auswertung, da echter DHL-Status direkt bei eBay)
-4. **Bei eBay-bestätigter Zustellung ohne vorhandenen Bewertungsbitte-Entwurf**: Entwurf ansehen/erzeugen und mit mir durchgehen
+4. **Bei eBay-bestätigter Zustellung ohne vorhandenen Bewertungsbitte-Entwurf**: Entwurf ansehen/erzeugen und mit mir durchgehen. Vor jeder Bewertungsbitte prüfen, ob der Käufer bereits bewertet hat (App prüft das jetzt automatisch über eBay Trading-API) — falls ja, keine weitere Anfrage stellen.
 
 Am Ende kurz zusammenfassen, wie viele Bestellungen in welcher Kategorie stehen — erst danach mit der eigentlichen Bearbeitung der Bestellung unten beginnen.
 

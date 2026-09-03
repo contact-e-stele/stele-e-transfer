@@ -33,8 +33,10 @@ der App, siehe unten) — noch keine Einträge:
 
 | # | PR | Zählt zu |
 |---|---|---|
+| 1 | #63 | P-100 (shippedAt-Lücke) / P-101 (90-Tage-Sync-Limit) |
+| 2 | #64 | P-102 (Notfall-Rollback "0 Bestellungen") |
 
-**→ Zähler: 0 von 4 seit v1.6.**
+**→ Zähler: 2 von 4 seit v1.6.**
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)

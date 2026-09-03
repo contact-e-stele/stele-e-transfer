@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -1549,10 +1549,20 @@ const app = new Hono()
         const orderPhrase = itemTitle ? `Ihre Bestellung "${itemTitle}"` : 'Ihre Bestellung bei uns';
         return `Hallo, wir hoffen, dass ${orderPhrase} gut bei Ihnen angekommen ist und Ihren Erwartungen entspricht. Über eine kurze Bewertung würden wir uns sehr freuen — das hilft uns und anderen Käufern weiter. Sollte etwas nicht in Ordnung sein, melden Sie sich gerne direkt bei uns, wir kümmern uns umgehend darum. Vielen Dank für Ihren Einkauf!\n\nViele Grüße, Stele E-Transfer`;
       };
+      // P-105: einmal die zuletzt erhaltenen Käufer-Bewertungen holen (Trading API GetFeedback,
+      // best effort — bei einem Fehler wird einfach nicht danach gefiltert, statt die ganze Route
+      // scheitern zu lassen) und pro Bestellung client-seitig gegen Käufername + ItemID prüfen,
+      // ob der Käufer bereits bewertet hat. Falls ja: keine Bewertungsbitte mehr vorschlagen, um
+      // Käufer nicht doppelt anzufragen.
+      const receivedFeedback = await getAccessToken()
+        .then(token => getRecentlyReceivedFeedback(token))
+        .catch(() => []);
       const canSuggest = (matched: typeof orders[number]): boolean => {
         if (noteByOrderId.get(matched.orderId)?.customerNotifiedAt) return false; // schon erledigt
         const lastNotified = lastNotifiedByBuyer.get(matched.buyerUsername);
         if (lastNotified && now - lastNotified < THIRTY_DAYS_MS) return false; // Käufer erst kürzlich angefragt
+        const itemId = matched.lineItems[0]?.legacyItemId ?? null;
+        if (hasAlreadyLeftFeedback(receivedFeedback, matched.buyerUsername, itemId)) return false; // P-105: hat schon bewertet
         return true;
       };
 
