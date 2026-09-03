@@ -1687,6 +1687,56 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   return results;
 }
 
+// ─── P-105: Bereits erhaltenes Käufer-Feedback abfragen (Trading API GetFeedback) ─────────────
+// Ziel: keine Bewertungsbitte mehr vorschlagen, wenn der Käufer schon bewertet hat (nicht doppelt
+// "belästigen"). Holt EINMAL die zuletzt erhaltenen Verkäufer-Feedbacks (bis zu 200, eBays
+// üblicher Seitengröße-Richtwert für Trading-API-Listen) und liefert sie als einfache Paare
+// zurück — der Aufrufer filtert dann pro Bestellung client-seitig nach Käufername + ItemID, statt
+// pro Bestellung einen eigenen API-Call zu machen (schont das Trading-API-Rate-Limit).
+// HINWEIS: Feldnamen/Response-Form gegen eBays Doku recherchiert, aber in dieser Sandbox nicht
+// gegen die echte API verifizierbar (kein Live-Zugriff) — best effort, bei Abweichungen bitte
+// melden.
+export interface ReceivedFeedbackEntry {
+  commentingUser: string;
+  itemId: string | null;
+}
+
+export async function getRecentlyReceivedFeedback(token: string): Promise<ReceivedFeedbackEntry[]> {
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<GetFeedbackRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <FeedbackType>FeedbackReceivedAsSeller</FeedbackType>
+  <Pagination><EntriesPerPage>200</EntriesPerPage><PageNumber>1</PageNumber></Pagination>
+</GetFeedbackRequest>`;
+
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'GetFeedback',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+  });
+  const text = await res.text();
+  // Pro <FeedbackDetail>-Block einzeln parsen (nicht mit einer kombinierten Regex über den ganzen
+  // Text), da die Feldreihenfolge innerhalb eines Blocks laut Schema nicht garantiert ist.
+  const blocks = text.match(/<FeedbackDetail>[\s\S]*?<\/FeedbackDetail>/g) ?? [];
+  return blocks.map(block => ({
+    commentingUser: block.match(/<CommentingUser>([^<]+)<\/CommentingUser>/)?.[1] ?? '',
+    itemId: block.match(/<ItemID>([^<]+)<\/ItemID>/)?.[1] ?? null,
+  })).filter(e => e.commentingUser);
+}
+
+export function hasAlreadyLeftFeedback(entries: ReceivedFeedbackEntry[], buyerUsername: string, itemId: string | null): boolean {
+  return entries.some(e =>
+    e.commentingUser.toLowerCase() === buyerUsername.toLowerCase() &&
+    (!itemId || !e.itemId || e.itemId === itemId)
+  );
+}
+
 // ─── Bestellungen (Fulfillment API) ────────────────────────────────────────────
 export interface EbayOrder {
   orderId: string;
