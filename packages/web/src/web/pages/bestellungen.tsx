@@ -815,27 +815,40 @@ export default function Bestellungen() {
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
 
-              {/* P-98: persistente Warnung statt nur Toast — eBay hat die zuletzt versuchte
-                  Sendungsnummer-Übermittlung nachweislich abgelehnt (trackingEbaySubmitted===false).
-                  Bleibt sichtbar, bis erfolgreich erneut übermittelt oder die Sendungsnummer
-                  manuell geändert wird — nicht wie der alte 4-Sekunden-Toast leicht zu verpassen. */}
-              {order.localNote?.trackingNumber && order.localNote?.trackingEbaySubmitted === false && (
-                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA" }}>
-                  <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700 }}>
-                    ⚠️ eBay hat die Sendungsnummer NICHT bestätigt — Käufer hat vermutlich keine Versandbenachrichtigung mit Tracking erhalten
+              {/* P-98/P-103: persistente Warnung statt nur Toast, sobald trackingEbaySubmitted
+                  nicht nachweislich TRUE ist. Zwei Fälle, bewusst unterschiedlich eingefärbt:
+                  - false: eBay hat den letzten Übermittlungsversuch nachweislich abgelehnt (rot).
+                  - null/undefined ("nie verifiziert"): Sendungsnummer wurde vor dem P-98-Fix
+                    eingetragen, ohne dass je geprüft wurde, ob eBay sie überhaupt akzeptiert hat —
+                    P-98 blendete das bisher fälschlich als "kein Fehler" aus (Live-Fund Engel:
+                    App zeigte "Versendet", eBay Seller Hub weiterhin "+ Sendungsnummer
+                    hinzufügen"). Absichtlich amber statt rot, um bei potenziell längst
+                    erfolgreichen Altfällen keinen falschen Alarm auszulösen — aber sichtbar genug,
+                    um zum Nachprüfen per Klick zu motivieren, statt stillschweigend "erfolgreich"
+                    zu unterstellen. Bleibt sichtbar, bis erfolgreich erneut übermittelt oder die
+                    Sendungsnummer manuell geändert wird. */}
+              {order.localNote?.trackingNumber && order.localNote?.trackingEbaySubmitted !== true && (() => {
+                const confirmed = order.localNote.trackingEbaySubmitted === false;
+                return (
+                  <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: confirmed ? "#FEF2F2" : "#FFFBEB", border: `1px solid ${confirmed ? "#FECACA" : "#FDE68A"}` }}>
+                    <div style={{ fontSize: 11, color: confirmed ? "#DC2626" : "#B45309", fontWeight: 700 }}>
+                      {confirmed
+                        ? "⚠️ eBay hat die Sendungsnummer NICHT bestätigt — Käufer hat vermutlich keine Versandbenachrichtigung mit Tracking erhalten"
+                        : "❔ eBay-Übermittlung nie verifiziert — bitte prüfen, ob eBay die Sendungsnummer wirklich hat"}
+                    </div>
+                    {order.localNote.trackingEbaySubmittedError && (
+                      <div style={{ fontSize: 10, color: "#991B1B", marginTop: 2 }}>{order.localNote.trackingEbaySubmittedError.slice(0, 200)}</div>
+                    )}
+                    <button
+                      onClick={() => handleRetryEbaySubmit(order.orderId)}
+                      disabled={savingNote === order.orderId}
+                      style={{ marginTop: 6, background: confirmed ? "#DC2626" : "#B45309", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: savingNote === order.orderId ? "not-allowed" : "pointer" }}
+                    >
+                      Erneut an eBay übermitteln
+                    </button>
                   </div>
-                  {order.localNote.trackingEbaySubmittedError && (
-                    <div style={{ fontSize: 10, color: "#991B1B", marginTop: 2 }}>{order.localNote.trackingEbaySubmittedError.slice(0, 200)}</div>
-                  )}
-                  <button
-                    onClick={() => handleRetryEbaySubmit(order.orderId)}
-                    disabled={savingNote === order.orderId}
-                    style={{ marginTop: 6, background: "#DC2626", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: savingNote === order.orderId ? "not-allowed" : "pointer" }}
-                  >
-                    Erneut an eBay übermitteln
-                  </button>
-                </div>
-              )}
+                );
+              })()}
 
               {/* P-86: Danke+Sendungsnummer-Entwurf, sobald P-80 erfolgreich eine trackingNumber
                   gespeichert hat — reiner Text zum Kopieren, KEIN Versand-Mechanismus (V1, wie P-85).

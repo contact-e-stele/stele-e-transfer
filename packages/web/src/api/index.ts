@@ -1592,12 +1592,22 @@ const app = new Hono()
       // per explizitem "Als verschickt markieren") getrackt wurden (siehe Fix in
       // PATCH /order-notes/:id oben — greift ab jetzt für NEUE Sendungsnummer-Eintragungen).
       // Für bereits BESTEHENDE Bestellungen mit trackingNumber, aber weiterhin ohne shippedAt
-      // (vor diesem Fix gespeichert), wird updatedAt als Näherung genutzt statt sie komplett zu
-      // ignorieren — kein DB-Backfill nötig, reine Leselogik.
+      // (vor diesem Fix gespeichert), braucht es eine Näherung statt sie komplett zu ignorieren.
+      //
+      // P-104-Korrektur: nutzte hierfür ursprünglich `note.updatedAt` — das ist aber KEIN stabiler
+      // Zeitstempel, sondern wird bei JEDER PATCH /order-notes/:id-Änderung neu gesetzt, auch bei
+      // völlig unabhängigen Bearbeitungen (interne Notiz, Kaufpreis-Korrektur, bloßes Anzeigen
+      // von Vorschlägen). Live-Fund: mehrere längst überfällige Bestellungen (Caner San u.a.)
+      // bekamen dadurch nie einen Vorschlag/eine P-99-Warnung, weil `updatedAt` durch normale
+      // Bearbeitung immer wieder auf "jetzt" zurückgesetzt wurde — der Tage-Zähler startete
+      // faktisch nie. Jetzt stattdessen `order.orderDate` (von eBay, unveränderlich) — eine
+      // Bestellung kann nicht vor ihrem Bestelldatum verschickt worden sein, das ist also eine
+      // sichere untere Schranke, die durch keine spätere Bearbeitung mehr verschoben wird. Kein
+      // DB-Backfill nötig, reine Leselogik.
       for (const order of orders) {
         if (suggestedOrderIds.has(order.orderId)) continue;
         const note = noteByOrderId.get(order.orderId);
-        const shippedAt = note?.shippedAt ?? (note?.trackingNumber ? note.updatedAt : null);
+        const shippedAt = note?.shippedAt ?? (note?.trackingNumber ? order.orderDate : null);
         if (!shippedAt) continue; // ohne bekannten Versandzeitpunkt keine verlässliche Schätzung
         const elapsedMs = now - new Date(shippedAt).getTime();
         if (elapsedMs < ELEVEN_DAYS_MS) continue;
