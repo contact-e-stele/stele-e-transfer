@@ -1723,22 +1723,30 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
   let offset = 0;
   const limit = 50;
 
-  // P-101: eBays getOrders liefert ohne expliziten creationdate-Filter standardmäßig NUR
-  // Bestellungen der letzten 90 Tage (offiziell dokumentiertes API-Verhalten) — Live-Fund:
-  // eine ~3 Monate alte, noch unbearbeitete Bestellung verschwand dadurch unbemerkt aus der
-  // Liste. Expliziter Filter bis 2 Jahre zurück (eBays erlaubtes Maximum) verhindert das.
-  const twoYearsAgoIso = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000).toISOString();
-  const filterParam = `&filter=${encodeURIComponent(`creationdate:[${twoYearsAgoIso}..]`)}`;
-
+  // P-101 (ROLLBACK 2026-09-03): der ursprüngliche P-101-Fix fügte einen expliziten
+  // creationdate-Filter hinzu (eBay liefert ohne ihn standardmäßig nur die letzten 90 Tage).
+  // Live-Fund direkt danach: die App zeigte plötzlich 0 Bestellungen — die eBay-API lehnte den
+  // Request vermutlich mit einem Fehler ab (falsche Filter-Syntax, evtl. durch encodeURIComponent
+  // über-kodierte Doppelpunkte/Klammern, die eBays Filter-Parser wörtlich erwartet), und der Fehler
+  // wurde unten (siehe P-102-Fix direkt darunter) bis jetzt still verschluckt statt geworfen.
+  // Filter erstmal komplett zurückgenommen, bis die korrekte Syntax gegen die echte API verifiziert
+  // werden kann (in dieser Sandbox nicht möglich) — damit gilt wieder eBays 90-Tage-Standard-
+  // verhalten, das ist eine bekannte, kleinere Lücke, aber kein kompletter Ausfall.
   while (true) {
     const res = await fetch(
-      `${BASE_URL}/sell/fulfillment/v1/order?limit=${limit}&offset=${offset}${filterParam}`,
+      `${BASE_URL}/sell/fulfillment/v1/order?limit=${limit}&offset=${offset}`,
       { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
     if (!res.ok) {
       const errText = await res.text();
       console.error('[eBay GetOrders] Fehler:', res.status, errText.slice(0, 300));
-      break;
+      // P-102: vorher wurde hier nur geloggt und die Schleife mit `break` verlassen — die Funktion
+      // gab dann `results` (ggf. leer) zurück, als wäre alles in Ordnung. Ein eBay-seitiger Fehler
+      // (z.B. durch einen künftigen fehlerhaften Filter/Query-Parameter) sah dadurch für Nutzer
+      // exakt wie "0 Bestellungen" aus, ohne jede Fehlermeldung — genau das ist beim P-101-Filter-
+      // Rollout gerade passiert. Jetzt wird geworfen; alle Aufrufer von getAllOrders() fangen das
+      // bereits ab und zeigen einen echten Fehler statt einer stillen leeren Liste.
+      throw new Error(`eBay GetOrders fehlgeschlagen: ${res.status} ${errText.slice(0, 300)}`);
     }
     const data = await res.json() as {
       orders?: Array<{
