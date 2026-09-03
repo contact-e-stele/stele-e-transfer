@@ -1723,9 +1723,16 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
   let offset = 0;
   const limit = 50;
 
+  // P-101: eBays getOrders liefert ohne expliziten creationdate-Filter standardmäßig NUR
+  // Bestellungen der letzten 90 Tage (offiziell dokumentiertes API-Verhalten) — Live-Fund:
+  // eine ~3 Monate alte, noch unbearbeitete Bestellung verschwand dadurch unbemerkt aus der
+  // Liste. Expliziter Filter bis 2 Jahre zurück (eBays erlaubtes Maximum) verhindert das.
+  const twoYearsAgoIso = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000).toISOString();
+  const filterParam = `&filter=${encodeURIComponent(`creationdate:[${twoYearsAgoIso}..]`)}`;
+
   while (true) {
     const res = await fetch(
-      `${BASE_URL}/sell/fulfillment/v1/order?limit=${limit}&offset=${offset}`,
+      `${BASE_URL}/sell/fulfillment/v1/order?limit=${limit}&offset=${offset}${filterParam}`,
       { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
     if (!res.ok) {

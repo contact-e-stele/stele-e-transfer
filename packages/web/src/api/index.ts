@@ -936,12 +936,25 @@ const app = new Hono()
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
+      const existingNote = await db.select().from(schema.orderNotes).where(eq(schema.orderNotes.ebayOrderId, ebayOrderId)).get();
 
       const update: Partial<typeof schema.orderNotes.$inferInsert> = { updatedAt: new Date().toISOString() };
       if (body.aliexpressOrderId !== undefined) update.aliexpressOrderId = body.aliexpressOrderId || null;
       if (body.aliexpressInvoiceUrl !== undefined) update.aliexpressInvoiceUrl = body.aliexpressInvoiceUrl || null;
       if (body.internalNote !== undefined) update.internalNote = body.internalNote || null;
-      if (body.markShipped) update.shippedAt = new Date().toISOString();
+      if (body.markShipped) {
+        update.shippedAt = new Date().toISOString();
+      } else if (body.trackingNumber?.trim() && !existingNote?.shippedAt) {
+        // P-100: eine gespeicherte Sendungsnummer zählt ebenfalls als "versendet" — vorher wurde
+        // shippedAt NUR beim expliziten "Als verschickt markieren"-Klick gesetzt, wodurch
+        // Bestellungen, bei denen nur die Sendungsnummer eingetragen wurde (normaler Flow, z.B.
+        // aus einem P-84-Gmail-Vorschlag übernommen), nie einen shippedAt-Wert bekamen — der
+        // komplette P-97/P-99-Zeitfallback lief für sie nie an (Live-Fund: Caner San u.a., seit
+        // 21 Tagen unterwegs, von eBay längst als "Zugestellt" bestätigt, aber nie ein
+        // Vorschlag/Warnung). Nur setzen wenn noch nicht vorhanden, damit ein späteres Korrigieren
+        // der Sendungsnummer den Countdown nicht zurücksetzt.
+        update.shippedAt = new Date().toISOString();
+      }
       if (body.manualBuyPrice !== undefined) update.manualBuyPrice = body.manualBuyPrice;
       if (body.trackingNumber !== undefined) update.trackingNumber = body.trackingNumber || null;
       if (body.carrier !== undefined) update.carrier = body.carrier || null;
@@ -1575,9 +1588,16 @@ const app = new Hono()
       // 2) Zeit-Fallback (P-96/P-97): kein Mail-Treffer, aber lange genug seit "Als verschickt
       // markieren". P-99: bei sehr langer Wartezeit ohne jede Zustellmail (POSSIBLY_LOST_MS)
       // stattdessen eine Warnung statt eines Bewertungsbitte-Vorschlags — siehe Kommentar oben.
+      // P-100: shippedAt fehlt bei Bestellungen, die nur per normalem Sendungsnummer-Flow (nicht
+      // per explizitem "Als verschickt markieren") getrackt wurden (siehe Fix in
+      // PATCH /order-notes/:id oben — greift ab jetzt für NEUE Sendungsnummer-Eintragungen).
+      // Für bereits BESTEHENDE Bestellungen mit trackingNumber, aber weiterhin ohne shippedAt
+      // (vor diesem Fix gespeichert), wird updatedAt als Näherung genutzt statt sie komplett zu
+      // ignorieren — kein DB-Backfill nötig, reine Leselogik.
       for (const order of orders) {
         if (suggestedOrderIds.has(order.orderId)) continue;
-        const shippedAt = noteByOrderId.get(order.orderId)?.shippedAt;
+        const note = noteByOrderId.get(order.orderId);
+        const shippedAt = note?.shippedAt ?? (note?.trackingNumber ? note.updatedAt : null);
         if (!shippedAt) continue; // ohne bekannten Versandzeitpunkt keine verlässliche Schätzung
         const elapsedMs = now - new Date(shippedAt).getTime();
         if (elapsedMs < ELEVEN_DAYS_MS) continue;
