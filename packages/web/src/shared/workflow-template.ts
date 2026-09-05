@@ -147,7 +147,9 @@ Verbesserungsvorschläge aus diesem Durchlauf kurz benennen.
 
 ---
 
-*Effizienz-Hinweis für den Agenten: Arbeite die Schritte zügig und ohne unnötige Zwischenfragen ab — nur bei den explizit markierten STOPP-Punkten (Duplikat-Verdacht, zu geringe Marge, vor der Zahlung) tatsächlich anhalten und nachfragen. Je konsistenter der Ablauf, desto schneller und fehlerärmer wird er bei jeder weiteren Bestellung.*`;
+*Effizienz-Hinweis für den Agenten: Arbeite die Schritte zügig und ohne unnötige Zwischenfragen ab — nur bei den explizit markierten STOPP-Punkten (Duplikat-Verdacht, zu geringe Marge, vor der Zahlung) tatsächlich anhalten und nachfragen. Je konsistenter der Ablauf, desto schneller und fehlerärmer wird er bei jeder weiteren Bestellung.*
+
+**Feste Regel, bei JEDEM Durchgang verpflichtend:** immer live mit eBay abgleichen statt nur auf App-eigene Signale zu vertrauen, immer aktiv nach Verbesserungsvorschlägen suchen, bereits umgesetzte Fixes bei jedem weiteren Durchgang stichprobenartig erneut verifizieren.`;
 
 export function renderWorkflowTemplate(template: string, vars: Record<string, string>): string {
   let result = template;
