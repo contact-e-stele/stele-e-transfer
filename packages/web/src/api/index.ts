@@ -5,7 +5,7 @@ import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '.
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
-import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail } from './gmail';
+import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail, addressMatchesEmailByStreetOnly } from './gmail';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
@@ -1468,7 +1468,14 @@ const app = new Hono()
 
       const suggestions: Array<{ orderId: string; trackingNumber: string; carrier: string }> = [];
       for (const email of emails) {
-        const matches = openOrders.filter(o => addressMatchesEmail(o.shippingAddress!, email));
+        let matches = openOrders.filter(o => addressMatchesEmail(o.shippingAddress!, email));
+        // P-84-Nachbesserung: strikter Abgleich (inkl. Ort) liefert bei manchen Gemeinden 0
+        // Treffer, weil AliExpress dort den Landkreis statt der Gemeinde meldet (siehe Kommentar
+        // bei addressMatchesEmailByStreetOnly() in gmail.ts) — dann als Fallback nur Straße
+        // (+Hausnummer/Telefon) prüfen, weiterhin nur bei genau einem eindeutigen Treffer nutzen.
+        if (matches.length === 0) {
+          matches = openOrders.filter(o => addressMatchesEmailByStreetOnly(o.shippingAddress!, email));
+        }
 
         // Nur bei GENAU EINEM eindeutigen Treffer einen Vorschlag liefern — bei 0 oder
         // mehreren Treffern bewusst nichts vorschlagen (P-84-Sicherheitsprinzip).
@@ -1586,7 +1593,12 @@ const app = new Hono()
         if (byTracking.length === 1) {
           matched = byTracking[0];
         } else if (byTracking.length === 0) {
-          const byAddress = orders.filter(o => o.shippingAddress && addressMatchesEmail(o.shippingAddress, email));
+          let byAddress = orders.filter(o => o.shippingAddress && addressMatchesEmail(o.shippingAddress, email));
+          // P-84-Nachbesserung (siehe /gmail/tracking-suggestions oben): Ort-Feld kann bei
+          // AliExpress der Landkreis statt der Gemeinde sein — Straße-only-Fallback bei 0 Treffern.
+          if (byAddress.length === 0) {
+            byAddress = orders.filter(o => o.shippingAddress && addressMatchesEmailByStreetOnly(o.shippingAddress, email));
+          }
           if (byAddress.length === 1) matched = byAddress[0];
         }
         if (!matched || !canSuggest(matched)) continue;
