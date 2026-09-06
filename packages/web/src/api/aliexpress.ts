@@ -1210,6 +1210,58 @@ export async function backfillVariantImages(url: string, variantPrices: VariantP
   }
 }
 
+// P-110: durchsucht bekannte eingebettete Seiten-State-JSON-Blobs rekursiv nach einem
+// Store-/Seller-/Shop-Namensfeld, statt nur nach fest benannten Einzel-Keys zu suchen (siehe
+// Kommentar an der Aufrufstelle unten). Exportiert für Tests.
+export function findSellerInEmbeddedJson(html: string): string | null {
+  const PLAUSIBLE_NAME = /^[^<>{}[\]"]{3,60}$/;
+  const LOOKS_LIKE_URL_OR_ID = /^(https?:\/\/|\/\/|\d+$)/;
+
+  function search(obj: unknown, depth: number): string | null {
+    if (depth > 6 || obj == null || typeof obj !== 'object') return null;
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        const found = search(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    const record = obj as Record<string, unknown>;
+    // Erst auf dieser Ebene nach einem passenden Key suchen (bevorzugt flache Treffer)
+    for (const [key, value] of Object.entries(record)) {
+      if (/store|seller|shop/i.test(key) && /name|title/i.test(key) && typeof value === 'string') {
+        const v = value.trim();
+        if (PLAUSIBLE_NAME.test(v) && !LOOKS_LIKE_URL_OR_ID.test(v)) return v;
+      }
+    }
+    // Dann rekursiv in verschachtelte Objekte/Arrays absteigen
+    for (const value of Object.values(record)) {
+      if (value && typeof value === 'object') {
+        const found = search(value, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  // Bekannte AliExpress-Einbettungsmuster für globalen Seiten-State
+  const jsonBlobPatterns = [
+    /window\.runParams\.data\s*=\s*(\{[\s\S]*?\});/,
+    /window\.runParams\s*=\s*(\{[\s\S]*?\});/,
+    /<script[^>]+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/,
+  ];
+  for (const pattern of jsonBlobPatterns) {
+    const m = html.match(pattern);
+    if (!m) continue;
+    try {
+      const parsed = JSON.parse(m[1]);
+      const found = search(parsed, 0);
+      if (found) return found;
+    } catch { /* ignore malformed/partial JSON-Blob (z.B. abgeschnittenes Regex-Match) */ }
+  }
+  return null;
+}
+
 export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
   // Normalize URL — always use de.aliexpress.com + clean URL (strip tracking params)
   let fetchUrl = url;
@@ -1347,6 +1399,22 @@ export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct |
               html.match(/>([^<]{3,60})\s*\(Händler\)</i) ||
               html.match(/"storeTitle"\s*:\s*"([^"]+)"/);
     if (m) seller = m[1].trim();
+  }
+  // P-110 (Live-Fund 2026-09-06): alle obigen festen Schlüsselnamen/Regex griffen bei mehreren
+  // getesteten, unterschiedlichen Anbietern gleichzeitig ins Leere -- der Code selbst ist seit
+  // 22.07. unverändert (git log geprüft), spricht also für eine externe AliExpress-Struktur-
+  // änderung statt eine eigene Regression. Statt auf einen weiteren geratenen festen Feldnamen zu
+  // setzen: durchsucht jedes bekannte eingebettete Seiten-State-JSON rekursiv nach IRGENDEINEM
+  // Store-/Seller-/Shop-Namensfeld -- übersteht Umbenennungen/Restrukturierungen einzelner Keys,
+  // solange die Grundkonvention ("irgendwo ein *Store*Name/*Seller*Title-Key mit Namen als
+  // String") erhalten bleibt. Kein Ersatz für eine echte Live-Verifizierung (dafür fehlt aus der
+  // Sandbox der Zugriff), aber eine deutlich robustere Grundlage als ein einzelner weiterer Regex.
+  if (!seller) {
+    const found = findSellerInEmbeddedJson(html);
+    if (found) seller = found;
+  }
+  if (!seller) {
+    console.warn(`[AliExpress] Verkäufername nicht erkannt — Diagnose: HTML enthält "store"=${/store/i.test(html)} "seller"=${/seller/i.test(html)} "shop"=${/shop/i.test(html)} "händler"=${/händler/i.test(html)}, Länge=${html.length}`);
   }
 
   // Clean description — HTML raus, Footer/Spam-Zeilen filtern
