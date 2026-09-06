@@ -5,7 +5,7 @@ import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
-import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify } from './ebay';
+import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR } from '../shared/constants';
 
@@ -297,28 +297,39 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           ? JSON.stringify(data.variantPrices.map(v => ({ skuId: v.skuId, attrs: v.attrs, price: v.price, stock: v.stock })))
           : product.variantPrices;
 
-        // P-93: Verfügbarkeits-Sync — bei stock=0 einer Variante automatisch die eBay-Inventory-
-        // Item-Menge für GENAU diese Variante auf 0 setzen. Reine Tatsachen-Synchronisation (kein
-        // Preis-/Gewinn-Ermessen), daher anders als bei Preisänderungen OHNE Bestätigungs-Vorschau.
-        // Andere, weiterhin verfügbare Varianten bleiben unangetastet. Nur bei eindeutigem Match
-        // gegen die ECHTEN eBay-SKUs (getInventoryItemGroupSkus) — kein Raten.
+        // P-93: Verfügbarkeits-Sync — die eBay-Inventory-Item-Menge für GENAU die passende
+        // Variante nach dem echten AliExpress-Bestand setzen. Reine Tatsachen-Synchronisation
+        // (kein Preis-/Gewinn-Ermessen), daher anders als bei Preisänderungen OHNE Bestätigungs-
+        // Vorschau. Nur bei eindeutigem Match gegen die ECHTEN eBay-SKUs
+        // (getInventoryItemGroupSkus) — kein Raten.
+        //
+        // P-108-Korrektur (Live-Fund 2026-09-06, stele-151-GROUP): lief bisher NUR bei stock=0
+        // (Ausverkauf) — alle anderen Varianten wurden nie erneut angefasst. Da
+        // resolveVariantQuantity() beim Erst-Listing bis zu diesem Fix den echten Bestand
+        // unverändert 1:1 übernahm (statt auf max. 3 zu deckeln, siehe ebay.ts), blieben bereits
+        // gelistete Varianten mit z.B. 137 Stück dauerhaft auf diesem Wert stehen — der laufende
+        // Sync korrigierte das nie zurück. Jetzt: JEDE Variante mit bekanntem Bestand wird bei
+        // jedem Lauf auf resolveVariantQuantity(stock, ...) (= MIN(Bestand, 3), 0 bleibt 0)
+        // gesetzt — heilt bereits betroffene Live-Listings automatisch innerhalb eines
+        // Cron-Durchlaufs, ohne dass die eigentliche Korrektur einen DB-Wert braucht.
         if (product.ebayListingId && product.ebayStatus === 'listed') {
-          const outOfStock = data.variantPrices.filter(v => v.stock === 0);
-          if (outOfStock.length > 0) {
+          const knownStock = data.variantPrices.filter(v => typeof v.stock === 'number');
+          if (knownStock.length > 0) {
             try {
               const token = await getAccessToken();
               const groupSku = `stele-${product.id}-GROUP`;
               const realSkus = await getInventoryItemGroupSkus(groupSku, token);
-              for (const v of outOfStock) {
+              for (const v of knownStock) {
                 const suffix = Object.values(v.attrs ?? {}).map(slugify).filter(Boolean).join('-');
                 const candidateSku = `stele-${product.id}-${suffix}`;
                 if (!realSkus.includes(candidateSku)) continue; // kein eindeutiger Match — nichts unternehmen
-                const ok = await setInventoryItemQuantity(candidateSku, 0, token);
+                const targetQuantity = resolveVariantQuantity(v.stock, 0);
+                const ok = await setInventoryItemQuantity(candidateSku, targetQuantity, token);
                 if (ok) {
                   stockUpdated++;
-                  console.log(`[PriceMonitor] ${product.id}: Variante ${candidateSku} ausverkauft (stock=0) — eBay-Menge auf 0 gesetzt`);
+                  console.log(`[PriceMonitor] ${product.id}: Variante ${candidateSku} (echter Bestand ${v.stock}) — eBay-Menge auf ${targetQuantity} gesetzt`);
                 } else {
-                  console.warn(`[PriceMonitor] ${product.id}: Menge für ${candidateSku} konnte nicht auf 0 gesetzt werden`);
+                  console.warn(`[PriceMonitor] ${product.id}: Menge für ${candidateSku} konnte nicht auf ${targetQuantity} gesetzt werden`);
                 }
               }
             } catch (e) {

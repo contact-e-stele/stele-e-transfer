@@ -929,11 +929,19 @@ export function slugify(s: string): string {
 }
 
 // P-93: echte Varianten-Stückzahl aus dem AliExpress-Scrape statt einer für alle Varianten
-// identischen Fantasiezahl. Obergrenze 999, da AliExpress bei manchen Artikeln unrealistisch
-// hohe Lagerbestände meldet (z.B. ~99.990) — eBay würde das unverändert übernehmen.
-// Fällt nur zurück auf `fallback`, wenn stock im Scrape ganz fehlt (Datenlücke) — ein
-// tatsächlicher Wert von 0 bleibt 0 (korrekt: Variante von Anfang an ausverkauft).
-const MAX_VARIANT_QUANTITY = 999;
+// identischen Fantasiezahl, damit eine ausverkaufte Variante (stock=0) korrekt auch bei eBay
+// als ausverkauft erscheint. Fällt nur zurück auf `fallback`, wenn stock im Scrape ganz fehlt
+// (Datenlücke) — ein tatsächlicher Wert von 0 bleibt 0.
+//
+// P-108-Korrektur (Live-Fund 2026-09-06, stele-151-GROUP): P-93 hatte die Obergrenze dabei auf
+// 999 gesetzt (ursprünglich nur als Sanity-Check gegen unrealistische AliExpress-Werte wie
+// ~99.990 gedacht) — das hat aber die VORHER bestehende, bewusste 3er-Sicherheitsdeckelung pro
+// Variante komplett entfernt, statt beides zu kombinieren. eBay zeigte dadurch den echten
+// AliExpress-Bestand 1:1 an (z.B. 137 Stück), obwohl die Menge grundsätzlich auf max. 3 pro
+// Variante gedeckelt sein soll (Sicherheitspuffer gegen Überverkauf bei schnellen Bestands-
+// Änderungen oder gleichzeitigen Käufern). Jetzt: MIN(echter Bestand, 3) — zeigt nie mehr als
+// 3, aber weiterhin korrekt weniger, falls der echte Bestand kleiner ist (z.B. nur 1 vorhanden).
+const MAX_VARIANT_QUANTITY = 3;
 export function resolveVariantQuantity(stock: number | undefined, fallback: number): number {
   return typeof stock === 'number' && !isNaN(stock)
     ? Math.min(Math.max(Math.round(stock), 0), MAX_VARIANT_QUANTITY)
