@@ -187,14 +187,28 @@ function parsePrice(raw: string): number {
   return parseFloat(m[1].replace(",", "."));
 }
 
+// P-109-Nachbesserung (Live-Fund 2026-09-06): normalisiert vor dem Vergleich zusätzlich
+// Whitespace-Läufe auf ein einzelnes Leerzeichen (JS \s erfasst dabei auch geschütztes
+// Leerzeichen U+00A0, das AliExpress-Scrapes gelegentlich statt eines normalen Leerzeichens
+// liefern -- sieht identisch aus, ist aber ein anderes Zeichen und hätte den bisherigen
+// reinen .trim()/.toLowerCase()-Vergleich stillschweigend scheitern lassen) sowie
+// Satzzeichen am Rand (Punkt/Komma/Semikolon), bevor case-insensitive verglichen wird.
+export function normalizeShopName(name: string): string {
+  return name
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/^[\s.,;]+|[\s.,;]+$/g, '');
+}
+
 // Ordnet den beim Scrape gelieferten Shop-Namen einem gespeicherten Lieferanten zu.
-// Simple case-insensitive Gleichheit/Teilstring-Prüfung — kein exaktes ID-Matching möglich,
-// da AliExpress-Scrapes keine stabile Store-ID liefern, nur den Anzeigenamen.
-function findMatchingSupplier<T extends { shopName: string }>(sellerName: string | undefined, suppliers: T[]): T | undefined {
+// Case-insensitive Gleichheit/Teilstring-Prüfung — kein exaktes ID-Matching möglich, da
+// AliExpress-Scrapes keine stabile Store-ID liefern, nur den Anzeigenamen.
+export function findMatchingSupplier<T extends { shopName: string }>(sellerName: string | undefined, suppliers: T[]): T | undefined {
   if (!sellerName?.trim()) return undefined;
-  const needle = sellerName.trim().toLowerCase();
+  const needle = normalizeShopName(sellerName);
   return suppliers.find(s => {
-    const hay = s.shopName.trim().toLowerCase();
+    const hay = normalizeShopName(s.shopName);
     return hay === needle || hay.includes(needle) || needle.includes(hay);
   });
 }
@@ -2042,7 +2056,9 @@ export default function Lieferanten() {
                       </p>
                       <p style={{ margin: "4px 0 0", fontSize: 11, color: "#B91C1C" }}>
                         Erkannt als: {regulatedMatches.map(m => m.labelDe).join(', ')} — automatische Stichwort-Erkennung, keine rechtsverbindliche Prüfung.
-                        {matchedSupplier && <> Lieferant „{matchedSupplier.shopName}" ist aktuell: <strong>{matchedSupplier.complianceStatus}</strong>.</>}
+                        {matchedSupplier
+                          ? <> Lieferant „{matchedSupplier.shopName}" ist aktuell: <strong>{matchedSupplier.complianceStatus}</strong>.</>
+                          : <> Erkannter Verkäufer laut Scrape: <strong>„{product?.seller || '(kein Name erkannt)'}"</strong> — dafür existiert kein Eintrag in „Meine EU-Shops" (P-109: Abgleich prüft Groß-/Kleinschreibung, Leerzeichen und Teilstring, aber keine völlig anderen Schreibweisen). Bitte Schreibweise in „Meine EU-Shops" mit dem hier angezeigten Namen abgleichen oder neu anlegen.</>}
                       </p>
                     </div>
                   </div>
