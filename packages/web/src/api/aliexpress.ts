@@ -322,7 +322,20 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
     const EU_COUNTRIES = ['germany', 'de', 'spain', 'france', 'italy', 'poland', 'netherlands', 'czech', 'austria', 'belgium', 'sweden'];
     const shipsFromDE = EU_COUNTRIES.some(c => shipsFrom.toLowerCase().includes(c));
 
-    const seller = detail.ae_store_info?.store_name || '';
+    // P-111-Korrektur (Live-Fund 2026-09-06, Produkt 1005010280178344): der DS-API-Pfad ist
+    // in der Praxis der weitaus häufigste erfolgreiche Weg (siehe Render-Logs), hatte aber eine
+    // EIGENE, vom P-110-Fix komplett getrennte Verkäufer-Extraktion — P-110 fixte nur den HTML-
+    // Scraping-Fallback, der hier nie erreicht wird, da scrapeAliExpressUrl() bei erfolgreicher
+    // DS-API-Antwort sofort zurückkehrt. Root Cause war also nicht "Extraktion greift nicht
+    // mehr", sondern "Extraktion existiert im tatsächlich aktiven Codepfad gar nicht robust
+    // genug" — ae_store_info?.store_name allein bricht ab, sobald AliExpress dieses Feld in der
+    // DS-API-Antwort umbenennt/verschiebt. Jetzt zusätzlich dieselbe rekursive Key-Suche wie im
+    // HTML-Pfad (P-110) als Fallback direkt auf das bereits geparste `result`-Objekt.
+    const seller = detail.ae_store_info?.store_name || findSellerKeyInObject(result) || '';
+    if (!seller) {
+      const resultJson = JSON.stringify(result);
+      console.warn(`[DS API] Verkäufername nicht erkannt — Diagnose: Antwort enthält "store"=${/store/i.test(resultJson)} "seller"=${/seller/i.test(resultJson)} "shop"=${/shop/i.test(resultJson)}`);
+    }
 
     // Versandkosten (P-69) — dieser DS-API-Pfad lief bislang ohne Frachtabfrage, obwohl er
     // in der Praxis häufig der tatsächlich erfolgreiche Pfad ist (getAliProductByApi schlägt
@@ -1210,40 +1223,44 @@ export async function backfillVariantImages(url: string, variantPrices: VariantP
   }
 }
 
-// P-110: durchsucht bekannte eingebettete Seiten-State-JSON-Blobs rekursiv nach einem
-// Store-/Seller-/Shop-Namensfeld, statt nur nach fest benannten Einzel-Keys zu suchen (siehe
-// Kommentar an der Aufrufstelle unten). Exportiert für Tests.
-export function findSellerInEmbeddedJson(html: string): string | null {
+// P-110/P-111: durchsucht ein beliebiges bereits geparstes JSON-Objekt rekursiv nach einem
+// Store-/Seller-/Shop-Namensfeld, statt nur nach fest benannten Einzel-Keys zu suchen — übersteht
+// damit Umbenennungen einzelner Felder (z.B. AliExpress benennt "storeName" in "aeStoreName" um).
+// Exportiert, da sowohl vom HTML-Fallback (auf eingebettete Seiten-State-JSON-Blobs) als auch vom
+// DS-API-Pfad (P-111, direkt auf die geparste API-Antwort) genutzt — siehe beide Aufrufstellen.
+export function findSellerKeyInObject(obj: unknown, depth = 0): string | null {
   const PLAUSIBLE_NAME = /^[^<>{}[\]"]{3,60}$/;
   const LOOKS_LIKE_URL_OR_ID = /^(https?:\/\/|\/\/|\d+$)/;
 
-  function search(obj: unknown, depth: number): string | null {
-    if (depth > 6 || obj == null || typeof obj !== 'object') return null;
-    if (Array.isArray(obj)) {
-      for (const item of obj) {
-        const found = search(item, depth + 1);
-        if (found) return found;
-      }
-      return null;
-    }
-    const record = obj as Record<string, unknown>;
-    // Erst auf dieser Ebene nach einem passenden Key suchen (bevorzugt flache Treffer)
-    for (const [key, value] of Object.entries(record)) {
-      if (/store|seller|shop/i.test(key) && /name|title/i.test(key) && typeof value === 'string') {
-        const v = value.trim();
-        if (PLAUSIBLE_NAME.test(v) && !LOOKS_LIKE_URL_OR_ID.test(v)) return v;
-      }
-    }
-    // Dann rekursiv in verschachtelte Objekte/Arrays absteigen
-    for (const value of Object.values(record)) {
-      if (value && typeof value === 'object') {
-        const found = search(value, depth + 1);
-        if (found) return found;
-      }
+  if (depth > 6 || obj == null || typeof obj !== 'object') return null;
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findSellerKeyInObject(item, depth + 1);
+      if (found) return found;
     }
     return null;
   }
+  const record = obj as Record<string, unknown>;
+  // Erst auf dieser Ebene nach einem passenden Key suchen (bevorzugt flache Treffer)
+  for (const [key, value] of Object.entries(record)) {
+    if (/store|seller|shop/i.test(key) && /name|title/i.test(key) && typeof value === 'string') {
+      const v = value.trim();
+      if (PLAUSIBLE_NAME.test(v) && !LOOKS_LIKE_URL_OR_ID.test(v)) return v;
+    }
+  }
+  // Dann rekursiv in verschachtelte Objekte/Arrays absteigen
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object') {
+      const found = findSellerKeyInObject(value, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
+// P-110: durchsucht bekannte eingebettete Seiten-State-JSON-Blobs im HTML-Fallback-Pfad
+// (siehe Kommentar an der Aufrufstelle unten). Exportiert für Tests.
+export function findSellerInEmbeddedJson(html: string): string | null {
   // Bekannte AliExpress-Einbettungsmuster für globalen Seiten-State
   const jsonBlobPatterns = [
     /window\.runParams\.data\s*=\s*(\{[\s\S]*?\});/,
@@ -1255,7 +1272,7 @@ export function findSellerInEmbeddedJson(html: string): string | null {
     if (!m) continue;
     try {
       const parsed = JSON.parse(m[1]);
-      const found = search(parsed, 0);
+      const found = findSellerKeyInObject(parsed);
       if (found) return found;
     } catch { /* ignore malformed/partial JSON-Blob (z.B. abgeschnittenes Regex-Match) */ }
   }
