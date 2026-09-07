@@ -219,26 +219,12 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
     // P-112 (Live-Fund 2026-09-07, Produkt 1005010280178344): P-110/P-111 haben bisher blind auf
     // reine Namensfelder gesetzt (Key enthält "store"/"seller"/"shop" UND "name"/"title") — auch
     // nach dem P-111-Fix im DS-API-Pfad weiterhin "(kein Name erkannt)" live bestätigt. Statt
-    // eines weiteren geratenen Fixes: einmalige, gezielte Diagnose. Findet JEDES Feld (String ODER
-    // Zahl, beliebiger Wertname) irgendwo in der Antwort, dessen KEY "shop"/"seller"/"store"
-    // enthält — deckt damit auch numerische ID-Felder ab (z.B. "sellerId", "storeNum"), die eine
-    // Namenssuche systematisch übersieht. Ergebnis wird als kompakte Liste geloggt (kein Rätselraten
-    // mehr nötig, welche Felder überhaupt existieren) — bei diesem einen bekannten Testprodukt
+    // eines weiteren geratenen Fixes: einmalige, gezielte Diagnose (collectShopRelatedFields,
+    // s.u., modulweit exportiert). Findet JEDES Feld (String ODER Zahl, beliebiger Wertname)
+    // irgendwo in der Antwort, dessen KEY "shop"/"seller"/"store" enthält — deckt damit auch
+    // numerische ID-Felder ab (z.B. "sellerId", "storeNum"), die eine Namenssuche systematisch
+    // übersieht. Ergebnis wird als kompakte Liste geloggt — bei diesem einen bekannten Testprodukt
     // zusätzlich der komplette, ungekürzte Rohdaten-Dump für die manuelle Vollinspektion.
-    function collectShopRelatedFields(obj: unknown, path: string, depth: number, out: Array<{ path: string; value: unknown }>): void {
-      if (depth > 8 || obj == null || typeof obj !== 'object') return;
-      if (Array.isArray(obj)) {
-        obj.forEach((item, i) => collectShopRelatedFields(item, `${path}[${i}]`, depth + 1, out));
-        return;
-      }
-      for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-        const fullPath = path ? `${path}.${key}` : key;
-        if (/shop|seller|store/i.test(key)) {
-          out.push({ path: fullPath, value: typeof value === 'object' ? '[object]' : value });
-        }
-        if (value && typeof value === 'object') collectShopRelatedFields(value, fullPath, depth + 1, out);
-      }
-    }
     const shopRelatedFields: Array<{ path: string; value: unknown }> = [];
     collectShopRelatedFields(result, 'result', 0, shopRelatedFields);
     console.log(`[DS API] P-112-Diagnose: ${shopRelatedFields.length} shop/seller/store-bezogene Felder gefunden:`, JSON.stringify(shopRelatedFields));
@@ -1288,6 +1274,27 @@ export function findSellerKeyInObject(obj: unknown, depth = 0): string | null {
     }
   }
   return null;
+}
+
+// P-112: findet JEDES Feld (String ODER Zahl, beliebiger Wertname) irgendwo in einem beliebigen
+// bereits geparsten Objekt, dessen KEY "shop"/"seller"/"store" enthält — deckt damit auch
+// numerische ID-Felder ab (z.B. "sellerId", "storeNum"), die findSellerKeyInObject() (nur
+// Namensfelder) systematisch übersieht. Modulweit exportiert, da P-112 gezeigt hat, dass es
+// mehrere unabhängige DS-API-Aufrufer/-Parser gibt (aliexpress.ts UND aliexpress-api.ts) und
+// dieselbe Diagnose an jeder Stelle nötig sein kann, an der eine DS-API-Antwort geparst wird.
+export function collectShopRelatedFields(obj: unknown, path: string, depth: number, out: Array<{ path: string; value: unknown }>): void {
+  if (depth > 8 || obj == null || typeof obj !== 'object') return;
+  if (Array.isArray(obj)) {
+    obj.forEach((item, i) => collectShopRelatedFields(item, `${path}[${i}]`, depth + 1, out));
+    return;
+  }
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    const fullPath = path ? `${path}.${key}` : key;
+    if (/shop|seller|store/i.test(key)) {
+      out.push({ path: fullPath, value: typeof value === 'object' ? '[object]' : value });
+    }
+    if (value && typeof value === 'object') collectShopRelatedFields(value, fullPath, depth + 1, out);
+  }
 }
 
 // P-110: durchsucht bekannte eingebettete Seiten-State-JSON-Blobs im HTML-Fallback-Pfad

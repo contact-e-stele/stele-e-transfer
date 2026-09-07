@@ -6,6 +6,7 @@
 import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import type { VariantPrice, GpsrInfo } from './aliexpress';
+import { collectShopRelatedFields } from './aliexpress';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
 const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
@@ -429,6 +430,23 @@ export async function getAliProductByApi(productId: string, accessToken: string)
     }
     // result_code ist manchmal nicht vorhanden — prüfe ob result existiert
     const result = (resp.result as Record<string, unknown>) || resp;
+
+    // P-112 (Korrektur 2026-09-07): Root Cause der gescheiterten P-109/P-110/P-111-Fixes war NICHT
+    // Caching, sondern dass alle bisherigen Fixes/Diagnose-Logs in aliexpress.ts (scrapeWithDsApi)
+    // eingebaut wurden — der Import-Endpunkt (index.ts /aliexpress/preview) ruft aber ZUERST
+    // getAliProductByApi() HIER auf und kehrt bei Erfolg sofort zurück, sodass aliexpress.ts nie
+    // erreicht wird. Diese Datei hat eine eigene, dritte, bisher unberührte Seller-Extraktion
+    // (result.store_info?.store_name, siehe unten) — die immer denselben (leeren) Wert lieferte,
+    // was wie ein Cache-Treffer aussah, aber deterministisches Verhalten desselben Bugs war.
+    // Jetzt dieselbe Diagnose wie P-112 in aliexpress.ts, aber am tatsächlich ausgeführten Ort.
+    const shopRelatedFields: Array<{ path: string; value: unknown }> = [];
+    collectShopRelatedFields(result, 'result', 0, shopRelatedFields);
+    console.log(`[AliExpress API] P-112-Diagnose: ${shopRelatedFields.length} shop/seller/store-bezogene Felder gefunden:`, JSON.stringify(shopRelatedFields));
+    if (productId === '1005010280178344') {
+      console.log('[AliExpress API] P-112-Diagnose: VOLLSTÄNDIGER Rohdaten-Dump (Testprodukt) START >>>');
+      console.log(JSON.stringify(result, null, 2));
+      console.log('[AliExpress API] P-112-Diagnose: VOLLSTÄNDIGER Rohdaten-Dump ENDE <<<');
+    }
 
     // ── Titel ──────────────────────────────────────────────────────────────────
     const baseInfo = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
