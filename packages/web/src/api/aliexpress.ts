@@ -216,6 +216,38 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
     const result = resp['result'] as Record<string, unknown> | undefined;
     if (!result) { console.log('[DS API] Kein result'); return null; }
 
+    // P-112 (Live-Fund 2026-09-07, Produkt 1005010280178344): P-110/P-111 haben bisher blind auf
+    // reine Namensfelder gesetzt (Key enthält "store"/"seller"/"shop" UND "name"/"title") — auch
+    // nach dem P-111-Fix im DS-API-Pfad weiterhin "(kein Name erkannt)" live bestätigt. Statt
+    // eines weiteren geratenen Fixes: einmalige, gezielte Diagnose. Findet JEDES Feld (String ODER
+    // Zahl, beliebiger Wertname) irgendwo in der Antwort, dessen KEY "shop"/"seller"/"store"
+    // enthält — deckt damit auch numerische ID-Felder ab (z.B. "sellerId", "storeNum"), die eine
+    // Namenssuche systematisch übersieht. Ergebnis wird als kompakte Liste geloggt (kein Rätselraten
+    // mehr nötig, welche Felder überhaupt existieren) — bei diesem einen bekannten Testprodukt
+    // zusätzlich der komplette, ungekürzte Rohdaten-Dump für die manuelle Vollinspektion.
+    function collectShopRelatedFields(obj: unknown, path: string, depth: number, out: Array<{ path: string; value: unknown }>): void {
+      if (depth > 8 || obj == null || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) {
+        obj.forEach((item, i) => collectShopRelatedFields(item, `${path}[${i}]`, depth + 1, out));
+        return;
+      }
+      for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+        const fullPath = path ? `${path}.${key}` : key;
+        if (/shop|seller|store/i.test(key)) {
+          out.push({ path: fullPath, value: typeof value === 'object' ? '[object]' : value });
+        }
+        if (value && typeof value === 'object') collectShopRelatedFields(value, fullPath, depth + 1, out);
+      }
+    }
+    const shopRelatedFields: Array<{ path: string; value: unknown }> = [];
+    collectShopRelatedFields(result, 'result', 0, shopRelatedFields);
+    console.log(`[DS API] P-112-Diagnose: ${shopRelatedFields.length} shop/seller/store-bezogene Felder gefunden:`, JSON.stringify(shopRelatedFields));
+    if (productId === '1005010280178344') {
+      console.log('[DS API] P-112-Diagnose: VOLLSTÄNDIGER Rohdaten-Dump (Testprodukt) START >>>');
+      console.log(JSON.stringify(result, null, 2));
+      console.log('[DS API] P-112-Diagnose: VOLLSTÄNDIGER Rohdaten-Dump ENDE <<<');
+    }
+
     const detail = result as {
       subject?: string;
       product_id?: string | number;
