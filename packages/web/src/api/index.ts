@@ -1316,28 +1316,40 @@ const app = new Hono()
   // betroffene Listings NICHT rückwirkend repariert — recalculate-preview zeigt sie gar nicht
   // erst an, weil der informative Vorschlagspreis (weiterhin das Maximum) identisch mit dem
   // aktuellen, falschen Einheitspreis ist (kein Diff > DIFF_THRESHOLD). Dieser Endpunkt läuft
-  // deshalb OHNE Schwellenwert-Prüfung über ALLE live gelisteten Varianten-Produkte — bewusst
-  // eine einmalige, gezielte Aktion (kein Ersatz für den regulären "Preise neu berechnen"-Weg).
+  // deshalb OHNE Schwellenwert-Prüfung über die live gelisteten Varianten-Produkte — bewusst eine
+  // einmalige, gezielte Aktion (kein Ersatz für den regulären "Preise neu berechnen"-Weg).
+  //
+  // PR 4 (2026-09-09, Live-Fund): bei ~15-20 Varianten-Produkten in EINEM Request (pro Produkt
+  // eBay-Token, SKU-Abfrage, pro SKU GET+PUT, 400ms Pause) kappte Render die Verbindung, bevor
+  // alle durch waren — Frontend bekam eine HTML-Fehlerseite statt JSON. Jetzt in kleinen, garantiert
+  // schnellen Chargen (offset/limit) statt eines einzigen Requests — kein Preis-Logik-Unterschied,
+  // reines Chunking. computeRepairBatchRange()/repairVariantPricesForProduct() unverändert.
   .post('/ebay/listings/repair-variant-prices', async (c) => {
     try {
-      const { repairVariantPricesForProduct } = await import('./price-monitor');
+      const { repairVariantPricesForProduct, computeRepairBatchRange } = await import('./price-monitor');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
 
+      const offset = Math.max(0, parseInt(c.req.query('offset') ?? '0', 10) || 0);
+      const limit = Math.max(1, parseInt(c.req.query('limit') ?? '5', 10) || 5);
+
       const listedProducts = await db.select().from(schema.products).where(eq(schema.products.ebayStatus, 'listed'));
 
-      const results: Array<{ productId: number; title: string; ok: boolean; updatedSkuCount: number; error?: string }> = [];
-
-      for (const product of listedProducts) {
+      const variantProducts = listedProducts.filter(product => {
         let variantCount = 0;
         try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
         let variantGroupCount = 0;
         try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
-        const isVariant = variantCount > 1 || variantGroupCount > 0;
-        if (!isVariant) continue;
+        return variantCount > 1 || variantGroupCount > 0;
+      });
 
+      const { start, end, done } = computeRepairBatchRange(variantProducts.length, offset, limit);
+      const batch = variantProducts.slice(start, end);
+
+      const results: Array<{ productId: number; title: string; ok: boolean; updatedSkuCount: number; error?: string }> = [];
+      for (const product of batch) {
         const title = product.generatedTitle || product.title;
         try {
           const { ok, updatedSkuCount, error } = await repairVariantPricesForProduct(product);
@@ -1348,7 +1360,7 @@ const app = new Hono()
         await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
       }
 
-      return c.json({ results, total: results.length }, 200);
+      return c.json({ results, offset, limit, totalVariantProducts: variantProducts.length, done }, 200);
     } catch (e) {
       console.error('[repair-variant-prices]', e);
       return c.json({ error: String(e) }, 500);

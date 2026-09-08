@@ -174,17 +174,38 @@ export default function Listings() {
   const [repairLoading, setRepairLoading] = useState(false);
   const [repairResults, setRepairResults] = useState<RepairRow[]>([]);
   const [repairError, setRepairError] = useState<string | null>(null);
+  const [repairProgress, setRepairProgress] = useState<{ done: number; total: number } | null>(null);
 
+  // PR 4 (2026-09-09, Live-Fund): bei ~15-20 Varianten-Produkten in EINEM Request kappte Render
+  // die Verbindung, bevor alle durch waren ("Unexpected token '<'" — HTML-Fehlerseite statt JSON).
+  // Jetzt in kleinen Chargen über offset/limit, mit Live-Fortschritt. Bricht ein Batch ab, bleiben
+  // bereits erfolgreich reparierte Ergebnisse sichtbar (repairResults wird nur ANGEHÄNGT, nie ersetzt).
   const handleRepairVariantPrices = async () => {
     setRepairOpen(true);
     setRepairLoading(true);
     setRepairError(null);
     setRepairResults([]);
+    setRepairProgress(null);
+    const limit = 5;
+    let offset = 0;
     try {
-      const res = await fetch("/api/ebay/listings/repair-variant-prices", { method: "POST" });
-      const data = await res.json() as { results?: RepairRow[]; error?: string };
-      if (!res.ok || !data.results) throw new Error(data.error ?? "Fehler bei der Reparatur");
-      setRepairResults(data.results);
+      while (true) {
+        const res = await fetch(`/api/ebay/listings/repair-variant-prices?offset=${offset}&limit=${limit}`, { method: "POST" });
+        let data: { results?: RepairRow[]; totalVariantProducts?: number; done?: boolean; error?: string };
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(`Serverantwort nicht lesbar (Status ${res.status}) — Batch ab Produkt ${offset} evtl. abgebrochen`);
+        }
+        if (!res.ok || !data.results) throw new Error(data.error ?? "Fehler bei der Reparatur");
+
+        setRepairResults(prev => [...prev, ...data.results!]);
+        const total = data.totalVariantProducts ?? 0;
+        offset += data.results.length;
+        setRepairProgress({ done: Math.min(offset, total), total });
+
+        if (data.done || data.results.length === 0) break;
+      }
     } catch (e) {
       setRepairError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -689,12 +710,13 @@ export default function Listings() {
             </div>
             <div style={{ padding: "16px 20px" }}>
               {repairLoading && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "20px 0", color: "#64748B", fontSize: 13 }}>
-                  <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Setze jede Varianten-SKU auf ihren eigenen Preis…
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0", color: "#64748B", fontSize: 13 }}>
+                  <Loader size={16} style={{ animation: "spin 1s linear infinite" }} />
+                  {repairProgress ? `Repariere ${repairProgress.done} von ${repairProgress.total}…` : "Starte Reparatur…"}
                 </div>
               )}
 
-              {!repairLoading && repairError && (
+              {repairError && (
                 <div style={{ padding: "10px 14px", borderRadius: 8, background: "#FEF2F2", color: "#991B1B", fontSize: 13, marginBottom: 12 }}>
                   {repairError}
                 </div>
@@ -706,7 +728,7 @@ export default function Listings() {
                 </div>
               )}
 
-              {!repairLoading && repairResults.length > 0 && (
+              {repairResults.length > 0 && (
                 <>
                   <div style={{ fontSize: 12, color: "#64748B", marginBottom: 10 }}>
                     {repairResults.filter(r => r.ok).length} von {repairResults.length} Produkten repariert
