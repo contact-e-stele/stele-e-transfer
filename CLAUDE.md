@@ -26,21 +26,36 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-08-31, aktuelle Version: v1.6):**
+**Aktueller Zählerstand (Stand 2026-09-08, aktuelle Version: v1.8):**
 
-Zähler für die nächste Erhöhung (→ v1.7) läuft ab dem PR mit P-94 (Workflow-Text editierbar in
-der App, siehe unten) — noch keine Einträge:
+Der Zähler war seit dem 2026-08-31-Stand (v1.6, "2 von 4" mit #63/#64) über mehrere Sessions
+hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #63 bis #74
+nachträglich rekonstruiert (Merge-Zeitstempel, PR-Inhalt gegen "eigenständiger Feature-/
+Bugfix-PR ohne/mit funktionaler Änderung" geprüft). #72/#73 zählen NICHT — beide laut eigener
+PR-Beschreibung ausdrücklich "kein funktionaler Fix, nur Diagnose".
 
 | # | PR | Zählt zu |
 |---|---|---|
 | 1 | #63 | P-100 (shippedAt-Lücke) / P-101 (90-Tage-Sync-Limit) |
 | 2 | #64 | P-102 (Notfall-Rollback "0 Bestellungen") |
+| 3 | #65 | P-105 (doppelte Bewertungsbitten via eBay GetFeedback vermeiden) |
+| 4 | #66 | P-107 (AliExpress-Mails teils Englisch statt Deutsch) → **Bump v1.6 → v1.7 bei #66** |
+| 1 | #67 | Workflow-Vorlage: feste Regel für jeden Durchgang ergänzt |
+| 2 | #68 | P-108 (3er-Mengendeckel bei Varianten-Listings wiederhergestellt) |
+| 3 | #69 | P-109 (Compliance-Gate-Abgleich robuster) |
+| 4 | #70 | P-110 (Verkäufername-Extraktion robuster) → **Bump v1.7 → v1.8 bei #70** |
+| 1 | #71 | P-111 (echte Root Cause von P-110 im DS-API-Pfad nachgezogen) |
+| — | #72 | *(zählt nicht — reine Diagnose, kein funktionaler Fix)* |
+| — | #73 | *(zählt nicht — reine Diagnose, kein funktionaler Fix)* |
+| 2 | #74 | P-27/P-28-Konsolidierung (zentrale Preisformel, 3 echte Preis-Bugs behoben) |
 
-**→ Zähler: 2 von 4 seit v1.6.**
+**→ Zähler: 2 von 4 seit v1.8.**
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
 - v1.5 → v1.6: PR #49 (P-90 Workflow-kopieren-Button + 4 Bestellkarten-Lücken), #50 (Sicherheitspuffer vom Import-Preisvorschlag getrennt + Mindestgewinn-Auswahl), #51 (P-93 Verfügbarkeits-Monitor), #52 (P-93 zweite Funktion — Dateinamensschema AliExpress-Rechnungen)
+- v1.6 → v1.7: PR #63, #64, #65, #66 (siehe Tabelle oben)
+- v1.7 → v1.8: PR #67, #68, #69, #70 (siehe Tabelle oben)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
