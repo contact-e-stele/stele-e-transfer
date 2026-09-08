@@ -8,7 +8,7 @@
 
 0b. **P-66-Bypass — manueller Freigabe-Button (2026-09-08, PAUSIERT, keine Entscheidung):** Auftrag: Button "Manuell freigeben" bei der Compliance-Sperre, unabhängig von der (kaputten) Verkäufer-Erkennung, inkl. DB-Flag `manuallyApprovedRegulated`+Zeitstempel. Vor Umsetzung Rückfrage gestellt, da das eine bewusste "kein Bypass"-Entscheidung aus P-66 (GPSR-Haftungsgrund, Commit `3bf9088`) aufheben würde + DB-Migration (CLAUDE.md-Bestätigungspflicht). Nutzer hat die Rückfrage weggeklickt, dann kam Preis-Krise (Punkt 1 unten) dazwischen — **keine Entscheidung getroffen**, nichts umgesetzt. Hängt inhaltlich mit P-112 zusammen: falls die Verkäufer-Erkennung bald tatsächlich funktioniert, braucht es den Bypass evtl. nur als Übergangslösung.
 
-1. **Preis-Krise "Teil 1-4" (2026-09-08, TEILWEISE UMGESETZT — PR #74 Draft, wartet auf manuelle Merge-Freigabe):** Auslöser: stele-98-Variante "White 1pcs" verkaufte real mit Verlust. Root-Cause-Suche fand DREI unabhängige Preis-Bugs — alle jetzt auf einen zentralen `shared/pricing.ts` konsolidiert und in **PR #74** (Draft, NICHT gemergt) behoben:
+1. **Preis-Krise "Teil 1-4" (2026-09-08, TEILWEISE UMGESETZT — PR #74 GEMERGT, deployed):** Auslöser: stele-98-Variante "White 1pcs" verkaufte real mit Verlust. Root-Cause-Suche fand DREI unabhängige Preis-Bugs — alle jetzt auf einen zentralen `shared/pricing.ts` konsolidiert und in **PR #74** (gemergt nach expliziter Nutzer-Freigabe, inkl. committeter `pricing.test.ts`) behoben:
    - (a) `ebay.ts:1249` Fallback auf rohen Einkaufspreis bei fehlendem `ebayPrice` → behoben (berechnet jetzt live nach oder blockiert mit Fehlermeldung)
    - (b) adRate-Default-Inkonsistenz (`?? 0` vs `?? 5`) → überall auf `5` vereinheitlicht
    - (c) Dritte Formel in `/products/check-all-prices` (fester 18%, kein Puffer, automatischer Live-Push) → nutzt jetzt die zentrale Funktion
@@ -16,8 +16,9 @@
    - Import-Preisvorschlag (`lieferanten.tsx`) bewusst UNVERÄNDERT gelassen (kein Puffer) — regressionsgetestet, exakt gleiche Ergebnisse wie vorher
    - Typecheck (Server+App) grün, alle Test-Erfolgsbedingungen bestätigt (20,95€ mit/18,50€ ohne Puffer bei buyPrice=10/versand=2/adRate=5, 6 Regressionsfälle exakt identisch zur alten Formel)
    - **Noch offen/bewusst nicht angefasst:** weitere Formel-Kopien in `lieferanten.tsx` (Bulk-Varianten-Vorschau/Validierungsanzeige, ~Zeilen 1749/1808/1843) — nur UI-Anzeige, kein gespeicherter Preis, nicht im ursprünglichen Auftrag
-   - **Teil 1 (Sofortkorrektur stele-98) weiterhin blockiert auf Nutzer:** kein eBay-API-Zugriff aus der Sandbox — manuelle Korrektur im Seller Hub nötig, unabhängig vom PR-Merge
+   - **Teil 1 (Sofortkorrektur stele-98) weiterhin blockiert auf Nutzer:** kein eBay-API-Zugriff aus der Sandbox — manuelle Korrektur im Seller Hub nötig; nach Deploy von PR #74 sollte ein Re-Listing der Variante den Preis jetzt aber korrekt berechnen
    - **Teil 2 (feste 2,00€-Gewinn-OBERGRENZE statt Minimum)** und **Teil 4 (Sicherheitsgate >5€)** aus dem ursprünglichen Ziel: NICHT Teil von PR #74 (das war ein separates, neueres, engeres Konsolidierungs-Ziel) — weiterhin nur als Plan vorhanden, keine Design-Entscheidung getroffen, kein Code geschrieben
+   - **Nebenbei erledigt:** CLAUDE.md-Versionszähler war seit v1.6/2026-08-31 über mehrere Sessions nicht gepflegt worden (Standing-Rule) — anhand `git log --merges` #63-74 rekonstruiert und nachgeholt, PR #75 (gemergt): v1.6 → v1.8, neuer Zähler "2 von 4 seit v1.8"
    - **Vor Merge von PR #74:** Nutzer-Freigabe nötig (Geld-Logik, Standing-Regel)
    - Alte P-27/P-28-Detailfunde bleiben als Kontext gültig, siehe Punkt 1b unten (id=137 weiterhin ungeklärt)
 
