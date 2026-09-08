@@ -120,6 +120,21 @@ export async function updateEbayVariantPricesIndividually(
   }
 }
 
+// P-27/P-28 PR 3 (2026-09-09): Pro-Produkt-Reparaturschritt für /ebay/listings/repair-variant-prices
+// — bewusst OHNE jede Preis-Diff-Schwelle (anders als recalculate-preview/-apply), da der Zweck
+// genau ist, bereits live falsch bepreiste Listings zu reparieren, die wegen unverändertem
+// Einkaufspreis nie in der normalen Vorschau auftauchen würden. `updateFn` als DI-Parameter,
+// damit dieser Aufruf in Tests ohne echten eBay-Zugriff geprüft werden kann.
+export async function repairVariantPricesForProduct(
+  product: { id: number; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null },
+  updateFn: typeof updateEbayVariantPricesIndividually = updateEbayVariantPricesIndividually
+): Promise<{ ok: boolean; updatedSkuCount: number; error?: string }> {
+  const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
+  if (rows.length === 0) return { ok: false, updatedSkuCount: 0, error: 'Keine Varianten-Einkaufspreise vorhanden' };
+  const { ok, updatedCount } = await updateFn(product.id, rows);
+  return { ok, updatedSkuCount: updatedCount };
+}
+
 // Holt das Offer zu einer EXAKTEN SKU und setzt dessen Preis (Inventory API).
 // eBays "sku"-Query-Parameter bei GET /offer ist ein exakter Match — kein Präfix-/Wildcard-Filter.
 export async function updateOfferPriceBySku(sku: string, newPrice: number, token: string): Promise<boolean> {
