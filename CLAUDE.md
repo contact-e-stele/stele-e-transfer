@@ -67,3 +67,20 @@ Einstellungen-Tab pflegbar. Startinhalt/Fallback: `packages/web/src/shared/workf
 **Feste Regel bei jeder künftigen Aktualisierung dieses Texts (auch für Dich als Claude Code):**
 neue Version immer gegen die vorherige vergleichen, nur ergänzen/verbessern, niemals bestehende
 Punkte einfach löschen. Grundstruktur (Rolle, Schritte 1-6, Effizienz-Hinweis) bleibt erhalten.
+
+## Verifikations- & Archivierungs-Workflow (Regel seit 2026-09-08)
+
+Bei jeder Bug-Untersuchung / jedem Fix, unabhängig vom Themenbereich:
+
+- Erfolgsmeldungen (eigene oder von Sub-Agents) nie ungeprüft übernehmen — Diff lesen,
+  Tests/Typecheck selbst laufen lassen, nach einem Deploy den tatsächlichen Live-Zustand
+  unabhängig prüfen (Browser: App-Seite, eBay-Seite, Netzwerk-Requests, Konsole;
+  Render-Deploy-/App-Logs). Eine reine UI-Erfolgsmeldung ist kein Beweis dafür, dass ein Fix
+  wirklich gegriffen hat.
+- `/goal`-Text-Länge vor dem Senden prüfen (Limit: 4000 Zeichen). Bei Bedarf in mehrere klar
+  nummerierte, in sich abgeschlossene Teilaufträge mit expliziten Abhängigkeits-Hinweisen
+  zwischen ihnen aufteilen.
+- Jeder Fund (Bug, Root Cause, Fix, Verifikationsergebnis) wird vollständig und mit klarer,
+  konkreter Bezeichnung des Problems im projektspezifischen Fehler-Archiv (Google Drive
+  "Fehler- & Skript-Archiv – stele-e-transfer") festgehalten — nicht nur kurz notiert. Ziel:
+  Sessions/Tokens sparen, indem nichts erneut untersucht werden muss.
