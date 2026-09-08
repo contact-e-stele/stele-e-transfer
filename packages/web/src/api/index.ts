@@ -1159,9 +1159,9 @@ const app = new Hono()
         const isVariant = variantCount > 1 || variantGroupCount > 0;
 
         if (isVariant) {
-          // Diagnose: computeVariantPriceRows() nutzt intern adRate ?? 5 (siehe price-monitor.ts) —
-          // anderer Default als der Einzelartikel-Zweig unten (adRate ?? 0). Beide hier sichtbar
-          // machen, statt zu raten, welcher Default tatsächlich gegriffen hat.
+          // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08) — gilt
+          // jetzt gleichermaßen hier wie in computeVariantPriceRows() und im Einzelartikel-Zweig
+          // unten.
           const variantAdRate = product.adRate ?? 5;
           const variantZoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
           const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
@@ -1187,12 +1187,11 @@ const app = new Hono()
         }
 
         if (product.buyPrice == null) continue;
-        // Diagnose: dieser Zweig nutzt adRate ?? 0 (anders als computeVariantPriceRows oben,
-        // dort adRate ?? 5) — bei NULL-adRate rechnen Einzelartikel und Varianten-Produkte also
-        // mit unterschiedlichen Gebührensätzen. adRateWasNull zeigt, ob das hier gerade zuschlägt.
+        // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08).
+        // adRateWasNull im debug-Feld zeigt weiterhin an, ob der Default hier gerade greift.
         const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
         const versand = product.shippingCost ?? 0;
-        const adRate = product.adRate ?? 0;
+        const adRate = product.adRate ?? 5;
         const newPrice = calcSellPrice(product.buyPrice, versand, zoll, adRate);
         const oldPrice = listing.currentPrice;
         const diff = Math.round((newPrice - oldPrice) * 100) / 100;
@@ -1259,7 +1258,7 @@ const app = new Hono()
           newPrice = safeUniformVariantPrice(rows);
         } else {
           newPrice = product.buyPrice != null
-            ? calcSellPrice(product.buyPrice, product.shippingCost ?? 0, isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0, product.adRate ?? 0)
+            ? calcSellPrice(product.buyPrice, product.shippingCost ?? 0, isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0, product.adRate ?? 5)
             : null;
         }
         if (newPrice == null) {
@@ -1906,13 +1905,28 @@ const app = new Hono()
       }
     }
 
-    // sellPrice Fallback: wenn nicht gesetzt, niedrigsten Varianten-Preis nehmen
-    let effectiveSellPrice = product.sellPrice;
+    // P-27/P-28-Konsolidierung (2026-09-08): Preis wird unmittelbar vor dem eBay-Call FRISCH aus
+    // dem aktuellen Einkaufspreis über die zentrale Formel berechnet (Erst-Listing UND Re-Listing
+    // nach Delisting) — statt einen möglicherweise veralteten oder nie korrekt gesetzten
+    // product.sellPrice ungeprüft zu übernehmen. Nur wenn kein buyPrice bekannt ist (z.B. manuell
+    // angelegtes Produkt ohne AliExpress-Quelle), bleibt der gespeicherte sellPrice die Quelle.
+    const { calcSellPrice: calcSellPriceForListing, isChinaShipping: isChinaShippingForListing } = await import('./price-monitor');
+    const zollForListing = isChinaShippingForListing(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+    const versandForListing = product.shippingCost ?? 0;
+    const adRateForListing = product.adRate ?? 5;
+
+    let effectiveSellPrice: number | null = product.buyPrice != null
+      ? calcSellPriceForListing(product.buyPrice, versandForListing, zollForListing, adRateForListing)
+      : product.sellPrice;
     if (!effectiveSellPrice) {
       try {
-        const varPrices = JSON.parse(product.variantPrices ?? '[]') as Array<{ ebayPrice?: number; price?: number }>;
-        const prices = varPrices.map(v => v.ebayPrice ?? v.price ?? 0).filter(p => p > 0);
-        if (prices.length > 0) effectiveSellPrice = Math.min(...prices);
+        const varPrices = JSON.parse(product.variantPrices ?? '[]') as Array<{ price?: number }>;
+        const computed = varPrices
+          .map(v => typeof v.price === 'number' && v.price > 0
+            ? calcSellPriceForListing(v.price, versandForListing, zollForListing, adRateForListing)
+            : 0)
+          .filter(p => p > 0);
+        if (computed.length > 0) effectiveSellPrice = Math.min(...computed);
       } catch { /* ignore */ }
     }
     if (!effectiveSellPrice) return c.json({ error: 'Kein Verkaufspreis gesetzt — bitte VK Preis eintragen' }, 400);
@@ -2002,11 +2016,21 @@ const app = new Hono()
         ? (product.sourceUrl.match(/\/item\/(\d+)\.html/)?.[1] ?? product.sourceUrl.match(/productId=(\d+)/)?.[1] ?? undefined)
         : undefined;
 
-      // variantPrices für pro-Variante Preise
+      // variantPrices für pro-Variante Preise — ebayPrice wird hier (Punkt 3, P-27/P-28-
+      // Konsolidierung) für jede Variante mit bekanntem Einkaufspreis frisch über die zentrale
+      // Formel neu berechnet, statt einen evtl. veralteten gespeicherten Wert zu übernehmen.
+      // ebay.ts:1249 hat zusätzlich einen eigenen Fallback für den Fall, dass hier trotzdem kein
+      // ebayPrice ankommt (Verteidigung in der Tiefe).
       const variantPricesForListing: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }> = (() => {
         try {
           const parsed = JSON.parse(product.variantPrices ?? '[]');
-          if (Array.isArray(parsed)) return parsed;
+          if (!Array.isArray(parsed)) return [];
+          return (parsed as Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }>).map(v => ({
+            ...v,
+            ebayPrice: typeof v.price === 'number' && v.price > 0
+              ? calcSellPriceForListing(v.price, versandForListing, zollForListing, adRateForListing)
+              : v.ebayPrice,
+          }));
         } catch { /* ignore */ }
         return [];
       })();
@@ -2043,6 +2067,8 @@ const app = new Hono()
         mpn,
         ean: product.ean ?? undefined,
         adRate: product.adRate ?? 5,
+        shippingCost: product.shippingCost ?? undefined,
+        shipsFrom: product.shipsFrom ?? undefined,
         handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
         manualAspects,
@@ -2761,6 +2787,7 @@ const app = new Hono()
 
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
+        const { calcSellPrice, isChinaShipping } = await import('./price-monitor');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         for (const product of all) {
           const url = product.sourceUrl || product.amazonUrl;
@@ -2789,11 +2816,12 @@ const app = new Hono()
               continue;
             }
             const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
-            // Neuen VK-Preis berechnen: (buyPrice + Versand + Mindestgewinn [+ China-Zoll]) / (1 - 0.18 eBay-Fee)
-            const isChina = (product.shipsFrom ?? '').toLowerCase() === 'china';
-            const chinaZoll = isChina ? CHINA_ZOLL_EUR : 0;
+            // P-27/P-28-Konsolidierung (2026-09-08): vorher eine eigene, abweichende Formel hier
+            // (fester 18%-Satz statt (13+adRate)%×1.19, kein Sicherheitspuffer, keine Bestell-
+            // gebühr, Cent- statt ,95-Rundung) — jetzt dieselbe zentrale Funktion wie überall sonst.
+            const chinaZoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
             const versand = product.shippingCost ?? 0;
-            const newSellPrice = Math.ceil(((newPrice + versand + MIN_GEWINN_EUR + chinaZoll) / (1 - 0.18)) * 100) / 100;
+            const newSellPrice = calcSellPrice(newPrice, versand, chinaZoll, product.adRate ?? 5);
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             await db.update(schema.products).set({
               buyPrice: newPrice,

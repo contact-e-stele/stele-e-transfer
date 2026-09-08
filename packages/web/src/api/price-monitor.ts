@@ -7,36 +7,19 @@ import { scrapeAliExpressUrl, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR } from '../shared/constants';
+import { CHINA_ZOLL_EUR } from '../shared/constants';
+import {
+  roundUpToX95, isChinaShipping, calcSellPrice, calcSellPriceCore, calcImportPriceSuggestion,
+  type CalcSellPriceOptions,
+} from '../shared/pricing';
 
-const MIN_GEWINN = MIN_GEWINN_EUR; // Mindestgewinn € (zentral in shared/constants.ts)
+// P-27/P-28-Konsolidierung (2026-09-08): die eigentliche Formel lebt jetzt ausschließlich in
+// shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit bestehende
+// Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
+export { roundUpToX95, isChinaShipping, calcSellPrice, calcSellPriceCore, calcImportPriceSuggestion, type CalcSellPriceOptions };
+
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
-
-// Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Bewusst kein "nächstgelegen"-Runden:
-// calcSellPrice() ist ein Mindestpreis (garantiert MIN_GEWINN) — würde man zur nächstgelegenen
-// ,95-Marke runden, könnte der tatsächliche Preis unter den berechneten Mindestpreis fallen
-// und die Gewinn-Garantie brechen. Aufrunden ist der einzige Modus, der das nicht tut.
-export function roundUpToX95(price: number): number {
-  return Math.round((Math.ceil(price - 0.95) + 0.95) * 100) / 100;
-}
-
-// Gleiche Formel wie in lieferanten.tsx (Mindestpreis-Button):
-// feeRate = (13% eBay + adRate%) × 1.19 MwSt
-// sellPrice = (buyPrice + versand + zoll + MIN_GEWINN + PRICE_SAFETY_BUFFER + 0.45€ Bestellgebühr × 1.19 MwSt) / (1 - feeRate)
-// PRICE_SAFETY_BUFFER_EUR (P-27/P-28): der Preis liegt bewusst über der exakten Gewinn-
-// Untergrenze, damit kleine, kurzzeitig unentdeckte Preis-Drift erstmal nur weniger Gewinn
-// statt echten Verlust bedeutet.
-export function calcSellPrice(buyPrice: number, versand: number, zoll: number, adRate: number): number {
-  const feeRate = (13 + adRate) / 100 * 1.19;
-  const minPrice = ((buyPrice + versand + zoll + MIN_GEWINN + PRICE_SAFETY_BUFFER_EUR + 0.45 * 1.19) / (1 - feeRate));
-  return roundUpToX95(minPrice);
-}
-
-export function isChinaShipping(shipsFrom?: string | null): boolean {
-  if (!shipsFrom) return false;
-  return shipsFrom.toLowerCase().includes('china');
-}
 
 function parsePrice(raw: string): number {
   // Handle formats: "9.99 €", "9,99 €", "EUR 9.99", "9.99"
@@ -260,7 +243,11 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       const isChina = isChinaShipping(data.shipsFrom);
       const zoll = isChina ? CHINA_ZOLL_EUR : 0;
       const versand = product.shippingCost ?? 0;
-      const adRate = product.adRate ?? 0;
+      // P-27/P-28-Konsolidierung (2026-09-08): adRate-Default vereinheitlicht auf 5 (= DB-Default,
+      // schema.ts `ad_rate.default(5)`, bereits von computeVariantPriceRows() genutzt) — vorher
+      // rechnete dieser Zweig bei NULL-adRate mit 0, computeVariantPriceRows() mit 5, also mit
+      // unterschiedlichen Gebührensätzen für dasselbe Produkt je nachdem, ob es Varianten hat.
+      const adRate = product.adRate ?? 5;
       if (isChina) {
         console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Zollgebühr +${CHINA_ZOLL_EUR}€ wird addiert`);
       }

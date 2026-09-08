@@ -7,6 +7,7 @@ import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategories, type RegulatedCategory } from "../../shared/regulated-categories";
+import { calcImportPriceSuggestion } from "../../shared/pricing";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -1587,13 +1588,13 @@ export default function Lieferanten() {
                     {einkauf > 0 && (
                       <button
                         onClick={() => {
-                          // Empfohlener Mindestpreis (initialer Import — OHNE PRICE_SAFETY_BUFFER_EUR,
-                          // der bleibt der laufenden automatischen Preisprüfung vorbehalten):
-                          // (einkauf + versand + zoll + Mindestgewinn) / (1 - (13+adRate)/100*1.19)
-                          const feeRate = (13 + adRate) / 100 * 1.19;
+                          // Empfohlener Mindestpreis (initialer Import — OHNE Sicherheitspuffer, der
+                          // bleibt der laufenden automatischen Preisprüfung vorbehalten). Zentrale
+                          // Formel (P-27/P-28-Konsolidierung, 2026-09-08) — Verhalten hier bewusst
+                          // unverändert gegenüber vorher (regressionsgetestet).
                           const chinaZoll = (shipsFromInfo && isChinaShipping(shipsFromInfo.country)) ? CHINA_ZOLL_EUR : 0;
                           const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
-                          const recommended = Math.ceil(((einkauf + versand + chinaZoll + minGewinn + 0.45 * 1.19) / (1 - feeRate)) * 100) / 100;
+                          const recommended = calcImportPriceSuggestion(einkauf, versand, chinaZoll, adRate, minGewinn);
                           setEbayPrice(recommended.toFixed(2));
                         }}
                         style={{
