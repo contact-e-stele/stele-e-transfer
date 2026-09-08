@@ -9,7 +9,7 @@ import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTr
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR } from '../shared/constants';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
@@ -1138,6 +1138,14 @@ const app = new Hono()
         itemId: string; title: string; oldPrice: number; newPrice: number; diff: number;
         isVariant: boolean;
         variantBreakdown?: Array<{ attrs: Record<string, string>; buyPrice: number; correctSellPrice: number }>;
+        // Diagnose (2026-09-08, Root-Cause-Suche für unplausible Preissprünge in "Preise neu
+        // berechnen"): zeigt alle Formel-Eingaben pro Zeile, damit sich ein konkreter Sprung
+        // (z.B. Alufolie +23€, Backpapier -6€) Schritt für Schritt nachrechnen lässt, statt raten
+        // zu müssen. Reine Zusatzinfo — verändert keinen berechneten Preis.
+        debug: {
+          buyPrice: number | null; versand: number; zoll: number; adRate: number; adRateWasNull: boolean;
+          feeRate: number; minGewinn: number; safetyBuffer: number; shipsFrom: string | null;
+        };
       };
       const preview: PreviewRow[] = [];
       for (const listing of listings) {
@@ -1151,6 +1159,11 @@ const app = new Hono()
         const isVariant = variantCount > 1 || variantGroupCount > 0;
 
         if (isVariant) {
+          // Diagnose: computeVariantPriceRows() nutzt intern adRate ?? 5 (siehe price-monitor.ts) —
+          // anderer Default als der Einzelartikel-Zweig unten (adRate ?? 0). Beide hier sichtbar
+          // machen, statt zu raten, welcher Default tatsächlich gegriffen hat.
+          const variantAdRate = product.adRate ?? 5;
+          const variantZoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
           const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
           const newPrice = safeUniformVariantPrice(rows);
           if (newPrice == null) continue;
@@ -1163,11 +1176,20 @@ const app = new Hono()
             title: product.generatedTitle || listing.title,
             oldPrice, newPrice, diff, isVariant: true,
             variantBreakdown: rows.map(r => ({ attrs: r.attrs, buyPrice: r.buyPrice, correctSellPrice: r.correctSellPrice })),
+            debug: {
+              buyPrice: null, versand: product.shippingCost ?? 0, zoll: variantZoll,
+              adRate: variantAdRate, adRateWasNull: product.adRate == null,
+              feeRate: (13 + variantAdRate) / 100 * 1.19,
+              minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
+            },
           });
           continue;
         }
 
         if (product.buyPrice == null) continue;
+        // Diagnose: dieser Zweig nutzt adRate ?? 0 (anders als computeVariantPriceRows oben,
+        // dort adRate ?? 5) — bei NULL-adRate rechnen Einzelartikel und Varianten-Produkte also
+        // mit unterschiedlichen Gebührensätzen. adRateWasNull zeigt, ob das hier gerade zuschlägt.
         const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? 0;
@@ -1177,7 +1199,14 @@ const app = new Hono()
 
         if (Math.abs(diff) < DIFF_THRESHOLD) continue;
 
-        preview.push({ itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff, isVariant: false });
+        preview.push({
+          itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff, isVariant: false,
+          debug: {
+            buyPrice: product.buyPrice, versand, zoll, adRate, adRateWasNull: product.adRate == null,
+            feeRate: (13 + adRate) / 100 * 1.19,
+            minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
+          },
+        });
       }
       preview.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
 
