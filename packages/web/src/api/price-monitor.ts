@@ -74,6 +74,52 @@ export function safeUniformVariantPrice(rows: VariantPriceRow[]): number | null 
   return Math.max(...rows.map(r => r.correctSellPrice));
 }
 
+// P-27/P-28-Fix (2026-09-08, Live-Fund stele-138): computeVariantPriceRows() berechnet für JEDE
+// Variante bereits den korrekten Einzelpreis — vorher wurde trotzdem nur safeUniformVariantPrice()
+// (das Maximum aller Zeilen) an JEDE echte eBay-Varianten-SKU geschrieben ("EUR 20,95-EUR 20,95"
+// statt drei unterschiedlicher Preise). Diese Funktion schreibt jeder echten SKU ihren EIGENEN
+// Preis. Matching exakt wie beim Bestands-Sync oben (`stele-${productId}-${slugify(attrs)}`) und
+// bei der Listing-Erstellung (ebay.ts) — gegen die ECHTEN eBay-SKUs (getInventoryItemGroupSkus),
+// kein Raten. Für eine reale SKU, der keine Zeile eindeutig zugeordnet werden kann, greift
+// safeUniformVariantPrice() als Fallback NUR für GENAU diese eine SKU (nicht für alle).
+export async function updateEbayVariantPricesIndividually(
+  productId: number,
+  rows: VariantPriceRow[]
+): Promise<{ ok: boolean; updatedCount: number }> {
+  if (rows.length === 0) return { ok: false, updatedCount: 0 };
+  try {
+    const token = await getAccessToken();
+    const groupSku = `stele-${productId}-GROUP`;
+    const realSkus = await getInventoryItemGroupSkus(groupSku, token);
+    if (realSkus.length === 0) return { ok: false, updatedCount: 0 };
+
+    const rowBySku = new Map<string, VariantPriceRow>();
+    for (const row of rows) {
+      const suffix = Object.values(row.attrs ?? {}).map(slugify).filter(Boolean).join('-');
+      rowBySku.set(`stele-${productId}-${suffix}`, row);
+    }
+    const fallbackPrice = safeUniformVariantPrice(rows);
+
+    let updatedCount = 0;
+    for (const sku of realSkus) {
+      const row = rowBySku.get(sku);
+      const price = row ? row.correctSellPrice : fallbackPrice;
+      if (price == null) continue;
+      const ok = await updateOfferPriceBySku(sku, price, token);
+      if (ok) {
+        updatedCount++;
+        console.log(`[PriceMonitor] ${productId}: Variante ${sku} → ${price.toFixed(2)}€${row ? '' : ' (kein Zeilen-Match — sicherer Einheitspreis als Fallback für nur diese SKU)'}`);
+      } else {
+        console.warn(`[PriceMonitor] ${productId}: Preis für ${sku} konnte nicht auf ${price.toFixed(2)}€ gesetzt werden`);
+      }
+    }
+    return { ok: updatedCount > 0, updatedCount };
+  } catch (e) {
+    console.warn(`[PriceMonitor] ${productId}: updateEbayVariantPricesIndividually fehlgeschlagen:`, e);
+    return { ok: false, updatedCount: 0 };
+  }
+}
+
 // Holt das Offer zu einer EXAKTEN SKU und setzt dessen Preis (Inventory API).
 // eBays "sku"-Query-Parameter bei GET /offer ist ein exakter Match — kein Präfix-/Wildcard-Filter.
 export async function updateOfferPriceBySku(sku: string, newPrice: number, token: string): Promise<boolean> {

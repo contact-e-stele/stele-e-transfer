@@ -1212,7 +1212,7 @@ const app = new Hono()
       return c.json({
         preview,
         total: preview.length,
-        note: 'Bei Varianten-Produkten (isVariant:true) ist newPrice ein sicherer EINHEITSPREIS — das Maximum aller Varianten-Mindestpreise (variantBreakdown zeigt die Details je Variante). Echte Preisdifferenzierung pro einzelner Variante ist eine mögliche spätere Erweiterung.',
+        note: 'Bei Varianten-Produkten (isVariant:true) ist newPrice hier nur INFORMATIV das Maximum aller Varianten-Mindestpreise (variantBreakdown zeigt die Details je Variante). Der tatsächliche eBay-Schreibvorgang bei "Übernehmen" setzt seit P-27/P-28 jede echte Varianten-SKU auf ihren EIGENEN korrekten Preis (updateEbayVariantPricesIndividually) — der Einheitspreis wird nur noch als Fallback für eine einzelne SKU verwendet, deren Zuordnung fehlschlägt.',
       }, 200);
     } catch (e) {
       console.error('[recalculate-preview]', e);
@@ -1228,7 +1228,10 @@ const app = new Hono()
         return c.json({ error: 'Keine itemIds übergeben' }, 400);
       }
 
-      const { calcSellPrice, isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
+      const {
+        calcSellPrice, isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice,
+        updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading,
+      } = await import('./price-monitor');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1253,9 +1256,13 @@ const app = new Hono()
         const isVariant = variantCount > 1 || variantGroupCount > 0;
 
         let newPrice: number | null;
+        let variantRows: ReturnType<typeof computeVariantPriceRows> = [];
         if (isVariant) {
-          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
-          newPrice = safeUniformVariantPrice(rows);
+          variantRows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
+          // newPrice bleibt informativ das Maximum (für DB-Speicherung/UI) — der tatsächliche
+          // eBay-Schreibvorgang unten nutzt für jede Variante ihren EIGENEN Preis (P-27/P-28-Fix,
+          // Live-Fund stele-138: vorher schrieb dieser Zweig denselben Einheitspreis auf jede SKU).
+          newPrice = safeUniformVariantPrice(variantRows);
         } else {
           newPrice = product.buyPrice != null
             ? calcSellPrice(product.buyPrice, product.shippingCost ?? 0, isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0, product.adRate ?? 5)
@@ -1267,16 +1274,21 @@ const app = new Hono()
         }
         const oldPrice = product.sellPrice ?? undefined;
 
-        // Varianten-Listings: NUR über die Inventory API (setzt jede exakte Varianten-SKU
-        // einzeln) — die Trading API kennt keine Varianten-Preise (P-14/P-89) und wird hier
-        // bewusst nicht als Fallback versucht, um keinen aussichtslosen/irreführenden Request
-        // zu senden.
-        let ok = await updateEbayPriceInventory(product.id, newPrice);
+        let ok: boolean;
         let tradingError: string | undefined;
-        if (!ok && !isVariant) {
-          const tradingResult = await updateEbayPriceTrading(itemId, newPrice);
-          ok = tradingResult.ok;
-          tradingError = tradingResult.error;
+        if (isVariant) {
+          const result = await updateEbayVariantPricesIndividually(product.id, variantRows);
+          ok = result.ok;
+          if (!ok) tradingError = 'Keine der Varianten-SKUs konnte aktualisiert werden';
+        } else {
+          // Einzelartikel: NUR über die Inventory API, mit Trading-API-Fallback falls das
+          // Listing (noch) über die ältere Trading API läuft.
+          ok = await updateEbayPriceInventory(product.id, newPrice);
+          if (!ok) {
+            const tradingResult = await updateEbayPriceTrading(itemId, newPrice);
+            ok = tradingResult.ok;
+            tradingError = tradingResult.error;
+          }
         }
 
         if (ok) {
@@ -1287,7 +1299,7 @@ const app = new Hono()
           }).where(eq(schema.products.id, product.id));
           results.push({ itemId, ok: true, oldPrice, newPrice });
         } else {
-          results.push({ itemId, ok: false, oldPrice, error: tradingError ?? 'eBay-Update fehlgeschlagen (Inventory API' + (isVariant ? ', Trading API für Varianten nicht unterstützt' : ' + Trading API') + ')' });
+          results.push({ itemId, ok: false, oldPrice, error: tradingError ?? (isVariant ? 'eBay-Update fehlgeschlagen (Inventory API, pro Variante)' : 'eBay-Update fehlgeschlagen (Inventory API + Trading API)') });
         }
         await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
       }
