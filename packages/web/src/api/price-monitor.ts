@@ -135,6 +135,17 @@ export async function repairVariantPricesForProduct(
   return { ok, updatedSkuCount: updatedCount };
 }
 
+// P-27/P-28 PR 4 (2026-09-09, Live-Fund): repair-variant-prices verarbeitete bisher ALLE
+// live gelisteten Varianten-Produkte in einem einzigen Request — bei ~15-20 Produkten (pro
+// Produkt eBay-Token, SKU-Abfrage, pro SKU GET+PUT, 400ms Pause) kappte Render die Verbindung,
+// bevor alle durch waren (HTML-Fehlerseite statt JSON im Frontend). Reine Chunking-Arithmetik,
+// keine Preis-Logik — extrahiert für isolierte Tests ohne DB/eBay-Zugriff.
+export function computeRepairBatchRange(total: number, offset: number, limit: number): { start: number; end: number; done: boolean } {
+  const start = Math.max(0, Math.min(offset, total));
+  const end = Math.max(start, Math.min(total, start + Math.max(1, limit)));
+  return { start, end, done: end >= total };
+}
+
 // Holt das Offer zu einer EXAKTEN SKU und setzt dessen Preis (Inventory API).
 // eBays "sku"-Query-Parameter bei GET /offer ist ein exakter Match — kein Präfix-/Wildcard-Filter.
 export async function updateOfferPriceBySku(sku: string, newPrice: number, token: string): Promise<boolean> {

@@ -10,7 +10,7 @@ import { describe, expect, mock, test } from 'bun:test';
 // hier per dynamischem Import erst NACH dem Setzen einer Dummy-URL geladen (kein echter
 // DB-Zugriff in den hier getesteten reinen Funktionen nötig).
 process.env.TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'file:/tmp/price-monitor-test.db';
-const { computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct } = await import('./price-monitor');
+const { computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct, computeRepairBatchRange } = await import('./price-monitor');
 
 describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
   test('3 Varianten mit unterschiedlichem Einkaufspreis ergeben 3 unterschiedliche correctSellPrice-Werte', () => {
@@ -100,5 +100,38 @@ describe('repairVariantPricesForProduct (POST /ebay/listings/repair-variant-pric
     expect(result.ok).toBe(false);
     expect(result.updatedSkuCount).toBe(0);
     expect(result.error).toBeTruthy();
+  });
+});
+
+// P-27/P-28 PR 4 (2026-09-09, Live-Fund): repair-variant-prices verarbeitete bisher ALLE
+// Varianten-Produkte in einem einzigen Request — bei ~15-20 Produkten kappte Render die
+// Verbindung, bevor alle durch waren ("Unexpected token '<'" im Frontend statt JSON). Dieser
+// Test prüft nur die reine Chunking-Arithmetik (kein DB-/eBay-Zugriff nötig).
+describe('computeRepairBatchRange (Chunking für POST /ebay/listings/repair-variant-prices)', () => {
+  test('12 Varianten-Produkte, limit=5 → 3 Batches, done erst beim dritten Aufruf true', () => {
+    const total = 12;
+    const limit = 5;
+
+    const batch1 = computeRepairBatchRange(total, 0, limit);
+    expect(batch1).toEqual({ start: 0, end: 5, done: false });
+
+    const batch2 = computeRepairBatchRange(total, batch1.end, limit);
+    expect(batch2).toEqual({ start: 5, end: 10, done: false });
+
+    const batch3 = computeRepairBatchRange(total, batch2.end, limit);
+    expect(batch3).toEqual({ start: 10, end: 12, done: true });
+  });
+
+  test('leere Liste ist sofort done', () => {
+    expect(computeRepairBatchRange(0, 0, 5)).toEqual({ start: 0, end: 0, done: true });
+  });
+
+  test('offset über der Gesamtzahl liefert eine leere, aber done-markierte Charge (kein Absturz)', () => {
+    expect(computeRepairBatchRange(12, 100, 5)).toEqual({ start: 12, end: 12, done: true });
+  });
+
+  test('exakt durch limit teilbare Gesamtzahl wird nach dem letzten Batch als done markiert', () => {
+    expect(computeRepairBatchRange(10, 0, 5)).toEqual({ start: 0, end: 5, done: false });
+    expect(computeRepairBatchRange(10, 5, 5)).toEqual({ start: 5, end: 10, done: true });
   });
 });
