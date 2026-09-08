@@ -1,6 +1,9 @@
 // eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
+import { calcSellPrice, isChinaShipping } from '../shared/pricing';
+import { CHINA_ZOLL_EUR } from '../shared/constants';
+
 const EBAY_CLIENT_ID = process.env.EBAY_CLIENT_ID ?? '';
 const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET ?? '';
 const EBAY_REFRESH_TOKEN = process.env.EBAY_REFRESH_TOKEN ?? '';
@@ -253,6 +256,10 @@ export interface EbayListingInput {
   mpn?: string; // AliExpress Produkt-ID als MPN
   ean?: string; // EAN/GTIN Barcode — falls vorhanden, sonst "Nicht zutreffend"
   adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
+  shippingCost?: number; // Versandkosten € — P-27/P-28-Konsolidierung: nötig, damit fehlende
+                          // Varianten-ebayPrice-Werte live über die zentrale Formel nachberechnet
+                          // werden können statt auf den rohen Einkaufspreis zu fallen
+  shipsFrom?: string;     // Versandland — für Zoll-Berechnung im selben Fallback
   handlingTimeDays?: number; // Bearbeitungszeit in Tagen (Standard: 10)
   gpsr?: {         // EU Produktsicherheit — aus DB; wenn undefined → Stele-Fallback
     name: string;
@@ -1246,7 +1253,23 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       // Match wenn alle combo-Werte in attrs vorkommen
       return comboValues.every(cv => attrsVal.some(av => av.includes(cv) || cv.includes(av)));
     });
-    const varPrice = varPriceEntry ? (varPriceEntry.ebayPrice ?? varPriceEntry.price ?? input.price) : input.price;
+    // P-27/P-28-Konsolidierung (2026-09-08): vorher fiel eine fehlende .ebayPrice auf
+    // varPriceEntry.price (roher AliExpress-EINKAUFSPREIS!) und dann erst auf input.price zurück
+    // — konnte eine Variante zum Einkaufspreis listen (live bestätigter Verlustfall stele-98).
+    // Jetzt: fehlt .ebayPrice, aber der Einkaufspreis (.price) ist bekannt → live über die
+    // zentrale Formel nachberechnen. Ist auch das nicht bekannt → hart blockieren statt zu raten.
+    const varPrice: number | undefined = varPriceEntry?.ebayPrice ??
+      (varPriceEntry?.price != null && varPriceEntry.price > 0
+        ? calcSellPrice(
+            varPriceEntry.price,
+            input.shippingCost ?? 0,
+            isChinaShipping(input.shipsFrom) ? CHINA_ZOLL_EUR : 0,
+            input.adRate ?? 5,
+          )
+        : undefined);
+    if (varPrice == null) {
+      throw new Error(`Kein Preis für Variante ${varSku} ermittelbar — weder ebayPrice noch Einkaufspreis (price) in variantPrices vorhanden. Bitte Varianten-Preise im Produkt pflegen, bevor gelistet wird.`);
+    }
     const offerQuantity = resolveVariantQuantity(varPriceEntry?.stock, input.quantity);
     console.log(`[eBay] ${varSku} → combo=${JSON.stringify(varCombo)} priceEntry=${JSON.stringify(varPriceEntry)} → price=${varPrice} qty=${offerQuantity}`);
 
