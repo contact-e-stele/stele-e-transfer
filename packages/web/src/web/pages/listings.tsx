@@ -164,6 +164,34 @@ export default function Listings() {
   const [recalcResultMsg, setRecalcResultMsg] = useState<string | null>(null);
   const [expandedVariantRow, setExpandedVariantRow] = useState<string | null>(null);
 
+  // ─── Varianten-Preise reparieren (einmalig, P-27/P-28 PR 3) ────────────────────────────────
+  // Repariert Listings, die PR #77 (individuelle Varianten-Preise) nicht rückwirkend erreicht
+  // hat, weil "Preise neu berechnen" sie mangels Preis-Diff nie in der Vorschau anzeigt.
+  interface RepairRow {
+    productId: number; title: string; ok: boolean; updatedSkuCount: number; error?: string;
+  }
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [repairResults, setRepairResults] = useState<RepairRow[]>([]);
+  const [repairError, setRepairError] = useState<string | null>(null);
+
+  const handleRepairVariantPrices = async () => {
+    setRepairOpen(true);
+    setRepairLoading(true);
+    setRepairError(null);
+    setRepairResults([]);
+    try {
+      const res = await fetch("/api/ebay/listings/repair-variant-prices", { method: "POST" });
+      const data = await res.json() as { results?: RepairRow[]; error?: string };
+      if (!res.ok || !data.results) throw new Error(data.error ?? "Fehler bei der Reparatur");
+      setRepairResults(data.results);
+    } catch (e) {
+      setRepairError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRepairLoading(false);
+    }
+  };
+
   const handleRecalcOpen = async () => {
     setRecalcOpen(true);
     setRecalcLoading(true);
@@ -649,6 +677,64 @@ export default function Listings() {
         </div>
       )}
 
+      {/* Varianten-Preise-reparieren-Modal (P-27/P-28 PR 3) */}
+      {repairOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setRepairOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 640, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #E2E8F0", position: "sticky", top: 0, background: "#fff", zIndex: 10 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>Varianten-Preise reparieren</span>
+              <button onClick={() => setRepairOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" }}>
+                <X size={18} color="#94A3B8" />
+              </button>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              {repairLoading && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "20px 0", color: "#64748B", fontSize: 13 }}>
+                  <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> Setze jede Varianten-SKU auf ihren eigenen Preis…
+                </div>
+              )}
+
+              {!repairLoading && repairError && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: "#FEF2F2", color: "#991B1B", fontSize: 13, marginBottom: 12 }}>
+                  {repairError}
+                </div>
+              )}
+
+              {!repairLoading && !repairError && repairResults.length === 0 && (
+                <div style={{ padding: "20px 0", textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
+                  Keine live gelisteten Varianten-Produkte gefunden.
+                </div>
+              )}
+
+              {!repairLoading && repairResults.length > 0 && (
+                <>
+                  <div style={{ fontSize: 12, color: "#64748B", marginBottom: 10 }}>
+                    {repairResults.filter(r => r.ok).length} von {repairResults.length} Produkten repariert
+                    ({repairResults.reduce((sum, r) => sum + r.updatedSkuCount, 0)} SKUs aktualisiert)
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {repairResults.map(row => (
+                      <div key={row.productId} style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+                        borderRadius: 8, border: "1px solid #F1F5F9", background: "#FAFAFA",
+                      }}>
+                        {row.ok ? <CheckCircle size={15} color="#16A34A" style={{ flexShrink: 0 }} /> : <XCircle size={15} color="#DC2626" style={{ flexShrink: 0 }} />}
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "#0F172A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.title}>
+                          {row.title}
+                        </div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: row.ok ? "#16A34A" : "#DC2626", flexShrink: 0 }}>
+                          {row.ok ? `${row.updatedSkuCount} SKUs aktualisiert` : (row.error ?? "fehlgeschlagen")}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ maxWidth: 780, margin: "0 auto" }}>
 
         {/* Header */}
@@ -671,6 +757,15 @@ export default function Listings() {
             }}>
               <TrendingUp size={14} />
               Preise neu berechnen
+            </button>
+            <button onClick={handleRepairVariantPrices} title="Einmalige Reparatur: setzt bei allen Varianten-Listings jede SKU auf ihren eigenen korrekten Preis, unabhängig von einer Preisänderung (behebt bereits live falsch bepreiste Listings, siehe PR #77)" style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "#FEF2F2", border: "1.5px solid #FECACA", borderRadius: 10,
+              padding: "8px 14px", fontSize: 13, fontWeight: 700, color: "#991B1B",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+              <TrendingUp size={14} />
+              Varianten-Preise reparieren (einmalig)
             </button>
             <button onClick={() => load(true)} disabled={loading} style={{
               display: "flex", alignItems: "center", gap: 6,

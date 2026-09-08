@@ -1311,6 +1311,50 @@ const app = new Hono()
     }
   })
 
+  // ─── P-27/P-28 PR 3: einmalige Reparatur bereits live falsch bepreister Varianten-Listings ──
+  // PR #77 hat den Code-Bug behoben (siehe updateEbayVariantPricesIndividually), aber bereits
+  // betroffene Listings NICHT rückwirkend repariert — recalculate-preview zeigt sie gar nicht
+  // erst an, weil der informative Vorschlagspreis (weiterhin das Maximum) identisch mit dem
+  // aktuellen, falschen Einheitspreis ist (kein Diff > DIFF_THRESHOLD). Dieser Endpunkt läuft
+  // deshalb OHNE Schwellenwert-Prüfung über ALLE live gelisteten Varianten-Produkte — bewusst
+  // eine einmalige, gezielte Aktion (kein Ersatz für den regulären "Preise neu berechnen"-Weg).
+  .post('/ebay/listings/repair-variant-prices', async (c) => {
+    try {
+      const { repairVariantPricesForProduct } = await import('./price-monitor');
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+
+      const listedProducts = await db.select().from(schema.products).where(eq(schema.products.ebayStatus, 'listed'));
+
+      const results: Array<{ productId: number; title: string; ok: boolean; updatedSkuCount: number; error?: string }> = [];
+
+      for (const product of listedProducts) {
+        let variantCount = 0;
+        try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
+        let variantGroupCount = 0;
+        try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
+        const isVariant = variantCount > 1 || variantGroupCount > 0;
+        if (!isVariant) continue;
+
+        const title = product.generatedTitle || product.title;
+        try {
+          const { ok, updatedSkuCount, error } = await repairVariantPricesForProduct(product);
+          results.push({ productId: product.id, title, ok, updatedSkuCount, error });
+        } catch (e) {
+          results.push({ productId: product.id, title, ok: false, updatedSkuCount: 0, error: String(e) });
+        }
+        await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
+      }
+
+      return c.json({ results, total: results.length }, 200);
+    } catch (e) {
+      console.error('[repair-variant-prices]', e);
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
   .post('/ebay/listings/bulk/end', async (c) => {
     try {
       const body = await c.req.json() as { itemIds: string[] };
