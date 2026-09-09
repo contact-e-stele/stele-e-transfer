@@ -5,7 +5,7 @@ import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
-import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity } from './ebay';
+import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
 import {
@@ -95,7 +95,17 @@ export async function updateEbayVariantPricesIndividually(
 
     const rowBySku = new Map<string, VariantPriceRow>();
     for (const row of rows) {
-      const suffix = Object.values(row.attrs ?? {}).map(slugify).filter(Boolean).join('-');
+      // P-27/P-28-Fix (2026-09-09, Live-Fund Produkte 71/77/92/95): row.attrs kann Felder wie
+      // "Ships From" enthalten, die NIE Teil der echten eBay-SKU sind (ebay.ts baut Varianten-
+      // SKUs nur aus den echten Varianten-GRUPPEN, nicht aus Zusatzfeldern wie Ships From).
+      // Ohne diesen Filter verlängerte sich die hier erwartete SKU um ein Segment (z.B.
+      // "-CHINA-MAINLAND"), das real nicht existiert → kein Match → Preis blieb für die
+      // betroffene(n) Variante(n) unverändert. NON_VARIATION_ASPECTS ist dieselbe Liste, die
+      // ebay.ts beim Listing-Erstellen für Item-Aspekte nutzt — eine Quelle, kein Duplikat.
+      const attrs = Object.fromEntries(
+        Object.entries(row.attrs ?? {}).filter(([k]) => !NON_VARIATION_ASPECTS.has(k))
+      );
+      const suffix = Object.values(attrs).map(slugify).filter(Boolean).join('-');
       rowBySku.set(`stele-${productId}-${suffix}`, row);
     }
     const fallbackPrice = safeUniformVariantPrice(rows);

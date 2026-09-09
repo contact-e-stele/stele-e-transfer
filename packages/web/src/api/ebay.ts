@@ -4,6 +4,16 @@
 import { calcSellPrice, isChinaShipping } from '../shared/pricing';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
 
+// Aspekte, die NIE als eBay-Artikelmerkmal/Pflichtfeld gesetzt werden UND (P-27/P-28-Fix,
+// 2026-09-09, Live-Fund Produkte 71/77/92/95) NIE Teil einer Varianten-SKU sind — würden sie in
+// row.attrs mitgezählt, verlängert sich die beim Reparieren/Aktualisieren erwartete SKU um ein
+// Segment (z.B. "-CHINA-MAINLAND"), das in der echten eBay-SKU nicht existiert → kein Match →
+// Preis kann für die betroffene(n) Variante(n) nicht individuell gesetzt werden. Modulweit
+// exportiert, damit jede Stelle, die eine Varianten-SKU baut oder Item-Aspekte filtert
+// (hier UND price-monitor.ts), dieselbe Liste nutzt statt eigener, potenziell auseinanderlaufender
+// Kopien.
+export const NON_VARIATION_ASPECTS = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
+
 const EBAY_CLIENT_ID = process.env.EBAY_CLIENT_ID ?? '';
 const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET ?? '';
 const EBAY_REFRESH_TOKEN = process.env.EBAY_REFRESH_TOKEN ?? '';
@@ -522,13 +532,10 @@ export const KNOWN_VARIATION_CATEGORIES: Record<string, string> = {
 async function getRequiredAspects(categoryId: string, token: string): Promise<Record<string, string | null>> {
   if (aspectCache.has(categoryId)) return aspectCache.get(categoryId)!;
 
-  // Aspekte die wir bewusst NICHT setzen — würden als störende Dropdown-Variante erscheinen
-  const ASPECT_BLACKLIST = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
-
   const all = await getRawAspectsForCategory(categoryId, token);
   const required: Record<string, string | null> = {};
   for (const aspect of all) {
-    if (aspect.aspectConstraint?.aspectRequired && !ASPECT_BLACKLIST.has(aspect.localizedAspectName)) {
+    if (aspect.aspectConstraint?.aspectRequired && !NON_VARIATION_ASPECTS.has(aspect.localizedAspectName)) {
       // Ersten erlaubten Wert nehmen oder null
       required[aspect.localizedAspectName] = aspect.aspectValues?.[0]?.localizedValue ?? null;
     }
@@ -1124,12 +1131,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler
   const variantAspectNames = new Set(groups.map(g => mapVariantGroupName(g.name)));
 
-  // Aspekte die grundsätzlich nicht im Listing erscheinen sollen
-  const ITEM_ASPECT_BLACKLIST = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
-
   // baseAspects ohne Varianten-Aspekte und ohne Blacklist (für Items und Gruppe)
   const baseAspectsFiltered = Object.fromEntries(
-    Object.entries(baseAspects).filter(([k]) => !variantAspectNames.has(k) && !ITEM_ASPECT_BLACKLIST.has(k))
+    Object.entries(baseAspects).filter(([k]) => !variantAspectNames.has(k) && !NON_VARIATION_ASPECTS.has(k))
   );
 
   // 1. Pro Kombination: Inventory Item anlegen
