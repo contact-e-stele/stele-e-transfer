@@ -97,7 +97,7 @@ function StatusBadge({ status, listingId }: { status: string; listingId: string 
     none: { bg: "#F1F5F9", color: "#64748B", icon: <Clock size={11} />, label: "Nicht gelistet" },
     listed: { bg: "#F0FDF4", color: "#16A34A", icon: <CheckCircle size={11} />, label: `eBay #${listingId?.slice(0, 8) ?? ""}` },
     error: { bg: "#FEF2F2", color: "#DC2626", icon: <XCircle size={11} />, label: "Fehler" },
-    unavailable: { bg: "#FEF2F2", color: "#DC2626", icon: <XCircle size={11} />, label: "AliExpress nicht verfügbar" },
+    unavailable: { bg: "#FFEDD5", color: "#C2410C", icon: <XCircle size={11} />, label: "AliExpress nicht verfügbar" },
   };
   const s = map[status] ?? map.none;
   return (
@@ -1273,7 +1273,7 @@ export default function Produkte() {
             { label: "eBay aktiv", value: stats.listed, color: "#16A34A", bg: "#F0FDF4" },
             { label: "Fehler", value: stats.errors, color: "#DC2626", bg: "#FEF2F2" },
             { label: "Preisalarm", value: stats.priceAlerts, color: "#F59E0B", bg: "#FFFBEB" },
-            { label: "AliExpress nicht verfügbar", value: stats.aliexpressUnavailable, color: "#DC2626", bg: "#FEF2F2" },
+            { label: "AliExpress nicht verfügbar", value: stats.aliexpressUnavailable, color: "#C2410C", bg: "#FFEDD5" },
           ].map(s => (
             <div key={s.label} style={{ background: s.bg, borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.value}</div>
@@ -1347,9 +1347,14 @@ export default function Produkte() {
           const thumb = images[0];
           return (
             <div key={product.id} style={{
-              background: "#fff", borderRadius: 16, padding: 18,
+              // Schritt 3 (P-27/P-28 PR 6, 2026-09-09): AliExpress-Quelle nicht verfügbar
+              // bekommt eine eigene, auffällige orange Kennzeichnung — unterscheidbar vom
+              // gelben Preisänderungs-Rahmen (priceChanged).
+              background: product.ebayStatus === "unavailable" ? "#FFF7ED" : "#fff",
+              borderRadius: 16, padding: 18,
               boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 12,
-              border: product.priceChanged ? "1.5px solid #FCD34D" : "1.5px solid transparent",
+              border: product.ebayStatus === "unavailable" ? "1.5px solid #FB923C"
+                : product.priceChanged ? "1.5px solid #FCD34D" : "1.5px solid transparent",
             }}>
               <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
                 {/* Thumbnail */}
@@ -1420,6 +1425,15 @@ export default function Produkte() {
                       </span>
                     )}
                   </div>
+                  {product.ebayStatus === "unavailable" && (
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700,
+                      color: "#C2410C", background: "#FFEDD5", border: "1px solid #FDBA74",
+                      borderRadius: 6, padding: "5px 8px", marginTop: 6, marginBottom: 2,
+                    }}>
+                      <AlertTriangle size={12} /> AliExpress-Quelle nicht verfügbar — neue Quelle muss gesucht werden
+                    </div>
+                  )}
                   <PriceBadge buy={product.buyPrice} sell={product.sellPrice} />
                   {/* VK Preis setzen */}
                   {editingPrice === product.id ? (

@@ -1,6 +1,6 @@
 import app from "./api";
 import { startBackupScheduler } from "./api/backup";
-import { startPriceMonitor } from "./api/price-monitor";
+import { startPriceMonitor, startAvailabilityCheckCron } from "./api/price-monitor";
 import { startOrderNotifier } from "./api/order-notifier";
 import { runMigrations } from "./db/migrate";
 import { runStartupCheck } from "./startup-check";
@@ -82,6 +82,10 @@ startBackupScheduler();
 
 // Preisüberwachung: alle 8h AliExpress-Preise prüfen, erster Check nach 2 Min (P-23)
 startPriceMonitor();
+
+// AliExpress-Verfügbarkeit: täglich prüfen, ob gelistete Quellartikel noch existieren,
+// bei Nichtverfügbarkeit eBay-Anzeige automatisch beenden (P-27/P-28 PR 6, Teil B/Schritt 2)
+startAvailabilityCheckCron();
 
 // Neue-Bestellung-Benachrichtigung: alle 120 Min, 8–22 Uhr Berlin-Zeit
 startOrderNotifier();
