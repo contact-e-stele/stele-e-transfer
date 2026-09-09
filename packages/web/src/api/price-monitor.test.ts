@@ -12,7 +12,7 @@ import { describe, expect, mock, test } from 'bun:test';
 process.env.TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'file:/tmp/price-monitor-test.db';
 const {
   computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct,
-  computeRepairBatchRange, updateEbayVariantPricesIndividually,
+  computeRepairBatchRange, updateEbayVariantPricesIndividually, runAvailabilityCheck,
 } = await import('./price-monitor');
 
 describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
@@ -263,5 +263,103 @@ describe('updateEbayVariantPricesIndividually — Ships-From/Blacklist-Filterung
     // echten eBay-SKUs vorkommt — der eigentliche Fix-Test oben beweist damit tatsächlich etwas.
     const realSkus = ['stele-71-RED'];
     expect(realSkus.includes('stele-71-RED-CHINA-MAINLAND')).toBe(false);
+  });
+});
+
+// P-27/P-28 PR 6, Schritt 2 (2026-09-09): täglicher Cron, der ALLE gelisteten Produkte gegen
+// checkSourceAvailability() prüft und bei Nichtverfügbarkeit die bestehende
+// markProductSourceUnavailable()-Logik wiederverwendet. Vollständig DI-testbar (Mock-Produktliste
+// + Mock checkFn/markUnavailableFn) — kein echter DB-/Netzwerkzugriff nötig, pauseMs:0 macht die
+// Tests schnell (kein echtes Rate-Limiting-Warten).
+describe('runAvailabilityCheck (täglicher AliExpress-Verfügbarkeits-Cron)', () => {
+  test('durchläuft alle aktiven Produkte und ruft checkFn genau einmal pro Produkt auf', async () => {
+    const products = [
+      { id: 1, sourceUrl: 'https://de.aliexpress.com/item/111.html', ebayListingId: 'ebay-1', ebayStatus: 'listed' },
+      { id: 2, sourceUrl: 'https://de.aliexpress.com/item/222.html', ebayListingId: 'ebay-2', ebayStatus: 'listed' },
+      { id: 3, sourceUrl: 'https://de.aliexpress.com/item/333.html', ebayListingId: 'ebay-3', ebayStatus: 'listed' },
+    ];
+    const checkFn = mock(async (_url: string) => ({ unavailable: false }));
+    const markUnavailableFn = mock(async () => ({ ok: true, ebayEnded: false }));
+
+    const result = await runAvailabilityCheck({ products, checkFn, markUnavailableFn, pauseMs: 0 });
+
+    expect(checkFn).toHaveBeenCalledTimes(3);
+    expect(markUnavailableFn).not.toHaveBeenCalled();
+    expect(result).toEqual({ checked: 3, markedUnavailable: 0, errors: 0 });
+  });
+
+  test('bei simulierter Nichtverfügbarkeit (z.B. 482 SHIP_TO_COUNTRY_PROHIBITED) wird markProductSourceUnavailable() korrekt aufgerufen', async () => {
+    const products = [
+      { id: 71, sourceUrl: 'https://de.aliexpress.com/item/1005006895494400.html', ebayListingId: 'ebay-71', ebayStatus: 'listed' },
+      { id: 77, sourceUrl: 'https://de.aliexpress.com/item/222.html', ebayListingId: 'ebay-77', ebayStatus: 'listed' },
+    ];
+    // Produkt 71 ist die tote Quelle (Live-Fund), Produkt 77 ist normal verfügbar.
+    const checkFn = mock(async (url: string) =>
+      url.includes('1005006895494400')
+        ? { unavailable: true, reason: 'DS-API Fehlercode 482 (SHIP_TO_COUNTRY_PROHIBITED)' }
+        : { unavailable: false }
+    );
+    const markUnavailableFn = mock(async (_product: { id: number }, _reason: string) => ({ ok: true, ebayEnded: true }));
+
+    const result = await runAvailabilityCheck({ products, checkFn, markUnavailableFn, pauseMs: 0 });
+
+    expect(markUnavailableFn).toHaveBeenCalledTimes(1);
+    const [calledProduct, calledReason] = markUnavailableFn.mock.calls[0];
+    expect(calledProduct.id).toBe(71);
+    expect(calledReason).toContain('482');
+    expect(result).toEqual({ checked: 2, markedUnavailable: 1, errors: 0 });
+  });
+
+  // Der zentrale False-Positive-Schutz auf Cron-Ebene: checkFn (checkSourceAvailability) gibt bei
+  // 403/429/5xx bereits selbst unavailable:false zurück (siehe aliexpress.test.ts) — dieser Test
+  // beweist zusätzlich, dass der Cron dieses Ergebnis unverändert respektiert und in KEINEM Fall
+  // markUnavailableFn aufruft, wenn checkFn kein sicheres Signal meldet.
+  test('bei False-Positive-Risiko (403/429/5xx, von checkFn bereits als unavailable:false gemeldet) wird NICHTS beendet', async () => {
+    const products = [
+      { id: 1, sourceUrl: 'https://de.aliexpress.com/item/111.html', ebayListingId: 'ebay-1', ebayStatus: 'listed' }, // 403
+      { id: 2, sourceUrl: 'https://de.aliexpress.com/item/222.html', ebayListingId: 'ebay-2', ebayStatus: 'listed' }, // 429
+      { id: 3, sourceUrl: 'https://de.aliexpress.com/item/333.html', ebayListingId: 'ebay-3', ebayStatus: 'listed' }, // 503
+      { id: 4, sourceUrl: 'https://de.aliexpress.com/item/444.html', ebayListingId: 'ebay-4', ebayStatus: 'listed' }, // Timeout
+    ];
+    const checkFn = mock(async (_url: string) => ({ unavailable: false }));
+    const markUnavailableFn = mock(async () => ({ ok: true, ebayEnded: false }));
+
+    const result = await runAvailabilityCheck({ products, checkFn, markUnavailableFn, pauseMs: 0 });
+
+    expect(markUnavailableFn).not.toHaveBeenCalled();
+    expect(result).toEqual({ checked: 4, markedUnavailable: 0, errors: 0 });
+  });
+
+  test('ein Fehler bei einem einzelnen Produkt (z.B. checkFn wirft) bricht den Lauf nicht ab und zählt als errors, nicht als markedUnavailable', async () => {
+    const products = [
+      { id: 1, sourceUrl: 'https://de.aliexpress.com/item/111.html', ebayListingId: 'ebay-1', ebayStatus: 'listed' },
+      { id: 2, sourceUrl: 'https://de.aliexpress.com/item/222.html', ebayListingId: 'ebay-2', ebayStatus: 'listed' },
+    ];
+    const checkFn = mock(async (url: string) => {
+      if (url.includes('111')) throw new Error('Netzwerkfehler');
+      return { unavailable: false };
+    });
+    const markUnavailableFn = mock(async () => ({ ok: true, ebayEnded: false }));
+
+    const result = await runAvailabilityCheck({ products, checkFn, markUnavailableFn, pauseMs: 0 });
+
+    expect(markUnavailableFn).not.toHaveBeenCalled();
+    expect(checkFn).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ checked: 2, markedUnavailable: 0, errors: 1 });
+  });
+
+  test('Produkte ohne AliExpress-sourceUrl werden übersprungen (nicht mitgezählt, checkFn nicht aufgerufen)', async () => {
+    const products = [
+      { id: 1, sourceUrl: 'https://de.aliexpress.com/item/111.html', ebayListingId: 'ebay-1', ebayStatus: 'listed' },
+      { id: 2, sourceUrl: null, ebayListingId: 'ebay-2', ebayStatus: 'listed' },
+      { id: 3, sourceUrl: 'https://www.amazon.de/dp/XYZ', ebayListingId: 'ebay-3', ebayStatus: 'listed' },
+    ];
+    const checkFn = mock(async (_url: string) => ({ unavailable: false }));
+    const markUnavailableFn = mock(async () => ({ ok: true, ebayEnded: false }));
+
+    const result = await runAvailabilityCheck({ products, checkFn, markUnavailableFn, pauseMs: 0 });
+
+    expect(checkFn).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ checked: 1, markedUnavailable: 0, errors: 0 });
   });
 });

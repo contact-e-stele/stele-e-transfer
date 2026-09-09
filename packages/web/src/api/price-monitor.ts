@@ -333,6 +333,71 @@ export async function markProductSourceUnavailable(
   return { ok: true, ebayEnded, error: endError };
 }
 
+const AVAILABILITY_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // täglich
+const AVAILABILITY_CHECK_PAUSE_MS = 1500; // Rate-Limiting/Pause zwischen AliExpress-Abrufen
+
+type AvailabilityCheckProduct = { id: number; sourceUrl: string | null; ebayListingId: string | null; ebayStatus: string | null };
+
+// Schritt 2 (P-27/P-28 PR 6, 2026-09-09): täglicher Cron, der für jedes aktuell auf eBay
+// gelistete Produkt prüft, ob der AliExpress-Quellartikel noch verfügbar ist — unabhängig vom
+// bestehenden 8h-Preis-Cron (der checkOne() nutzt classifySourceUnavailability() nur als
+// Nebeneffekt, WENN das reguläre Scraping bereits fehlgeschlagen ist; dieser Cron prüft aktiv
+// und gezielt JEDES gelistete Produkt). Nutzt bei Nichtverfügbarkeit die bestehende
+// markProductSourceUnavailable()-Logik wieder — keine eigene Beenden-/DB-Logik. DI-testbar
+// (products/checkFn/markUnavailableFn/pauseMs) wie repairVariantPricesForProduct() — die
+// Default-Werte greifen nur in echtem Betrieb, Tests übergeben eine Mock-Liste + Mock-Funktionen
+// und brauchen dadurch keinen echten DB-/Netzwerkzugriff.
+export async function runAvailabilityCheck(options: {
+  products?: AvailabilityCheckProduct[];
+  checkFn?: (url: string) => Promise<{ unavailable: boolean; reason?: string }>;
+  markUnavailableFn?: typeof markProductSourceUnavailable;
+  pauseMs?: number;
+} = {}): Promise<{ checked: number; markedUnavailable: number; errors: number }> {
+  const {
+    products = await db.select().from(schema.products).where(eq(schema.products.ebayStatus, 'listed')),
+    checkFn = checkSourceAvailability,
+    markUnavailableFn = markProductSourceUnavailable,
+    pauseMs = AVAILABILITY_CHECK_PAUSE_MS,
+  } = options;
+
+  console.log(`[AvailabilityCheck] Starte AliExpress-Verfügbarkeits-Prüfung für ${products.length} gelistete Produkte...`);
+  let checked = 0, markedUnavailable = 0, errors = 0;
+
+  for (const product of products) {
+    const url = product.sourceUrl;
+    if (!url || !url.includes('aliexpress')) continue;
+    checked++;
+    try {
+      const { unavailable, reason } = await checkFn(url);
+      if (unavailable) {
+        console.log(`[AvailabilityCheck] ${product.id}: Quelle nicht mehr verfügbar (${reason})`);
+        await markUnavailableFn(product, reason ?? 'AliExpress-Quellartikel nicht mehr verfügbar');
+        markedUnavailable++;
+      }
+    } catch (e) {
+      console.warn(`[AvailabilityCheck] ${product.id}: Prüfung fehlgeschlagen:`, e);
+      errors++;
+    }
+    if (pauseMs > 0) await new Promise(r => setTimeout(r, pauseMs));
+  }
+
+  console.log(`[AvailabilityCheck] Fertig — geprüft: ${checked}, als nicht verfügbar markiert: ${markedUnavailable}, Fehler: ${errors}`);
+  return { checked, markedUnavailable, errors };
+}
+
+export function startAvailabilityCheckCron() {
+  // 5 Min nach Start (versetzt zum bestehenden Preis-Cron, der bei 2 Min läuft)
+  setTimeout(async () => {
+    await runAvailabilityCheck().catch(e => console.error('[AvailabilityCheck] Startup check error:', e));
+  }, 5 * 60 * 1000);
+
+  setInterval(async () => {
+    await runAvailabilityCheck().catch(e => console.error('[AvailabilityCheck] Interval error:', e));
+  }, AVAILABILITY_CHECK_INTERVAL_MS);
+
+  console.log('[AvailabilityCheck] Scheduler aktiv — täglich, erster Check in 5 Min');
+}
+
 export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number; stockUpdated: number }> {
   console.log('[PriceMonitor] Starte Preisüberwachung...');
 

@@ -156,7 +156,11 @@ export function formatGpsrText(gpsr: GpsrInfo): string {
 }
 
 // ── AliExpress DS API — product.get (schnellste Methode, keine Browser nötig) ──
-async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null> {
+
+// Schritt 1 (P-27/P-28 PR 6, 2026-09-09): Token-Lookup + Signierung + Request/Parse aus
+// scrapeWithDsApi() extrahiert, damit checkDsApiUnavailability() (s.u., für die
+// Verfügbarkeitsprüfung) dieselbe Anfrage stellen kann, ohne die Logik zu duplizieren.
+async function fetchDsApiRaw(productId: string): Promise<{ raw: Record<string, unknown>; accessToken: string } | null> {
   const { createHash } = await import('node:crypto');
   const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
   const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
@@ -183,36 +187,54 @@ async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null
     return createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
   }
 
-  try {
-    const params: Record<string, string> = {
-      app_key: APP_KEY,
-      method: 'aliexpress.ds.product.get',
-      timestamp: String(Date.now()),
-      format: 'json',
-      sign_method: 'md5',
-      v: '2.0',
-      access_token: accessToken,
-      product_id: productId,
-      ship_from_country: 'DE',
-      ship_to_country: 'DE',
-      target_currency: 'EUR',
-      target_language: 'DE',
-    };
-    params.sign = sign(APP_SECRET, params);
+  const params: Record<string, string> = {
+    app_key: APP_KEY,
+    method: 'aliexpress.ds.product.get',
+    timestamp: String(Date.now()),
+    format: 'json',
+    sign_method: 'md5',
+    v: '2.0',
+    access_token: accessToken,
+    product_id: productId,
+    ship_from_country: 'DE',
+    ship_to_country: 'DE',
+    target_currency: 'EUR',
+    target_language: 'DE',
+  };
+  params.sign = sign(APP_SECRET, params);
 
-    console.log(`[DS API] Rufe product.get für ${productId} auf...`);
-    const res = await fetch(IOP_EP, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(params),
-      signal: AbortSignal.timeout(15000),
-    });
-    const raw = await res.json() as Record<string, unknown>;
-    console.log('[DS API] Response:', JSON.stringify(raw).slice(0, 300));
+  console.log(`[DS API] Rufe product.get für ${productId} auf...`);
+  const res = await fetch(IOP_EP, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params),
+    signal: AbortSignal.timeout(15000),
+  });
+  const raw = await res.json() as Record<string, unknown>;
+  console.log('[DS API] Response:', JSON.stringify(raw).slice(0, 300));
+  return { raw, accessToken };
+}
+
+async function scrapeWithDsApi(productId: string): Promise<ScrapedProduct | null> {
+  try {
+    const fetched = await fetchDsApiRaw(productId);
+    if (!fetched) return null;
+    const { raw, accessToken } = fetched;
 
     // Response-Struktur: aliexpress_ds_product_get_response.result
     const resp = raw['aliexpress_ds_product_get_response'] as Record<string, unknown> | undefined;
-    if (!resp) { console.log('[DS API] Kein aliexpress_ds_product_get_response'); return null; }
+    if (!resp) {
+      console.log('[DS API] Kein aliexpress_ds_product_get_response');
+      // Schritt 1: bei einem echten API-Fehler (kein Erfolgs-Wrapper) steckt der Grund meist in
+      // error_response.code/sub_code — nur zu Diagnosezwecken loggen, keine Aktion hier (das
+      // eigentliche Verfügbarkeits-Signal wird separat über checkDsApiUnavailability() geprüft,
+      // NICHT hier, damit scrapeWithDsApi() ausschließlich fürs Scrapen zuständig bleibt).
+      const errorResponse = raw['error_response'] as { code?: string | number; sub_code?: string; msg?: string; sub_msg?: string } | undefined;
+      if (errorResponse) {
+        console.log(`[DS API] error_response: code=${errorResponse.code} sub_code=${errorResponse.sub_code} msg=${errorResponse.msg ?? errorResponse.sub_msg}`);
+      }
+      return null;
+    }
     const result = resp['result'] as Record<string, unknown> | undefined;
     if (!result) { console.log('[DS API] Kein result'); return null; }
 
@@ -1003,8 +1025,60 @@ function extractVariants(html: string): Array<{ name: string; values: string[] }
 // ── Playwright Scraper ────────────────────────────────────────────────────────
 // Intercepts mtop.aliexpress.pdp.pc.query to get all variant prices accurately
 // Uses @sparticuz/chromium for serverless-compatible headless Chrome
+// Schritt 1 (P-27/P-28 PR 6 Folge-Fix, 2026-09-09, live nachgewiesen): bei toten/blockierten
+// Quellen (z.B. Fehlercode 482 SHIP_TO_COUNTRY_PROHIBITED) hängt der Playwright-Aufruf teils
+// unendlich (>3 Min. beobachtet, kein Timeout, kein Fehler) — vermutlich in chromium.launch()
+// oder browser.close(), NICHT in den bereits intern begrenzten goto()/waitForTimeout()-Schritten.
+// Deshalb hier ein hartes Außen-Timeout, das die GESAMTE Funktion umschließt, unabhängig davon,
+// WO genau sie hängt — die zurückgegebene Promise MUSS immer innerhalb dieser Frist auflösen,
+// damit scrapeAliExpressUrl() (und darüber checkOne()) nie unbegrenzt blockiert.
+const PLAYWRIGHT_HARD_TIMEOUT_MS = 18000;
+
+// Generischer Timeout-Wrapper, aus scrapeWithPlaywright() extrahiert und exportiert, damit die
+// eigentliche Absicherung ("Promise darf nie unaufgelöst bleiben") direkt getestet werden kann
+// (echtes Playwright/Chromium ist im Sandbox/CI nicht verfügbar, PLAYWRIGHT_AVAILABLE=false —
+// ein Test gegen scrapeWithPlaywright() selbst könnte den Hänge-Fall daher nie reproduzieren).
+// work darf NIE geworfen/abgelehnt werden (Aufrufer müssen intern try/catch behalten) — bei
+// Timeout wird stattdessen einfach mit null aufgelöst, das hängende work bleibt im Hintergrund
+// unbeobachtet (kein echtes Promise-Cancel in JS möglich), blockiert aber den Aufrufer nicht mehr.
+export async function raceWithHardTimeout<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  onTimeout?: () => void,
+): Promise<T | null> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timeoutId = setTimeout(() => {
+      onTimeout?.();
+      resolve(null);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([work, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null> {
   if (!PLAYWRIGHT_AVAILABLE) return null;
+  let browser: { close: () => Promise<void> } | undefined;
+  const scrapePromise = scrapeWithPlaywrightInner(url, (b) => { browser = b; });
+
+  return raceWithHardTimeout(scrapePromise, PLAYWRIGHT_HARD_TIMEOUT_MS, () => {
+    console.warn(`[Playwright] Hartes Timeout nach ${PLAYWRIGHT_HARD_TIMEOUT_MS}ms — Quelle antwortet nicht, breche ab`);
+    try { void browser?.close().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+  });
+}
+
+// Die eigentliche Scraping-Logik — unverändert gegenüber vorher, nur in eine eigene Funktion
+// ausgelagert, damit scrapeWithPlaywright() sie per Promise.race gegen das harte Timeout laufen
+// lassen kann. onBrowser meldet die Browser-Instanz nach außen, sobald sie existiert, damit das
+// Timeout sie im Ernstfall noch schließen kann.
+async function scrapeWithPlaywrightInner(
+  url: string,
+  onBrowser: (browser: { close: () => Promise<void> }) => void,
+): Promise<ScrapedProduct | null> {
   let browser;
   try {
     const { chromium: playwrightChromium } = await import('playwright-core');
@@ -1037,6 +1111,7 @@ async function scrapeWithPlaywright(url: string): Promise<ScrapedProduct | null>
       executablePath: execPath,
       args: launchArgs,
     });
+    onBrowser(browser);
     const context = await browser.newContext({
       locale: 'de-DE',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -1331,7 +1406,15 @@ export interface UnavailabilityCheckResult {
   reason?: string;
 }
 
-export function classifySourceUnavailability(status: number, bodyText: string): UnavailabilityCheckResult {
+// Schritt 1 (2026-09-09, live nachgewiesen an mehreren toten Quellen): die DS-API liefert bei
+// endgültig blockierten/toten Artikeln einen eigenen, eindeutigen Fehlercode zurück — 482 mit
+// sub_code "isv.SHIP_TO_COUNTRY_PROHIBITED" — statt eines HTTP-Fehlers oder Textmarkers auf der
+// HTML-Seite. dsApiErrorCode nimmt den rohen Fehlercode/sub_code als String entgegen (z.B. "482"
+// oder "isv.SHIP_TO_COUNTRY_PROHIBITED" oder beides kombiniert) — bewusst als zusätzliches,
+// unabhängiges Signal, NICHT als Ersatz für die bestehenden HTTP/Text-Prüfungen.
+const DS_API_UNAVAILABLE_CODES = ['482', 'ship_to_country_prohibited'];
+
+export function classifySourceUnavailability(status: number, bodyText: string, dsApiErrorCode?: string | number): UnavailabilityCheckResult {
   if (status === 404) {
     return { unavailable: true, reason: 'HTTP 404 (Quellartikel nicht gefunden)' };
   }
@@ -1348,7 +1431,34 @@ export function classifySourceUnavailability(status: number, bodyText: string): 
   if (matched) {
     return { unavailable: true, reason: `Textmarker gefunden: "${matched}"` };
   }
+  if (dsApiErrorCode != null) {
+    const codeText = String(dsApiErrorCode).toLowerCase();
+    const matchedCode = DS_API_UNAVAILABLE_CODES.find(c => codeText.includes(c));
+    if (matchedCode) {
+      return { unavailable: true, reason: `DS-API Fehlercode 482 (SHIP_TO_COUNTRY_PROHIBITED)` };
+    }
+  }
   return { unavailable: false };
+}
+
+// Ruft die DS-API (product.get) NUR zur Fehlercode-Diagnose auf — reine Verfügbarkeitsprüfung,
+// keine Datenextraktion (die übernimmt scrapeWithDsApi() im normalen Scrape-Pfad). Nutzt
+// dieselbe fetchDsApiRaw()-Anfrage, damit die Signier-/Token-Logik nicht dupliziert wird.
+export async function checkDsApiUnavailability(productId: string): Promise<UnavailabilityCheckResult> {
+  try {
+    const fetched = await fetchDsApiRaw(productId);
+    if (!fetched) return { unavailable: false };
+    const { raw } = fetched;
+    if (raw['aliexpress_ds_product_get_response']) return { unavailable: false }; // Erfolg — nichts zu erkennen
+    const errorResponse = raw['error_response'] as { code?: string | number; sub_code?: string } | undefined;
+    if (!errorResponse) return { unavailable: false };
+    const combinedCode = `${errorResponse.code ?? ''} ${errorResponse.sub_code ?? ''}`.trim();
+    return classifySourceUnavailability(0, '', combinedCode);
+  } catch {
+    // Netzwerkfehler/Timeout bei der DS-API selbst: bewusst KEINE Aussage (gleiches
+    // False-Positive-Schutzprinzip wie in checkSourceAvailability()).
+    return { unavailable: false };
+  }
 }
 
 // Eigene, leichte Anfrage an die AliExpress-Produktseite — bewusst UNABHÄNGIG vom bestehenden
@@ -1364,7 +1474,17 @@ export async function checkSourceAvailability(url: string): Promise<Unavailabili
     if (status === 404 || status === 200) {
       try { bodyText = await res.text(); } catch { /* ignore */ }
     }
-    return classifySourceUnavailability(status, bodyText);
+    const httpResult = classifySourceUnavailability(status, bodyText);
+    if (httpResult.unavailable) return httpResult;
+
+    // Schritt 1: zusätzlich die DS-API auf den spezifischen 482-Fehlercode prüfen — ein
+    // HTTP-200-Seitenaufruf allein zeigt SHIP_TO_COUNTRY_PROHIBITED nicht zuverlässig an.
+    const productId = url.match(/\/item\/(\d+)\.html/)?.[1] ?? url.match(/[?&]id=(\d+)/)?.[1];
+    if (productId) {
+      const dsApiResult = await checkDsApiUnavailability(productId);
+      if (dsApiResult.unavailable) return dsApiResult;
+    }
+    return { unavailable: false };
   } catch {
     // Netzwerkfehler/Timeout: bewusst KEINE Aussage, nicht "nicht verfügbar" — verhindert False
     // Positives bei Scraping-Infrastruktur-Problemen (IP-Sperre, DNS-Fehler, Render-Netzwerk-Hänger).
