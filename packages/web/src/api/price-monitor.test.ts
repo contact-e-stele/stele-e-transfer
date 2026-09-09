@@ -103,35 +103,64 @@ describe('repairVariantPricesForProduct (POST /ebay/listings/repair-variant-pric
   });
 });
 
-// P-27/P-28 PR 4 (2026-09-09, Live-Fund): repair-variant-prices verarbeitete bisher ALLE
-// Varianten-Produkte in einem einzigen Request — bei ~15-20 Produkten kappte Render die
-// Verbindung, bevor alle durch waren ("Unexpected token '<'" im Frontend statt JSON). Dieser
-// Test prüft nur die reine Chunking-Arithmetik (kein DB-/eBay-Zugriff nötig).
+// P-27/P-28 PR 4+5 (2026-09-09, Live-Funde): repair-variant-prices verarbeitete zunächst ALLE
+// Varianten-Produkte in einem einzigen Request (Render kappte die Verbindung, "Unexpected
+// token '<'" im Frontend statt JSON). PR 4s Fix (feste Anzahl PRODUKTE pro Charge) reichte
+// nicht — ein einzelnes Produkt mit vielen Varianten (Live-Fund: 11) sprengte das Zeitbudget
+// einer Charge unabhängig von der Produktzahl. computeRepairBatchRange() ist jetzt varianten-/
+// SKU-gewichtet: nimmt die Varianten-Anzahl pro Produkt als Array entgegen. Diese Tests prüfen
+// nur die reine Chunking-Arithmetik (kein DB-/eBay-Zugriff nötig).
 describe('computeRepairBatchRange (Chunking für POST /ebay/listings/repair-variant-prices)', () => {
-  test('12 Varianten-Produkte, limit=5 → 3 Batches, done erst beim dritten Aufruf true', () => {
-    const total = 12;
-    const limit = 5;
+  test('12 Produkte mit je 1 Variante, maxVariantsPerBatch=5 → 3 Batches, done erst beim dritten Aufruf true', () => {
+    const variantCounts = Array(12).fill(1);
+    const maxVariantsPerBatch = 5;
 
-    const batch1 = computeRepairBatchRange(total, 0, limit);
+    const batch1 = computeRepairBatchRange(variantCounts, 0, maxVariantsPerBatch);
     expect(batch1).toEqual({ start: 0, end: 5, done: false });
 
-    const batch2 = computeRepairBatchRange(total, batch1.end, limit);
+    const batch2 = computeRepairBatchRange(variantCounts, batch1.end, maxVariantsPerBatch);
     expect(batch2).toEqual({ start: 5, end: 10, done: false });
 
-    const batch3 = computeRepairBatchRange(total, batch2.end, limit);
+    const batch3 = computeRepairBatchRange(variantCounts, batch2.end, maxVariantsPerBatch);
     expect(batch3).toEqual({ start: 10, end: 12, done: true });
   });
 
+  test('Live-Fund-Szenario: ein Produkt mit 11 Varianten sprengt allein schon das Limit und bildet seine eigene Charge', () => {
+    // Nachgebaut aus dem Live-Fund: Produkte 70,71,77,92,95 — Produkt 71 hat 11 Varianten,
+    // die anderen 1-2. maxVariantsPerBatch=6 (Default).
+    const variantCounts = [3, 11, 2, 1, 4, 2]; // Summe 23, insgesamt > 6
+    const maxVariantsPerBatch = 6;
+
+    // Charge 1: nur Produkt 0 (3 Varianten) — Produkt 1 (11) würde 3+11=14 > 6 sprengen.
+    const batch1 = computeRepairBatchRange(variantCounts, 0, maxVariantsPerBatch);
+    expect(batch1).toEqual({ start: 0, end: 1, done: false });
+
+    // Charge 2: Produkt 1 allein (11 Varianten) — liegt allein schon über dem Limit, bildet
+    // trotzdem nur seine eigene Charge statt mit anderen Produkten zusammengelegt zu werden.
+    const batch2 = computeRepairBatchRange(variantCounts, batch1.end, maxVariantsPerBatch);
+    expect(batch2).toEqual({ start: 1, end: 2, done: false });
+
+    // Charge 3: Produkte 2+3+4 (2+1+4=7 > 6, also nur 2+3 = 3, dann Produkt 4 (4) würde
+    // 3+4=7>6 sprengen) → Produkte 2,3 (Summe 3).
+    const batch3 = computeRepairBatchRange(variantCounts, batch2.end, maxVariantsPerBatch);
+    expect(batch3).toEqual({ start: 2, end: 4, done: false });
+
+    // Charge 4: Produkte 4,5 (4+2=6 <= 6) → fertig.
+    const batch4 = computeRepairBatchRange(variantCounts, batch3.end, maxVariantsPerBatch);
+    expect(batch4).toEqual({ start: 4, end: 6, done: true });
+  });
+
   test('leere Liste ist sofort done', () => {
-    expect(computeRepairBatchRange(0, 0, 5)).toEqual({ start: 0, end: 0, done: true });
+    expect(computeRepairBatchRange([], 0, 6)).toEqual({ start: 0, end: 0, done: true });
   });
 
   test('offset über der Gesamtzahl liefert eine leere, aber done-markierte Charge (kein Absturz)', () => {
-    expect(computeRepairBatchRange(12, 100, 5)).toEqual({ start: 12, end: 12, done: true });
+    expect(computeRepairBatchRange(Array(12).fill(1), 100, 6)).toEqual({ start: 12, end: 12, done: true });
   });
 
-  test('exakt durch limit teilbare Gesamtzahl wird nach dem letzten Batch als done markiert', () => {
-    expect(computeRepairBatchRange(10, 0, 5)).toEqual({ start: 0, end: 5, done: false });
-    expect(computeRepairBatchRange(10, 5, 5)).toEqual({ start: 5, end: 10, done: true });
+  test('exakt durch das Limit teilbare Gesamt-Variantenzahl wird nach der letzten Charge als done markiert', () => {
+    const variantCounts = Array(10).fill(1);
+    expect(computeRepairBatchRange(variantCounts, 0, 5)).toEqual({ start: 0, end: 5, done: false });
+    expect(computeRepairBatchRange(variantCounts, 5, 5)).toEqual({ start: 5, end: 10, done: true });
   });
 });

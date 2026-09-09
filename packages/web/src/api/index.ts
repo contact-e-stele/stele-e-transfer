@@ -1319,21 +1319,26 @@ const app = new Hono()
   // deshalb OHNE Schwellenwert-Prüfung über die live gelisteten Varianten-Produkte — bewusst eine
   // einmalige, gezielte Aktion (kein Ersatz für den regulären "Preise neu berechnen"-Weg).
   //
-  // PR 4 (2026-09-09, Live-Fund): bei ~15-20 Varianten-Produkten in EINEM Request (pro Produkt
-  // eBay-Token, SKU-Abfrage, pro SKU GET+PUT, 400ms Pause) kappte Render die Verbindung, bevor
-  // alle durch waren — Frontend bekam eine HTML-Fehlerseite statt JSON. Jetzt in kleinen, garantiert
-  // schnellen Chargen (offset/limit) statt eines einzigen Requests — kein Preis-Logik-Unterschied,
-  // reines Chunking. computeRepairBatchRange()/repairVariantPricesForProduct() unverändert.
+  // PR 4 (2026-09-09, Live-Fund): bei ~15-20 Varianten-Produkten in EINEM Request kappte Render
+  // die Verbindung, bevor alle durch waren — Frontend bekam eine HTML-Fehlerseite statt JSON.
+  // Erster Fix: feste Anzahl PRODUKTE pro Charge (offset/limit).
+  //
+  // PR 5 (2026-09-09, Live-Fund): reichte nicht — ein Produkt mit 11 Varianten allein sprengte
+  // schon das Zeitbudget einer 5-Produkte-Charge (15 SKU-Updates, 39s). Jetzt varianten-/
+  // SKU-basiert statt produkt-basiert (computeRepairBatchRange nimmt die Varianten-Anzahl pro
+  // Produkt entgegen) — kein Preis-Logik-Unterschied, reines Chunking.
+  // `limit` bleibt der Query-Parameter-Name (Frontend unverändert), bedeutet jetzt aber
+  // "maximale Varianten-Summe pro Charge" statt "Anzahl Produkte pro Charge".
   .post('/ebay/listings/repair-variant-prices', async (c) => {
     try {
-      const { repairVariantPricesForProduct, computeRepairBatchRange } = await import('./price-monitor');
+      const { repairVariantPricesForProduct, computeRepairBatchRange, computeVariantPriceRows } = await import('./price-monitor');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
 
       const offset = Math.max(0, parseInt(c.req.query('offset') ?? '0', 10) || 0);
-      const limit = Math.max(1, parseInt(c.req.query('limit') ?? '5', 10) || 5);
+      const maxVariantsPerBatch = Math.max(1, parseInt(c.req.query('limit') ?? '6', 10) || 6);
 
       const listedProducts = await db.select().from(schema.products).where(eq(schema.products.ebayStatus, 'listed'));
 
@@ -1345,7 +1350,14 @@ const app = new Hono()
         return variantCount > 1 || variantGroupCount > 0;
       });
 
-      const { start, end, done } = computeRepairBatchRange(variantProducts.length, offset, limit);
+      // Tatsächliche Varianten-/SKU-Anzahl je Produkt — dieselbe Funktion, die auch
+      // repairVariantPricesForProduct() intern nutzt, damit die Charge-Gewichtung exakt der
+      // Anzahl SKUs entspricht, die gleich wirklich an eBay geschrieben werden.
+      const variantCounts = variantProducts.map(p =>
+        computeVariantPriceRows(p.variantPrices, p.shippingCost, p.shipsFrom, p.adRate).length
+      );
+
+      const { start, end, done } = computeRepairBatchRange(variantCounts, offset, maxVariantsPerBatch);
       const batch = variantProducts.slice(start, end);
 
       const results: Array<{ productId: number; title: string; ok: boolean; updatedSkuCount: number; error?: string }> = [];
@@ -1360,7 +1372,7 @@ const app = new Hono()
         await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
       }
 
-      return c.json({ results, offset, limit, totalVariantProducts: variantProducts.length, done }, 200);
+      return c.json({ results, offset, limit: maxVariantsPerBatch, totalVariantProducts: variantProducts.length, done }, 200);
     } catch (e) {
       console.error('[repair-variant-prices]', e);
       return c.json({ error: String(e) }, 500);

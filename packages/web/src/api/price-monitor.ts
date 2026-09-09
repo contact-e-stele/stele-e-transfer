@@ -135,14 +135,33 @@ export async function repairVariantPricesForProduct(
   return { ok, updatedSkuCount: updatedCount };
 }
 
-// P-27/P-28 PR 4 (2026-09-09, Live-Fund): repair-variant-prices verarbeitete bisher ALLE
-// live gelisteten Varianten-Produkte in einem einzigen Request — bei ~15-20 Produkten (pro
-// Produkt eBay-Token, SKU-Abfrage, pro SKU GET+PUT, 400ms Pause) kappte Render die Verbindung,
-// bevor alle durch waren (HTML-Fehlerseite statt JSON im Frontend). Reine Chunking-Arithmetik,
-// keine Preis-Logik — extrahiert für isolierte Tests ohne DB/eBay-Zugriff.
-export function computeRepairBatchRange(total: number, offset: number, limit: number): { start: number; end: number; done: boolean } {
+// P-27/P-28 PR 5 (2026-09-09, Live-Fund): PR 4s "N Produkte pro Batch" reichte nicht — ein
+// einzelnes Produkt mit vielen Varianten (Live-Fund: Produkt mit 11 Varianten) kann die
+// Batch-Laufzeit unabhängig von der Produktzahl sprengen (5 Produkte, davon eines mit 11
+// Varianten = 15 SKU-Updates in einem Request, 39s reine Verarbeitungszeit → Render-
+// Verbindungs-Timeout trotz serverseitig gesunder Verarbeitung). Jetzt varianten-/SKU-basiert:
+// Produkte werden in eine Charge gepackt, bis die SUMME ihrer Varianten `maxVariantsPerBatch`
+// erreicht/überschreitet. Ein einzelnes Produkt, das allein schon über dem Limit liegt, bildet
+// notfalls seine eigene (größere) Charge — lieber ein längerer Einzel-Request als ein Batch
+// mehrerer Produkte, der das Zeitbudget trotzdem sprengt. Reine Chunking-Arithmetik, keine
+// Preis-Logik — nimmt die Varianten-Anzahl pro Produkt als vorberechnetes Array entgegen, damit
+// sie isoliert ohne DB-/eBay-Zugriff testbar bleibt.
+export function computeRepairBatchRange(
+  variantCounts: number[], offset: number, maxVariantsPerBatch: number
+): { start: number; end: number; done: boolean } {
+  const total = variantCounts.length;
   const start = Math.max(0, Math.min(offset, total));
-  const end = Math.max(start, Math.min(total, start + Math.max(1, limit)));
+  if (start >= total) return { start: total, end: total, done: true };
+
+  let end = start;
+  let sum = 0;
+  while (end < total) {
+    const weight = Math.max(1, variantCounts[end]);
+    if (end > start && sum + weight > maxVariantsPerBatch) break;
+    sum += weight;
+    end++;
+    if (sum >= maxVariantsPerBatch) break;
+  }
   return { start, end, done: end >= total };
 }
 
