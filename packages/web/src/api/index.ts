@@ -628,28 +628,9 @@ const app = new Hono()
   .delete('/ebay/listings/:itemId', async (c) => {
     const itemId = c.req.param('itemId');
     try {
-      const token = await (await import('./ebay')).getAccessToken();
-      const xml = `<?xml version="1.0" encoding="utf-8"?>
-<EndItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
-  <ItemID>${itemId}</ItemID>
-  <EndingReason>NotAvailable</EndingReason>
-</EndItemRequest>`;
-
-      const res = await fetch('https://api.ebay.com/ws/api.dll', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/xml',
-          'X-EBAY-API-SITEID': '77',
-          'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
-          'X-EBAY-API-CALL-NAME': 'EndItem',
-          'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
-        },
-        body: xml,
-      });
-
-      const text = await res.text();
-      const hasError = text.includes('<Ack>Failure</Ack>');
+      const { getAccessToken, endListing } = await import('./ebay');
+      const token = await getAccessToken();
+      const { ok, error } = await endListing(itemId, token);
 
       // DB-Produkt auch updaten wenn verknüpft
       const { db, schema } = await import('../db/index').then(async m => {
@@ -664,9 +645,8 @@ const app = new Hono()
         }).where(eq(schema.products.ebayListingId, itemId));
       }
 
-      if (hasError) {
-        const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
-        return c.json({ warning: errMsg }, 200);
+      if (!ok) {
+        return c.json({ warning: error }, 200);
       }
       return c.json({ ok: true }, 200);
     } catch (e) {
@@ -1329,6 +1309,14 @@ const app = new Hono()
   // Produkt entgegen) — kein Preis-Logik-Unterschied, reines Chunking.
   // `limit` bleibt der Query-Parameter-Name (Frontend unverändert), bedeutet jetzt aber
   // "maximale Varianten-Summe pro Charge" statt "Anzahl Produkte pro Charge".
+  //
+  // PR 6 (2026-09-09, Live-Fund): der Render-Prozess restartet in mehreren beobachteten Läufen
+  // konsistent kurz nach dem schwersten Batch (Produkt mit 10+ Varianten) — vermutlich ein
+  // Memory-/Health-Check-Neustart, unabhängig vom Chunking-Fix aus PR 5. Jeder Klick begann
+  // danach wieder bei offset=0, weil der Fortschritt nur im Client-Modal (React-State) lebte.
+  // Fortschritt jetzt in app_settings (bestehender Key-Value-Store, KEINE Schema-Änderung nötig)
+  // persistiert: ohne explizites ?offset= wird beim persistierten Wert fortgesetzt, ein
+  // Server-Neustart verliert den Lauf also nicht mehr. ?offset=0 setzt explizit zurück.
   .post('/ebay/listings/repair-variant-prices', async (c) => {
     try {
       const { repairVariantPricesForProduct, computeRepairBatchRange, computeVariantPriceRows } = await import('./price-monitor');
@@ -1337,7 +1325,15 @@ const app = new Hono()
         return { db: m.db, schema: s };
       });
 
-      const offset = Math.max(0, parseInt(c.req.query('offset') ?? '0', 10) || 0);
+      const REPAIR_OFFSET_KEY = 'repair_variant_prices_offset';
+      const offsetParam = c.req.query('offset');
+      let offset: number;
+      if (offsetParam != null) {
+        offset = Math.max(0, parseInt(offsetParam, 10) || 0);
+      } else {
+        const [persisted] = await db.select().from(schema.appSettings).where(eq(schema.appSettings.key, REPAIR_OFFSET_KEY));
+        offset = persisted ? Math.max(0, parseInt(persisted.value, 10) || 0) : 0;
+      }
       const maxVariantsPerBatch = Math.max(1, parseInt(c.req.query('limit') ?? '6', 10) || 6);
 
       const listedProducts = await db.select().from(schema.products).where(eq(schema.products.ebayStatus, 'listed'));
@@ -1361,7 +1357,8 @@ const app = new Hono()
       const batch = variantProducts.slice(start, end);
 
       const results: Array<{ productId: number; title: string; ok: boolean; updatedSkuCount: number; error?: string }> = [];
-      for (const product of batch) {
+      for (let i = 0; i < batch.length; i++) {
+        const product = batch[i];
         const title = product.generatedTitle || product.title;
         try {
           const { ok, updatedSkuCount, error } = await repairVariantPricesForProduct(product);
@@ -1369,6 +1366,14 @@ const app = new Hono()
         } catch (e) {
           results.push({ productId: product.id, title, ok: false, updatedSkuCount: 0, error: String(e) });
         }
+        // Fortschritt NACH JEDEM Produkt persistieren (nicht erst am Batch-Ende) — bricht der
+        // Server-Prozess mitten in einer Charge ab, geht dadurch höchstens das eine gerade
+        // laufende Produkt verloren, nicht die ganze Charge.
+        const processedOffset = start + i + 1;
+        const isLastProduct = processedOffset >= variantProducts.length;
+        await db.insert(schema.appSettings)
+          .values({ key: REPAIR_OFFSET_KEY, value: isLastProduct ? '0' : String(processedOffset), updatedAt: new Date().toISOString() })
+          .onConflictDoUpdate({ target: schema.appSettings.key, set: { value: isLastProduct ? '0' : String(processedOffset), updatedAt: new Date().toISOString() } });
         await new Promise(r => setTimeout(r, 400)); // eBay Rate-Limit schonen
       }
 
@@ -1382,7 +1387,8 @@ const app = new Hono()
   .post('/ebay/listings/bulk/end', async (c) => {
     try {
       const body = await c.req.json() as { itemIds: string[] };
-      const token = await (await import('./ebay')).getAccessToken();
+      const { getAccessToken, endListing } = await import('./ebay');
+      const token = await getAccessToken();
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1390,27 +1396,9 @@ const app = new Hono()
       const results: Array<{ itemId: string; ok: boolean; error?: string }> = [];
       for (const itemId of body.itemIds) {
         try {
-          const xml = `<?xml version="1.0" encoding="utf-8"?>
-<EndItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
-  <ItemID>${itemId}</ItemID>
-  <EndingReason>NotAvailable</EndingReason>
-</EndItemRequest>`;
-          const res = await fetch('https://api.ebay.com/ws/api.dll', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'text/xml',
-              'X-EBAY-API-SITEID': '77',
-              'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
-              'X-EBAY-API-CALL-NAME': 'EndItem',
-              'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
-            },
-            body: xml,
-          });
-          const text = await res.text();
-          if (text.includes('<Ack>Failure</Ack>')) {
-            const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
-            results.push({ itemId, ok: false, error: errMsg });
+          const { ok, error } = await endListing(itemId, token);
+          if (!ok) {
+            results.push({ itemId, ok: false, error });
           } else {
             await db.update(schema.products).set({ ebayListingId: null, ebayStatus: 'none', ebayError: null })
               .where(eq(schema.products.ebayListingId, itemId));
@@ -2504,26 +2492,9 @@ const app = new Hono()
       if (!product.ebayListingId) return c.json({ error: 'Kein aktives eBay Listing' }, 400);
 
       // eBay Listing beenden via Trading API
-      const token = await (await import('./ebay')).getAccessToken();
-      const xmlBody = `<?xml version="1.0" encoding="utf-8"?>
-<EndItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
-  <ItemID>${product.ebayListingId}</ItemID>
-  <EndingReason>NotAvailable</EndingReason>
-</EndItemRequest>`;
-
-      const res = await fetch('https://api.ebay.com/ws/api.dll', {
-        method: 'POST',
-        headers: {
-          'X-EBAY-API-SITEID': '77',
-          'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
-          'X-EBAY-API-CALL-NAME': 'EndItem',
-          'Content-Type': 'text/xml',
-        },
-        body: xmlBody,
-      });
-      const text = await res.text();
-      const success = text.includes('<Ack>Success</Ack>') || text.includes('<Ack>Warning</Ack>');
+      const { getAccessToken, endListing } = await import('./ebay');
+      const token = await getAccessToken();
+      const { ok, error } = await endListing(product.ebayListingId, token);
 
       // DB Status zurücksetzen
       await db.update(schema.products).set({
@@ -2533,9 +2504,9 @@ const app = new Hono()
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, id));
 
-      if (!success) {
+      if (!ok) {
         // Auch bei eBay-Fehler DB zurücksetzen — Listing war evtl. schon abgelaufen
-        console.warn('[eBay EndItem]', text.slice(0, 300));
+        console.warn('[eBay EndItem]', error);
       }
 
       return c.json({ ok: true }, 200);

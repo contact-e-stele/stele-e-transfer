@@ -1318,6 +1318,60 @@ export function findSellerInEmbeddedJson(html: string): string | null {
   return null;
 }
 
+// P-27/P-28 PR 6 — Teil B (2026-09-09, Live-Fund Produkt 71, de.aliexpress.com/item/1005006895494400.html):
+// erkennt, ob ein AliExpress-Quellartikel ENDGÜLTIG nicht mehr verfügbar ist (Artikel gelöscht/
+// Shop geschlossen) — im Unterschied zu einem gewöhnlichen, transienten Scraping-Fehler
+// (Timeout, IP-Sperre, Rate-Limit, Render-Netzwerk-Hänger). Bewusst SEHR eng gefasst: nur ein
+// echter HTTP 404 oder eine kleine, sehr spezifische Liste bekannter "nicht mehr verfügbar"-
+// Textmarker gelten als sicheres Signal. Alles andere (403/429/5xx, leere/kurze Antwort,
+// Netzwerkfehler) bleibt bewusst UNENTSCHIEDEN (unavailable:false) — false positives würden
+// aktive, verkaufende eBay-Angebote grundlos automatisch beenden (echter Umsatzschaden).
+export interface UnavailabilityCheckResult {
+  unavailable: boolean;
+  reason?: string;
+}
+
+export function classifySourceUnavailability(status: number, bodyText: string): UnavailabilityCheckResult {
+  if (status === 404) {
+    return { unavailable: true, reason: 'HTTP 404 (Quellartikel nicht gefunden)' };
+  }
+  const text = (bodyText || '').toLowerCase();
+  // Bewusst kurze, sehr spezifische Liste — jede Erweiterung sollte einzeln gegen echte
+  // Live-Fälle geprüft werden, nicht "auf Verdacht" ergänzt werden.
+  const UNAVAILABLE_MARKERS = [
+    'currently unavailable in your location',
+    'item is no longer available',
+    'product is no longer available',
+    'this item is no longer for sale',
+  ];
+  const matched = UNAVAILABLE_MARKERS.find(m => text.includes(m));
+  if (matched) {
+    return { unavailable: true, reason: `Textmarker gefunden: "${matched}"` };
+  }
+  return { unavailable: false };
+}
+
+// Eigene, leichte Anfrage an die AliExpress-Produktseite — bewusst UNABHÄNGIG vom bestehenden
+// Scraping-Fallback (fetchWithFallbacks/scrapeAliExpressUrl), damit dessen Retry-/Fallback-
+// Verhalten für transiente Fehler unverändert bleibt. Wird nur als LETZTER Schritt aufgerufen,
+// nachdem der reguläre Scrape bereits vollständig fehlgeschlagen ist (siehe Aufrufstelle in
+// price-monitor.ts checkOne()) — kann also nie einen erfolgreichen Scrape verhindern/überschreiben.
+export async function checkSourceAvailability(url: string): Promise<UnavailabilityCheckResult> {
+  try {
+    const res = await fetch(url, { headers: DIRECT_HEADERS, signal: AbortSignal.timeout(10000) });
+    const status = res.status;
+    let bodyText = '';
+    if (status === 404 || status === 200) {
+      try { bodyText = await res.text(); } catch { /* ignore */ }
+    }
+    return classifySourceUnavailability(status, bodyText);
+  } catch {
+    // Netzwerkfehler/Timeout: bewusst KEINE Aussage, nicht "nicht verfügbar" — verhindert False
+    // Positives bei Scraping-Infrastruktur-Problemen (IP-Sperre, DNS-Fehler, Render-Netzwerk-Hänger).
+    return { unavailable: false };
+  }
+}
+
 export async function scrapeAliExpressUrl(url: string): Promise<ScrapedProduct | null> {
   // Normalize URL — always use de.aliexpress.com + clean URL (strip tracking params)
   let fetchUrl = url;
