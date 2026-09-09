@@ -180,28 +180,42 @@ export default function Listings() {
   // die Verbindung, bevor alle durch waren ("Unexpected token '<'" — HTML-Fehlerseite statt JSON).
   // Jetzt in kleinen Chargen über offset/limit, mit Live-Fortschritt. Bricht ein Batch ab, bleiben
   // bereits erfolgreich reparierte Ergebnisse sichtbar (repairResults wird nur ANGEHÄNGT, nie ersetzt).
-  const handleRepairVariantPrices = async () => {
+  //
+  // PR 6 (2026-09-09, Live-Fund): der Server-Prozess restartet in manchen Läufen mitten im
+  // schwersten Batch — der Fortschritt lebt jetzt serverseitig in app_settings (siehe
+  // repair-variant-prices-Endpunkt), nicht mehr nur hier im Client-State. Ohne explizites
+  // offset (restart=false) nimmt der Server den zuletzt persistierten Wert — ein Klick auf
+  // "fortsetzen" nach einem Server-Neustart macht dadurch automatisch da weiter, wo es aufhörte.
+  // "Von vorne"-Button (restart=true) erzwingt offset=0.
+  // startOffset: null = Server nimmt den zuletzt persistierten Fortschritt (normaler
+  // Start/Fortsetzen-Fall); 0 = explizit von vorne. clearResults: true nur beim allerersten Klick
+  // bzw. explizitem Neustart — ein "Fortsetzen nach Fehler" darf bereits angezeigte, erfolgreich
+  // reparierte Zeilen NICHT verwerfen.
+  const runRepairLoop = async (startOffset: number | null, clearResults: boolean) => {
     setRepairOpen(true);
     setRepairLoading(true);
     setRepairError(null);
-    setRepairResults([]);
-    setRepairProgress(null);
+    if (clearResults) { setRepairResults([]); setRepairProgress(null); }
     const limit = 5;
-    let offset = 0;
+    let offset: number | null = startOffset;
     try {
       while (true) {
-        const res = await fetch(`/api/ebay/listings/repair-variant-prices?offset=${offset}&limit=${limit}`, { method: "POST" });
-        let data: { results?: RepairRow[]; totalVariantProducts?: number; done?: boolean; error?: string };
+        const qs = offset != null ? `offset=${offset}&limit=${limit}` : `limit=${limit}`;
+        const res = await fetch(`/api/ebay/listings/repair-variant-prices?${qs}`, { method: "POST" });
+        let data: { results?: RepairRow[]; offset?: number; totalVariantProducts?: number; done?: boolean; error?: string };
         try {
           data = await res.json();
         } catch {
-          throw new Error(`Serverantwort nicht lesbar (Status ${res.status}) — Batch ab Produkt ${offset} evtl. abgebrochen`);
+          throw new Error(`Serverantwort nicht lesbar (Status ${res.status}) — Batch ab Produkt ${offset ?? "?"} evtl. abgebrochen (Fortschritt bleibt serverseitig gespeichert, "Fortsetzen" macht danach automatisch weiter)`);
         }
         if (!res.ok || !data.results) throw new Error(data.error ?? "Fehler bei der Reparatur");
 
         setRepairResults(prev => [...prev, ...data.results!]);
         const total = data.totalVariantProducts ?? 0;
-        offset += data.results.length;
+        // Nächster Request nutzt den vom Server tatsächlich verarbeiteten Bereich (offset+Anzahl
+        // Ergebnisse) — nicht einen rein lokalen Zähler, der bei einem Resume nach Server-
+        // Neustart aus dem Takt geraten würde.
+        offset = (data.offset ?? 0) + data.results.length;
         setRepairProgress({ done: Math.min(offset, total), total });
 
         if (data.done || data.results.length === 0) break;
@@ -212,6 +226,15 @@ export default function Listings() {
       setRepairLoading(false);
     }
   };
+
+  // Erster Klick / normaler Aufruf: startet beim serverseitig persistierten Fortschritt (macht
+  // nach einem Server-Neustart automatisch da weiter, wo es aufhörte), zeigt eine leere Liste.
+  const handleRepairVariantPrices = () => runRepairLoop(null, true);
+  // Nach einem Fehler mitten im Lauf: derselbe persistierte Fortschritt, aber bereits angezeigte
+  // Ergebnisse bleiben stehen statt zu verschwinden.
+  const handleRepairResume = () => runRepairLoop(null, false);
+  // Expliziter Neustart: erzwingt offset=0, auch wenn serverseitig noch ein alter Fortschritt steht.
+  const handleRepairRestart = () => runRepairLoop(0, true);
 
   const handleRecalcOpen = async () => {
     setRecalcOpen(true);
@@ -717,9 +740,24 @@ export default function Listings() {
               )}
 
               {repairError && (
-                <div style={{ padding: "10px 14px", borderRadius: 8, background: "#FEF2F2", color: "#991B1B", fontSize: 13, marginBottom: 12 }}>
-                  {repairError}
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: "#FEF2F2", color: "#991B1B", fontSize: 13, marginBottom: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <span>{repairError}</span>
+                  <button onClick={handleRepairResume} style={{
+                    alignSelf: "flex-start", padding: "6px 12px", borderRadius: 8, border: "1px solid #FECACA",
+                    background: "#fff", color: "#991B1B", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                    Fortsetzen (ab letztem Fortschritt)
+                  </button>
                 </div>
+              )}
+
+              {!repairLoading && (
+                <button onClick={handleRepairRestart} style={{
+                  display: "block", marginBottom: 12, padding: 0, border: "none", background: "none",
+                  color: "#94A3B8", fontSize: 11, textDecoration: "underline", cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  Von vorne beginnen (setzt gespeicherten Fortschritt zurück)
+                </button>
               )}
 
               {!repairLoading && !repairError && repairResults.length === 0 && (

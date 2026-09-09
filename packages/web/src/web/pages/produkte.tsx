@@ -97,6 +97,7 @@ function StatusBadge({ status, listingId }: { status: string; listingId: string 
     none: { bg: "#F1F5F9", color: "#64748B", icon: <Clock size={11} />, label: "Nicht gelistet" },
     listed: { bg: "#F0FDF4", color: "#16A34A", icon: <CheckCircle size={11} />, label: `eBay #${listingId?.slice(0, 8) ?? ""}` },
     error: { bg: "#FEF2F2", color: "#DC2626", icon: <XCircle size={11} />, label: "Fehler" },
+    unavailable: { bg: "#FEF2F2", color: "#DC2626", icon: <XCircle size={11} />, label: "AliExpress nicht verfügbar" },
   };
   const s = map[status] ?? map.none;
   return (
@@ -981,6 +982,9 @@ export default function Produkte() {
     listed: products.filter(p => p.ebayStatus === "listed").length,
     errors: products.filter(p => p.ebayStatus === "error").length,
     priceAlerts: products.filter(p => p.priceChanged).length,
+    // Teil B (2026-09-09): eigene Kategorie für automatisch erkannte AliExpress-Nichtverfügbarkeit
+    // — bewusst getrennt von "Fehler" (dort zählen andere, unabhängige eBay-Fehlerursachen).
+    aliexpressUnavailable: products.filter(p => p.ebayStatus === "unavailable").length,
   };
 
   return (
@@ -1269,6 +1273,7 @@ export default function Produkte() {
             { label: "eBay aktiv", value: stats.listed, color: "#16A34A", bg: "#F0FDF4" },
             { label: "Fehler", value: stats.errors, color: "#DC2626", bg: "#FEF2F2" },
             { label: "Preisalarm", value: stats.priceAlerts, color: "#F59E0B", bg: "#FFFBEB" },
+            { label: "AliExpress nicht verfügbar", value: stats.aliexpressUnavailable, color: "#DC2626", bg: "#FEF2F2" },
           ].map(s => (
             <div key={s.label} style={{ background: s.bg, borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.value}</div>

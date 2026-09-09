@@ -3,9 +3,9 @@
 
 import { db } from '../db/index';
 import * as schema from '../db/schema';
-import { scrapeAliExpressUrl, type ScrapedProduct } from './aliexpress';
+import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
-import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS } from './ebay';
+import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
 import {
@@ -294,6 +294,45 @@ export async function updateEbayPriceTrading(itemId: string, newPrice: number): 
   }
 }
 
+// P-27/P-28 PR 6, Teil B (2026-09-09): AliExpress-Quellartikel eindeutig nicht mehr verfügbar
+// (404 oder bestätigter "nicht verfügbar"-Text, siehe classifySourceUnavailability() in
+// aliexpress.ts) — Produkt-Status setzen UND eine ggf. aktive eBay-Anzeige beenden, damit keine
+// Bestellungen für nicht mehr lieferbare Ware hereinkommen. DI-testbar (endListingFn) wie
+// repairVariantPricesForProduct().
+export async function markProductSourceUnavailable(
+  product: { id: number; ebayListingId: string | null; ebayStatus: string | null },
+  reason: string,
+  endListingFn: (itemId: string, token: string) => Promise<{ ok: boolean; error?: string }> = endListing,
+): Promise<{ ok: boolean; ebayEnded: boolean; error?: string }> {
+  let ebayEnded = false;
+  let endError: string | undefined;
+
+  if (product.ebayListingId && product.ebayStatus === 'listed') {
+    try {
+      const token = await getAccessToken();
+      const { ok, error } = await endListingFn(product.ebayListingId, token);
+      ebayEnded = ok;
+      endError = error;
+      if (!ok) {
+        console.warn(`[PriceMonitor] ${product.id}: eBay-Anzeige ${product.ebayListingId} konnte nicht automatisch beendet werden: ${error}`);
+      }
+    } catch (e) {
+      endError = String(e);
+      console.warn(`[PriceMonitor] ${product.id}: Fehler beim automatischen Beenden der eBay-Anzeige:`, e);
+    }
+  }
+
+  await db.update(schema.products).set({
+    ebayStatus: 'unavailable',
+    ebayError: reason,
+    ebayListingId: ebayEnded ? null : product.ebayListingId,
+    updatedAt: new Date().toISOString(),
+  }).where(eq(schema.products.id, product.id));
+
+  console.log(`[PriceMonitor] ${product.id}: als "AliExpress nicht verfügbar" markiert (${reason})${ebayEnded ? ' — eBay-Anzeige beendet' : ''}`);
+  return { ok: true, ebayEnded, error: endError };
+}
+
 export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number; stockUpdated: number }> {
   console.log('[PriceMonitor] Starte Preisüberwachung...');
 
@@ -338,7 +377,26 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
         }
       }
-      if (!data) { errors++; return; }
+      if (!data) {
+        errors++;
+        // Teil B (2026-09-09): erst NACHDEM die komplette bestehende Scrape-Fallback-Kette
+        // (DS-API + Scraper + Retry) bereits vollständig fehlgeschlagen ist — als letzter,
+        // zusätzlicher Schritt prüfen, ob der Quellartikel eindeutig (404 / bestätigter
+        // "nicht verfügbar"-Text) nicht mehr existiert, statt nur transient nicht erreichbar zu
+        // sein. Bewusst konservativ: normale Scraping-Fehler/Timeouts lösen NICHTS aus (siehe
+        // classifySourceUnavailability() in aliexpress.ts) — kein False-Positive-Risiko für
+        // laufende Anzeigen.
+        try {
+          const { unavailable, reason } = await checkSourceAvailability(url);
+          if (unavailable) {
+            console.log(`[PriceMonitor] ${product.id}: Quellartikel nicht mehr verfügbar (${reason})`);
+            await markProductSourceUnavailable(product, reason ?? 'AliExpress-Quellartikel nicht mehr verfügbar');
+          }
+        } catch (e) {
+          console.warn(`[PriceMonitor] ${product.id}: Verfügbarkeits-Check fehlgeschlagen:`, e);
+        }
+        return;
+      }
 
       // China-Versand: Zollgebühr +3€ addieren (ab 01.07.2026), NICHT überspringen
       const isChina = isChinaShipping(data.shipsFrom);

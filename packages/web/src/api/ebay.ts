@@ -95,6 +95,40 @@ export async function getAccessToken(): Promise<string> {
   return cachedToken.token;
 }
 
+// ─── eBay Listing beenden (Trading API EndItem) ───────────────────────────────
+// Konsolidiert aus zuvor drei duplizierten Inline-Kopien in index.ts (DELETE
+// /ebay/listings/:itemId, POST /ebay/listings/bulk/end, DELETE
+// /products/:id/ebay-listing) — keine vierte Kopie für die AliExpress-
+// Verfügbarkeits-Auto-Deaktivierung (P-27/P-28 PR 6, Teil B).
+export async function endListing(itemId: string, token: string): Promise<{ ok: boolean; error?: string }> {
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<EndItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <ItemID>${itemId}</ItemID>
+  <EndingReason>NotAvailable</EndingReason>
+</EndItemRequest>`;
+
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'EndItem',
+      'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '',
+    },
+    body: xml,
+  });
+
+  const text = await res.text();
+  const hasError = text.includes('<Ack>Failure</Ack>');
+  if (hasError) {
+    const errMsg = text.match(/<LongMessage>([^<]*)<\/LongMessage>/)?.[1] ?? 'Fehler';
+    return { ok: false, error: errMsg };
+  }
+  return { ok: true };
+}
+
 // ─── OAuth URL generieren (für User-Auth) ─────────────────────────────────────
 
 export function getOAuthUrl(state: string): string {
