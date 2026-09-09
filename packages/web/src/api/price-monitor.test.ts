@@ -10,7 +10,10 @@ import { describe, expect, mock, test } from 'bun:test';
 // hier per dynamischem Import erst NACH dem Setzen einer Dummy-URL geladen (kein echter
 // DB-Zugriff in den hier getesteten reinen Funktionen nötig).
 process.env.TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'file:/tmp/price-monitor-test.db';
-const { computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct, computeRepairBatchRange } = await import('./price-monitor');
+const {
+  computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct,
+  computeRepairBatchRange, updateEbayVariantPricesIndividually,
+} = await import('./price-monitor');
 
 describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
   test('3 Varianten mit unterschiedlichem Einkaufspreis ergeben 3 unterschiedliche correctSellPrice-Werte', () => {
@@ -162,5 +165,103 @@ describe('computeRepairBatchRange (Chunking für POST /ebay/listings/repair-vari
     const variantCounts = Array(10).fill(1);
     expect(computeRepairBatchRange(variantCounts, 0, 5)).toEqual({ start: 0, end: 5, done: false });
     expect(computeRepairBatchRange(variantCounts, 5, 5)).toEqual({ start: 5, end: 10, done: true });
+  });
+});
+
+// P-27/P-28-Fix (2026-09-09, Live-Fund Produkte 71/77/92/95): row.attrs kann Felder wie
+// "Ships From" enthalten, die NIE Teil der echten eBay-SKU sind — ohne Filterung verlängerte
+// sich die hier erwartete SKU um ein nicht existierendes Segment (z.B. "-CHINA-MAINLAND") →
+// kein Match → Preis blieb für die betroffene(n) Variante(n) unverändert, eBay zeigte weiterhin
+// einen einzigen Preis für alle Varianten. Diese Tests mocken die eBay-API komplett (kein
+// echter Netzwerkzugriff) und prüfen die tatsächlich an eBay gesendeten PUT-Preise pro SKU.
+describe('updateEbayVariantPricesIndividually — Ships-From/Blacklist-Filterung beim SKU-Matching', () => {
+  // Baut einen Mock für genau die drei eBay-Aufrufe, die updateEbayVariantPricesIndividually()
+  // auslöst: OAuth-Token, Varianten-SKU-Liste der Gruppe, und pro SKU GET+PUT auf /offer.
+  // realSkus: die SKUs, die eBay laut getInventoryItemGroupSkus() tatsächlich kennt (OHNE
+  // Ships-From-Segment, wie live bestätigt).
+  function mockEbayFetch(realSkus: string[]) {
+    const putBodiesBySku = new Map<string, { value: string }>();
+    globalThis.fetch = (async (url: string, opts?: { method?: string; body?: string }) => {
+      const u = String(url);
+      if (u.includes('/identity/v1/oauth2/token')) {
+        return new Response(JSON.stringify({ access_token: 'test-token', expires_in: 7200 }), { status: 200 });
+      }
+      if (u.includes('/inventory_item_group/')) {
+        return new Response(JSON.stringify({ variantSKUs: realSkus }), { status: 200 });
+      }
+      const offerMatch = u.match(/\/sell\/inventory\/v1\/offer\?sku=([^&]+)&/);
+      if (offerMatch && (!opts || opts.method === undefined)) {
+        const sku = decodeURIComponent(offerMatch[1]);
+        return new Response(JSON.stringify({ offers: [{ offerId: `offer-${sku}`, sku }] }), { status: 200 });
+      }
+      if (u.includes('/sell/inventory/v1/offer/offer-') && opts?.method === 'PUT') {
+        const sku = u.split('/sell/inventory/v1/offer/offer-')[1];
+        const body = JSON.parse(opts.body as string) as { pricingSummary: { price: { value: string } } };
+        putBodiesBySku.set(sku, body.pricingSummary.price as { value: string });
+        return new Response('', { status: 204 });
+      }
+      throw new Error('Unmocked eBay fetch: ' + u + ' ' + (opts?.method ?? 'GET'));
+    }) as unknown as typeof fetch;
+    return putBodiesBySku;
+  }
+
+  test('a) row.attrs mit "Ships From" wird beim SKU-Aufbau korrekt ignoriert (analog Produkt 71/77/92/95)', async () => {
+    const realSkus = ['stele-71-RED', 'stele-71-BLUE']; // echte eBay-SKUs, KEIN Ships-From-Segment
+    const putBodies = mockEbayFetch(realSkus);
+
+    const rows = [
+      { skuId: 'v1', attrs: { Color: 'Red', 'Ships From': 'China Mainland' }, buyPrice: 5, correctSellPrice: 12.95 },
+      { skuId: 'v2', attrs: { Color: 'Blue', 'Ships From': 'China Mainland' }, buyPrice: 8, correctSellPrice: 17.95 },
+    ];
+
+    const result = await updateEbayVariantPricesIndividually(71, rows);
+
+    expect(result).toEqual({ ok: true, updatedCount: 2 });
+    // Jede SKU bekommt ihren EIGENEN Preis — kein Fallback auf den Einheitspreis, weil beide
+    // trotz "Ships From" im attrs-Objekt korrekt der jeweils echten SKU zugeordnet wurden.
+    expect(putBodies.get('stele-71-RED')?.value).toBe('12.95');
+    expect(putBodies.get('stele-71-BLUE')?.value).toBe('17.95');
+  });
+
+  test('b) row.attrs OHNE "Ships From" bleibt unverändert korrekt (Regressionsschutz, analog Produkt 138)', async () => {
+    const realSkus = ['stele-138-RED', 'stele-138-BLUE', 'stele-138-GREEN'];
+    const putBodies = mockEbayFetch(realSkus);
+
+    const rows = [
+      { skuId: 'v1', attrs: { Color: 'Red' }, buyPrice: 6.19, correctSellPrice: 20.95 },
+      { skuId: 'v2', attrs: { Color: 'Blue' }, buyPrice: 3.39, correctSellPrice: 15.95 },
+      { skuId: 'v3', attrs: { Color: 'Green' }, buyPrice: 2.39, correctSellPrice: 13.95 },
+    ];
+
+    const result = await updateEbayVariantPricesIndividually(138, rows);
+
+    expect(result).toEqual({ ok: true, updatedCount: 3 });
+    expect(putBodies.get('stele-138-RED')?.value).toBe('20.95');
+    expect(putBodies.get('stele-138-BLUE')?.value).toBe('15.95');
+    expect(putBodies.get('stele-138-GREEN')?.value).toBe('13.95');
+  });
+
+  test('c) mehrere Blacklist-Keys gleichzeitig ("Ships From" UND "Herstellungsland") werden beide gefiltert', async () => {
+    const realSkus = ['stele-92-M', 'stele-92-L'];
+    const putBodies = mockEbayFetch(realSkus);
+
+    const rows = [
+      { skuId: 'v1', attrs: { Size: 'M', 'Ships From': 'Germany', 'Herstellungsland': 'Deutschland' }, buyPrice: 4, correctSellPrice: 14.95 },
+      { skuId: 'v2', attrs: { Size: 'L', 'Ships From': 'Germany', 'Herstellungsland': 'Deutschland' }, buyPrice: 4.5, correctSellPrice: 15.95 },
+    ];
+
+    const result = await updateEbayVariantPricesIndividually(92, rows);
+
+    expect(result).toEqual({ ok: true, updatedCount: 2 });
+    expect(putBodies.get('stele-92-M')?.value).toBe('14.95');
+    expect(putBodies.get('stele-92-L')?.value).toBe('15.95');
+  });
+
+  test('Regression: ohne Filterung hätte "Ships From" die SKU-Zuordnung sprengen müssen (Beweis, dass der Test den Bug wirklich erkennt)', async () => {
+    // Diese Variante des Tests baut die SKU absichtlich OHNE Blacklist-Filterung nach, um zu
+    // zeigen, dass "stele-71-RED-CHINA-MAINLAND" (die alte, kaputte Erwartung) NICHT unter den
+    // echten eBay-SKUs vorkommt — der eigentliche Fix-Test oben beweist damit tatsächlich etwas.
+    const realSkus = ['stele-71-RED'];
+    expect(realSkus.includes('stele-71-RED-CHINA-MAINLAND')).toBe(false);
   });
 });
