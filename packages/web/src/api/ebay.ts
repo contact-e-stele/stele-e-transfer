@@ -1,8 +1,7 @@
 // eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
-import { calcSellPrice, isChinaShipping } from '../shared/pricing';
-import { CHINA_ZOLL_EUR } from '../shared/constants';
+import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 
 // Aspekte, die NIE als eBay-Artikelmerkmal/Pflichtfeld gesetzt werden UND (P-27/P-28-Fix,
 // 2026-09-09, Live-Fund Produkte 71/77/92/95) NIE Teil einer Varianten-SKU sind — würden sie in
@@ -1296,14 +1295,17 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     // — konnte eine Variante zum Einkaufspreis listen (live bestätigter Verlustfall stele-98).
     // Jetzt: fehlt .ebayPrice, aber der Einkaufspreis (.price) ist bekannt → live über die
     // zentrale Formel nachberechnen. Ist auch das nicht bekannt → hart blockieren statt zu raten.
+    // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
     const varPrice: number | undefined = varPriceEntry?.ebayPrice ??
       (varPriceEntry?.price != null && varPriceEntry.price > 0
-        ? calcSellPrice(
-            varPriceEntry.price,
-            input.shippingCost ?? 0,
-            isChinaShipping(input.shipsFrom) ? CHINA_ZOLL_EUR : 0,
-            input.adRate ?? 5,
-          )
+        ? computeMinSellPrice({
+            buyPrice: varPriceEntry.price, supplierShipping: input.shippingCost ?? 0,
+            isChinaOrigin: isChinaShipping(input.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+            vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+            targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+            rounding: 'up95',
+          }).minSellPrice
         : undefined);
     if (varPrice == null) {
       throw new Error(`Kein Preis für Variante ${varSku} ermittelbar — weder ebayPrice noch Einkaufspreis (price) in variantPrices vorhanden. Bitte Varianten-Preise im Produkt pflegen, bevor gelistet wird.`);

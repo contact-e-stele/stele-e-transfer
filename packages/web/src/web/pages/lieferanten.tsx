@@ -7,7 +7,7 @@ import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategories, type RegulatedCategory } from "../../shared/regulated-categories";
-import { calcImportPriceSuggestion } from "../../shared/pricing";
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -118,14 +118,6 @@ function isEUShipping(shipsFrom?: string): boolean {
 function isChinaShipping(shipsFrom?: string): boolean {
   if (!shipsFrom) return false;
   return shipsFrom.toLowerCase().includes('china');
-}
-
-// P-74: Rundet zur NÄCHSTEN ,95-Endung (auf oder ab) — bewusst anders als der automatische
-// Preis-Monitor (dort immer aufrunden für garantierten Mindestgewinn). Hier im manuellen
-// Modal darf der Preis auch knapp unter den berechneten Mindestpreis fallen.
-function roundToNearest95(value: number): number {
-  const nearestInt = Math.round(value - 0.95);
-  return Math.round((nearestInt + 0.95) * 100) / 100;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1590,11 +1582,18 @@ export default function Lieferanten() {
                         onClick={() => {
                           // Empfohlener Mindestpreis (initialer Import — OHNE Sicherheitspuffer, der
                           // bleibt der laufenden automatischen Preisprüfung vorbehalten). Zentrale
-                          // Formel (P-27/P-28-Konsolidierung, 2026-09-08) — Verhalten hier bewusst
-                          // unverändert gegenüber vorher (regressionsgetestet).
-                          const chinaZoll = (shipsFromInfo && isChinaShipping(shipsFromInfo.country)) ? CHINA_ZOLL_EUR : 0;
+                          // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A, 2026-09-10) —
+                          // Verhalten hier bewusst unverändert gegenüber vorher (regressionsgetestet).
+                          // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
                           const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
-                          const recommended = calcImportPriceSuggestion(einkauf, versand, chinaZoll, adRate, minGewinn);
+                          const recommended = computeMinSellPrice({
+                            buyPrice: einkauf, supplierShipping: versand,
+                            isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)), customsFlat: CHINA_ZOLL_EUR,
+                            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                            vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+                            targetMarginEur: minGewinn, safetyBufferEur: 0,
+                            rounding: 'cent',
+                          }).minSellPrice;
                           setEbayPrice(recommended.toFixed(2));
                         }}
                         style={{
@@ -1739,17 +1738,24 @@ export default function Lieferanten() {
               const minP = Math.min(...vp.map(v => v.price));
               // P-75: Gleiche Formel wie der Einzel-Varianten-Button unten (inkl. P-74 ,95-Rundung) —
               // hier einmal extrahiert, damit "Alle übernehmen" und Einzel-Button garantiert identisch rechnen.
+              // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
               const recommendedFor = (v: VariantPrice): number => {
                 const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
                 const versandV = parseFloat(shippingCost.replace(",", ".")) || 0;
                 const sendungswertV = v.price + versandV;
                 const zollManuellV = parseFloat((variantZollManuell[v.skuId] ?? "").replace(",", ".")) || 0;
+                // Zoll-Schwellenlogik (Pauschale bis 150€ Sendungswert, sonst manueller Wert) bleibt
+                // hier — sie ist spezifisch für dieses Modal, nicht Teil der zentralen Formel.
                 const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
-                const wahrerEinkaufV = v.price + versandV + zollV;
-                const feeRate = (13 + adRate) / 100 * 1.19;
                 // OHNE PRICE_SAFETY_BUFFER_EUR beim initialen Import (siehe Einzelprodukt-Button oben)
-                const rawMinV = (wahrerEinkaufV + minGewinn + 0.45 * 1.19) / (1 - feeRate);
-                return roundToNearest95(rawMinV);
+                return computeMinSellPrice({
+                  buyPrice: v.price, supplierShipping: versandV,
+                  isChinaOrigin: ausChinaV, customsFlat: zollV,
+                  ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                  vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+                  targetMarginEur: minGewinn, safetyBufferEur: 0,
+                  rounding: 'nearest95',
+                }).minSellPrice;
               };
               return (
                 <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>

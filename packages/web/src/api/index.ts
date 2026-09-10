@@ -1090,7 +1090,8 @@ const app = new Hono()
   // eigener Zeile pro Variante (isVariant:true, variantBreakdown) — Anforderung 1 + 3.
   .get('/ebay/listings/recalculate-preview', async (c) => {
     try {
-      const { calcSellPrice, isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
+      const { isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
+      const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1142,8 +1143,8 @@ const app = new Hono()
           // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08) — gilt
           // jetzt gleichermaßen hier wie in computeVariantPriceRows() und im Einzelartikel-Zweig
           // unten.
-          const variantAdRate = product.adRate ?? 5;
-          const variantZoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+          const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+          const variantZoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
           const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
           const newPrice = safeUniformVariantPrice(rows);
           if (newPrice == null) continue;
@@ -1159,7 +1160,8 @@ const app = new Hono()
             debug: {
               buyPrice: null, versand: product.shippingCost ?? 0, zoll: variantZoll,
               adRate: variantAdRate, adRateWasNull: product.adRate == null,
-              feeRate: (13 + variantAdRate) / 100 * 1.19,
+              // TODO Teil 2B: auf gemessene 15% + 0,30 EUR umstellen
+              feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + variantAdRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
               minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
             },
           });
@@ -1169,10 +1171,18 @@ const app = new Hono()
         if (product.buyPrice == null) continue;
         // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08).
         // adRateWasNull im debug-Feld zeigt weiterhin an, ob der Default hier gerade greift.
-        const zoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+        const zoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
         const versand = product.shippingCost ?? 0;
-        const adRate = product.adRate ?? 5;
-        const newPrice = calcSellPrice(product.buyPrice, versand, zoll, adRate);
+        const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+        // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
+        const newPrice = computeMinSellPrice({
+          buyPrice: product.buyPrice, supplierShipping: versand,
+          isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+          ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+          vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+          targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+          rounding: 'up95',
+        }).minSellPrice;
         const oldPrice = listing.currentPrice;
         const diff = Math.round((newPrice - oldPrice) * 100) / 100;
 
@@ -1182,7 +1192,8 @@ const app = new Hono()
           itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff, isVariant: false,
           debug: {
             buyPrice: product.buyPrice, versand, zoll, adRate, adRateWasNull: product.adRate == null,
-            feeRate: (13 + adRate) / 100 * 1.19,
+            // TODO Teil 2B: auf gemessene 15% + 0,30 EUR umstellen
+            feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
             minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
           },
         });
@@ -1209,9 +1220,10 @@ const app = new Hono()
       }
 
       const {
-        calcSellPrice, isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice,
+        isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice,
         updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading,
       } = await import('./price-monitor');
+      const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1244,8 +1256,16 @@ const app = new Hono()
           // Live-Fund stele-138: vorher schrieb dieser Zweig denselben Einheitspreis auf jede SKU).
           newPrice = safeUniformVariantPrice(variantRows);
         } else {
+          // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
           newPrice = product.buyPrice != null
-            ? calcSellPrice(product.buyPrice, product.shippingCost ?? 0, isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0, product.adRate ?? 5)
+            ? computeMinSellPrice({
+                buyPrice: product.buyPrice, supplierShipping: product.shippingCost ?? 0,
+                isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+                ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+                targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+                rounding: 'up95',
+              }).minSellPrice
             : null;
         }
         if (newPrice == null) {
@@ -1978,20 +1998,29 @@ const app = new Hono()
     // nach Delisting) — statt einen möglicherweise veralteten oder nie korrekt gesetzten
     // product.sellPrice ungeprüft zu übernehmen. Nur wenn kein buyPrice bekannt ist (z.B. manuell
     // angelegtes Produkt ohne AliExpress-Quelle), bleibt der gespeicherte sellPrice die Quelle.
-    const { calcSellPrice: calcSellPriceForListing, isChinaShipping: isChinaShippingForListing } = await import('./price-monitor');
-    const zollForListing = isChinaShippingForListing(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+    const { isChinaShipping: isChinaShippingForListing } = await import('./price-monitor');
+    const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
     const versandForListing = product.shippingCost ?? 0;
-    const adRateForListing = product.adRate ?? 5;
+    const adRateForListing = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+    // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
+    const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
+      buyPrice, supplierShipping: versandForListing,
+      isChinaOrigin: isChinaShippingForListing(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
+      targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+      rounding: 'up95',
+    }).minSellPrice;
 
     let effectiveSellPrice: number | null = product.buyPrice != null
-      ? calcSellPriceForListing(product.buyPrice, versandForListing, zollForListing, adRateForListing)
+      ? calcSellPriceForListing(product.buyPrice)
       : product.sellPrice;
     if (!effectiveSellPrice) {
       try {
         const varPrices = JSON.parse(product.variantPrices ?? '[]') as Array<{ price?: number }>;
         const computed = varPrices
           .map(v => typeof v.price === 'number' && v.price > 0
-            ? calcSellPriceForListing(v.price, versandForListing, zollForListing, adRateForListing)
+            ? calcSellPriceForListing(v.price)
             : 0)
           .filter(p => p > 0);
         if (computed.length > 0) effectiveSellPrice = Math.min(...computed);
@@ -2096,7 +2125,7 @@ const app = new Hono()
           return (parsed as Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }>).map(v => ({
             ...v,
             ebayPrice: typeof v.price === 'number' && v.price > 0
-              ? calcSellPriceForListing(v.price, versandForListing, zollForListing, adRateForListing)
+              ? calcSellPriceForListing(v.price)
               : v.ebayPrice,
           }));
         } catch { /* ignore */ }
@@ -2838,7 +2867,8 @@ const app = new Hono()
 
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
-        const { calcSellPrice, isChinaShipping } = await import('./price-monitor');
+        const { isChinaShipping } = await import('./price-monitor');
+        const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         for (const product of all) {
           const url = product.sourceUrl || product.amazonUrl;
@@ -2870,9 +2900,18 @@ const app = new Hono()
             // P-27/P-28-Konsolidierung (2026-09-08): vorher eine eigene, abweichende Formel hier
             // (fester 18%-Satz statt (13+adRate)%×1.19, kein Sicherheitspuffer, keine Bestell-
             // gebühr, Cent- statt ,95-Rundung) — jetzt dieselbe zentrale Funktion wie überall sonst.
-            const chinaZoll = isChinaShipping(product.shipsFrom) ? CHINA_ZOLL_EUR : 0;
+            // Teil 2A: nur der Aufruf selbst ersetzt (strikte Vorgabe), sonst keine Änderung an
+            // diesem Endpunkt. TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15%
+            // + 0,30 EUR umstellen.
             const versand = product.shippingCost ?? 0;
-            const newSellPrice = calcSellPrice(newPrice, versand, chinaZoll, product.adRate ?? 5);
+            const newSellPrice = computeMinSellPrice({
+              buyPrice: newPrice, supplierShipping: versand,
+              isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+              targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+              rounding: 'up95',
+            }).minSellPrice;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             await db.update(schema.products).set({
               buyPrice: newPrice,

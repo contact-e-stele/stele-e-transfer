@@ -8,15 +8,12 @@ import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliPro
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
-import {
-  roundUpToX95, isChinaShipping, calcSellPrice, calcSellPriceCore, calcImportPriceSuggestion,
-  type CalcSellPriceOptions,
-} from '../shared/pricing';
+import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 
-// P-27/P-28-Konsolidierung (2026-09-08): die eigentliche Formel lebt jetzt ausschließlich in
-// shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit bestehende
-// Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
-export { roundUpToX95, isChinaShipping, calcSellPrice, calcSellPriceCore, calcImportPriceSuggestion, type CalcSellPriceOptions };
+// P-27/P-28-Konsolidierung (2026-09-08), Teil 2A (2026-09-10): die eigentliche Formel lebt
+// ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
+// bestehende Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
+export { isChinaShipping, computeMinSellPrice, DEFAULT_PRICING_CONFIG };
 
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
@@ -52,15 +49,23 @@ export function computeVariantPriceRows(
   let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
   const versand = shippingCost ?? 0;
-  const zoll = isChinaShipping(shipsFrom) ? CHINA_ZOLL_EUR : 0;
-  const rate = adRate ?? 5;
+  const isChina = isChinaShipping(shipsFrom);
+  const rate = adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+  // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
   return raw
     .filter(v => typeof v.price === 'number' && v.price > 0)
     .map(v => ({
       skuId: v.skuId,
       attrs: v.attrs ?? {},
       buyPrice: v.price,
-      correctSellPrice: calcSellPrice(v.price, versand, zoll, rate),
+      correctSellPrice: computeMinSellPrice({
+        buyPrice: v.price, supplierShipping: versand,
+        isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
+        targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+        rounding: 'up95',
+      }).minSellPrice,
     }));
 }
 
@@ -465,13 +470,12 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
       // China-Versand: Zollgebühr +3€ addieren (ab 01.07.2026), NICHT überspringen
       const isChina = isChinaShipping(data.shipsFrom);
-      const zoll = isChina ? CHINA_ZOLL_EUR : 0;
       const versand = product.shippingCost ?? 0;
       // P-27/P-28-Konsolidierung (2026-09-08): adRate-Default vereinheitlicht auf 5 (= DB-Default,
       // schema.ts `ad_rate.default(5)`, bereits von computeVariantPriceRows() genutzt) — vorher
       // rechnete dieser Zweig bei NULL-adRate mit 0, computeVariantPriceRows() mit 5, also mit
       // unterschiedlichen Gebührensätzen für dasselbe Produkt je nachdem, ob es Varianten hat.
-      const adRate = product.adRate ?? 5;
+      const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
       if (isChina) {
         console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Zollgebühr +${CHINA_ZOLL_EUR}€ wird addiert`);
       }
@@ -573,7 +577,15 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         return;
       }
 
-      const newSellPrice = calcSellPrice(newBuyPrice, versand, zoll, adRate);
+      // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
+      const newSellPrice = computeMinSellPrice({
+        buyPrice: newBuyPrice, supplierShipping: versand,
+        isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+        targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+        rounding: 'up95',
+      }).minSellPrice;
       const isAlert = product.sellPrice == null || Math.abs(newSellPrice - product.sellPrice) >= ALERT_THRESHOLD;
 
       if (isAlert || buyPriceDiff > 0.01) {

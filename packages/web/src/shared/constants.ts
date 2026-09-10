@@ -19,8 +19,8 @@ export const MIN_GEWINN_EUR = 2.00;
 // Der berechnete Mindestpreis ist NICHT mehr die exakte Gewinn-Untergrenze, sondern liegt um
 // diesen Betrag darueber. Kleine, kurzzeitig unentdeckte Preis-Drift (z.B. zwischen zwei
 // Preis-Check-Laeufen) fuehrt dadurch erstmal nur zu etwas weniger Gewinn statt sofort zu
-// echtem Verlust. Wird zentral in calcSellPrice() (price-monitor.ts) sowie in den identischen
-// Formel-Kopien in lieferanten.tsx (Mindestpreis-Buttons) addiert.
+// echtem Verlust. Wird zentral in computeMinSellPrice() (shared/pricing.ts, Teil 2A) als
+// DEFAULT_PRICING_CONFIG.safetyBufferEur addiert, wo dieser Wert verwendet wird.
 export const PRICE_SAFETY_BUFFER_EUR = 1.50;
 
 // Feste Kategorieliste fuer manuell gespeicherte Shops ("Meine Shops")
