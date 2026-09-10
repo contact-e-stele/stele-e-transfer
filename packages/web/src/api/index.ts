@@ -9,7 +9,7 @@ import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTr
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
@@ -1091,7 +1091,7 @@ const app = new Hono()
   .get('/ebay/listings/recalculate-preview', async (c) => {
     try {
       const { isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
-      const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1119,6 +1119,11 @@ const app = new Hono()
       type PreviewRow = {
         itemId: string; title: string; oldPrice: number; newPrice: number; diff: number;
         isVariant: boolean;
+        // Teil 2D ("Senkungsbremse"): newPrice ist ggf. bereits gedeckelt (max. MAX_PRICE_DECREASE_PERCENT
+        // Absenkung ggü. oldPrice pro Lauf). uncappedNewPrice zeigt, was OHNE Deckel herausgekommen
+        // wäre — bei wasCapped:true sinkt der Preis bei einem erneuten Lauf weiter, bis er den
+        // unabgedeckelten Wert erreicht.
+        uncappedNewPrice: number; wasCapped: boolean;
         variantBreakdown?: Array<{ attrs: Record<string, string>; buyPrice: number; correctSellPrice: number }>;
         // Diagnose (2026-09-08, Root-Cause-Suche für unplausible Preissprünge in "Preise neu
         // berechnen"): zeigt alle Formel-Eingaben pro Zeile, damit sich ein konkreter Sprung
@@ -1147,16 +1152,21 @@ const app = new Hono()
           const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
           const variantZoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
           const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
-          const newPrice = safeUniformVariantPrice(rows);
-          if (newPrice == null) continue;
+          const rawNewPrice = safeUniformVariantPrice(rows);
+          if (rawNewPrice == null) continue;
           const oldPrice = listing.currentPrice;
+          // Teil 2D: newPrice ist hier weiterhin nur das informative Maximum (s.u.) — der Deckel
+          // wirkt trotzdem auf diesen Wert, damit Vorschau/Diff-Schwelle nicht einen Preissturz
+          // zeigen, der so nie geschrieben würde (der tatsächliche Schreibvorgang bei "Übernehmen"
+          // nutzt ohnehin pro SKU deren eigenen, hier nicht gedeckelten correctSellPrice).
+          const { price: newPrice, wasCapped } = applyDecreaseCap(oldPrice, rawNewPrice, MAX_PRICE_DECREASE_PERCENT);
           const diff = Math.round((newPrice - oldPrice) * 100) / 100;
           if (Math.abs(diff) < DIFF_THRESHOLD) continue;
 
           preview.push({
             itemId: listing.itemId,
             title: product.generatedTitle || listing.title,
-            oldPrice, newPrice, diff, isVariant: true,
+            oldPrice, newPrice, diff, isVariant: true, uncappedNewPrice: rawNewPrice, wasCapped,
             variantBreakdown: rows.map(r => ({ attrs: r.attrs, buyPrice: r.buyPrice, correctSellPrice: r.correctSellPrice })),
             debug: {
               buyPrice: null, versand: product.shippingCost ?? 0, zoll: variantZoll,
@@ -1174,7 +1184,7 @@ const app = new Hono()
         const zoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-        const newPrice = computeMinSellPrice({
+        const rawNewPrice = computeMinSellPrice({
           buyPrice: product.buyPrice, supplierShipping: versand,
           isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
@@ -1183,12 +1193,18 @@ const app = new Hono()
           rounding: 'nearest95',
         }).minSellPrice;
         const oldPrice = listing.currentPrice;
+        // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
+        // Zielpreis — ohne Deckel würde "Preise neu berechnen" ein laufendes Angebot direkt auf
+        // diese Untergrenze vorschlagen (real beobachtet: stele-141 23,95€→10,95€). Anheben bleibt
+        // uneingeschränkt.
+        const { price: newPrice, wasCapped } = applyDecreaseCap(oldPrice, rawNewPrice, MAX_PRICE_DECREASE_PERCENT);
         const diff = Math.round((newPrice - oldPrice) * 100) / 100;
 
         if (Math.abs(diff) < DIFF_THRESHOLD) continue;
 
         preview.push({
           itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff, isVariant: false,
+          uncappedNewPrice: rawNewPrice, wasCapped,
           debug: {
             buyPrice: product.buyPrice, versand, zoll, adRate, adRateWasNull: product.adRate == null,
             feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
@@ -1201,7 +1217,7 @@ const app = new Hono()
       return c.json({
         preview,
         total: preview.length,
-        note: 'Bei Varianten-Produkten (isVariant:true) ist newPrice hier nur INFORMATIV das Maximum aller Varianten-Mindestpreise (variantBreakdown zeigt die Details je Variante). Der tatsächliche eBay-Schreibvorgang bei "Übernehmen" setzt seit P-27/P-28 jede echte Varianten-SKU auf ihren EIGENEN korrekten Preis (updateEbayVariantPricesIndividually) — der Einheitspreis wird nur noch als Fallback für eine einzelne SKU verwendet, deren Zuordnung fehlschlägt.',
+        note: `Bei Varianten-Produkten (isVariant:true) ist newPrice hier nur INFORMATIV das Maximum aller Varianten-Mindestpreise (variantBreakdown zeigt die Details je Variante). Der tatsächliche eBay-Schreibvorgang bei "Übernehmen" setzt seit P-27/P-28 jede echte Varianten-SKU auf ihren EIGENEN korrekten Preis (updateEbayVariantPricesIndividually) — der Einheitspreis wird nur noch als Fallback für eine einzelne SKU verwendet, deren Zuordnung fehlschlägt. Senkungsbremse (Teil 2D): newPrice sinkt pro Lauf max. ${MAX_PRICE_DECREASE_PERCENT}% unter oldPrice — wasCapped:true zeigt, dass uncappedNewPrice niedriger ist und der Preis bei einem erneuten Lauf weiter fällt, bis er dort ankommt. Anheben ist nie gedeckelt.`,
       }, 200);
     } catch (e) {
       console.error('[recalculate-preview]', e);
@@ -1221,7 +1237,7 @@ const app = new Hono()
         isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice,
         updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading,
       } = await import('./price-monitor');
-      const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1252,9 +1268,14 @@ const app = new Hono()
           // newPrice bleibt informativ das Maximum (für DB-Speicherung/UI) — der tatsächliche
           // eBay-Schreibvorgang unten nutzt für jede Variante ihren EIGENEN Preis (P-27/P-28-Fix,
           // Live-Fund stele-138: vorher schrieb dieser Zweig denselben Einheitspreis auf jede SKU).
-          newPrice = safeUniformVariantPrice(variantRows);
+          // Teil 2D: die Senkungsbremse wirkt hier nur auf diesen informativen Wert (für die
+          // DB-Speicherung) — die echten Varianten-SKU-Preise unten (variantRows) sind pro SKU
+          // bereits ihr eigener Mindestpreis, für den es keinen einzelnen "aktuellen Preis" je SKU
+          // gibt, gegen den gedeckelt werden könnte (kein Verlustrisiko, da Mindestpreise).
+          const rawUniform = safeUniformVariantPrice(variantRows);
+          newPrice = rawUniform == null ? null : applyDecreaseCap(product.sellPrice, rawUniform, MAX_PRICE_DECREASE_PERCENT).price;
         } else {
-          newPrice = product.buyPrice != null
+          const rawNewPrice = product.buyPrice != null
             ? computeMinSellPrice({
                 buyPrice: product.buyPrice, supplierShipping: product.shippingCost ?? 0,
                 isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
@@ -1264,6 +1285,10 @@ const app = new Hono()
                 rounding: 'nearest95',
               }).minSellPrice
             : null;
+          // Teil 2D ("Senkungsbremse"): dies ist der tatsächliche eBay-Schreibvorgang (unten,
+          // updateEbayPriceInventory/-Trading) — der Deckel wirkt hier also real, nicht nur in der
+          // Vorschau. Konsistent mit recalculate-preview (dieselbe Funktion, derselbe Bezugspreis).
+          newPrice = rawNewPrice == null ? null : applyDecreaseCap(product.sellPrice, rawNewPrice, MAX_PRICE_DECREASE_PERCENT).price;
         }
         if (newPrice == null) {
           results.push({ itemId, ok: false, error: 'Kein Einkaufspreis vorhanden' });
@@ -2868,7 +2893,7 @@ const app = new Hono()
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
         const { isChinaShipping } = await import('./price-monitor');
-        const { computeMinSellPrice, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
+        const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         for (const product of all) {
           const url = product.sourceUrl || product.amazonUrl;
@@ -2903,7 +2928,7 @@ const app = new Hono()
             // Teil 2A: nur der Aufruf selbst ersetzt (strikte Vorgabe), sonst keine Änderung an
             // diesem Endpunkt.
             const versand = product.shippingCost ?? 0;
-            const newSellPrice = computeMinSellPrice({
+            const rawNewSellPrice = computeMinSellPrice({
               buyPrice: newPrice, supplierShipping: versand,
               isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
@@ -2911,6 +2936,10 @@ const app = new Hono()
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
               rounding: 'nearest95',
             }).minSellPrice;
+            // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
+            // Zielpreis — ohne Deckel würde dieser komplett unbeaufsichtigte Job ein laufendes
+            // Angebot in einem Lauf bis auf die Untergrenze herunterziehen. Anheben uneingeschränkt.
+            const newSellPrice = applyDecreaseCap(product.sellPrice, rawNewSellPrice, MAX_PRICE_DECREASE_PERCENT).price;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             // Teil 2B SICHERHEITSKRITISCH: solange AUTO_PRICE_WRITE_ENABLED false ist (neue
             // Gebühren-Konstanten 15%/0,30€ noch nicht gegen einen vollen Preiszyklus bestätigt),

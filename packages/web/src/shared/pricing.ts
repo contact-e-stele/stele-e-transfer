@@ -97,6 +97,54 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   return { totalCost, customs, baseFeeRateGross, totalFeeRateGross, fixedFeeGross, rawMinSellPrice, minSellPrice };
 }
 
+export interface DecreaseCapResult {
+  price: number;           // finaler Preis (gedeckelt oder unverändert)
+  wasCapped: boolean;      // true, wenn die Absenkung auf maxDecreasePercent begrenzt wurde
+  uncappedPrice: number;   // der übergebene computedMinPrice, unverändert — für die Vorschau ("ohne Deckel wäre X herausgekommen")
+}
+
+// Teil 2D (2026-09-10, "Senkungsbremse"), Vorgabe des Nutzers: computeMinSellPrice() liefert eine
+// UNTERGRENZE, keinen Zielpreis. Ohne Bremse würde ein automatischer Neuberechnungs-Lauf ein
+// laufendes Angebot direkt auf diese Untergrenze herunterziehen (real beobachtet: stele-141
+// 23,95€→10,95€, stele-110 20,95€→10,95€ — beides deutlich mehr als 8%). Das ANHEBEN bei zu
+// niedrigem Preis bleibt bewusst uneingeschränkt (schützt vor Verlust, darf nie gedeckelt werden)
+// — nur das Absenken wird pro Lauf auf maxDecreasePercent begrenzt.
+//
+// currentPrice fehlt (z.B. Erst-Listing, noch kein bisheriger Preis) → computedMinPrice
+// unverändert, nichts zu deckeln. computedMinPrice >= currentPrice → Anheben, nie gedeckelt.
+// Sonst: nicht tiefer als currentPrice × (1 − maxDecreasePercent/100) — das Ergebnis wird
+// anschließend gerundet.
+//
+// Rundungs-Präzisierung gegenüber der wörtlichen Vorgabe ("das Ergebnis danach mit
+// roundToNearest95() runden"): roundToNearest95() rundet auch ABWÄRTS — angewandt auf den
+// Deckel-Grenzwert selbst kann das den gedeckelten Preis unter genau diesen Grenzwert drücken und
+// damit die Bremse leicht überschreiten (Beispiel: currentPrice=23,95€, 8% → Grenzwert 22,034€ →
+// roundToNearest95(22,034) = 21,95€ = 8,35% Absenkung, nicht 8%). Die Pflichtverifikation verlangt
+// aber ausdrücklich "kein Produkt fällt in einem Lauf um mehr als 8 Prozent" — diese harte Grenze
+// hat Vorrang vor der Rundungs-Vorgabe. Deshalb: erst mit roundToNearest95() runden (trifft in der
+// Mehrzahl der Fälle ohnehin einen Wert ≥ Grenzwert), nur falls das Ergebnis DOCH unter den
+// Grenzwert fällt, stattdessen mit roundUpToX95() runden (rundet garantiert aufwärts, verletzt die
+// Bremse nie) — exakt dieselbe Zwei-Modi-Logik, die computeMinSellPrice() bereits kennt.
+export function applyDecreaseCap(
+  currentPrice: number | null | undefined,
+  computedMinPrice: number,
+  maxDecreasePercent: number
+): DecreaseCapResult {
+  if (currentPrice == null) {
+    return { price: computedMinPrice, wasCapped: false, uncappedPrice: computedMinPrice };
+  }
+  if (computedMinPrice >= currentPrice) {
+    return { price: computedMinPrice, wasCapped: false, uncappedPrice: computedMinPrice };
+  }
+  const floor = currentPrice * (1 - maxDecreasePercent / 100);
+  if (computedMinPrice >= floor) {
+    return { price: computedMinPrice, wasCapped: false, uncappedPrice: computedMinPrice };
+  }
+  const nearest = roundToNearest95(floor);
+  const capped = nearest >= floor ? nearest : roundUpToX95(floor);
+  return { price: capped, wasCapped: true, uncappedPrice: computedMinPrice };
+}
+
 // ─── Konstanten-Konfiguration (Teil-2A-Vorgabe: Defaults gehören hierher, nicht in die Funktion) ──
 //
 // Teil 2B (2026-09-10): Gebührensatz + Fixbetrag auf die real gemessenen Werte umgestellt — aus
