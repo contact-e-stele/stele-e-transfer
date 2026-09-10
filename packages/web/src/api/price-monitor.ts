@@ -8,12 +8,12 @@ import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliPro
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
-import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 
-// P-27/P-28-Konsolidierung (2026-09-08), Teil 2A (2026-09-10): die eigentliche Formel lebt
+// P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
 // ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
 // bestehende Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
-export { isChinaShipping, computeMinSellPrice, DEFAULT_PRICING_CONFIG };
+export { isChinaShipping, computeMinSellPrice, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
 
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
@@ -51,7 +51,6 @@ export function computeVariantPriceRows(
   const versand = shippingCost ?? 0;
   const isChina = isChinaShipping(shipsFrom);
   const rate = adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-  // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
   return raw
     .filter(v => typeof v.price === 'number' && v.price > 0)
     .map(v => ({
@@ -577,7 +576,6 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         return;
       }
 
-      // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
       const newSellPrice = computeMinSellPrice({
         buyPrice: newBuyPrice, supplierShipping: versand,
         isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
@@ -589,12 +587,16 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       const isAlert = product.sellPrice == null || Math.abs(newSellPrice - product.sellPrice) >= ALERT_THRESHOLD;
 
       if (isAlert || buyPriceDiff > 0.01) {
-        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€, VK ${product.sellPrice ?? '–'}→${newSellPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}`);
+        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€, VK ${product.sellPrice ?? '–'}→${newSellPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}${AUTO_PRICE_WRITE_ENABLED ? '' : ' (AUTO_PRICE_WRITE_ENABLED=false — nur beobachtet, nicht geschrieben)'}`);
 
-        // DB aktualisieren
+        // Teil 2B SICHERHEITSKRITISCH: die neuen Gebühren-Konstanten (15%/0,30€) sind noch nicht
+        // gegen einen vollen Preiszyklus bestätigt — solange AUTO_PRICE_WRITE_ENABLED false ist,
+        // bleibt der bisherige sellPrice unangetastet und es wird NICHTS an eBay gepusht. buyPrice/
+        // priceChanged werden weiterhin geschrieben (reine Tatsachen-Synchronisation/Anzeige-Flag,
+        // kein mit der neuen Formel berechneter Verkaufspreis).
         await db.update(schema.products).set({
           buyPrice: newBuyPrice,
-          sellPrice: newSellPrice,
+          ...(AUTO_PRICE_WRITE_ENABLED ? { sellPrice: newSellPrice } : {}),
           lastPriceCheck: new Date().toISOString(),
           priceChanged: isAlert,
           updatedAt: new Date().toISOString()
@@ -603,7 +605,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
         // eBay Listing Preis automatisch aktualisieren (falls verknüpft) — nur Nicht-Varianten-
         // Produkte, unverändertes bestehendes Verhalten (kein neuer automatischer Write hier).
-        if (product.ebayListingId && product.ebayStatus === 'listed') {
+        // Teil 2B: hinter AUTO_PRICE_WRITE_ENABLED stillgelegt, s.o.
+        if (AUTO_PRICE_WRITE_ENABLED && product.ebayListingId && product.ebayStatus === 'listed') {
           console.log(`[PriceMonitor] ${product.id}: eBay Listing ${product.ebayListingId} — aktualisiere auf ${newSellPrice.toFixed(2)}€`);
           // Erst Inventory API versuchen (neue Listings), dann Trading API als Fallback
           let ok = await updateEbayPriceInventory(product.id, newSellPrice);

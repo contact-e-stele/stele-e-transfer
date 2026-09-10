@@ -1160,7 +1160,6 @@ const app = new Hono()
             debug: {
               buyPrice: null, versand: product.shippingCost ?? 0, zoll: variantZoll,
               adRate: variantAdRate, adRateWasNull: product.adRate == null,
-              // TODO Teil 2B: auf gemessene 15% + 0,30 EUR umstellen
               feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + variantAdRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
               minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
             },
@@ -1174,7 +1173,6 @@ const app = new Hono()
         const zoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-        // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
         const newPrice = computeMinSellPrice({
           buyPrice: product.buyPrice, supplierShipping: versand,
           isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
@@ -1192,7 +1190,6 @@ const app = new Hono()
           itemId: listing.itemId, title: product.generatedTitle || listing.title, oldPrice, newPrice, diff, isVariant: false,
           debug: {
             buyPrice: product.buyPrice, versand, zoll, adRate, adRateWasNull: product.adRate == null,
-            // TODO Teil 2B: auf gemessene 15% + 0,30 EUR umstellen
             feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
             minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
           },
@@ -1256,7 +1253,6 @@ const app = new Hono()
           // Live-Fund stele-138: vorher schrieb dieser Zweig denselben Einheitspreis auf jede SKU).
           newPrice = safeUniformVariantPrice(variantRows);
         } else {
-          // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
           newPrice = product.buyPrice != null
             ? computeMinSellPrice({
                 buyPrice: product.buyPrice, supplierShipping: product.shippingCost ?? 0,
@@ -2002,7 +1998,6 @@ const app = new Hono()
     const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
     const versandForListing = product.shippingCost ?? 0;
     const adRateForListing = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-    // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
     const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
       buyPrice, supplierShipping: versandForListing,
       isChinaOrigin: isChinaShippingForListing(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
@@ -2868,7 +2863,7 @@ const app = new Hono()
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
         const { isChinaShipping } = await import('./price-monitor');
-        const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+        const { computeMinSellPrice, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         for (const product of all) {
           const url = product.sourceUrl || product.amazonUrl;
@@ -2901,8 +2896,7 @@ const app = new Hono()
             // (fester 18%-Satz statt (13+adRate)%×1.19, kein Sicherheitspuffer, keine Bestell-
             // gebühr, Cent- statt ,95-Rundung) — jetzt dieselbe zentrale Funktion wie überall sonst.
             // Teil 2A: nur der Aufruf selbst ersetzt (strikte Vorgabe), sonst keine Änderung an
-            // diesem Endpunkt. TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15%
-            // + 0,30 EUR umstellen.
+            // diesem Endpunkt.
             const versand = product.shippingCost ?? 0;
             const newSellPrice = computeMinSellPrice({
               buyPrice: newPrice, supplierShipping: versand,
@@ -2913,9 +2907,13 @@ const app = new Hono()
               rounding: 'up95',
             }).minSellPrice;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
+            // Teil 2B SICHERHEITSKRITISCH: solange AUTO_PRICE_WRITE_ENABLED false ist (neue
+            // Gebühren-Konstanten 15%/0,30€ noch nicht gegen einen vollen Preiszyklus bestätigt),
+            // bleibt sellPrice unangetastet und es wird nichts an eBay gepusht — buyPrice/
+            // priceChanged (Tatsachen-Sync/Anzeige-Flag) werden weiterhin geschrieben.
             await db.update(schema.products).set({
               buyPrice: newPrice,
-              sellPrice: priceChanged ? newSellPrice : product.sellPrice,
+              sellPrice: (AUTO_PRICE_WRITE_ENABLED && priceChanged) ? newSellPrice : product.sellPrice,
               lastPriceCheck: new Date().toISOString(),
               priceChanged,
               updatedAt: new Date().toISOString(),
@@ -2923,8 +2921,9 @@ const app = new Hono()
 
             // eBay Listing Preis automatisch aktualisieren wenn Preis gestiegen/gesunken
             // Inventory API (neue Listings) zuerst, dann Trading API Fallback
+            // Teil 2B: hinter AUTO_PRICE_WRITE_ENABLED stillgelegt, s.o.
             let ebayUpdated = false;
-            if (priceChanged && product.ebayListingId && product.ebayStatus === 'listed') {
+            if (AUTO_PRICE_WRITE_ENABLED && priceChanged && product.ebayListingId && product.ebayStatus === 'listed') {
               try {
                 const { getAccessToken } = await import('./ebay');
                 const ebayToken = await getAccessToken();

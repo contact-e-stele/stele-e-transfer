@@ -1582,9 +1582,7 @@ export default function Lieferanten() {
                         onClick={() => {
                           // Empfohlener Mindestpreis (initialer Import — OHNE Sicherheitspuffer, der
                           // bleibt der laufenden automatischen Preisprüfung vorbehalten). Zentrale
-                          // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A, 2026-09-10) —
-                          // Verhalten hier bewusst unverändert gegenüber vorher (regressionsgetestet).
-                          // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
+                          // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A+2B, 2026-09-10).
                           const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
                           const recommended = computeMinSellPrice({
                             buyPrice: einkauf, supplierShipping: versand,
@@ -1738,7 +1736,6 @@ export default function Lieferanten() {
               const minP = Math.min(...vp.map(v => v.price));
               // P-75: Gleiche Formel wie der Einzel-Varianten-Button unten (inkl. P-74 ,95-Rundung) —
               // hier einmal extrahiert, damit "Alle übernehmen" und Einzel-Button garantiert identisch rechnen.
-              // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
               const recommendedFor = (v: VariantPrice): number => {
                 const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
                 const versandV = parseFloat(shippingCost.replace(",", ".")) || 0;
