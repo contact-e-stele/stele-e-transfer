@@ -53,12 +53,16 @@ Derselbe Rohfall (EK=10€, Versand=2€, adRate=5%, Zielgewinn=2€) vorher/nac
 
 | | Sicherheitspuffer | Rundung | Berechneter VK | Tatsächlicher Gewinn |
 |---|---|---|---|---|
-| Teil 2B (vorher) | +1,50€ | immer aufwärts (up95) | 20,95€ | 4,23€ |
-| Teil 2C (nachher) | 0€ | nächste ,95-Marke (nearest95) | 18,95€ | 2,23€ |
+| Teil 2B (vorher) | +1,50€ | immer aufwärts (up95) | 20,95€ | 3,61€ |
+| Teil 2C (nachher) | 0€ | nächste ,95-Marke (nearest95) | 18,95€ | 2,08€ |
+
+**Korrektur (Teil 2D, nachgetragen):** hier standen ursprünglich 4,23€ bzw. 2,23€ — beides falsch,
+fälschlich aus der stele-98-Zeile der Tabelle oben übernommen statt für diesen (EK=10€,
+Versand=2€)-Rohfall frisch gerechnet. Mit `bun` neu nachgerechnet: 3,61€ bzw. 2,08€ (s.o.).
 
 Genau die im Auftrag beschriebene Differenz: aus einem gewünschten 2,00€-Zielgewinn wurden vorher
-real ca. 3,50-4,25€ (siehe Formel-Header, hier konkret 4,23€) — jetzt 2,23€, innerhalb der
-,95-Rundungstoleranz.
+real ca. 3,50-4,25€ (siehe Formel-Header, hier konkret 3,61€ — am unteren Rand des genannten
+Rahmens, aber weiterhin klar über dem Ziel) — jetzt 2,08€, innerhalb der ,95-Rundungstoleranz.
 
 ## Definition "Zielgewinn" — Abgleich mit computeMinSellPrice()
 

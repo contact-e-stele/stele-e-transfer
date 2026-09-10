@@ -15,7 +15,8 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
   test('Gebührensatz, Fixbetrag und MwSt-Faktor entsprechen den in 13 realen Bestellungen gemessenen Werten', () => {
@@ -253,5 +254,71 @@ describe('roundUpToX95 / roundToNearest95 — reine Rundungsfunktionen (unverän
     expect(roundToNearest95(10.00)).toBe(9.95);
     expect(roundToNearest95(10.50)).toBe(10.95);
     expect(roundToNearest95(10.95)).toBe(10.95);
+  });
+});
+
+describe('applyDecreaseCap — Teil 2D "Senkungsbremse": computeMinSellPrice() liefert eine Untergrenze, kein Zielpreis', () => {
+  test('MAX_PRICE_DECREASE_PERCENT ist 8 (Vorgabe des Nutzers, 2026-09-10)', () => {
+    expect(MAX_PRICE_DECREASE_PERCENT).toBe(8);
+  });
+
+  // a) Anheben, weil der aktuelle Preis unter dem Mindestpreis liegt — darf NICHT gedeckelt werden
+  test('a) Anheben wird NIE gedeckelt (schützt vor Verlust)', () => {
+    const result = applyDecreaseCap(15.00, 18.95, MAX_PRICE_DECREASE_PERCENT);
+    expect(result).toEqual({ price: 18.95, wasCapped: false, uncappedPrice: 18.95 });
+  });
+
+  // b) Absenken um mehr als 8% — muss auf 8% begrenzt werden (reale Beispiele aus dem Auftrag)
+  test('b) Absenken um mehr als 8% wird begrenzt — real beobachtete Fälle stele-141/stele-110', () => {
+    // stele-141: eBay aktuell 23,95€, berechneter Mindestpreis 10,95€ (−54,3%, weit über 8%)
+    const stele141 = applyDecreaseCap(23.95, 10.95, MAX_PRICE_DECREASE_PERCENT);
+    expect(stele141.wasCapped).toBe(true);
+    expect(stele141.uncappedPrice).toBe(10.95);
+    expect(stele141.price).toBe(22.95);
+    expect((23.95 - stele141.price) / 23.95).toBeLessThanOrEqual(0.08);
+
+    // stele-110: eBay aktuell 20,95€, berechneter Mindestpreis 10,95€ (−47,7%, weit über 8%)
+    const stele110 = applyDecreaseCap(20.95, 10.95, MAX_PRICE_DECREASE_PERCENT);
+    expect(stele110.wasCapped).toBe(true);
+    expect(stele110.uncappedPrice).toBe(10.95);
+    expect(stele110.price).toBe(19.95);
+    expect((20.95 - stele110.price) / 20.95).toBeLessThanOrEqual(0.08);
+  });
+
+  // Regressionsschutz für die Rundungs-Präzisierung (s. Kommentar in pricing.ts): eine naive
+  // roundToNearest95()-Anwendung auf den 8%-Grenzwert selbst würde hier 21,95€ ergeben — das wäre
+  // bereits 8,35% Absenkung, eine Verletzung der 8%-Bremse. Beweist, dass die Zwei-Modi-Rundung
+  // (roundUpToX95 als Fallback) das tatsächlich verhindert.
+  test('Regressionsschutz: eine reine roundToNearest95()-Rundung des Grenzwerts würde die 8%-Bremse verletzen', () => {
+    const naiveFloor = 23.95 * (1 - 8 / 100);
+    const naiveRounded = roundToNearest95(naiveFloor);
+    expect(naiveRounded).toBe(21.95); // würde die Bremse verletzen, s.u.
+    expect((23.95 - naiveRounded) / 23.95).toBeGreaterThan(0.08); // 8,35% — genau der Bug, den applyDecreaseCap vermeidet
+    // applyDecreaseCap() selbst bleibt innerhalb der Bremse (Test b oben: 22,95€, 4,18%).
+  });
+
+  // c) Absenken um weniger als 8% — muss unveraendert durchgehen
+  test('c) Absenken um weniger als 8% bleibt unverändert (kein unnötiges Runden/Verändern)', () => {
+    const result = applyDecreaseCap(20.00, 19.00, MAX_PRICE_DECREASE_PERCENT); // −5%
+    expect(result).toEqual({ price: 19.00, wasCapped: false, uncappedPrice: 19.00 });
+  });
+
+  test('currentPrice null/undefined (Erst-Listing, kein bisheriger Preis) — computedMinPrice unverändert', () => {
+    expect(applyDecreaseCap(null, 12.95, MAX_PRICE_DECREASE_PERCENT)).toEqual({ price: 12.95, wasCapped: false, uncappedPrice: 12.95 });
+    expect(applyDecreaseCap(undefined, 12.95, MAX_PRICE_DECREASE_PERCENT)).toEqual({ price: 12.95, wasCapped: false, uncappedPrice: 12.95 });
+  });
+
+  test('computedMinPrice === currentPrice — keine Änderung, kein Deckeln (Grenzfall, kein Absinken)', () => {
+    expect(applyDecreaseCap(18.95, 18.95, MAX_PRICE_DECREASE_PERCENT)).toEqual({ price: 18.95, wasCapped: false, uncappedPrice: 18.95 });
+  });
+
+  test('gedeckelter Preis überschreitet die 8%-Bremse in keinem der Testfälle (a/b/c + Regressionsfall)', () => {
+    const cases: Array<[number, number]> = [[15.00, 18.95], [23.95, 10.95], [20.95, 10.95], [20.00, 19.00]];
+    for (const [currentPrice, computedMinPrice] of cases) {
+      const { price } = applyDecreaseCap(currentPrice, computedMinPrice, MAX_PRICE_DECREASE_PERCENT);
+      if (price < currentPrice) {
+        expect((currentPrice - price) / currentPrice).toBeLessThanOrEqual(MAX_PRICE_DECREASE_PERCENT / 100);
+      }
+    }
   });
 });

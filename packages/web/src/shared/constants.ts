@@ -24,6 +24,14 @@ export const MIN_GEWINN_EUR = 2.00;
 // nachvollziehbar bleibt.
 export const PRICE_SAFETY_BUFFER_EUR = 1.50;
 
+// Teil 2D (2026-09-10, "Senkungsbremse"), Vorgabe des Nutzers: computeMinSellPrice() liefert eine
+// UNTERGRENZE, keinen Zielpreis — automatische Neuberechnungs-Läufe würden ein laufendes Angebot
+// sonst in einem einzigen Lauf bis auf diese Untergrenze herunterziehen (real beobachtet:
+// stele-141 23,95€→10,95€, stele-110 20,95€→10,95€). Begrenzt darum, um wie viel Prozent ein
+// automatisch berechneter Preis GEGENÜBER DEM AKTUELLEN PREIS pro Lauf sinken darf — das Anheben
+// bei zu niedrigem Preis bleibt davon unberührt (schützt weiterhin uneingeschränkt vor Verlust).
+export const MAX_PRICE_DECREASE_PERCENT = 8;
+
 // Feste Kategorieliste fuer manuell gespeicherte Shops ("Meine Shops")
 // Dient nur der Uebersicht im Suche-Tab-Dropdown (z.B. um zu wissen, wo man zuerst nachschauen sollte)
 export const SHOP_CATEGORIES = [

@@ -7,13 +7,13 @@ import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } fro
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
-import { CHINA_ZOLL_EUR } from '../shared/constants';
-import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { CHINA_ZOLL_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
+import { computeMinSellPrice, applyDecreaseCap, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 
 // P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
 // ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
 // bestehende Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
-export { isChinaShipping, computeMinSellPrice, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
+export { isChinaShipping, computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
 
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
@@ -578,7 +578,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         return;
       }
 
-      const newSellPrice = computeMinSellPrice({
+      const rawNewSellPrice = computeMinSellPrice({
         buyPrice: newBuyPrice, supplierShipping: versand,
         isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
@@ -586,10 +586,14 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'nearest95',
       }).minSellPrice;
+      // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
+      // Zielpreis — ohne Deckel würde dieser komplett unbeaufsichtigte 8h-Cron ein laufendes
+      // Angebot in einem Lauf bis auf die Untergrenze herunterziehen. Anheben bleibt uneingeschränkt.
+      const { price: newSellPrice, wasCapped } = applyDecreaseCap(product.sellPrice, rawNewSellPrice, MAX_PRICE_DECREASE_PERCENT);
       const isAlert = product.sellPrice == null || Math.abs(newSellPrice - product.sellPrice) >= ALERT_THRESHOLD;
 
       if (isAlert || buyPriceDiff > 0.01) {
-        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€, VK ${product.sellPrice ?? '–'}→${newSellPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}${AUTO_PRICE_WRITE_ENABLED ? '' : ' (AUTO_PRICE_WRITE_ENABLED=false — nur beobachtet, nicht geschrieben)'}`);
+        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€, VK ${product.sellPrice ?? '–'}→${newSellPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}${wasCapped ? ` (Senkungsbremse: unabgedeckelt wären ${rawNewSellPrice.toFixed(2)}€ herausgekommen, max. ${MAX_PRICE_DECREASE_PERCENT}% Absenkung pro Lauf)` : ''}${AUTO_PRICE_WRITE_ENABLED ? '' : ' (AUTO_PRICE_WRITE_ENABLED=false — nur beobachtet, nicht geschrieben)'}`);
 
         // Teil 2B SICHERHEITSKRITISCH: die neuen Gebühren-Konstanten (15%/0,30€) sind noch nicht
         // gegen einen vollen Preiszyklus bestätigt — solange AUTO_PRICE_WRITE_ENABLED false ist,
