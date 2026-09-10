@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 
 interface VariantGroup {
   name: string;
@@ -109,8 +110,15 @@ function StatusBadge({ status, listingId }: { status: string; listingId: string 
 
 function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) {
   if (!buy && !sell) return null;
-  // Gleiche Formel wie Preise-Tab: 18% × 1.19 MwSt + 0.45€ × 1.19
-  const ebayFee = sell ? sell * (0.18 * 1.19) + (0.45 * 1.19) : 0;
+  // Gleiche Formel wie Preise-Tab: 18% × 1.19 MwSt + 0.45€ × 1.19 — Gebührensätze jetzt aus der
+  // zentralen Kalkulationsfunktion statt eigenem Literal, Zahlen unverändert.
+  // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
+  const pricingRates = computeMinSellPrice({
+    buyPrice: 0, supplierShipping: 0, isChinaOrigin: false, customsFlat: 0,
+    ebayFeeRatePercent: 18, ebayFixedFeeEur: 0.45, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+    adRatePercent: 0, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
+  });
+  const ebayFee = sell ? sell * pricingRates.baseFeeRateGross + pricingRates.fixedFeeGross : 0;
   const margin = (buy && sell) ? ((sell - buy - ebayFee) / sell * 100) : null;
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>

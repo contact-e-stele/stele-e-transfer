@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR } from "../../shared/constants";
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 
 function formatEuro(val: number) {
   return val.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -151,14 +152,23 @@ export default function Index() {
   const zollVal = !ausChina ? 0 : (sendungswert <= 150 ? zollPauschaleVal : zollManuellVal);
   const wahrerEinkauf = einkaufVal > 0 ? einkaufVal + versandVal + zollVal : 0;
 
-  const EBAY_FEE_NETTO = (parseFloat(gebuehr.replace(",", ".")) || 18) / 100;
-  const MWST = 1.19;
+  // Teil 2A: Gebührensätze/Fixbetrag kommen jetzt aus der zentralen Kalkulationsfunktion, statt
+  // hier ein zweites Mal ausgerechnet zu werden — Zahlen unverändert (eigener 17%/18%-Eingabewert
+  // bleibt bewusst erhalten, NICHT der 13%-Formel-Default). Ein Mindestpreis wird hier nicht
+  // gebraucht (buyPrice/targetMargin daher neutral 0), nur die Gebührensätze/der Fixbetrag.
+  // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
+  const ebayFeeRatePercentInput = parseFloat(gebuehr.replace(",", ".")) || 18;
+  const pricingRates = computeMinSellPrice({
+    buyPrice: 0, supplierShipping: 0, isChinaOrigin: false, customsFlat: 0,
+    ebayFeeRatePercent: ebayFeeRatePercentInput, ebayFixedFeeEur: 0.45, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+    adRatePercent: anzeigegebuehrProzent * 100, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
+  });
   // EBAY_FEE (nur Provision, ohne Anzeigegebühr) bleibt separat erhalten — wird weiterhin
   // für die Untergrenze (minPreis80) gebraucht, die bewusst unverändert bleibt.
-  const EBAY_FEE = EBAY_FEE_NETTO * MWST;
-  const FIXBETRAG = 0.45 * MWST; // 0,45 € + 19% MwSt. = 0,5355 €
+  const EBAY_FEE = pricingRates.baseFeeRateGross;
+  const FIXBETRAG = pricingRates.fixedFeeGross; // 0,45 € + 19% MwSt. = 0,5355 €
   // Gesamtgebührensatz: eBay-Provision + Anzeigegebühr zusammen, beide inkl. MwSt. (wie im Wizard)
-  const GESAMT_FEE = (EBAY_FEE_NETTO + anzeigegebuehrProzent) * MWST;
+  const GESAMT_FEE = pricingRates.totalFeeRateGross;
 
   // Netto = was du bekommst nach ALLEN eBay-Gebühren (Provision % + Anzeigegebühr % + Fixbetrag)
   const nettoListen = listen > 0 ? listen * (1 - GESAMT_FEE) - FIXBETRAG : 0;
