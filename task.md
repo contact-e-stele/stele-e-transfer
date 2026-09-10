@@ -4,7 +4,7 @@
 > Architektur-Details: `docs/ARCHITECTURE.md`.
 
 ## NOCH OFFEN
--4. **Preis-Fundament Teil 2B (2026-09-10, Draft, wartet auf manuelle Freigabe):** Gebühren-Konstanten auf real gemessene Werte umgestellt — SICHERHEITSKRITISCH, betrifft Geld-Logik.
+-4. **Preis-Fundament Teil 2B (2026-09-10, Draft #86, wartet auf manuelle Freigabe):** Gebühren-Konstanten auf real gemessene Werte umgestellt — SICHERHEITSKRITISCH, betrifft Geld-Logik.
    - `DEFAULT_PRICING_CONFIG` (shared/pricing.ts): `ebayFeeRatePercent` 13→**15**, `ebayFixedFeeEur` 0,45→**0,30**, MwSt-Faktor unverändert 1,19. Alle 8 Aufrufstellen aus Teil 2A lesen bereits aus dieser Konfiguration (keine eigenen Literale mehr) — Korrektur wirkt sich überall gleichzeitig aus. TODO-Kommentare aus Teil 2A entfernt; `index.tsx`/`produkte.tsx`, die bisher eigene 17/18%-Literale hatten, zeigen jetzt ebenfalls auf `DEFAULT_PRICING_CONFIG`.
    - **Anzeigengebühr im Preise-Tab** (`index.tsx`): freies "Anzeigegebühr"-Textfeld entfernt, ersetzt durch Produkt-Auswahl (Dropdown, lädt `GET /api/products`) — Anzeigengebühr kommt jetzt aus `adRate` des gewählten Produkts. Kein Produkt gewählt oder `adRate` null → 0%, sichtbar als "ohne Anzeigengebühr" gekennzeichnet (kein stiller Platzhalter).
    - **Default Herkunft** (`index.tsx`): `ausChina` startet jetzt `true` (vorher `false`), da Lieferant-Default "aliexpress" ist; Lieferant-Dropdown setzt `ausChina` beim Wechsel reaktiv mit (`val === "aliexpress"`).
