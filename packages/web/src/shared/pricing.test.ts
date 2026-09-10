@@ -1,10 +1,12 @@
-// Teil 2A+2B (P-27/P-28-Preis-Fundament, 2026-09-10): Tests für die einzige Kalkulationsfunktion
-// computeMinSellPrice(). Teil 2A bewies WERTNEUTRALITÄT des reinen Struktur-Refactors (alte 13%/
-// 0,45€-Annahme unverändert). Teil 2B korrigiert DEFAULT_PRICING_CONFIG auf die real gemessenen
-// Werte (15% + 0,30€, aus 13 realen Bestellungen ermittelt) — die Fixture-Erwartungszahlen in
-// diesem Test wurden darum NEU mit der korrigierten Formel berechnet (nicht mehr mit 13%/0,45€)
-// und als feste Literale hinterlegt, exakt wie im Auftrag gefordert ("Vorher-Werte als feste
-// Fixtures ablegen, nicht frisch berechnen" — hier sind es die "Nachher"-Werte nach Teil 2B).
+// Teil 2A+2B+2C (P-27/P-28-Preis-Fundament, 2026-09-10): Tests für die einzige Kalkulationsfunktion
+// computeMinSellPrice(). Teil 2A bewies WERTNEUTRALITÄT des reinen Struktur-Refactors. Teil 2B
+// korrigierte DEFAULT_PRICING_CONFIG auf die real gemessenen Werte (15% + 0,30€). Teil 2C
+// ("Zielgewinn trifft exakt") entfernt den Sicherheitspuffer (safetyBufferEur jetzt fest 0, vorher
+// 1,50€ zusätzlich zum Zielgewinn) und stellt alle automatischen Aufrufstellen von 'up95'
+// (rundet IMMER aufwärts) auf 'nearest95' (rundet zur nächsten ,95-Marke, auch abwärts) um — beides
+// zusammen war die Ursache dafür, dass aus einem gewünschten 2,00€-Zielgewinn real 3,50-4,25€
+// wurden. Alle Fixture-Erwartungszahlen in diesem Test wurden darum NEU mit der Teil-2C-Formel
+// berechnet (nicht mehr mit Sicherheitspuffer/up95) und als feste Literale hinterlegt.
 //
 // Datenherkunft der Snapshot-Fixtures: mindestens 10 reale Produkte, darunter stele-98/110/141
 // (12 reale Einkaufspreis-Datenpunkte in Summe, vom Nutzer in Teil 1 direkt mitgeteilt).
@@ -15,11 +17,18 @@
 import { describe, expect, test } from 'bun:test';
 import { computeMinSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 
-describe('DEFAULT_PRICING_CONFIG — Teil 2B: real gemessene Werte', () => {
+describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
   test('Gebührensatz, Fixbetrag und MwSt-Faktor entsprechen den in 13 realen Bestellungen gemessenen Werten', () => {
     expect(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent).toBe(15);
     expect(DEFAULT_PRICING_CONFIG.ebayFixedFeeEur).toBe(0.30);
     expect(DEFAULT_PRICING_CONFIG.vatFactor).toBe(1.19);
+  });
+
+  // Teil 2C, Ursache 1 der Zielgewinn-Abweichung: der Sicherheitspuffer wurde ZUSÄTZLICH zum
+  // Zielgewinn addiert. Ab jetzt fest 0 — PRICE_SAFETY_BUFFER_EUR (shared/constants.ts) bleibt
+  // als Konstante bestehen, wird aber von keiner Kalkulation mehr referenziert.
+  test('safetyBufferEur ist 0 (Teil 2C — vorher 1,50€, Ursache der Zielgewinn-Abweichung)', () => {
+    expect(DEFAULT_PRICING_CONFIG.safetyBufferEur).toBe(0);
   });
 
   // SICHERHEITSKRITISCH (Pflichtbestandteil der strikten Grenzen): solange die neue Formel nicht
@@ -29,71 +38,80 @@ describe('DEFAULT_PRICING_CONFIG — Teil 2B: real gemessene Werte', () => {
   });
 });
 
-describe('computeMinSellPrice — "up95"-Fall (price-monitor.ts/index.ts: MIT Sicherheitspuffer, ,95 aufwärts gerundet)', () => {
-  function upstreamCase(buyPrice: number, versand: number, zoll: number, adRate: number) {
+describe('computeMinSellPrice — "nearest95"-Fall, automatische Preisprüfung (price-monitor.ts/index.ts/ebay.ts): Teil 2C, OHNE Sicherheitspuffer, zur nächsten ,95-Marke gerundet', () => {
+  function automaticCheckCase(buyPrice: number, versand: number, zoll: number, adRate: number, targetMarginEur: number = DEFAULT_PRICING_CONFIG.targetMarginEur) {
     return computeMinSellPrice({
       buyPrice, supplierShipping: versand, isChinaOrigin: zoll > 0, customsFlat: zoll,
       ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
-      targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-      rounding: 'up95',
+      targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+      rounding: 'nearest95',
     }).minSellPrice;
   }
 
-  test('Erfolgsbedingung: buyPrice=10, versand=2, zoll=0, adRate=5 → 20,95€ (bei 15%/0,30€ zufällig identisch zum alten 13%/0,45€-Ergebnis)', () => {
-    expect(upstreamCase(10, 2, 0, 5)).toBe(20.95);
+  test('Erfolgsbedingung: buyPrice=10, versand=2, zoll=0, adRate=5, Zielgewinn=2 → 18,95€ (Teil 2B/up95+Puffer: 20,95€)', () => {
+    expect(automaticCheckCase(10, 2, 0, 5)).toBe(18.95);
   });
 
-  // 6 Fälle, neu berechnet mit 15%/0,30€ (vorher, mit 13%/0,45€: 11.95/49.95→jetzt50.95/22.95/22.95/129.95→jetzt132.95 —
-  // zwei der sechs Fälle bleiben nach ,95-Rundung zufällig gleich, vier ändern sich sichtbar).
-  test('mit den real gemessenen Gebühren-Konstanten (15%/0,30€) neu berechnet', () => {
+  test('mit den Teil-2C-Werten (kein Puffer, nearest95) neu berechnet (6 Fälle)', () => {
     const cases: Array<[number, number, number, number, number]> = [
-      [10, 2, 0, 5, 20.95],
-      [4.79, 0, 0, 5, 11.95],
-      [25.5, 3.2, 4.0, 8, 50.95],
-      [12.95, 1.1, 0, 2, 22.95],
-      [8.0, 0, 4.0, 10, 22.95],
-      [100, 5, 0, 0, 132.95],
+      [10, 2, 0, 5, 18.95],
+      [4.79, 0, 0, 5, 8.95],
+      [25.5, 3.2, 4.0, 8, 47.95],
+      [12.95, 1.1, 0, 2, 20.95],
+      [8.0, 0, 4.0, 10, 19.95],
+      [100, 5, 0, 0, 130.95],
     ];
     for (const [buyPrice, versand, zoll, adRate, expected] of cases) {
-      expect(upstreamCase(buyPrice, versand, zoll, adRate)).toBe(expected);
+      expect(automaticCheckCase(buyPrice, versand, zoll, adRate)).toBe(expected);
     }
   });
 
-  // ── Snapshot-Fixtures: reale Produkte (Pflichtbestandteil #4 aus Teil 2A, hier mit den neuen
-  // Teil-2B-Werten fortgeschrieben) ──
+  // ── Snapshot-Fixtures: reale Produkte (Pflichtbestandteil #4 aus Teil 2A, hier mit den
+  // Teil-2C-Werten fortgeschrieben — targetMarginEur=2,00 = globaler Default) ──
   test('stele-98 — realer AliExpress-Einkaufspreis 4,99€', () => {
-    expect(upstreamCase(4.99, 0, 0, 5)).toBe(11.95);
+    expect(automaticCheckCase(4.99, 0, 0, 5)).toBe(9.95);
   });
 
-  test('stele-110 — 6 reale Varianten-Einkaufspreise (v6=7,69€ ändert sich ggü. Teil 2A von 14,95€ auf 15,95€)', () => {
+  test('stele-110 — 6 reale Varianten-Einkaufspreise', () => {
     const realBuyPrices: Array<[number, number]> = [
-      [2.15, 7.95], [2.55, 8.95], [3.35, 9.95], [4.19, 10.95], [4.99, 11.95], [7.69, 15.95],
+      [2.15, 5.95], [2.55, 5.95], [3.35, 7.95], [4.19, 8.95], [4.99, 9.95], [7.69, 12.95],
     ];
     for (const [buyPrice, expected] of realBuyPrices) {
-      expect(upstreamCase(buyPrice, 0, 0, 5)).toBe(expected);
+      expect(automaticCheckCase(buyPrice, 0, 0, 5)).toBe(expected);
     }
   });
 
-  test('stele-141 — 5 reale Varianten-Einkaufspreise (v3/v4=2,99€ ändern sich ggü. Teil 2A von 8,95€ auf 9,95€)', () => {
+  test('stele-141 — 5 reale Varianten-Einkaufspreise', () => {
     const realBuyPrices: Array<[number, number]> = [
-      [1.79, 7.95], [2.25, 8.95], [2.99, 9.95], [2.99, 9.95], [8.19, 15.95],
+      [1.79, 4.95], [2.25, 5.95], [2.99, 6.95], [2.99, 6.95], [8.19, 13.95],
     ];
     for (const [buyPrice, expected] of realBuyPrices) {
-      expect(upstreamCase(buyPrice, 0, 0, 5)).toBe(expected);
+      expect(automaticCheckCase(buyPrice, 0, 0, 5)).toBe(expected);
     }
   });
 
   // stele-152: bewusst NICHT enthalten — kein realer Wert im Chat verfügbar, siehe Datei-Header.
 
   test('synthetische Randfälle (klar gekennzeichnet, keine Live-Daten): China-Zoll, adRate=0, hoher Einkaufspreis', () => {
-    expect(upstreamCase(6.50, 2.20, 4.00, 5)).toBe(21.95);   // China-Versand + Zollpauschale (unverändert ggü. Teil 2A)
-    expect(upstreamCase(15.00, 0, 0, 0)).toBe(23.95);         // adRate 0 — ändert sich ggü. Teil 2A von 22,95€
-    expect(upstreamCase(42.00, 3.50, 0, 8)).toBe(68.95);      // hoher EK + hoher adRate — ändert sich ggü. Teil 2A von 66,95€
+    expect(automaticCheckCase(6.50, 2.20, 4.00, 5)).toBe(19.95);
+    expect(automaticCheckCase(15.00, 0, 0, 0)).toBe(20.95);
+    expect(automaticCheckCase(42.00, 3.50, 0, 8)).toBe(65.95);
+  });
+
+  // Teil 2C, Ursache 2: der beim Import gewählte Zielgewinn wird jetzt pro Produkt (product.
+  // targetMarginEur) durchgereicht statt immer auf den globalen Default zurückzufallen — Beweis,
+  // dass ein abweichender Wert (hier 4€ statt 2€) wirklich durchschlägt (Pflichtbestandteil #6).
+  test('Zielgewinn=4€ statt des globalen Defaults (2€) schlägt sichtbar durch (3 reale Produkte)', () => {
+    expect(automaticCheckCase(4.99, 0, 0, 5, 4.00)).toBe(11.95);  // stele-98
+    expect(automaticCheckCase(2.15, 0, 0, 5, 4.00)).toBe(8.95);   // stele-110-v1
+    expect(automaticCheckCase(7.69, 0, 0, 5, 4.00)).toBe(15.95);  // stele-110-v6
+    // zum Vergleich: derselbe Einkaufspreis mit dem globalen 2€-Default ergibt einen niedrigeren VK
+    expect(automaticCheckCase(4.99, 0, 0, 5, 4.00)).toBeGreaterThan(automaticCheckCase(4.99, 0, 0, 5, 2.00));
   });
 });
 
-describe('computeMinSellPrice — "cent"-Fall (lieferanten.tsx Einzelbutton: OHNE Sicherheitspuffer, Cent-Rundung)', () => {
+describe('computeMinSellPrice — "cent"-Fall (lieferanten.tsx Einzelbutton: OHNE Sicherheitspuffer, Cent-Rundung) — unverändert seit Teil 2B, da schon ohne Puffer', () => {
   function importSuggestionCase(buyPrice: number, versand: number, zoll: number, adRate: number, minGewinn: number) {
     return computeMinSellPrice({
       buyPrice, supplierShipping: versand, isChinaOrigin: zoll > 0, customsFlat: zoll,
@@ -104,7 +122,7 @@ describe('computeMinSellPrice — "cent"-Fall (lieferanten.tsx Einzelbutton: OHN
     }).minSellPrice;
   }
 
-  test('Erfolgsbedingung: buyPrice=10, versand=2, zoll=0, adRate=5, minGewinn=2 → 18,85€ (ändert sich ggü. Teil 2A von 18,50€)', () => {
+  test('Erfolgsbedingung: buyPrice=10, versand=2, zoll=0, adRate=5, minGewinn=2 → 18,85€', () => {
     expect(importSuggestionCase(10, 2, 0, 5, 2.00)).toBe(18.85);
   });
 
@@ -129,7 +147,7 @@ describe('computeMinSellPrice — "cent"-Fall (lieferanten.tsx Einzelbutton: OHN
   });
 });
 
-describe('computeMinSellPrice — "nearest95"-Fall (lieferanten.tsx Varianten-Tabelle: OHNE Puffer, zur nächsten ,95-Marke)', () => {
+describe('computeMinSellPrice — "nearest95"-Fall (lieferanten.tsx Varianten-Tabelle: OHNE Puffer, zur nächsten ,95-Marke) — unverändert seit Teil 2B, da schon ohne Puffer/mit nearest95', () => {
   function variantTableCase(buyPrice: number, versand: number, zoll: number, adRate: number, minGewinn: number) {
     return computeMinSellPrice({
       buyPrice, supplierShipping: versand, isChinaOrigin: zoll > 0, customsFlat: zoll,
@@ -143,9 +161,7 @@ describe('computeMinSellPrice — "nearest95"-Fall (lieferanten.tsx Varianten-Ta
   test('reale stele-98/110-Einkaufspreise, zur nächsten ,95-Marke gerundet (minGewinn=2, adRate=5)', () => {
     expect(variantTableCase(4.99, 0, 0, 5, 2.00)).toBe(9.95);   // stele-98
     expect(variantTableCase(2.15, 0, 0, 5, 2.00)).toBe(5.95);   // stele-110-v1
-    // stele-110-v2 rundet mit den neuen Werten AB auf 5,95€ (vorher, mit 13%/0,45€: 6,95€) —
-    // genau das Rundungsverhalten, das roundToNearest95() von roundUpToX95() unterscheidet.
-    expect(variantTableCase(2.55, 0, 0, 5, 2.00)).toBe(5.95);   // stele-110-v2
+    expect(variantTableCase(2.55, 0, 0, 5, 2.00)).toBe(5.95);   // stele-110-v2 — rundet AB (Beweis nearest95 vs. up95)
     expect(variantTableCase(3.35, 0, 0, 5, 2.00)).toBe(7.95);   // stele-110-v3
     expect(variantTableCase(4.19, 0, 0, 5, 2.00)).toBe(8.95);   // stele-110-v4
   });
@@ -157,11 +173,12 @@ describe('computeMinSellPrice — "nearest95"-Fall (lieferanten.tsx Varianten-Ta
 });
 
 describe('computeMinSellPrice — "none"-Fall (Preise-Tab-Verhandlungsrechner & Produkte-Tab-Badge: nur Gebührensätze, kein Mindestpreis)', () => {
-  // Diese Tests bleiben gegenüber Teil 2A UNVERÄNDERT: der Preise-Tab-Rechner übergibt weiterhin
-  // seinen eigenen, frei editierbaren Gebührensatz (Default jetzt 15%, s. index.tsx) statt
-  // DEFAULT_PRICING_CONFIG direkt — die reine Rechenfunktion selbst wurde nicht verändert.
+  // Diese Tests bleiben gegenüber Teil 2A/2B UNVERÄNDERT: der Preise-Tab-Rechner übergibt weiterhin
+  // seinen eigenen, frei editierbaren Gebührensatz statt DEFAULT_PRICING_CONFIG direkt — die reine
+  // Rechenfunktion selbst und diese beiden Aufrufstellen sind von Teil 2C (Puffer/Rundung) nicht
+  // betroffen, weil hier ohnehin kein Mindestpreis berechnet wird (rounding: 'none').
   test('Preise-Tab: 15%-Default (ehem. 17%) + Anzeigegebühr aus adRate', () => {
-    const adRatePercent = 5; // jetzt aus dem adRate-Feld eines ausgewählten Produkts, nicht mehr manuell getippt
+    const adRatePercent = 5; // aus dem adRate-Feld eines ausgewählten Produkts, nicht manuell getippt
     const result = computeMinSellPrice({
       buyPrice: 0, supplierShipping: 0, isChinaOrigin: false, customsFlat: 0,
       ebayFeeRatePercent: 15, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: 1.19,
@@ -197,8 +214,8 @@ describe('computeMinSellPrice — "none"-Fall (Preise-Tab-Verhandlungsrechner & 
 
 describe('computeMinSellPrice — Regressionsschutz: falsche Rundung würde erkannt', () => {
   test('"up95" und "nearest95" liefern für denselben Rohwert unterschiedliche Preise', () => {
-    // buyPrice=3.80 ergibt mit den neuen Konstanten (15%/0,30€) einen Rohwert knapp über einer
-    // ,95-Marke: 'nearest95' rundet AB, 'up95' garantiert AUF.
+    // buyPrice=3.80 ergibt mit den Teil-2C-Werten (kein Puffer, 15%/0,30€) einen Rohwert knapp
+    // über einer ,95-Marke: 'nearest95' rundet AB, 'up95' garantiert AUF.
     const base = { buyPrice: 3.80, supplierShipping: 0, isChinaOrigin: false, customsFlat: 0,
       ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: 1.19, adRatePercent: 5,
       targetMarginEur: 2.00, safetyBufferEur: 0 };
@@ -207,6 +224,20 @@ describe('computeMinSellPrice — Regressionsschutz: falsche Rundung würde erka
     expect(up).toBe(8.95);
     expect(nearest).toBe(7.95);
     expect(up).not.toBe(nearest);
+  });
+
+  // Teil 2C, Ursache 1: beweist konkret, wie viel der Sicherheitspuffer+up95-Kombination ausmachte
+  // — derselbe Rohfall wie die automatische-Preisprüfung-Erfolgsbedingung oben, einmal mit der
+  // ALTEN (Teil-2B) Kombination und einmal mit der NEUEN (Teil-2C).
+  test('Sicherheitspuffer+up95 (Teil 2B) vs. kein Puffer+nearest95 (Teil 2C): 2,00€ Differenz bei buyPrice=10', () => {
+    const base = { buyPrice: 10, supplierShipping: 2, isChinaOrigin: false, customsFlat: 0,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: 1.19, adRatePercent: 5,
+      targetMarginEur: 2.00 };
+    const teil2b = computeMinSellPrice({ ...base, safetyBufferEur: 1.50, rounding: 'up95' }).minSellPrice;
+    const teil2c = computeMinSellPrice({ ...base, safetyBufferEur: 0, rounding: 'nearest95' }).minSellPrice;
+    expect(teil2b).toBe(20.95);
+    expect(teil2c).toBe(18.95);
+    expect(Math.round((teil2b - teil2c) * 100) / 100).toBe(2.00);
   });
 });
 

@@ -303,6 +303,7 @@ export interface EbayListingInput {
                           // Varianten-ebayPrice-Werte live über die zentrale Formel nachberechnet
                           // werden können statt auf den rohen Einkaufspreis zu fallen
   shipsFrom?: string;     // Versandland — für Zoll-Berechnung im selben Fallback
+  targetMarginEur?: number; // Teil 2C: product.targetMarginEur — für denselben Fallback (fehlt, wenn nicht gesetzt: globaler Default)
   handlingTimeDays?: number; // Bearbeitungszeit in Tagen (Standard: 10)
   gpsr?: {         // EU Produktsicherheit — aus DB; wenn undefined → Stele-Fallback
     name: string;
@@ -1302,8 +1303,8 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
             isChinaOrigin: isChinaShipping(input.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
-            targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-            rounding: 'up95',
+            targetMarginEur: input.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+            rounding: 'nearest95',
           }).minSellPrice
         : undefined);
     if (varPrice == null) {

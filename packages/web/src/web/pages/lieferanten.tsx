@@ -260,9 +260,10 @@ export default function Lieferanten() {
     const saved = localStorage.getItem("stele_ad_rate");
     return saved ? parseFloat(saved) : 5;
   });
-  // Mindestgewinn beim initialen Import-Preisvorschlag — BEWUSST getrennt von
-  // PRICE_SAFETY_BUFFER_EUR (der bleibt nur der laufenden automatischen Preisprüfung
-  // vorbehalten, P-27/P-28), sonst wären Erst-Listings unnötig teuer/unwettbewerbsfähig.
+  // Mindestgewinn beim initialen Import-Preisvorschlag. Teil 2C (2026-09-10): wird jetzt via
+  // handleSave() als targetMarginEur am Produkt persistiert (vorher nur React-State hier — jede
+  // spätere automatische Neuberechnung fiel dadurch auf den globalen MIN_GEWINN_EUR zurück, auch
+  // wenn hier bewusst z.B. 4€ gewählt wurden).
   const [minGewinn, setMinGewinn] = useState<number>(() => {
     const saved = localStorage.getItem("stele_min_gewinn");
     return saved ? parseFloat(saved) : MIN_GEWINN_EUR;
@@ -629,6 +630,7 @@ export default function Lieferanten() {
           images: visibleImages,
           buyPrice: einkauf || null,
           sellPrice: verkauf || null,
+          targetMarginEur: minGewinn,
           adRate: adRate,
           shippingCost: parseFloat(shippingCost.replace(",", ".")) || 0,
           shipsFrom: shipsFromInfo?.country,
@@ -1682,8 +1684,10 @@ export default function Lieferanten() {
                 </div>
               </div>
 
-              {/* Mindestgewinn beim Import (P-27/P-28-Folge) — bewusst ohne Sicherheitspuffer,
-                  der bleibt nur der laufenden automatischen Preisprüfung vorbehalten */}
+              {/* Mindestgewinn beim Import (P-27/P-28-Folge, Teil 2C 2026-09-10) — wird beim
+                  Speichern als targetMarginEur am Produkt persistiert und von JEDER späteren
+                  Neuberechnung (laufende Preisprüfung, Neu-Listing, "Preise neu berechnen")
+                  verwendet statt eines globalen Fallbacks. */}
               <div style={{ marginBottom: 14 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>
                   Mindestgewinn beim Import (€)
@@ -1704,7 +1708,7 @@ export default function Lieferanten() {
                   ))}
                 </div>
                 <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
-                  Gilt nur für den Preisvorschlag beim Import — die laufende automatische Preisprüfung nutzt zusätzlich einen eigenen Sicherheitspuffer (1,50€) gegen unentdeckte Preis-Drift.
+                  Wird beim Speichern für dieses Produkt gespeichert — gilt danach auch für die laufende automatische Preisprüfung und jede spätere Neuberechnung, nicht nur für diesen Import.
                 </div>
               </div>
 
@@ -1744,7 +1748,7 @@ export default function Lieferanten() {
                 // Zoll-Schwellenlogik (Pauschale bis 150€ Sendungswert, sonst manueller Wert) bleibt
                 // hier — sie ist spezifisch für dieses Modal, nicht Teil der zentralen Formel.
                 const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
-                // OHNE PRICE_SAFETY_BUFFER_EUR beim initialen Import (siehe Einzelprodukt-Button oben)
+                // Kein Sicherheitspuffer (Teil 2C: global entfernt, safetyBufferEur immer 0)
                 return computeMinSellPrice({
                   buyPrice: v.price, supplierShipping: versandV,
                   isChinaOrigin: ausChinaV, customsFlat: zollV,

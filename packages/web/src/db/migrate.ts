@@ -106,6 +106,11 @@ const migrations = [
   // tracking_number-Feld — vermeidet, dass ein fehlgeschlagener eBay-Call als Erfolg erscheint
   `ALTER TABLE order_notes ADD COLUMN tracking_ebay_submitted INTEGER`,
   `ALTER TABLE order_notes ADD COLUMN tracking_ebay_submitted_error TEXT`,
+  // Teil 2C (Preis-Fundament, 2026-09-10): Zielgewinn pro Produkt persistiert statt nur als
+  // React-State beim Import zu leben — jede spätere automatische Neuberechnung liest künftig
+  // diesen Wert statt immer auf den globalen MIN_GEWINN_EUR zurückzufallen. Additiv, Default 2.00,
+  // keine bestehende Spalte angefasst.
+  `ALTER TABLE products ADD COLUMN target_margin_eur REAL DEFAULT 2.00`,
 ];
 
 export async function runMigrations() {
