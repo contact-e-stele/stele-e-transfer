@@ -4,7 +4,7 @@
 > Architektur-Details: `docs/ARCHITECTURE.md`.
 
 ## NOCH OFFEN
--6. **Preis-Fundament Teil 2D (2026-09-10, Draft-PR wartet auf manuelle Freigabe):** "Senkungsbremse" — Geld-Logik, KEINE DB-Migration. Voraussetzung (Teil 2C/PR #87 gemergt) vor Start verifiziert.
+-6. **Preis-Fundament Teil 2D (2026-09-10, Draft #88, wartet auf manuelle Freigabe):** "Senkungsbremse" — Geld-Logik, KEINE DB-Migration. Voraussetzung (Teil 2C/PR #87 gemergt) vor Start verifiziert.
    - **Problem:** `computeMinSellPrice()` liefert eine UNTERGRENZE, keinen Zielpreis — die automatischen Pfade behandelten sie als Zielpreis und hätten laufende Angebote in EINEM Lauf darauf heruntergezogen (real: stele-141 23,95€→10,95€ = −54%, stele-110 20,95€→10,95€ = −48%).
    - **Neu:** `MAX_PRICE_DECREASE_PERCENT = 8` (shared/constants.ts) + `applyDecreaseCap(currentPrice, computedMinPrice, maxDecreasePercent)` (shared/pricing.ts, gibt `{price, wasCapped, uncappedPrice}` zurück). Anheben wird NIE gedeckelt; kein `currentPrice` (Erst-Listing) → unverändert.
    - **Angewandt auf:** `price-monitor.ts checkOne()`, `index.ts check-all-prices`, `recalculate-preview` (beide Zweige) und `recalculate-apply` (beide Zweige). **Nicht** auf `/ebay/list` (Erst-/Re-Listing, kein alter Preis) und nicht auf die Anzeige-/Import-Rechner (lieferanten.tsx, index.tsx, produkte.tsx) — laut Auftrag.
