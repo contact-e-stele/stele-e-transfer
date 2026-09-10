@@ -9,7 +9,7 @@ import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTr
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR } from '../shared/constants';
+import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR } from '../shared/constants';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
@@ -1106,6 +1106,7 @@ const app = new Hono()
         shippingCost: schema.products.shippingCost,
         adRate: schema.products.adRate,
         shipsFrom: schema.products.shipsFrom,
+        targetMarginEur: schema.products.targetMarginEur,
         generatedTitle: schema.products.generatedTitle,
         variantPrices: schema.products.variantPrices,
         variants: schema.products.variants,
@@ -1145,7 +1146,7 @@ const app = new Hono()
           // unten.
           const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
           const variantZoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
-          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
+          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
           const newPrice = safeUniformVariantPrice(rows);
           if (newPrice == null) continue;
           const oldPrice = listing.currentPrice;
@@ -1161,7 +1162,7 @@ const app = new Hono()
               buyPrice: null, versand: product.shippingCost ?? 0, zoll: variantZoll,
               adRate: variantAdRate, adRateWasNull: product.adRate == null,
               feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + variantAdRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
-              minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
+              minGewinn: product.targetMarginEur ?? MIN_GEWINN_EUR, safetyBuffer: 0, shipsFrom: product.shipsFrom,
             },
           });
           continue;
@@ -1178,8 +1179,8 @@ const app = new Hono()
           isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
-          targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-          rounding: 'up95',
+          targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+          rounding: 'nearest95',
         }).minSellPrice;
         const oldPrice = listing.currentPrice;
         const diff = Math.round((newPrice - oldPrice) * 100) / 100;
@@ -1191,7 +1192,7 @@ const app = new Hono()
           debug: {
             buyPrice: product.buyPrice, versand, zoll, adRate, adRateWasNull: product.adRate == null,
             feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
-            minGewinn: MIN_GEWINN_EUR, safetyBuffer: PRICE_SAFETY_BUFFER_EUR, shipsFrom: product.shipsFrom,
+            minGewinn: product.targetMarginEur ?? MIN_GEWINN_EUR, safetyBuffer: 0, shipsFrom: product.shipsFrom,
           },
         });
       }
@@ -1247,7 +1248,7 @@ const app = new Hono()
         let newPrice: number | null;
         let variantRows: ReturnType<typeof computeVariantPriceRows> = [];
         if (isVariant) {
-          variantRows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
+          variantRows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
           // newPrice bleibt informativ das Maximum (für DB-Speicherung/UI) — der tatsächliche
           // eBay-Schreibvorgang unten nutzt für jede Variante ihren EIGENEN Preis (P-27/P-28-Fix,
           // Live-Fund stele-138: vorher schrieb dieser Zweig denselben Einheitspreis auf jede SKU).
@@ -1259,8 +1260,8 @@ const app = new Hono()
                 isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
                 ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
-                targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-                rounding: 'up95',
+                targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+                rounding: 'nearest95',
               }).minSellPrice
             : null;
         }
@@ -1847,6 +1848,7 @@ const app = new Hono()
         images?: string[];
         buyPrice?: number | null;
         sellPrice?: number | null;
+        targetMarginEur?: number | null;
         adRate?: number;
         sourceUrl?: string;
         specs?: Record<string, string>;
@@ -1880,6 +1882,7 @@ const app = new Hono()
           images: body.images ? JSON.stringify(body.images) : undefined,
           buyPrice: body.buyPrice ?? undefined,
           sellPrice: body.sellPrice ?? undefined,
+          targetMarginEur: body.targetMarginEur ?? undefined,
           adRate: body.adRate ?? undefined,
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
           gpsrRaw: body.gpsrRaw ?? undefined,
@@ -1905,6 +1908,7 @@ const app = new Hono()
         images: body.images ? JSON.stringify(body.images) : '[]',
         buyPrice: body.buyPrice ?? null,
         sellPrice: body.sellPrice ?? null,
+        targetMarginEur: body.targetMarginEur ?? null,
         adRate: body.adRate ?? 5,
         specs: body.specs ? JSON.stringify(body.specs) : null,
         variantContents: body.variantContents ? JSON.stringify(body.variantContents) : null,
@@ -2003,8 +2007,8 @@ const app = new Hono()
       isChinaOrigin: isChinaShippingForListing(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
       ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
-      targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-      rounding: 'up95',
+      targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+      rounding: 'nearest95',
     }).minSellPrice;
 
     let effectiveSellPrice: number | null = product.buyPrice != null
@@ -2161,6 +2165,7 @@ const app = new Hono()
         adRate: product.adRate ?? 5,
         shippingCost: product.shippingCost ?? undefined,
         shipsFrom: product.shipsFrom ?? undefined,
+        targetMarginEur: product.targetMarginEur ?? undefined,
         handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
         manualAspects,
@@ -2903,8 +2908,8 @@ const app = new Hono()
               isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
-              targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-              rounding: 'up95',
+              targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+              rounding: 'nearest95',
             }).minSellPrice;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
             // Teil 2B SICHERHEITSKRITISCH: solange AUTO_PRICE_WRITE_ENABLED false ist (neue

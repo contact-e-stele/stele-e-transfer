@@ -1,4 +1,4 @@
-// Teil 2A+2B (P-27/P-28-Preis-Fundament, 2026-09-10): EINE einzige Kalkulations-Quelle mit den
+// Teil 2A+2B+2C (P-27/P-28-Preis-Fundament, 2026-09-10): EINE einzige Kalkulations-Quelle mit den
 // real gemessenen Gebühren-Werten.
 //
 // Vorher gab es sieben (tatsächlich acht — ebay.ts's Varianten-Listing-Fallback wurde in der
@@ -19,12 +19,13 @@
 // von beiden Seiten importierbare Ort und wird hier in-place ersetzt statt eine zweite,
 // parallele Datei anzulegen.
 
-import { MIN_GEWINN_EUR, PRICE_SAFETY_BUFFER_EUR, CHINA_ZOLL_EUR } from './constants';
+import { MIN_GEWINN_EUR, CHINA_ZOLL_EUR } from './constants';
 
 export type RoundingMode = 'up95' | 'nearest95' | 'cent' | 'none';
 
-// Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Für Mindestpreis-Berechnungen, bei denen ein
-// Abrunden die Gewinn-Garantie brechen könnte (laufende Preisprüfung, Erst-/Re-Listing).
+// Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Teil 2C (2026-09-10): keine produktive
+// Aufrufstelle mehr — genau dieses "immer aufwärts" trug zur Zielgewinn-Abweichung bei (s.u.
+// DEFAULT_PRICING_CONFIG-Kommentar). Bleibt exportiert für roundToNearest95()-Vergleichstests.
 export function roundUpToX95(price: number): number {
   return Math.round((Math.ceil(price - 0.95) + 0.95) * 100) / 100;
 }
@@ -105,13 +106,19 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
 // abgebucht wurde (5 × 1,19). Alle 8 Aufrufstellen aus Teil 2A lesen diese Werte bereits über
 // DEFAULT_PRICING_CONFIG (keine eigenen Literale mehr) — die Korrektur wirkt sich also überall
 // gleichzeitig aus, ohne dass an den Aufrufstellen selbst etwas geändert werden musste.
+// Teil 2C (2026-09-10): safetyBufferEur auf 0 gesetzt. Vorher wurde PRICE_SAFETY_BUFFER_EUR
+// (1,50€, shared/constants.ts) hier ZUSÄTZLICH zum Zielgewinn addiert, kombiniert mit der immer
+// AUFWÄRTS rundenden roundUpToX95() (alle Aufrufstellen inzwischen auf roundToNearest95()
+// umgestellt) — aus einem gewünschten 2,00€-Zielgewinn wurden dadurch real 3,50-4,25€. Die
+// Konstante PRICE_SAFETY_BUFFER_EUR bleibt in shared/constants.ts definiert, wird aber ab hier
+// von KEINER Kalkulation mehr referenziert (bewusst kein Import mehr in dieser Datei).
 export const DEFAULT_PRICING_CONFIG = {
   ebayFeeRatePercent: 15,
   ebayFixedFeeEur: 0.30,
   vatFactor: 1.19,
   defaultAdRatePercent: 5,                    // DB-Default (schema.ts ad_rate.default(5))
-  targetMarginEur: MIN_GEWINN_EUR,            // 2,00 €
-  safetyBufferEur: PRICE_SAFETY_BUFFER_EUR,   // 1,50 €
+  targetMarginEur: MIN_GEWINN_EUR,            // 2,00 € — globaler Fallback, wenn product.targetMarginEur null ist (Teil 2C)
+  safetyBufferEur: 0,                         // Teil 2C: kein Sicherheitspuffer mehr, s.o.
   chinaCustomsFlatEur: CHINA_ZOLL_EUR,        // 4,00 €
 } as const;
 

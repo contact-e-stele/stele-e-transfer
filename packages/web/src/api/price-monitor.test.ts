@@ -56,6 +56,35 @@ describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
     expect(uniform).toBe(Math.max(...rows.map(r => r.correctSellPrice)));
     expect(uniform).toBe(rows[0].correctSellPrice); // teuerste Variante (Red, EK 6,19€) bestimmt das Maximum
   });
+
+  // Teil 2C ("Zielgewinn trifft exakt"): der 5. Parameter (targetMarginEur, aus product.
+  // targetMarginEur) muss die Berechnung tatsächlich verändern, sonst würde ein beim Import
+  // gewählter abweichender Zielgewinn (z.B. 4€) bei jeder späteren automatischen Neuberechnung
+  // wieder auf den globalen 2€-Default zurückfallen — genau der Ursache-2-Bug aus dem Auftrag.
+  test('targetMarginEur-Parameter wird honoriert: höherer Zielgewinn ergibt höheren correctSellPrice', () => {
+    const variantPricesJson = JSON.stringify([
+      { skuId: 'v1', attrs: { Color: 'Red' }, price: 2.55 },
+    ]);
+    const rowsDefault = computeVariantPriceRows(variantPricesJson, 0, null, 5); // kein 5. Arg → globaler Default (2€)
+    const rowsMargin2 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 2.00);
+    const rowsMargin4 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 4.00);
+
+    // buyPrice=2,55€ rundet mit 'nearest95' auf 5,95€ — mit dem alten 'up95' (Teil 2B) wären es
+    // 6,95€ gewesen. Diese Fixture unterscheidet die beiden Rundungsmodi bewusst (anders als ein
+    // Rohwert, der zufällig für beide Modi gleich rundet), damit ein Regress auf 'up95' an dieser
+    // realen Aufrufstelle (nicht nur an der reinen Funktion in pricing.test.ts) erkannt würde.
+    expect(rowsDefault[0].correctSellPrice).toBe(5.95);
+    expect(rowsMargin2[0].correctSellPrice).toBe(5.95);
+    expect(rowsMargin4[0].correctSellPrice).toBe(8.95);
+    expect(rowsMargin4[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
+  });
+
+  test('targetMarginEur=null (nicht gesetztes Produktfeld) fällt auf den globalen 2€-Default zurück, wie undefined', () => {
+    const variantPricesJson = JSON.stringify([{ skuId: 'v1', attrs: {}, price: 2.55 }]);
+    const rowsNull = computeVariantPriceRows(variantPricesJson, 0, null, 5, null);
+    const rowsUndefined = computeVariantPriceRows(variantPricesJson, 0, null, 5);
+    expect(rowsNull[0].correctSellPrice).toBe(rowsUndefined[0].correctSellPrice);
+  });
 });
 
 // P-27/P-28 PR 3 (2026-09-09): repairVariantPricesForProduct() ist die Kernlogik hinter

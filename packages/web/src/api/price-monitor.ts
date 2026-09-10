@@ -44,13 +44,15 @@ export function computeVariantPriceRows(
   variantPricesJson: string | null,
   shippingCost: number | null,
   shipsFrom: string | null,
-  adRate: number | null
+  adRate: number | null,
+  targetMarginEur?: number | null // Teil 2C: product.targetMarginEur — null/undefined → globaler Fallback
 ): VariantPriceRow[] {
   let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
   const versand = shippingCost ?? 0;
   const isChina = isChinaShipping(shipsFrom);
   const rate = adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+  const margin = targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
   return raw
     .filter(v => typeof v.price === 'number' && v.price > 0)
     .map(v => ({
@@ -62,8 +64,8 @@ export function computeVariantPriceRows(
         isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
-        targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-        rounding: 'up95',
+        targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+        rounding: 'nearest95',
       }).minSellPrice,
     }));
 }
@@ -140,10 +142,10 @@ export async function updateEbayVariantPricesIndividually(
 // Einkaufspreis nie in der normalen Vorschau auftauchen würden. `updateFn` als DI-Parameter,
 // damit dieser Aufruf in Tests ohne echten eBay-Zugriff geprüft werden kann.
 export async function repairVariantPricesForProduct(
-  product: { id: number; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null },
+  product: { id: number; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null; targetMarginEur?: number | null },
   updateFn: typeof updateEbayVariantPricesIndividually = updateEbayVariantPricesIndividually
 ): Promise<{ ok: boolean; updatedSkuCount: number; error?: string }> {
-  const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate);
+  const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
   if (rows.length === 0) return { ok: false, updatedSkuCount: 0, error: 'Keine Varianten-Einkaufspreise vorhanden' };
   const { ok, updatedCount } = await updateFn(product.id, rows);
   return { ok, updatedSkuCount: updatedCount };
@@ -552,7 +554,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           }
         }
 
-        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, data.shipsFrom ?? product.shipsFrom, adRate);
+        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, data.shipsFrom ?? product.shipsFrom, adRate, product.targetMarginEur);
         const safePrice = safeUniformVariantPrice(rows);
         const deviates = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
 
@@ -581,8 +583,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
-        targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-        rounding: 'up95',
+        targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
+        rounding: 'nearest95',
       }).minSellPrice;
       const isAlert = product.sellPrice == null || Math.abs(newSellPrice - product.sellPrice) >= ALERT_THRESHOLD;
 

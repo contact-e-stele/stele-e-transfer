@@ -21,6 +21,7 @@ export const products = sqliteTable('products', {
   buyPrice: real('buy_price'),                 // Einkaufspreis (AliExpress, €)
   shippingCost: real('shipping_cost').default(0), // Versandkosten laut Lieferanten-Seite (0 = kostenlos)
   sellPrice: real('sell_price'),               // Verkaufspreis (eBay, €)
+  targetMarginEur: real('target_margin_eur').default(2.00), // Teil 2C: Zielgewinn NETTO IN DER HAND, beim Import vom Nutzer gewählt — null wird als 2,00€ behandelt
   lastPriceCheck: text('last_price_check'),    // ISO datetime
   priceChanged: integer('price_changed', { mode: 'boolean' }).default(false),
   // eBay

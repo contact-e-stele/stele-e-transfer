@@ -15,12 +15,13 @@ export const CHINA_ZOLL_EUR = 4.00;
 // Geaendert von 1,60€ auf 2,00€ am 2026-07-14 auf Wunsch des Users
 export const MIN_GEWINN_EUR = 2.00;
 
-// Sicherheitspuffer (€) über dem reinen Mindestgewinn (P-27/P-28, hinzugefuegt 2026-08-27):
-// Der berechnete Mindestpreis ist NICHT mehr die exakte Gewinn-Untergrenze, sondern liegt um
-// diesen Betrag darueber. Kleine, kurzzeitig unentdeckte Preis-Drift (z.B. zwischen zwei
-// Preis-Check-Laeufen) fuehrt dadurch erstmal nur zu etwas weniger Gewinn statt sofort zu
-// echtem Verlust. Wird zentral in computeMinSellPrice() (shared/pricing.ts, Teil 2A) als
-// DEFAULT_PRICING_CONFIG.safetyBufferEur addiert, wo dieser Wert verwendet wird.
+// Sicherheitspuffer (€) über dem reinen Mindestgewinn (P-27/P-28, hinzugefuegt 2026-08-27).
+// Teil 2C (2026-09-10, "Zielgewinn trifft exakt"): NICHT MEHR VERWENDET. Zusammen mit der
+// immer aufwärts rundenden roundUpToX95() sorgte dieser Puffer dafuer, dass aus einem
+// gewuenschten Zielgewinn von 2,00€ real 3,50-4,25€ wurden. DEFAULT_PRICING_CONFIG.safetyBufferEur
+// (shared/pricing.ts) ist seither fest 0 und referenziert diese Konstante nicht mehr — sie bleibt
+// hier nur als Konstante stehen (keine Kalkulation liest sie noch), damit ihre Herkunft/History
+// nachvollziehbar bleibt.
 export const PRICE_SAFETY_BUFFER_EUR = 1.50;
 
 // Feste Kategorieliste fuer manuell gespeicherte Shops ("Meine Shops")
