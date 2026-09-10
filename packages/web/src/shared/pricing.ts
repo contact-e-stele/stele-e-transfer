@@ -1,13 +1,15 @@
-// Teil 2A (P-27/P-28-Preis-Fundament, 2026-09-10): EINE einzige Kalkulations-Quelle.
+// Teil 2A+2B (P-27/P-28-Preis-Fundament, 2026-09-10): EINE einzige Kalkulations-Quelle mit den
+// real gemessenen Gebühren-Werten.
 //
 // Vorher gab es sieben (tatsächlich acht — ebay.ts's Varianten-Listing-Fallback wurde in der
 // Teil-1-Bestandsaufnahme übersehen) unabhängige Formel-Stellen im Code, dazu drei verschiedene
-// eBay-Gebühren-Annahmen (13% / 17% / 18%), keine trifft die real gemessenen ~15% + 0,30 EUR.
-// Dieser Refactor ist bewusst WERTNEUTRAL — er ändert an keiner Aufrufstelle das Rechenergebnis,
-// er ersetzt nur sieben-plus-eins unabhängige Kopien der Rechenlogik durch Aufrufe derselben
-// Funktion. Die abweichenden Gebühren-Annahmen bleiben deshalb absichtlich als von der
-// Aufrufstelle übergebene Parameter erhalten (mit TODO-Kommentar), nicht als versteckter Default
-// in dieser Datei — die Korrektur auf die real gemessenen Werte ist Teil 2B, hier NICHT enthalten.
+// eBay-Gebühren-Annahmen (13% / 17% / 18%), keine traf die real gemessenen ~15% + 0,30 EUR.
+// Teil 2A (reiner Struktur-Refactor, wertneutral) ersetzte die sieben-plus-eins unabhängigen
+// Kopien der Rechenlogik durch Aufrufe derselben Funktion, ohne ein Rechenergebnis zu ändern —
+// die abweichenden Gebühren-Annahmen blieben dabei absichtlich als von der Aufrufstelle
+// übergebene Parameter erhalten. Teil 2B (diese Version) korrigiert DEFAULT_PRICING_CONFIG auf
+// die real gemessenen Werte — da alle Aufrufstellen bereits auf DEFAULT_PRICING_CONFIG statt
+// eigener Literale zeigen, wirkt sich die Korrektur überall gleichzeitig aus.
 //
 // Standort: `shared/`, weil sowohl Backend (price-monitor.ts, ebay.ts, index.ts) als auch
 // Frontend (index.tsx, produkte.tsx, lieferanten.tsx) die Funktion brauchen — exakt der Grund,
@@ -45,16 +47,19 @@ function applyRounding(price: number, mode: RoundingMode): number {
 }
 
 // Alle Eingaben sind PFLICHT — bewusst keine Default-Werte in dieser Datei (Teil-2A-Vorgabe).
-// Defaults für die "echte" Formel (13% Basis-Gebühr, 0,45€ Fixbetrag, Mindestgewinn,
-// Sicherheitspuffer, China-Zollpauschale) leben separat in DEFAULT_PRICING_CONFIG weiter unten —
-// Aufrufstellen, die bewusst ANDERE Werte verwenden (Preise-Tab: 17/18%, Produkte-Tab-Badge:
-// 18%), übergeben ihre eigenen Literale statt der Defaults und markieren das mit einem TODO.
+// Defaults für die "echte" Formel (Gebührensatz, Fixbetrag, Mindestgewinn, Sicherheitspuffer,
+// China-Zollpauschale) leben separat in DEFAULT_PRICING_CONFIG weiter unten. Der Preise-Tab-
+// Verhandlungsrechner übergibt weiterhin einen eigenen, dort frei editierbaren Gebührensatz
+// (Default jetzt ebenfalls 15%, siehe index.tsx) statt DEFAULT_PRICING_CONFIG direkt — bewusst so
+// belassen, weil dieser Rechner explizit auch mit hypothetischen/abweichenden Sätzen rechnen
+// können soll (z.B. um ein Käufer-Gegenangebot bei einem angenommenen anderen Gebührensatz zu
+// prüfen), nicht weil der Wert falsch wäre.
 export interface PricingInput {
   buyPrice: number;          // Einkaufspreis
   supplierShipping: number;  // Versandkosten Lieferant
   isChinaOrigin: boolean;    // Herkunft: China (Zoll wird angesetzt) oder EU/sonstige (kein Zoll)
   customsFlat: number;       // Zollpauschale — wird nur angesetzt, wenn isChinaOrigin=true
-  ebayFeeRatePercent: number; // eBay-Gebührensatz in % (z.B. 13, 17 oder 18 — je nach Aufrufstelle)
+  ebayFeeRatePercent: number; // eBay-Gebührensatz in % (Default 15, siehe DEFAULT_PRICING_CONFIG)
   ebayFixedFeeEur: number;    // eBay-Fixbetrag in EUR, netto (vor MwSt)
   vatFactor: number;          // MwSt-Faktor (z.B. 1.19 = 19% MwSt.)
   adRatePercent: number;      // Anzeigentarif in % (Promoted Listings)
@@ -93,15 +98,16 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
 
 // ─── Konstanten-Konfiguration (Teil-2A-Vorgabe: Defaults gehören hierher, nicht in die Funktion) ──
 //
-// Das sind die Werte der "echten" Formel (price-monitor.ts, index.ts recalculate-*/list/
-// check-all-prices, ebay.ts, lieferanten.tsx-Einzelbutton) — unverändert gegenüber der
-// Vorgänger-Datei. 13% Basis-Gebühr und 0,45€ Fixbetrag waren dort bisher als Literale INNERHALB
-// der Formel verdrahtet; hier jetzt sichtbar benannt, aber NICHT korrigiert (Teil 2B).
+// Teil 2B (2026-09-10): Gebührensatz + Fixbetrag auf die real gemessenen Werte umgestellt — aus
+// 13 realen Bestellungen (90 Tage) ermittelt: eBay-Verkaufsgebühr ≈ 15% + 0,30 € netto, brutto
+// (0,15 × Preis + 0,30) × 1,19. Restunsicherheit ca. ±0,05 €. Der ×1,19-Schritt (MwSt-Faktor) war
+// bereits vorher korrekt — bestätigt dadurch, dass ein konstanter 5%-Anzeigentarif real als 5,95%
+// abgebucht wurde (5 × 1,19). Alle 8 Aufrufstellen aus Teil 2A lesen diese Werte bereits über
+// DEFAULT_PRICING_CONFIG (keine eigenen Literale mehr) — die Korrektur wirkt sich also überall
+// gleichzeitig aus, ohne dass an den Aufrufstellen selbst etwas geändert werden musste.
 export const DEFAULT_PRICING_CONFIG = {
-  // TODO Teil 2B: auf gemessene 15% + 0,30 EUR umstellen (siehe Bestandsaufnahme Teil 1, Abschnitt 3)
-  ebayFeeRatePercent: 13,
-  // TODO Teil 2B: auf gemessene 15% + 0,30 EUR umstellen
-  ebayFixedFeeEur: 0.45,
+  ebayFeeRatePercent: 15,
+  ebayFixedFeeEur: 0.30,
   vatFactor: 1.19,
   defaultAdRatePercent: 5,                    // DB-Default (schema.ts ad_rate.default(5))
   targetMarginEur: MIN_GEWINN_EUR,            // 2,00 €
@@ -113,3 +119,15 @@ export function isChinaShipping(shipsFrom?: string | null): boolean {
   if (!shipsFrom) return false;
   return shipsFrom.toLowerCase().includes('china');
 }
+
+// Teil 2B (2026-09-10), SICHERHEITSKRITISCH: die neuen Gebühren-Konstanten (15%/0,30€) sind noch
+// NICHT gegen einen vollen Preiszyklus mit echten Bestellungen bestätigt (nur gegen 13
+// vergangene Bestellungen rückgerechnet, ±0,05€ Restunsicherheit). Bis zur manuellen Freigabe
+// durch den Nutzer darf KEIN automatischer, unbeaufsichtigter Pfad einen mit der neuen Formel
+// berechneten Verkaufspreis in die DB schreiben oder an eBay senden — nur die menschlich
+// bestätigten Preview→Übernehmen-Abläufe (recalculate-preview/-apply, Erst-/Re-Listing,
+// Varianten-Reparatur) bleiben aktiv, da dort vor jedem Schreibvorgang eine Vorschau mit den
+// neuen Zahlen gezeigt wird. Betrifft konkret: price-monitor.ts checkOne() (8h-Cron, komplett
+// unbeaufsichtigt) und index.ts POST /products/check-all-prices (schreibt+pusht ohne
+// Zwischenschritt, sobald der Job läuft). Auf true setzen, sobald die neue Formel freigegeben ist.
+export const AUTO_PRICE_WRITE_ENABLED = false;

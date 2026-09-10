@@ -1295,7 +1295,6 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     // — konnte eine Variante zum Einkaufspreis listen (live bestätigter Verlustfall stele-98).
     // Jetzt: fehlt .ebayPrice, aber der Einkaufspreis (.price) ist bekannt → live über die
     // zentrale Formel nachberechnen. Ist auch das nicht bekannt → hart blockieren statt zu raten.
-    // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
     const varPrice: number | undefined = varPriceEntry?.ebayPrice ??
       (varPriceEntry?.price != null && varPriceEntry.price > 0
         ? computeMinSellPrice({

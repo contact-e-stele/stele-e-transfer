@@ -1,8 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR } from "../../shared/constants";
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+
+// Teil 2B (2026-09-10): reicht für die Anzeigengebühr-Zuordnung im Preisrechner — nur die hier
+// gebrauchten Felder, nicht das volle Product-Objekt aus produkte.tsx.
+interface ProductForAdRate {
+  id: number;
+  generatedTitle: string;
+  title: string;
+  adRate: number | null;
+}
 
 function formatEuro(val: number) {
   return val.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
@@ -84,12 +93,20 @@ function Ampel({ gewinnProzent }: { gewinnProzent: number | null }) {
 export default function Index() {
   const [listenpreis, setListenpreis] = useState("");
   const [vorschlag, setVorschlag] = useState("");
-  const [gebuehr, setGebuehr] = useState("17");
+  // Teil 2B: Default von "17" auf den real gemessenen Gebührensatz (15%) umgestellt — bleibt
+  // weiterhin frei editierbar (dieser Rechner soll auch mit hypothetischen Sätzen rechnen können).
+  const [gebuehr, setGebuehr] = useState(String(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent));
   const [einkauf, setEinkauf] = useState("");
-  const [anzeigegebuehr, setAnzeigegebuehr] = useState("");
+  // Teil 2B: freies "Anzeigegebühr"-Textfeld entfernt — die Anzeigengebühr kommt jetzt aus dem
+  // adRate-Feld des ausgewählten Produkts (s.u. productsForAdRate/selectedProductId), nicht mehr
+  // aus einer global leeren, manuell einzutippenden Eingabe.
+  const [productsForAdRate, setProductsForAdRate] = useState<ProductForAdRate[]>([]);
+  const [selectedProductId, setSelectedProductId] = useState("");
+  // Teil 2B: Lieferant AliExpress → Herkunft China ist jetzt der korrekte Default (vorher fälschlich
+  // EU/Inland), s. onChange am Lieferant-Dropdown weiter unten für den reaktiven Teil.
   const [lieferant, setLieferant] = useState("aliexpress");
   const [versand, setVersand] = useState("");
-  const [ausChina, setAusChina] = useState(false);
+  const [ausChina, setAusChina] = useState(true);
   const [zollPauschale, setZollPauschale] = useState(String(CHINA_ZOLL_EUR));
   const [zollManuell, setZollManuell] = useState("");
 
@@ -108,6 +125,14 @@ export default function Index() {
   } | null>(null);
   const [priceCheckError, setPriceCheckError] = useState("");
   const [priceProgress, setPriceProgress] = useState<{ done: number; total: number; changed: number } | null>(null);
+
+  // Teil 2B: Produktliste laden, damit die Anzeigengebühr aus dem echten adRate-Feld eines
+  // konkreten Produkts kommen kann statt aus einem manuellen, global leeren Textfeld.
+  useEffect(() => {
+    safeJson<ProductForAdRate[]>("/api/products")
+      .then(setProductsForAdRate)
+      .catch(() => setProductsForAdRate([]));
+  }, []);
 
   const handleCheckAllPrices = async () => {
     setPriceChecking(true);
@@ -140,7 +165,13 @@ export default function Index() {
   const listen = parseFloat(listenpreis.replace(",", ".")) || 0;
   const vorschlagVal = parseFloat(vorschlag.replace(",", ".")) || 0;
   const einkaufVal = parseFloat(einkauf.replace(",", ".")) || 0;
-  const anzeigegebuehrProzent = (parseFloat(anzeigegebuehr.replace(",", ".")) || 0) / 100;
+  // Teil 2B: Anzeigengebühr aus dem adRate-Feld des ausgewählten Produkts, nicht mehr aus einem
+  // manuellen Textfeld. Kein Produkt ausgewählt ODER adRate dort leer/null → mit 0 rechnen, aber
+  // sichtbar als "ohne Anzeigengebühr" kennzeichnen (s. adRateIsUnset, UI weiter unten) statt
+  // still mit einem Platzhalter zu rechnen.
+  const selectedProductForAdRate = productsForAdRate.find(p => String(p.id) === selectedProductId) ?? null;
+  const adRateIsUnset = selectedProductForAdRate == null || selectedProductForAdRate.adRate == null;
+  const anzeigegebuehrProzent = (selectedProductForAdRate?.adRate ?? 0) / 100;
   const verkaufBrutto = vorschlagVal > 0 ? vorschlagVal : listen;
 
   // Versand + Zoll → "wahrer Einkauf" (ersetzt reinen Stückpreis in der Gewinn-Rechnung)
@@ -152,21 +183,21 @@ export default function Index() {
   const zollVal = !ausChina ? 0 : (sendungswert <= 150 ? zollPauschaleVal : zollManuellVal);
   const wahrerEinkauf = einkaufVal > 0 ? einkaufVal + versandVal + zollVal : 0;
 
-  // Teil 2A: Gebührensätze/Fixbetrag kommen jetzt aus der zentralen Kalkulationsfunktion, statt
-  // hier ein zweites Mal ausgerechnet zu werden — Zahlen unverändert (eigener 17%/18%-Eingabewert
-  // bleibt bewusst erhalten, NICHT der 13%-Formel-Default). Ein Mindestpreis wird hier nicht
-  // gebraucht (buyPrice/targetMargin daher neutral 0), nur die Gebührensätze/der Fixbetrag.
-  // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
-  const ebayFeeRatePercentInput = parseFloat(gebuehr.replace(",", ".")) || 18;
+  // Teil 2A: Gebührensätze/Fixbetrag kommen aus der zentralen Kalkulationsfunktion, statt hier ein
+  // zweites Mal ausgerechnet zu werden. Teil 2B: Default/Fallback des eigenen Eingabewerts auf den
+  // real gemessenen Satz (15%) umgestellt — das Feld bleibt bewusst frei editierbar (dieser
+  // Rechner soll auch mit hypothetischen Sätzen rechnen können), nur Startwert + Fallback stimmen
+  // jetzt. Ein Mindestpreis wird hier nicht gebraucht (buyPrice/targetMargin daher neutral 0).
+  const ebayFeeRatePercentInput = parseFloat(gebuehr.replace(",", ".")) || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent;
   const pricingRates = computeMinSellPrice({
     buyPrice: 0, supplierShipping: 0, isChinaOrigin: false, customsFlat: 0,
-    ebayFeeRatePercent: ebayFeeRatePercentInput, ebayFixedFeeEur: 0.45, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+    ebayFeeRatePercent: ebayFeeRatePercentInput, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
     adRatePercent: anzeigegebuehrProzent * 100, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
   });
   // EBAY_FEE (nur Provision, ohne Anzeigegebühr) bleibt separat erhalten — wird weiterhin
   // für die Untergrenze (minPreis80) gebraucht, die bewusst unverändert bleibt.
   const EBAY_FEE = pricingRates.baseFeeRateGross;
-  const FIXBETRAG = pricingRates.fixedFeeGross; // 0,45 € + 19% MwSt. = 0,5355 €
+  const FIXBETRAG = pricingRates.fixedFeeGross; // 0,30 € + 19% MwSt. = 0,357 €
   // Gesamtgebührensatz: eBay-Provision + Anzeigegebühr zusammen, beide inkl. MwSt. (wie im Wizard)
   const GESAMT_FEE = pricingRates.totalFeeRateGross;
 
@@ -265,7 +296,7 @@ export default function Index() {
               <div style={{ position: "relative" }}>
                 <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", color: "#94A3B8", fontWeight: 600 }}>%</span>
                 <input
-                  type="number" inputMode="decimal" placeholder="18" value={gebuehr}
+                  type="number" inputMode="decimal" placeholder={String(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent)} value={gebuehr}
                   onChange={e => setGebuehr(e.target.value)}
                   style={{ ...inputStyle, paddingLeft: 14, paddingRight: 36 }}
                   onFocus={e => (e.target.style.borderColor = "#3B82F6")}
@@ -274,22 +305,30 @@ export default function Index() {
               </div>
             </div>
 
-            {/* eBay Anzeigegebühr */}
+            {/* eBay Anzeigegebühr — Teil 2B: kommt aus dem adRate-Feld eines ausgewählten
+                Produkts, nicht mehr aus einem manuellen Textfeld */}
             <div style={{ marginBottom: 20 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, color: "#0F172A", marginBottom: 8, fontSize: 14 }}>
                 <Tag size={15} color="#8B5CF6" />
-                eBay Anzeigegebühr (%)
+                Produkt (für Anzeigengebühr)
               </label>
-              <div style={{ position: "relative" }}>
-                <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", color: "#94A3B8", fontWeight: 600 }}>%</span>
-                <input
-                  type="number" inputMode="decimal" placeholder="z.B. 6" value={anzeigegebuehr}
-                  onChange={e => setAnzeigegebuehr(e.target.value)}
-                  style={{ ...inputStyle, paddingLeft: 14, paddingRight: 36 }}
-                  onFocus={e => (e.target.style.borderColor = "#8B5CF6")}
-                  onBlur={e => (e.target.style.borderColor = "#E2E8F0")}
-                />
-              </div>
+              <select
+                value={selectedProductId}
+                onChange={e => setSelectedProductId(e.target.value)}
+                style={{ ...inputStyle, paddingLeft: 14, cursor: "pointer" }}
+              >
+                <option value="">Kein Produkt ausgewählt</option>
+                {productsForAdRate.map(p => (
+                  <option key={p.id} value={String(p.id)}>
+                    stele-{p.id} — {(p.generatedTitle || p.title).slice(0, 40)}
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: 12, marginTop: 6, fontWeight: 600, color: adRateIsUnset ? "#94A3B8" : "#8B5CF6" }}>
+                {adRateIsUnset
+                  ? "Anzeigengebühr: 0 % — ohne Anzeigengebühr (kein Produkt ausgewählt oder Anzeigentarif nicht gepflegt)"
+                  : `Anzeigengebühr: ${selectedProductForAdRate!.adRate}% (aus Produkt stele-${selectedProductForAdRate!.id})`}
+              </p>
             </div>
 
             {/* Lieferant */}
@@ -299,7 +338,13 @@ export default function Index() {
               </label>
               <select
                 value={lieferant}
-                onChange={e => setLieferant(e.target.value)}
+                onChange={e => {
+                  const val = e.target.value;
+                  setLieferant(val);
+                  // Teil 2B: AliExpress → Herkunft automatisch auf China voreinstellen (Zollpauschale
+                  // 4,00 €), nicht mehr EU/Inland. Bleibt danach weiterhin manuell umschaltbar.
+                  setAusChina(val === "aliexpress");
+                }}
                 style={{ ...inputStyle, paddingLeft: 14, cursor: "pointer" }}
               >
                 {LIEFERANTEN.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
@@ -513,7 +558,7 @@ export default function Index() {
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 700, color: "#0F172A" }}>{formatEuro(gesamtGebuehren)}</div>
                 <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>
-                  {gebuehr || 18}% + 0,45 € Fix{anzeigegebuehrProzent > 0 ? ` + ${anzeigegebuehr}% Anzeige` : ""} (inkl. 19% MwSt.)
+                  {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {DEFAULT_PRICING_CONFIG.ebayFixedFeeEur.toFixed(2)} € Fix{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} (inkl. 19% MwSt.)
                 </div>
               </div>
             </div>
@@ -613,7 +658,7 @@ export default function Index() {
         )}
 
         <p style={{ textAlign: "center", color: "#CBD5E1", fontSize: 12, marginTop: 24 }}>
-          eBay: {gebuehr || 18}% + 0,45 € Fix + 19% MwSt.{anzeigegebuehrProzent > 0 ? ` + ${anzeigegebuehr}% Anzeige` : ""} · stele-e-transfer
+          eBay: {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {DEFAULT_PRICING_CONFIG.ebayFixedFeeEur.toFixed(2)} € Fix + 19% MwSt.{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} · stele-e-transfer
         </p>
 
         {/* ─── Preisüberwachung ──────────────────────────────────────────────────── */}

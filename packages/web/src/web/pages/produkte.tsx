@@ -110,12 +110,13 @@ function StatusBadge({ status, listingId }: { status: string; listingId: string 
 
 function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) {
   if (!buy && !sell) return null;
-  // Gleiche Formel wie Preise-Tab: 18% × 1.19 MwSt + 0.45€ × 1.19 — Gebührensätze jetzt aus der
-  // zentralen Kalkulationsfunktion statt eigenem Literal, Zahlen unverändert.
-  // TODO Teil 2B: ebayFeeRatePercent/ebayFixedFeeEur auf gemessene 15% + 0,30 EUR umstellen
+  // Teil 2B (2026-09-10): eigenes 18%-Literal entfernt, nutzt jetzt den real gemessenen,
+  // zentralen Gebührensatz (DEFAULT_PRICING_CONFIG, aktuell 15% + 0,30 €) — dieselbe Quelle wie
+  // alle anderen Preis-Berechnungsstellen.
   const pricingRates = computeMinSellPrice({
     buyPrice: 0, supplierShipping: 0, isChinaOrigin: false, customsFlat: 0,
-    ebayFeeRatePercent: 18, ebayFixedFeeEur: 0.45, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
     adRatePercent: 0, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
   });
   const ebayFee = sell ? sell * pricingRates.baseFeeRateGross + pricingRates.fixedFeeGross : 0;
