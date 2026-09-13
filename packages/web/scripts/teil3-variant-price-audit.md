@@ -117,8 +117,9 @@ ohne zu raten.
 cd packages/web && bun run scripts/export-variant-price-plan.ts > varianten-preisplan.csv
 ```
 
-Spalten je Variante: `SKU, Variante, Varianten_SKU, SKU_Match, EK, heutiger_Preis, Preisquelle,
-neuer_Preis, Gewinn_heute, Gewinn_neu, Differenz_Preis, Absenkung_Prozent, ueber_8_Prozent, Anker,
+Spalten je Variante: `SKU, Variante, Varianten_SKU, SKU_Match, EK, gespeicherter_VK, VK_Quelle,
+heutiger_Preis, Preisquelle, Zielpreis, naechster_Lauf_Preis, Laeufe_bis_Ziel, Ziel_erreichbar,
+Gewinn_heute, Gewinn_neu, Differenz_Preis, Absenkung_Prozent, ueber_8_Prozent, Anker,
 Verkaeufe_90T`. Je Produkt zusätzlich: `Anzahl_Varianten, Ankervariante, Ankerpreis, Ankergewinn,
 Zielgewinn, Zielgewinn_Quelle, **Summe_Preissenkungen**, groesste_Absenkung_Prozent,
 Live_Preisspanne_heute`.
@@ -172,15 +173,39 @@ Live-Preis bei eBay (20,95 €) auseinanderlaufen. Der Bericht macht genau das s
 den gespeicherten `sellPrice` als Anker. Falls stattdessen der Live-Preis ankern soll, ist das eine
 Zeile im Skript; sag kurz Bescheid.
 
-## Offener Punkt für das spätere Nachziehen: Kollision mit der 8-%-Bremse
+## Entschieden am 13.09.2026: die 8-%-Bremse gilt auch hier
 
-Die Umstellung senkt einzelne Varianten um **20–35 %** (siehe Tabelle oben). Die Senkungsbremse aus
-Teil 2D (`MAX_PRICE_DECREASE_PERCENT = 8`) bleibt in diesem PR **unverändert gültig** — sie ist hier
-nicht angefasst. Beim späteren Nachziehen muss aber entschieden werden:
+Die Umstellung senkt einzelne Varianten um **20–35 %**. Der Nutzer hat entschieden: die
+Senkungsbremse aus Teil 2D (`MAX_PRICE_DECREASE_PERCENT = 8`) **gilt auch für die
+Varianten-Umstellung** — die Zielpreise werden also schrittweise über mehrere Läufe erreicht statt
+in einem Schritt. Die Bremse bleibt damit unverändert; es braucht keine Sonderfreigabe.
 
-- **Bremse gilt auch hier:** die Zielpreise werden über mehrere Läufe erreicht (bei 35 % ca. 5 Läufe).
-- **Einmalige Ausnahme:** die Umstellung wird als bewusst freigegebene Korrektur von der Bremse
-  ausgenommen und in einem Schritt geschrieben.
+`planCappedPriceSteps()` (shared/pricing.ts) rechnet das vorab durch. Für stele-110 konkret:
 
-Der Bericht markiert jede betroffene Zeile (`ueber_8_Prozent`) und zählt die Produkte am Ende, damit
-die Entscheidung auf Zahlen beruht. **In diesem PR wird nichts davon geschrieben.**
+| Variante | heute | Ziel | nächster Lauf setzt | Läufe bis Ziel |
+|---|---|---|---|---|
+| Rot (Anker) | 19,95 | 19,95 | 19,95 | 0 |
+| Blau | 19,95 | 15,95 | 18,95 | 4 |
+| Grün | 19,95 | 14,95 | 18,95 | 5 |
+| Gelb | 19,95 | 13,95 | 18,95 | 6 |
+| Weiß | 19,95 | 12,95 | 18,95 | 7 |
+| Schwarz | 19,95 | 12,95 | 18,95 | 7 |
+
+**Korrektur meiner früheren Schätzung:** ich hatte „ca. 5 Läufe" geschrieben — das war geschätzt.
+Nachgerechnet sind es bis zu **7 Läufe** für den größten Sprung. Kein Schritt der Kette
+überschreitet die 8 % (eigener Test prüft jeden Zwischenschritt).
+
+**Ein Nebenbefund, der beim Durchrechnen auffiel:** bei sehr günstigen Artikeln kann die Bremse
+einen Zielpreis **gar nicht erreichbar** machen — liegt die nächste ,95-Marke oberhalb des
+8-%-Grenzwerts, bleibt der Preis stehen (Beispiel: 1,95 € → Grenzwert 1,794 € → gerundet wieder
+1,95 €). Die Funktion meldet das über `reachesTarget: false` statt endlos zu drehen; der Bericht
+weist es je Variante als `Ziel_erreichbar = nein` aus und zählt die Fälle am Ende. Solche Varianten
+bleiben ohne Sonderfreigabe auf ihrem heutigen Preis stehen.
+
+## Entschieden am 13.09.2026: Anker ist der gespeicherte `sellPrice`
+
+Bei stele-110 laufen gespeicherter `sellPrice` (19,95 €) und eBay-Live-Preis (20,95 €) auseinander.
+Der Nutzer hat entschieden: **der gespeicherte `sellPrice` ankert** — so ist es bereits umgesetzt
+(wörtliche Vorgabe aus dem Auftrag, und nur damit werden die Pflichtwerte aus Punkt 7 getroffen).
+Der Bericht zeigt zusätzlich `Live_Preisspanne_heute`, damit die Drift zwischen DB und eBay sichtbar
+bleibt und nicht unbemerkt wächst.

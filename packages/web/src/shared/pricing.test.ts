@@ -15,7 +15,7 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, applyDecreaseCap, computeVariantSellPrices, profitAtSellPrice, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
@@ -494,5 +494,48 @@ describe('variant_sell_prices — Teil 3: eigene Spalte für den VK je Variante 
     for (const row of plan.rows) {
       expect(resolveVariantSellPrice(row.skuId, wieder, null).sellPrice).toBe(row.sellPrice);
     }
+  });
+});
+
+describe('planCappedPriceSteps — Teil 3: Varianten-Umstellung unter der 8-%-Bremse (Entscheidung des Nutzers)', () => {
+  test('grösster stele-110-Sprung (19,95 → 12,95) braucht 7 Läufe, der erste setzt 18,95', () => {
+    expect(planCappedPriceSteps(19.95, 12.95, MAX_PRICE_DECREASE_PERCENT))
+      .toEqual({ nextPrice: 18.95, runsToTarget: 7, reachesTarget: true });
+  });
+
+  test('kleinere Sprünge brauchen entsprechend weniger Läufe', () => {
+    expect(planCappedPriceSteps(19.95, 15.95, MAX_PRICE_DECREASE_PERCENT).runsToTarget).toBe(4);
+    expect(planCappedPriceSteps(19.95, 14.95, MAX_PRICE_DECREASE_PERCENT).runsToTarget).toBe(5);
+    expect(planCappedPriceSteps(19.95, 13.95, MAX_PRICE_DECREASE_PERCENT).runsToTarget).toBe(6);
+  });
+
+  test('kein Schritt der Kette überschreitet die 8-%-Bremse', () => {
+    let price = 19.95;
+    const target = 12.95;
+    for (let i = 0; i < 20 && price > target; i++) {
+      const next = planCappedPriceSteps(price, target, MAX_PRICE_DECREASE_PERCENT).nextPrice;
+      expect((price - next) / price).toBeLessThanOrEqual(MAX_PRICE_DECREASE_PERCENT / 100);
+      price = next;
+    }
+    expect(price).toBe(target);
+  });
+
+  test('Anheben ist nie gedeckelt und daher in einem Lauf erledigt', () => {
+    expect(planCappedPriceSteps(15.00, 18.95, MAX_PRICE_DECREASE_PERCENT))
+      .toEqual({ nextPrice: 18.95, runsToTarget: 1, reachesTarget: true });
+  });
+
+  test('Zielpreis gleich aktueller Preis: nichts zu tun', () => {
+    expect(planCappedPriceSteps(19.95, 19.95, MAX_PRICE_DECREASE_PERCENT))
+      .toEqual({ nextPrice: 19.95, runsToTarget: 0, reachesTarget: true });
+  });
+
+  test('kein Fortschritt möglich → Abbruch statt Endlosschleife (reachesTarget false)', () => {
+    // Bei niedrigen Preisen liegt die nächste ,95-Marke unterhalb des 8-%-Grenzwerts, die Bremse
+    // hält den Preis deshalb auf dem Ausgangswert fest: 1,95€ → Grenzwert 1,794€ → gerundet wieder
+    // 1,95€. Der Zielpreis 1,00€ ist so nie erreichbar; die Funktion muss das melden statt endlos
+    // zu drehen.
+    const plan = planCappedPriceSteps(1.95, 1.00, MAX_PRICE_DECREASE_PERCENT);
+    expect(plan).toEqual({ nextPrice: 1.95, runsToTarget: 0, reachesTarget: false });
   });
 });

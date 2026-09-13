@@ -360,6 +360,43 @@ export function applyDecreaseCap(
   return { price: capped, wasCapped: true, uncappedPrice: computedMinPrice };
 }
 
+export interface CappedStepPlan {
+  nextPrice: number;      // Preis, den der NÄCHSTE Lauf tatsächlich setzt (Bremse berücksichtigt)
+  runsToTarget: number;   // Anzahl Läufe, bis der Zielpreis erreicht ist
+  reachesTarget: boolean; // false, wenn die Bremse den Zielpreis nie erreichen lässt (Stillstand)
+}
+
+// Teil 3 (2026-09-13), Entscheidung des Nutzers: die 8-%-Senkungsbremse aus Teil 2D gilt AUCH für
+// die Varianten-Umstellung — die Zielpreise werden also über mehrere Läufe erreicht statt in einem
+// Schritt. Diese Funktion rechnet das vorab durch: welchen Preis setzt der nächste Lauf, und wie
+// viele Läufe braucht es bis zum Ziel? Reine Vorausberechnung, schreibt nichts.
+//
+// Anheben ist nie gedeckelt (siehe applyDecreaseCap) und daher immer in einem Lauf erledigt.
+// Die Schleife bricht ab, wenn ein Lauf keinen Fortschritt mehr bringt (die ,95-Rundung kann den
+// gedeckelten Preis auf dem Ausgangswert festhalten) — dann ist reachesTarget false, statt endlos
+// zu drehen.
+export function planCappedPriceSteps(
+  currentPrice: number,
+  targetPrice: number,
+  maxDecreasePercent: number,
+  maxRuns = 50
+): CappedStepPlan {
+  if (targetPrice === currentPrice) return { nextPrice: currentPrice, runsToTarget: 0, reachesTarget: true };
+  if (targetPrice > currentPrice) return { nextPrice: targetPrice, runsToTarget: 1, reachesTarget: true };
+
+  let price = currentPrice;
+  let nextPrice = currentPrice;
+  let runs = 0;
+  while (price > targetPrice && runs < maxRuns) {
+    const capped = applyDecreaseCap(price, targetPrice, maxDecreasePercent).price;
+    if (capped >= price) break; // kein Fortschritt mehr — Abbruch statt Endlosschleife
+    price = capped;
+    runs++;
+    if (runs === 1) nextPrice = capped;
+  }
+  return { nextPrice, runsToTarget: runs, reachesTarget: Math.abs(price - targetPrice) < 0.005 };
+}
+
 // ─── Konstanten-Konfiguration (Teil-2A-Vorgabe: Defaults gehören hierher, nicht in die Funktion) ──
 //
 // Teil 2B (2026-09-10): Gebührensatz + Fixbetrag auf die real gemessenen Werte umgestellt — aus

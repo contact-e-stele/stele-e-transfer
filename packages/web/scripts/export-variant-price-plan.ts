@@ -18,7 +18,7 @@ import { db } from '../src/db/index';
 import * as schema from '../src/db/schema';
 import {
   computeVariantSellPrices, profitAtSellPrice, isChinaShipping,
-  parseVariantSellPrices, resolveVariantSellPrice,
+  parseVariantSellPrices, resolveVariantSellPrice, planCappedPriceSteps,
   DEFAULT_PRICING_CONFIG, type VariantPriceEntry,
 } from '../src/shared/pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from '../src/shared/constants';
@@ -92,13 +92,20 @@ const variantRows: string[] = [
   // gespeicherter_VK/VK_Quelle: der bereits in der DB hinterlegte Varianten-Verkaufspreis nach der
   // Vorrang-Regel aus Teil 3 — "column" = neue Spalte variant_sell_prices, "legacy" = altes
   // ebayPrice-Feld in variant_prices, "none" = noch keiner hinterlegt.
-  'SKU,Variante,Varianten_SKU,SKU_Match,EK,gespeicherter_VK,VK_Quelle,heutiger_Preis,Preisquelle,neuer_Preis,Gewinn_heute,Gewinn_neu,Differenz_Preis,Absenkung_Prozent,ueber_8_Prozent,Anker,Verkaeufe_90T',
+  // naechster_Lauf_Preis / Laeufe_bis_Ziel: Entscheidung des Nutzers vom 13.09.2026 — die
+  // 8-%-Senkungsbremse aus Teil 2D gilt AUCH fuer die Varianten-Umstellung. Der Zielpreis wird
+  // also schrittweise erreicht; diese beiden Spalten zeigen, was der naechste Lauf tatsaechlich
+  // setzt und wie viele Laeufe noch noetig sind. Ziel_erreichbar=nein heisst: die Bremse laesst
+  // den Zielpreis bei diesem Preisniveau gar nicht zu (bei sehr guenstigen Artikeln moeglich).
+  'SKU,Variante,Varianten_SKU,SKU_Match,EK,gespeicherter_VK,VK_Quelle,heutiger_Preis,Preisquelle,Zielpreis,naechster_Lauf_Preis,Laeufe_bis_Ziel,Ziel_erreichbar,Gewinn_heute,Gewinn_neu,Differenz_Preis,Absenkung_Prozent,ueber_8_Prozent,Anker,Verkaeufe_90T',
 ];
 const productRows: string[] = [
   'SKU,Anzahl_Varianten,Ankervariante,Ankerpreis,Ankergewinn,Zielgewinn,Zielgewinn_Quelle,Summe_Preissenkungen,groesste_Absenkung_Prozent,Live_Preisspanne_heute',
 ];
 
 let productsOverCap = 0;
+let unreachableTargets = 0;
+let maxRuns = 0;
 
 for (const { product, variants } of multiVariantProducts) {
   const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
@@ -156,6 +163,10 @@ for (const { product, variants } of multiVariantProducts) {
     const priceSource = livePrice != null ? 'eBay-live' : (product.sellPrice != null ? 'DB-sellPrice' : 'Ankerpreis');
 
     const profitToday = profitAtSellPrice({ ...costContext, sellPrice: todayPrice, buyPrice: row.buyPrice });
+    // Schrittplan unter der 8-%-Bremse (Entscheidung: Bremse gilt auch hier).
+    const steps = planCappedPriceSteps(todayPrice, row.sellPrice, MAX_PRICE_DECREASE_PERCENT);
+    if (!steps.reachesTarget) unreachableTargets++;
+    maxRuns = Math.max(maxRuns, steps.runsToTarget);
     const diff = row.sellPrice - todayPrice;
     const decreasePercent = todayPrice > 0 && diff < 0 ? (-diff / todayPrice) * 100 : 0;
     if (diff < 0) sumDecrease += -diff;
@@ -176,6 +187,9 @@ for (const { product, variants } of multiVariantProducts) {
       todayPrice.toFixed(2),
       priceSource,
       row.sellPrice.toFixed(2),
+      steps.nextPrice.toFixed(2),
+      String(steps.runsToTarget),
+      steps.reachesTarget ? 'ja' : 'nein',
       profitToday.toFixed(2),
       row.profit.toFixed(2),
       (diff >= 0 ? '+' : '') + diff.toFixed(2),
@@ -214,7 +228,10 @@ console.log(productRows.join('\n'));
 console.error(`\nFertig — ${productRows.length - 1} Produkte, ${variantRows.length - 1} Varianten.`);
 console.error(
   productsOverCap > 0
-    ? `HINWEIS: bei ${productsOverCap} Produkt(en) liegt mindestens eine Varianten-Absenkung über der ${MAX_PRICE_DECREASE_PERCENT}%-Senkungsbremse aus Teil 2D. Das ist kein Fehler dieses Berichts — er zeigt den ZIELZUSTAND. Beim späteren Nachziehen muss entschieden werden, ob die Bremse dafür gilt (dann mehrere Läufe) oder ob die Umstellung als einmalige, bewusst freigegebene Korrektur davon ausgenommen wird.`
+    ? `${productsOverCap} Produkt(e) mit mindestens einer Absenkung über ${MAX_PRICE_DECREASE_PERCENT}%. Entscheidung vom 13.09.2026: die Senkungsbremse gilt auch hier — die Zielpreise werden schrittweise erreicht. Spalte "naechster_Lauf_Preis" zeigt, was der naechste Lauf setzt; groesste Laufzahl bis zum Ziel: ${maxRuns} Laeufe.`
     : `Keine Varianten-Absenkung überschreitet die ${MAX_PRICE_DECREASE_PERCENT}%-Senkungsbremse aus Teil 2D.`
 );
+if (unreachableTargets > 0) {
+  console.error(`ACHTUNG: bei ${unreachableTargets} Variante(n) laesst die ${MAX_PRICE_DECREASE_PERCENT}%-Bremse den Zielpreis gar nicht zu (Spalte Ziel_erreichbar=nein) — bei sehr guenstigen Artikeln liegt die naechste ,95-Marke oberhalb des Grenzwerts. Diese Varianten bleiben ohne Sonderfreigabe auf ihrem heutigen Preis stehen.`);
+}
 console.error('Es wurde NICHTS geschrieben — weder in die DB noch an eBay.');
