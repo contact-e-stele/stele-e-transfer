@@ -111,6 +111,11 @@ const migrations = [
   // diesen Wert statt immer auf den globalen MIN_GEWINN_EUR zurückzufallen. Additiv, Default 2.00,
   // keine bestehende Spalte angefasst.
   `ALTER TABLE products ADD COLUMN target_margin_eur REAL DEFAULT 2.00`,
+  // Teil 3 (Preis-Fundament, 2026-09-13): Verkaufspreis JE VARIANTE als eigene Spalte
+  // (JSON-Map {"<skuId>": 12.95}). Bis hierher gab es pro Produkt nur EINEN sellPrice, wodurch alle
+  // Varianten denselben Preis bekamen und die Gewinne innerhalb einer Anzeige stark auseinander
+  // liefen. Additiv, keine bestehende Spalte angefasst.
+  `ALTER TABLE products ADD COLUMN variant_sell_prices TEXT`,
 ];
 
 export async function runMigrations() {
