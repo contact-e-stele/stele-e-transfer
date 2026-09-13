@@ -80,6 +80,19 @@ Jeder Fund (Root Cause, Fix, Verifikation, offene Entscheidung) kommt in `task.m
 PR-Beschreibung — mit konkreter Bezeichnung, damit nichts zweimal untersucht wird. Ergänzt den
 Abschnitt "Verifikations- & Archivierungs-Workflow" weiter unten, ersetzt ihn nicht.
 
+**13. Merge-Regel (Stand 13.09.2026).**
+Der Nutzer mergt PRs **selbst und ohne Wartezeit** — auch bei Geld-/Preis-Logik, Migrationen und
+Auth. Claude prüft **danach**: Diff lesen, Zahlen unabhängig gegen die echte Produktions-DB
+nachrechnen, Live-Zustand prüfen, Abweichungen melden; bei Fehlern Rollback über Render.
+Claude übernimmt **keine Dauervollmacht zum Mergen** — nur auf ausdrückliche Ansage pro einzelnem PR.
+Das präzisiert den Abschnitt "Immer manuell bestätigen lassen" weiter unten: Draft-PR, vollständige
+Offenlegung und das Benennen aller Risiken bleiben Pflicht — die *Wartezeit* auf eine Freigabe
+entfällt. Quelle: Archiv-Dokument "Preis-Fundament Teil 2C, 2D und 3" (13.09.2026), Abschnitt 6.
+
+**Archiv:** Grundgesetz und alle Funde liegen zusätzlich im Google-Drive-Ordner
+"stele-e-transfer – Bug-Analyse" (Dokument "GRUNDGESETZ Arbeitsweise + Teil 3B …", 13.09.2026).
+Dort nachschlagen, bevor etwas erneut untersucht wird.
+
 **Änderungen an diesem Grundgesetz:** nur ergänzen/verbessern, nie bestehende Punkte löschen —
 dieselbe Regel wie beim Workflow-Text.
 
@@ -90,6 +103,10 @@ Unabhängig davon, was der Auto-Modus sonst automatisch ausführen würde: bei
 **Auth/Sicherheit** (Login, Sessions, Tokens, Berechtigungen) immer explizit beim Nutzer
 nachfragen, bevor umgesetzt/gemergt/deployed wird — auch wenn die Aufgabe sonst klar und
 risikoarm erscheint.
+
+*Präzisiert durch Grundgesetz-Regel 13 (13.09.2026): Draft-PR und vollständige Offenlegung bleiben
+Pflicht, aber der Nutzer mergt selbst ohne Wartezeit; die Prüfung durch Claude erfolgt danach gegen
+den echten Live-Zustand.*
 
 ## Automatische Versionsnummer-Erhöhung (Regel seit 2026-08-31)
 
