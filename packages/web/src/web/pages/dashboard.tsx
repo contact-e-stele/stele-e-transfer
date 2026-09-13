@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Package, ExternalLink, RefreshCw, ShoppingCart, Clock, CheckCircle, XCircle, Loader, TrendingUp, AlertTriangle } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
+import { profitAtSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 
 interface Product {
   id: number;
@@ -17,6 +18,8 @@ interface Product {
   buyPrice: number | null;
   sellPrice: number | null;
   adRate: number | null;
+  shippingCost: number | null;
+  shipsFrom: string | null;
   priceChanged: boolean;
   lastPriceCheck: string | null;
   createdAt: string;
@@ -134,8 +137,13 @@ export default function Dashboard() {
           const listed = products.filter(p => p.ebayStatus === "listed");
           const withProfit = listed.filter(p => p.sellPrice && p.buyPrice);
           const totalProfit = withProfit.reduce((sum, p) => {
-            const adR = p.adRate ?? 5;
-            const profit = p.sellPrice! - p.sellPrice! * (13 + adR) / 100 * 1.19 - 0.45 * 1.19 - p.buyPrice!;
+            const adR = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+            const profit = profitAtSellPrice({
+              sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, supplierShipping: p.shippingCost ?? 0,
+              isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adR,
+            });
             return sum + profit;
           }, 0);
           const avgProfit = withProfit.length > 0 ? totalProfit / withProfit.length : null;
