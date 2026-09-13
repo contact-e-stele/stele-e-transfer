@@ -7,7 +7,7 @@ import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategories, type RegulatedCategory } from "../../shared/regulated-categories";
-import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -426,14 +426,21 @@ export default function Lieferanten() {
   );
 
   // ─── Marge berechnen ──────────────────────────────────────────────────────
+  // Fix "Preislogik vereinheitlichen" (2026-09-13): Gewinn läuft jetzt über dieselbe zentrale
+  // profitAtSellPrice()/DEFAULT_PRICING_CONFIG-Formel wie die Preisempfehlung oben und die
+  // Varianten-Anzeige unten (statt einer eigenen Inline-Formel) — und zieht dabei, wie dort auch,
+  // Versand + Zoll vom Einkauf ab statt nur den reinen Einkaufspreis.
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
   const verkauf = parseFloat(ebayPrice.replace(",", ".")) || 0;
-  // Formel: (13% eBay + adRate%) × 1.19 MwSt + 0.45€ Fix × 1.19
-  const EBAY_BASE = 13; // eBay fix
-  const totalFeePercent = (EBAY_BASE + adRate) / 100;
-  const FIXBETRAG = 0.45 * 1.19;
-  const ebayFee = verkauf * totalFeePercent * 1.19 + FIXBETRAG;
-  const gewinn = verkauf - einkauf - ebayFee;
+  const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
+  const ebayFee = verkauf * (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor
+    + DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
+  const gewinn = profitAtSellPrice({
+    sellPrice: verkauf, buyPrice: einkauf, supplierShipping: versand,
+    isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)), customsFlat: CHINA_ZOLL_EUR,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+  });
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
 
   // ─── P-66 Schritt 2: Compliance-Gate für regulierte Produktgruppen ────────
@@ -1585,7 +1592,6 @@ export default function Lieferanten() {
                           // Empfohlener Mindestpreis (initialer Import — OHNE Sicherheitspuffer, der
                           // bleibt der laufenden automatischen Preisprüfung vorbehalten). Zentrale
                           // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A+2B, 2026-09-10).
-                          const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
                           const recommended = computeMinSellPrice({
                             buyPrice: einkauf, supplierShipping: versand,
                             isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)), customsFlat: CHINA_ZOLL_EUR,
@@ -1680,7 +1686,7 @@ export default function Lieferanten() {
                   </div>
                 </div>
                 <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
-                  eBay 13% + Anzeige {adRate}% = {(13 + adRate)}% gesamt (× 1,19 MwSt)
+                  eBay {DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + Anzeige {adRate}% = {(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate)}% gesamt (× {DEFAULT_PRICING_CONFIG.vatFactor} MwSt)
                 </div>
               </div>
 
@@ -1720,7 +1726,7 @@ export default function Lieferanten() {
                 }}>
                   <div className="stele-grid-3" style={{ gap: 8, textAlign: "center" }}>
                     {[
-                      { label: `Gebühr (${13 + adRate}%)`, value: `−${ebayFee.toFixed(2)} €`, color: "#64748B" },
+                      { label: `Gebühr (${DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate}%)`, value: `−${ebayFee.toFixed(2)} €`, color: "#64748B" },
                       { label: "Gewinn", value: `${gewinn >= 0 ? "+" : ""}${gewinn.toFixed(2)} €`, color: gewinn >= 0 ? "#16A34A" : "#DC2626" },
                       { label: "Marge", value: `${margePercent.toFixed(1)}%`, color: margePercent >= 15 ? "#16A34A" : margePercent >= 5 ? "#F59E0B" : "#DC2626" },
                     ].map(s => (
@@ -1811,8 +1817,17 @@ export default function Lieferanten() {
                       const zollManuellV = parseFloat((variantZollManuell[v.skuId] ?? "").replace(",", ".")) || 0;
                       const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
                       const wahrerEinkaufV = v.price + versandV + zollV;
+                      // Fix "Preislogik vereinheitlichen" (2026-09-13): gleiche zentrale Formel
+                      // (profitAtSellPrice/DEFAULT_PRICING_CONFIG) wie das Hauptpanel oben —
+                      // Hauptpanel und Varianten-Anzeige zeigen für dieselben Eingaben jetzt nie
+                      // unterschiedliche Gewinne mehr.
                       const varProfit = varEbay > 0
-                        ? varEbay - varEbay * (13 + adRate) / 100 * 1.19 - 0.45 * 1.19 - wahrerEinkaufV
+                        ? profitAtSellPrice({
+                            sellPrice: varEbay, buyPrice: v.price, supplierShipping: versandV,
+                            isChinaOrigin: ausChinaV, customsFlat: zollV,
+                            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                            vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+                          })
                         : null;
                       return (
                         <div key={v.skuId} style={{
