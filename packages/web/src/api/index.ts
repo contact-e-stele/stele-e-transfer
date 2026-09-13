@@ -459,7 +459,12 @@ const app = new Hono()
   .get('/health', (c) => c.json({ status: 'ok' }, 200))
   // ─── TESTCODE: löst einen kontrollierten Fehler aus, um die Sentry-Anbindung zu verifizieren ──
   // Nur zum manuellen Nachweis der Fehlerüberwachung gedacht, nicht Teil der Fachlogik.
-  .get('/sentry-test-error', () => {
+  // In Produktion deaktiviert (404, damit die Existenz des Endpunkts dort nicht sichtbar ist) —
+  // lokal/staging (NODE_ENV != 'production') bleibt er nutzbar, um die Anbindung erneut zu prüfen.
+  .get('/sentry-test-error', (c) => {
+    if (process.env.NODE_ENV === 'production') {
+      return c.json({ error: 'Not found' }, 404);
+    }
     throw new Error('[Sentry-Testfehler] Kontrolliert ausgelöst zur Verifikation der Fehlerüberwachung');
   })
   .get('/scrape-amazon', async (c) => {
