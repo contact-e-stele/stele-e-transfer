@@ -1,0 +1,8 @@
+# WORKLOG
+
+Hinweis: docs/WORKLOG.md existierte auf `main` noch nicht (nur auf dem unabhaengigen, noch nicht gemergten Branch `fix/p69-p74-versand-rundung`). Die vollstaendige Vorgeschichte (Import-Flow-Analyse, Pruefauftrag Preislogik) liegt dort und in docs/analyse-import-flow.md auf diesem Branch. Dieser Eintrag beginnt den Log fuer den Branch `fix/preislogik-vereinheitlichung`.
+
+## 2026-09-13 - Claude Sonnet 5 (Session 01CHnbcFwoiXkb658VwALM8H)
+**Claim:** Fix-Auftrag Preislogik vereinheitlichen. Branch fix/preislogik-vereinheitlichung (isoliertes Worktree, Basis origin/main), Draft-PR, kein Merge, kein Push auf main. Aufgabe 1: eine gemeinsame roundToNearest95 in shared/, ersetzt roundUpToX95 (price-monitor.ts), lokale roundToNearest95 (lieferanten.tsx) und die reinen Cent-Rundungen (lieferanten.tsx:1542, api/index.ts:2308). Aufgabe 2: Haupt-Gewinn in lieferanten.tsx:412-421 zieht kuenftig Versand+Zoll ab (wie varProfit/wahrerEinkaufV). Aufgabe 3: Einzelprodukt-Preisempfehlung (lieferanten.tsx) und api/index.ts:2308 rufen calcSellPrice statt eigener Formel auf. Keine USt-Logik, kein MIN_GEWINN_EUR-Change, kein Zielgewinn/target_margin_eur, keine DB-Migration. Pflicht: Typecheck + 3 Testfaelle zeigen.
+Abweichung von der woertlichen Vorgabe (mit Nutzer per AskUserQuestion abgestimmt, bevor Code geschrieben wurde): calcSellPrice zieht NICHT in price-monitor.ts um-bleibt, sondern wandert zusammen mit roundToNearest95 nach packages/web/src/shared/pricing.ts, weil price-monitor.ts beim Import Server-Nebenwirkungen ausloest (DB-Client-Aufbau, Sentry) die im Frontend-Bundle nicht laufen koennen. price-monitor.ts reexportiert calcSellPrice von dort, damit bestehende Backend-Aufrufer unveraendert bleiben.
+**Ergebnis:** (wird nach Abschluss eingetragen)
