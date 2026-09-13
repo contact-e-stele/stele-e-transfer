@@ -3,6 +3,7 @@ import app from "./api";
 import { startBackupScheduler } from "./api/backup";
 import { startPriceMonitor, startAvailabilityCheckCron } from "./api/price-monitor";
 import { startOrderNotifier } from "./api/order-notifier";
+import { startTrackingSyncCron } from "./api/tracking-sync";
 import { runMigrations } from "./db/migrate";
 import { runStartupCheck } from "./startup-check";
 
@@ -90,6 +91,10 @@ startAvailabilityCheckCron();
 
 // Neue-Bestellung-Benachrichtigung: alle 120 Min, 8–22 Uhr Berlin-Zeit
 startOrderNotifier();
+
+// Sendungsnummer automatisch von AliExpress übernehmen: alle 4h — hinter Schalter, steht
+// standardmäßig AUS (ALIEXPRESS_TRACKING_SYNC_ENABLED in tracking-sync.ts)
+startTrackingSyncCron();
 
 function getStaticFilePath(pathname: string) {
   const cleanPath = decodeURIComponent(pathname)
