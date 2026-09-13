@@ -8,13 +8,13 @@ import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliPro
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { Sentry } from '../instrument';
 
 // P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
 // ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
 // bestehende Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
-export { isChinaShipping, computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
+export { isChinaShipping, computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
 
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
@@ -570,22 +570,40 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
         const rows = computeVariantPriceRows(freshVariantPricesJson, versand, data.shipsFrom ?? product.shipsFrom, adRate, product.targetMarginEur);
         const safePrice = safeUniformVariantPrice(rows);
-        const deviates = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
+        // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): ob überhaupt ein Update lohnt
+        // (Abweichung vom gespeicherten VK groß genug), bleibt unverändert an safePrice/
+        // ALERT_THRESHOLD hängen — NUR die priceChanged-Bedeutung selbst wird korrigiert
+        // (s. evaluatePriceAlarm() in shared/pricing.ts): Alarm ist ab jetzt ausschließlich
+        // "aktueller VK liegt unter der Zielmarge", nicht mehr jede Abweichung nach oben ODER unten.
+        const pricesChangedEnough = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
+        const margin = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
+        const alarm = evaluatePriceAlarm({
+          currentSellPrice: product.sellPrice,
+          variants: rows.map(r => ({ buyPrice: r.buyPrice })),
+          supplierShipping: versand, isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+          ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+          vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+          targetMarginEur: margin,
+        }).isAlarm;
 
-        if (deviates || buyPriceDiff > 0.01) {
-          console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}" (Varianten): gespeicherter VK=${product.sellPrice ?? '–'} vs. sicherer Soll-VK=${safePrice ?? '–'}${deviates ? ' ⚠️ Abweichung' : ''}`);
+        // alarm zusätzlich als eigener Trigger (nicht nur pricesChangedEnough/buyPriceDiff): ein
+        // echter Marge-Alarm unterhalb der ALERT_THRESHOLD-Schwelle (z.B. nur 0,20€ unter der
+        // Zielmarge) darf nicht stillschweigend übergangen werden, nur weil die Abweichung vom
+        // zuletzt gespeicherten VK klein ist.
+        if (pricesChangedEnough || buyPriceDiff > 0.01 || alarm) {
+          console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}" (Varianten): gespeicherter VK=${product.sellPrice ?? '–'} vs. sicherer Soll-VK=${safePrice ?? '–'}${alarm ? ' ⚠️ unter Zielmarge' : ''}`);
           await db.update(schema.products).set({
             buyPrice: newBuyPrice,
             variantPrices: freshVariantPricesJson,
             lastPriceCheck: new Date().toISOString(),
-            priceChanged: deviates,
+            priceChanged: alarm,
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, product.id));
           updated++;
         } else {
           await db.update(schema.products).set({
             lastPriceCheck: new Date().toISOString(),
-            priceChanged: false,
+            priceChanged: alarm,
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, product.id));
         }
@@ -608,8 +626,27 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice);
       calculatedSellPrice = decision.price;
       const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
+      // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): priceChanged (= "Preisalarm" im
+      // Produkte-Tab) entkoppelt von der Anheben-Entscheidung (decision.action) — die blieb vorher
+      // auch bei einer Erst-Setzung (kein bisheriger Preis, isInitialPrice=true) 'raise' und hätte
+      // damit fälschlich einen Alarm für ein gerade erst bepreistes Produkt ausgelöst. Alarm ist
+      // jetzt ausschließlich der exakte, ungerundete evaluatePriceAlarm()-Gewinnvergleich; die
+      // Anheben-Entscheidung selbst (applyRaiseOnly, ob geschrieben/an eBay gepusht wird) bleibt
+      // unverändert.
+      const alarm = evaluatePriceAlarm({
+        currentSellPrice: product.sellPrice,
+        variants: [{ buyPrice: newBuyPrice }],
+        supplierShipping: versand, isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+        targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+      }).isAlarm;
 
-      if (decision.action === 'raise' || buyPriceDiff > 0.01) {
+      // alarm zusätzlich als eigener Trigger (wie im Varianten-Zweig oben): ein echter, aber
+      // kleiner Marge-Alarm (Rundungsgrenzfall zwischen dem gerundeten computeMinSellPrice()-Wert
+      // und der exakten Zielmarge) darf nicht übergangen werden, nur weil applyRaiseOnly() mit dem
+      // gerundeten Preis 'none' entscheidet.
+      if (decision.action === 'raise' || buyPriceDiff > 0.01 || alarm) {
         if (decision.action === 'raise') {
           // Pflicht-Log (Auftragspunkt 4+5): SKU, alter Preis, neuer Preis, auslösender
           // Einkaufspreis, und ob der Preis vorher unter Break-Even/Zielmarge lag — als Warnung
@@ -623,7 +660,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           buyPrice: newBuyPrice,
           ...(willWrite ? { sellPrice: decision.price } : {}),
           lastPriceCheck: new Date().toISOString(),
-          priceChanged: decision.action === 'raise',
+          priceChanged: alarm,
           updatedAt: new Date().toISOString()
         }).where(eq(schema.products.id, product.id));
         updated++;
@@ -647,7 +684,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         await db.update(schema.products).set({
           buyPrice: newBuyPrice,
           lastPriceCheck: new Date().toISOString(),
-          priceChanged: false,
+          priceChanged: alarm,
           updatedAt: new Date().toISOString()
         }).where(eq(schema.products.id, product.id));
       }

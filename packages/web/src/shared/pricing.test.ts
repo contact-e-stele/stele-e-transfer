@@ -15,7 +15,7 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, evaluatePriceAlarm, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
@@ -642,5 +642,74 @@ describe('dashboard.tsx Gesamtgewinn/Ø-Gewinn (Fix "Herkunft-Umschalter + Dashb
     const alteFormelOhneVersandAbzug = 11.95 - 11.95 * (13 + 5) / 100 * 1.19 - 0.45 * 1.19 - 5.00;
     expect(alteFormelOhneVersandAbzug).toBeCloseTo(3.8548, 4);
     expect(gewinn).not.toBeCloseTo(alteFormelOhneVersandAbzug, 1);
+  });
+});
+
+describe('evaluatePriceAlarm — Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): Alarm nur bei Verkaufspreis UNTER Mindestpreis/Zielmarge, nicht mehr bei jeder Abweichung', () => {
+  // Gemeinsamer Kosten-Kontext für alle Testfälle: Einkauf 5,00€, Versand 1,50€, Zoll 0, adRate 5%,
+  // Zielmarge 2,00€ — identisch zur bestehenden Fixture oben (lieferanten.tsx/dashboard.tsx-Tests),
+  // damit die Werte direkt vergleichbar bleiben. Alle Zahlen mit `bun run` nachgerechnet (Grundgesetz
+  // Nr. 3), nicht geraten:
+  //   computeMinSellPrice({buyPrice:5, supplierShipping:1.5, ...}).minSellPrice === 11.95
+  //   profitAtSellPrice({sellPrice:11.95, buyPrice:5, ...}) === 2.2489
+  //   profitAtSellPrice({sellPrice:8.95, buyPrice:5, ...}) === -0.0371
+  const ctx = {
+    supplierShipping: 1.50, isChinaOrigin: false, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5,
+  };
+
+  // Der geforderte Testfall aus dem Auftrag, Teil 1: "Preis über Mindestpreis ergibt keinen Alarm".
+  test('Verkaufspreis 11,95€ liegt ÜBER dem Mindestpreis (11,95€ selbst, Gewinn 2,2489€ ≥ 2,00€ Zielmarge) → kein Alarm', () => {
+    const result = evaluatePriceAlarm({
+      currentSellPrice: 11.95, variants: [{ buyPrice: 5.00 }], targetMarginEur: 2.00, ...ctx,
+    });
+    expect(result.isAlarm).toBe(false);
+    expect(result.worstProfit).toBeCloseTo(2.2489, 4);
+  });
+
+  // Der geforderte Testfall aus dem Auftrag, Teil 2: "Preis unter Mindestpreis ergibt Alarm".
+  test('Verkaufspreis 8,95€ liegt UNTER dem Mindestpreis (11,95€), Gewinn −0,0371€ < 2,00€ Zielmarge (sogar negativ) → Alarm', () => {
+    const result = evaluatePriceAlarm({
+      currentSellPrice: 8.95, variants: [{ buyPrice: 5.00 }], targetMarginEur: 2.00, ...ctx,
+    });
+    expect(result.isAlarm).toBe(true);
+    expect(result.worstProfit).toBeCloseTo(-0.0371, 4);
+  });
+
+  // Regressions-Beweis (Grundgesetz Nr. 5): stele-87-artiger Fall aus der PR-Beschreibung — heutiger
+  // Preis (25,95€) liegt WEIT ÜBER dem Mindestpreis (11,95€ bei diesen Testdaten). Die ALTE Bedingung
+  // (Math.abs(minSellPrice − currentPrice) >= ALERT_THRESHOLD) hätte hier fälschlich Alarm ausgelöst,
+  // weil sie auch nach OBEN abweichende (= gut verdienende) Preise als "Alarm" zählte. Der Test würde
+  // fehlschlagen, wenn evaluatePriceAlarm() dasselbe Verhalten hätte wie die alte Bedingung.
+  test('Verkaufspreis weit über dem Mindestpreis (25,95€ vs. 11,95€, wie stele-87) → alte Math.abs()-Bedingung hätte Alarm gemeldet, evaluatePriceAlarm() nicht', () => {
+    const minSellPrice = computeMinSellPrice({ buyPrice: 5.00, targetMarginEur: 2.00, safetyBufferEur: 0, rounding: 'nearest95', ...ctx }).minSellPrice;
+    expect(minSellPrice).toBe(11.95);
+
+    const alteBedingungAlarm = Math.abs(minSellPrice - 25.95) >= 0.50;
+    expect(alteBedingungAlarm).toBe(true); // Beleg: die alte Formel hätte hier (falsch) Alarm gemeldet
+
+    const result = evaluatePriceAlarm({ currentSellPrice: 25.95, variants: [{ buyPrice: 5.00 }], targetMarginEur: 2.00, ...ctx });
+    expect(result.isAlarm).toBe(false);
+    expect(result.worstProfit).toBeCloseTo(12.9169, 4);
+  });
+
+  // Kein bisheriger Verkaufspreis (Erst-Setzung) → kein Alarm, da nichts "unter" etwas liegen kann.
+  test('kein bisheriger Verkaufspreis (currentSellPrice null) → kein Alarm, auch ohne Prüfung der Varianten', () => {
+    const result = evaluatePriceAlarm({ currentSellPrice: null, variants: [{ buyPrice: 5.00 }], targetMarginEur: 2.00, ...ctx });
+    expect(result).toEqual({ isAlarm: false, worstProfit: null });
+  });
+
+  // Varianten-Produkt: EINE einzelne Variante unter der Zielmarge reicht für den Alarm, selbst wenn
+  // eine andere Variante beim selben (einheitlichen) Verkaufspreis gut verdient — "schlechteste
+  // Variante entscheidet", dieselbe Logik wie safeUniformVariantPrice() (Maximum der Mindestpreise).
+  test('Varianten-Produkt: eine günstige (Gewinn 5,2969€) und eine teure Variante (Gewinn −1,7031€) beim selben VK 15,95€ → Alarm, weil die teure Variante die Zielmarge verfehlt', () => {
+    const result = evaluatePriceAlarm({
+      currentSellPrice: 15.95,
+      variants: [{ buyPrice: 5.00 }, { buyPrice: 12.00 }],
+      targetMarginEur: 2.00, ...ctx,
+    });
+    expect(result.isAlarm).toBe(true);
+    expect(result.worstProfit).toBeCloseTo(-1.7031, 4);
   });
 });
