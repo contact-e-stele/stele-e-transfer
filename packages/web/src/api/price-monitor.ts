@@ -9,6 +9,7 @@ import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryI
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
 import { computeMinSellPrice, applyDecreaseCap, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { Sentry } from '../instrument';
 
 // P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
 // ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
@@ -434,6 +435,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
     const url = product.sourceUrl;
     if (!url || !url.includes('aliexpress')) return;
 
+    let calculatedSellPrice: number | undefined;
+
     try {
       checked++;
 
@@ -601,6 +604,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // Zielpreis — ohne Deckel würde dieser komplett unbeaufsichtigte 8h-Cron ein laufendes
       // Angebot in einem Lauf bis auf die Untergrenze herunterziehen. Anheben bleibt uneingeschränkt.
       const { price: newSellPrice, wasCapped } = applyDecreaseCap(product.sellPrice, rawNewSellPrice, MAX_PRICE_DECREASE_PERCENT);
+      calculatedSellPrice = newSellPrice;
       const isAlert = product.sellPrice == null || Math.abs(newSellPrice - product.sellPrice) >= ALERT_THRESHOLD;
 
       if (isAlert || buyPriceDiff > 0.01) {
@@ -646,6 +650,11 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
     } catch (e) {
       console.error(`[PriceMonitor] Fehler bei ${product.id}:`, e);
+      Sentry.setContext('price_calculation', {
+        productId: product.id,
+        calculatedPrice: calculatedSellPrice ?? null,
+      });
+      Sentry.captureException(e);
       errors++;
     }
   }

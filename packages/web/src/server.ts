@@ -1,3 +1,4 @@
+import "./instrument";
 import app from "./api";
 import { startBackupScheduler } from "./api/backup";
 import { startPriceMonitor, startAvailabilityCheckCron } from "./api/price-monitor";
