@@ -1824,6 +1824,10 @@ export interface EbayOrder {
     quantity: number;
     sku: string | null;
     legacyItemId: string | null;
+    // Positionsbetrag laut eBay (Artikelpreis der Position, ohne Versand/Steuern). null, wenn eBay
+    // ihn fuer die Position nicht liefert — dann bleibt der Umsatz dieser Position unbekannt und
+    // wird im Bericht als solcher ausgewiesen statt geschaetzt.
+    lineItemCost: number | null;
   }>;
   shippingAddress: {
     fullName: string;
@@ -1884,6 +1888,10 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
           quantity?: number;
           sku?: string;
           legacyItemId?: string;
+          // Teil 3B (2026-09-13): Positionsbetrag, bisher nicht durchgereicht. Ohne ihn laesst sich
+          // der Umsatz einer einzelnen Varianten-SKU bei Mehrpositionen-Bestellungen nicht
+          // bestimmen (order.total ist der Gesamtbetrag). Rein additiv, nur lesend.
+          lineItemCost?: { value?: string; currency?: string };
         }>;
         fulfillmentStartInstructions?: Array<{
           shippingStep?: {
@@ -1920,6 +1928,7 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
           // als der bisherige Weg über unseren internen SKU→Produkt-DB-Abgleich, der fehlschlägt
           // sobald das Produkt nicht (mehr) in unserer DB steht.
           legacyItemId: li.legacyItemId ?? null,
+          lineItemCost: li.lineItemCost?.value != null ? parseFloat(li.lineItemCost.value) : null,
         })),
         shippingAddress: shipTo ? {
           fullName: shipTo.fullName ?? '',
