@@ -18,6 +18,7 @@ import { db } from '../src/db/index';
 import * as schema from '../src/db/schema';
 import {
   computeVariantSellPrices, profitAtSellPrice, isChinaShipping,
+  parseVariantSellPrices, resolveVariantSellPrice,
   DEFAULT_PRICING_CONFIG, type VariantPriceEntry,
 } from '../src/shared/pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from '../src/shared/constants';
@@ -88,7 +89,10 @@ const variantRows: string[] = [
   // "nein" ist die wahrscheinlichste Ursache dafür, dass ein Listing trotz Einzelpreis-Logik nur
   // EINEN Preis zeigt (price-monitor.ts:128/133: ohne Zeilen-Match bekommt die SKU den
   // Einheits-Fallback) — siehe Auftragspunkt 4.
-  'SKU,Variante,Varianten_SKU,SKU_Match,EK,heutiger_Preis,Preisquelle,neuer_Preis,Gewinn_heute,Gewinn_neu,Differenz_Preis,Absenkung_Prozent,ueber_8_Prozent,Anker,Verkaeufe_90T',
+  // gespeicherter_VK/VK_Quelle: der bereits in der DB hinterlegte Varianten-Verkaufspreis nach der
+  // Vorrang-Regel aus Teil 3 — "column" = neue Spalte variant_sell_prices, "legacy" = altes
+  // ebayPrice-Feld in variant_prices, "none" = noch keiner hinterlegt.
+  'SKU,Variante,Varianten_SKU,SKU_Match,EK,gespeicherter_VK,VK_Quelle,heutiger_Preis,Preisquelle,neuer_Preis,Gewinn_heute,Gewinn_neu,Differenz_Preis,Absenkung_Prozent,ueber_8_Prozent,Anker,Verkaeufe_90T',
 ];
 const productRows: string[] = [
   'SKU,Anzahl_Varianten,Ankervariante,Ankerpreis,Ankergewinn,Zielgewinn,Zielgewinn_Quelle,Summe_Preissenkungen,groesste_Absenkung_Prozent,Live_Preisspanne_heute',
@@ -130,6 +134,9 @@ for (const { product, variants } of multiVariantProducts) {
     continue;
   }
 
+  const storedSellPrices = parseVariantSellPrices(product.variantSellPrices);
+  const legacyBySkuId = new Map(variants.map(v => [v.skuId, v]));
+
   const plan = computeVariantSellPrices({
     ...costContext,
     variants: variants.map(v => ({ skuId: v.skuId, buyPrice: v.price, attrs: v.attrs })),
@@ -156,12 +163,16 @@ for (const { product, variants } of multiVariantProducts) {
 
     const variantLabel = Object.values(row.attrs ?? {}).join(' / ') || row.skuId;
     const skuMatch = liveSkus.length === 0 ? 'n/v' : (liveSkus.includes(ebaySku) ? 'ja' : 'nein');
+    // Bereits hinterlegter VK nach der Teil-3-Vorrang-Regel (neue Spalte vor altem ebayPrice).
+    const storedVk = resolveVariantSellPrice(row.skuId, storedSellPrices, legacyBySkuId.get(row.skuId));
     variantRows.push([
       `stele-${product.id}`,
       csvSafe(variantLabel),
       ebaySku,
       skuMatch,
       row.buyPrice.toFixed(2),
+      storedVk.sellPrice != null ? storedVk.sellPrice.toFixed(2) : '',
+      storedVk.source,
       todayPrice.toFixed(2),
       priceSource,
       row.sellPrice.toFixed(2),

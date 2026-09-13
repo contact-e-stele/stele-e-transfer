@@ -1,4 +1,39 @@
-# Preis-Fundament Teil 3 — Varianten mit eigenen Preisen (Pflichtbestandteile #3–#7)
+# Preis-Fundament Teil 3 — Varianten mit eigenen Preisen (Pflichtbestandteile #1, #3–#7)
+
+## #1 — Datenmodell: eigene Spalte `products.variant_sell_prices`
+
+Der Verkaufspreis je Variante bekommt eine **eigene Spalte**: `variant_sell_prices TEXT`, Inhalt eine
+JSON-Map `{"<skuId>": 12.95}`. Additive Migration (`ALTER TABLE products ADD COLUMN`), keine
+bestehende Spalte geändert oder gelöscht.
+
+**Warum eine eigene Spalte und nicht das vorhandene `ebayPrice`-Feld:** ein VK je Variante existierte
+faktisch schon als *optionales* Feld an den `variantPrices`-Einträgen. Ich hatte deshalb zunächst
+vorgeschlagen, es dabei zu belassen — der Nutzer hat sich am 13.09.2026 ausdrücklich für die eigene
+Spalte entschieden. Der Vorteil: der VK ist damit kein Beiwerk der EINKAUFSpreis-Struktur mehr,
+sondern ein eigenständiges, gezielt beschreibbares Feld, und `variantPrices` bleibt reine
+Lieferantendaten (EK, Bestand, Bild).
+
+**Der Preis dafür — und wie er abgesichert ist:** zwei Orte für denselben Wert sind genau das
+Problem, das Teil 2A beseitigt hat. Deshalb gilt eine feste Vorrang-Regel, die **ausschließlich**
+über `resolveVariantSellPrice()` (shared/pricing.ts) angewandt werden darf:
+
+| Stufe | Quelle | gilt |
+|---|---|---|
+| 1 | `variant_sell_prices[skuId]` (neue Spalte) | gewinnt immer, wenn gesetzt |
+| 2 | `variantPrices[].ebayPrice` (Altbestand) | nur, wenn Stufe 1 leer |
+| 3 | — | kein gespeicherter VK → Aufrufstelle rechnet über `computeVariantSellPrices()` |
+
+Neue Schreibvorgänge befüllen **ausschließlich Stufe 1**; Stufe 2 wird nur noch gelesen und nie
+wieder geschrieben — der Altbestand läuft damit aus, ohne dass etwas migriert werden muss. Dazu
+`parseVariantSellPrices()` (tolerant: kaputtes JSON → leere Map, unplausible Einzelwerte werden
+verworfen) und `serializeVariantSellPrices()`. Alles durch Tests abgedeckt, inklusive des Falls
+„Spalte und Altwert widersprechen sich" (Spalte gewinnt).
+
+Der Bericht zeigt je Variante `gespeicherter_VK` und `VK_Quelle` (`column` / `legacy` / `none`), damit
+sichtbar ist, welche Produkte schon umgestellt sind und welche noch am Altbestand hängen.
+
+**In diesem PR wird die Spalte nicht befüllt** — das Schreiben gehört zum Nachziehen der Anzeigen,
+das der Nutzer nach Sichtung des Berichts separat freigibt.
 
 ## #3 — Über welchen Pfad gingen/gehen Varianten-Preise an eBay (nur Bestandsaufnahme)
 

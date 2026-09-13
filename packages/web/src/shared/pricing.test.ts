@@ -15,7 +15,7 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, applyDecreaseCap, computeVariantSellPrices, profitAtSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, computeVariantSellPrices, profitAtSellPrice, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
@@ -439,5 +439,60 @@ describe('computeVariantSellPrices — Teil 3: Varianten mit eigenen Preisen (An
       sellPrice, buyPrice, supplierShipping: versand, isChinaOrigin: true, customsFlat: zoll,
       ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: adRate,
     })).toBeCloseTo(erwartet, 10);
+  });
+});
+
+describe('variant_sell_prices — Teil 3: eigene Spalte für den VK je Variante + Vorrang-Regel', () => {
+  test('parseVariantSellPrices liest eine gültige Map', () => {
+    expect(parseVariantSellPrices('{"v1":19.95,"v2":12.95}')).toEqual({ v1: 19.95, v2: 12.95 });
+  });
+
+  test('parseVariantSellPrices ist tolerant: null/leer/kaputt/Array ergibt eine leere Map statt Absturz', () => {
+    expect(parseVariantSellPrices(null)).toEqual({});
+    expect(parseVariantSellPrices(undefined)).toEqual({});
+    expect(parseVariantSellPrices('')).toEqual({});
+    expect(parseVariantSellPrices('{kaputt')).toEqual({});
+    expect(parseVariantSellPrices('[1,2,3]')).toEqual({});
+  });
+
+  test('parseVariantSellPrices verwirft nicht-numerische und unplausible Werte einzeln', () => {
+    // Ein Schrottwert darf nicht als Preis durchrutschen — die übrigen bleiben gültig.
+    expect(parseVariantSellPrices('{"v1":19.95,"v2":"12,95","v3":null,"v4":0,"v5":-5}')).toEqual({ v1: 19.95 });
+  });
+
+  test('serializeVariantSellPrices erzeugt genau das Format, das parseVariantSellPrices wieder liest', () => {
+    const rows = [{ skuId: 'v1', sellPrice: 19.95 }, { skuId: 'v2', sellPrice: 12.95 }];
+    expect(parseVariantSellPrices(serializeVariantSellPrices(rows))).toEqual({ v1: 19.95, v2: 12.95 });
+  });
+
+  // Die Vorrang-Regel ist der eigentliche Schutz davor, dass die neue Spalte und das alte
+  // ebayPrice-Feld zu zwei konkurrierenden Wahrheiten werden.
+  test('Vorrang 1: die neue Spalte gewinnt gegen das alte ebayPrice-Feld', () => {
+    expect(resolveVariantSellPrice('v1', { v1: 15.95 }, { ebayPrice: 19.95 }))
+      .toEqual({ sellPrice: 15.95, source: 'column' });
+  });
+
+  test('Vorrang 2: ohne Spaltenwert greift der Altbestand ebayPrice', () => {
+    expect(resolveVariantSellPrice('v1', {}, { ebayPrice: 19.95 }))
+      .toEqual({ sellPrice: 19.95, source: 'legacy' });
+  });
+
+  test('Vorrang 3: ohne beides kein gespeicherter VK — die Aufrufstelle muss rechnen', () => {
+    expect(resolveVariantSellPrice('v1', {}, null)).toEqual({ sellPrice: null, source: 'none' });
+    expect(resolveVariantSellPrice('v1', {}, {})).toEqual({ sellPrice: null, source: 'none' });
+    expect(resolveVariantSellPrice('v1', {}, { ebayPrice: 0 })).toEqual({ sellPrice: null, source: 'none' });
+  });
+
+  test('ein Plan aus computeVariantSellPrices lässt sich verlustfrei in die Spalte schreiben und zurücklesen', () => {
+    const plan = computeVariantSellPrices({
+      variants: [{ skuId: 'v1', buyPrice: 7.69 }, { skuId: 'v2', buyPrice: 2.15 }],
+      anchorSellPrice: 19.95, supplierShipping: 0, isChinaOrigin: true, customsFlat: 4.00,
+      ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
+    });
+    const wieder = parseVariantSellPrices(serializeVariantSellPrices(plan.rows));
+    expect(wieder).toEqual({ v1: 19.95, v2: 12.95 });
+    for (const row of plan.rows) {
+      expect(resolveVariantSellPrice(row.skuId, wieder, null).sellPrice).toBe(row.sellPrice);
+    }
   });
 });

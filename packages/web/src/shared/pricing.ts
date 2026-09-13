@@ -99,30 +99,79 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
 
 // ─── Teil 3 (2026-09-13): Verkaufspreis JE VARIANTE ───────────────────────────────────────────
 //
-// Datenmodell-Entscheidung (Auftragspunkt 1, Begründung): der Verkaufspreis je Variante lebt
-// WEITERHIN als Feld `ebayPrice` am jeweiligen Eintrag der bestehenden `variantPrices`-JSON-Spalte
-// — er wird hier nur erstmals als verbindlicher Teil des Datenmodells festgeschrieben und
-// dokumentiert, statt eine zweite, parallele Struktur anzulegen. Gründe:
-//   1. Das Feld EXISTIERT bereits und wird bereits gelesen: `ebay.ts:1299` nimmt beim Listing
-//      `varPriceEntry?.ebayPrice` als Preis für die Varianten-SKU, `produkte.tsx:1613` zeigt es an,
-//      `lieferanten.tsx:624` schreibt es beim Import. Eine zweite Struktur hätte zwei konkurrierende
-//      Quellen für denselben Wert ergeben — genau das Problem, das Teil 2A gerade beseitigt hat.
-//   2. EK (`price`) und VK (`ebayPrice`) gehören pro SKU zusammen. Eine separate Spalte hätte
-//      zusammengehörende Daten über zwei Orte verteilt und die SKU-Zuordnung dupliziert.
-//   3. `variantPrices` ist eine TEXT/JSON-Spalte — ein zusätzliches Feld IN dieser Struktur braucht
-//      KEINE Schema-Migration. Eine additive Migration wäre hier also reine Attrappe. Siehe
-//      PR-Beschreibung: das ist eine bewusste, begründete Abweichung von der Auftragsvorgabe
-//      "Additive DB-Migration", nicht ein übersehener Punkt.
-// Was tatsächlich fehlte, war nicht das Feld, sondern eine VERBINDLICHE REGEL, welcher Preis dort
-// stehen soll — die liefert computeVariantSellPrices() unten.
+// Datenmodell (Auftragspunkt 1): der Verkaufspreis je Variante bekommt eine EIGENE Spalte
+// `products.variant_sell_prices` (JSON-Map `{"<skuId>": 12.95}`, additive Migration, keine
+// bestehende Spalte angefasst).
+//
+// Vorgeschichte, damit die Entscheidung nachvollziehbar bleibt: ein VK je Variante existierte
+// faktisch schon als optionales Feld `ebayPrice` an den `variantPrices`-Einträgen — gelesen beim
+// Listing (`ebay.ts:1299`), angezeigt (`produkte.tsx:1613`), beim Import geschrieben
+// (`lieferanten.tsx:624`). Ich hatte deshalb zunächst vorgeschlagen, es dabei zu belassen; der
+// Nutzer hat sich am 13.09.2026 ausdrücklich für die eigene Spalte entschieden. Vorteil der
+// Spalte: der VK ist nicht mehr ein optionales Beiwerk der EINKAUFSpreis-Struktur, sondern ein
+// eigenständiges, gezielt beschreibbares Feld — und `variantPrices` bleibt reine Lieferantendaten.
+//
+// DAMIT DARAUS KEINE ZWEITE KONKURRIERENDE WAHRHEIT WIRD, gilt eine feste Vorrang-Regel, die
+// ausschließlich über resolveVariantSellPrice() angewandt werden darf:
+//   1. `variant_sell_prices[skuId]` (neue Spalte) — gewinnt immer, wenn gesetzt
+//   2. sonst `variantPrices[].ebayPrice` (Altbestand, für noch nicht migrierte Produkte)
+//   3. sonst kein gespeicherter VK → die Aufrufstelle rechnet ihn über computeVariantSellPrices()
+// Neue Schreibvorgänge befüllen ausschließlich (1). (2) wird nur noch gelesen, nie mehr neu
+// geschrieben — so läuft der Altbestand aus, ohne dass etwas migriert werden muss.
 export interface VariantPriceEntry {
   skuId: string;
   attrs?: Record<string, string>;
   price: number;           // EINKAUFSpreis der Variante (AliExpress) — Bestand, unverändert
-  ebayPrice?: number;      // VERKAUFSpreis der Variante (eBay) — ab Teil 3 der maßgebliche Wert je SKU
+  ebayPrice?: number;      // ALT: VK je Variante. Nur noch Lesequelle (Stufe 2), nicht mehr befüllen.
   originalPrice?: number;
   stock?: number;
   imageUrl?: string;
+}
+
+// Inhalt der Spalte `products.variant_sell_prices`: skuId → Verkaufspreis in EUR.
+export type VariantSellPriceMap = Record<string, number>;
+
+// Tolerantes Parsen: kaputtes/leeres JSON ergibt eine leere Map statt eines Absturzes — dieselbe
+// Haltung wie bei variantPrices überall sonst im Projekt. Nicht-numerische Werte werden verworfen,
+// damit ein einzelner Schrottwert nicht als Preis durchrutscht.
+export function parseVariantSellPrices(json: string | null | undefined): VariantSellPriceMap {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: VariantSellPriceMap = {};
+    for (const [skuId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'number' && Number.isFinite(value) && value > 0) out[skuId] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function serializeVariantSellPrices(rows: Array<{ skuId: string; sellPrice: number }>): string {
+  const map: VariantSellPriceMap = {};
+  for (const row of rows) map[row.skuId] = row.sellPrice;
+  return JSON.stringify(map);
+}
+
+// Die EINE Stelle, an der die Vorrang-Regel oben angewandt wird. Jede Aufrufstelle, die den
+// gespeicherten VK einer Variante braucht, muss hierüber gehen — nie direkt auf eines der beiden
+// Felder zugreifen, sonst entstehen genau die konkurrierenden Quellen, die Teil 2A beseitigt hat.
+export function resolveVariantSellPrice(
+  skuId: string,
+  stored: VariantSellPriceMap,
+  legacyEntry?: { ebayPrice?: number } | null
+): { sellPrice: number | null; source: 'column' | 'legacy' | 'none' } {
+  const fromColumn = stored[skuId];
+  if (typeof fromColumn === 'number' && Number.isFinite(fromColumn) && fromColumn > 0) {
+    return { sellPrice: fromColumn, source: 'column' };
+  }
+  const legacy = legacyEntry?.ebayPrice;
+  if (typeof legacy === 'number' && Number.isFinite(legacy) && legacy > 0) {
+    return { sellPrice: legacy, source: 'legacy' };
+  }
+  return { sellPrice: null, source: 'none' };
 }
 
 export interface ProfitAtSellPriceInput {

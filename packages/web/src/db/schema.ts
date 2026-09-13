@@ -8,7 +8,11 @@ export const products = sqliteTable('products', {
   sourceUrl: text('source_url'),               // AliExpress URL
   amazonUrl: text('amazon_url').notNull(),     // legacy (= sourceUrl)
   aliexpressItemId: text('aliexpress_item_id'), // AliExpress Produkt-ID z.B. 1005012438990021
-  variantPrices: text('variant_prices'), // JSON: [{skuId, attrs:{Farbe:"Rot",Größe:"M"}, price:12.99}]
+  variantPrices: text('variant_prices'), // JSON: [{skuId, attrs:{Farbe:"Rot",Größe:"M"}, price:12.99}] — price = EINKAUFSpreis
+  // Teil 3 (2026-09-13): VERKAUFSpreis je Variante, JSON-Map {"<skuId>": 12.95}. Maßgebliche Quelle
+  // für den Varianten-VK; Vorrang vor dem alten `ebayPrice`-Feld in variant_prices (siehe
+  // resolveVariantSellPrice() in shared/pricing.ts). Wird von der Teil-3-Preisregel befüllt.
+  variantSellPrices: text('variant_sell_prices'),
   title: text('title').notNull(),              // Original-Titel
   generatedTitle: text('generated_title').notNull(),
   generatedDescription: text('generated_description'), // fertige HTML-Beschreibung für eBay
