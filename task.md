@@ -4,7 +4,7 @@
 > Architektur-Details: `docs/ARCHITECTURE.md`.
 
 ## NOCH OFFEN
--8. **Preis-Fundament Teil 3B (2026-09-13, Draft-PR wartet auf manuelle Freigabe):** "Verkaufszahlen je Varianten-SKU" — reines Lesen, keine DB-Migration. Voraussetzung (Teil 3/PR #89 gemergt, v1.11) verifiziert.
+-8. **Preis-Fundament Teil 3B (2026-09-13, Draft #90, wartet auf manuelle Freigabe):** "Verkaufszahlen je Varianten-SKU" — reines Lesen, keine DB-Migration. Voraussetzung (Teil 3/PR #89 gemergt, v1.11) verifiziert.
    - **Zentraler Befund:** die Bestellpositionen liegen **NICHT in der DB** — es gibt nur 5 Tabellen, `order_notes` speichert pro Bestellung nur Zusatzinfos (Tracking, Rechnung, manueller EK) und keine Positionen. Die Verkäufe je SKU sind deshalb **nur über die eBay Sell Fulfillment API** zu bekommen (`getAllOrders()` → `lineItems[].sku`). Dieser API-Aufruf ist zwingend nötig und rein lesend — wie im Auftrag verlangt ausdrücklich benannt.
    - **eBay-Positionsbetrag ergänzt** (`ebay.ts`): `lineItemCost` wurde bisher nicht durchgereicht. Ohne ihn ist der Umsatz einer einzelnen Varianten-SKU bei Mehrpositionen-Bestellungen nicht bestimmbar (`order.total` ist der Gesamtbetrag). Rein additiv.
    - **Aggregation als reine, getestete Funktion** (`src/api/variant-sales.ts`, 10 Tests): Verkäufe gesamt + letzte 90 Tage getrennt, Umsatz, Gewinn je Verkauf nach der zentralen Gebührenformel. `findProductForSku` aus `index.ts` nach `src/api/order-matching.ts` extrahiert (reiner Extract), damit Bericht und Bestellansicht dieselbe Zuordnung nutzen.
