@@ -15,7 +15,7 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, applyDecreaseCap, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
@@ -32,10 +32,13 @@ describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sich
     expect(DEFAULT_PRICING_CONFIG.safetyBufferEur).toBe(0);
   });
 
-  // SICHERHEITSKRITISCH (Pflichtbestandteil der strikten Grenzen): solange die neue Formel nicht
-  // manuell freigegeben ist, darf kein automatischer Pfad einen damit berechneten Preis schreiben.
-  test('AUTO_PRICE_WRITE_ENABLED ist standardmäßig false (automatische Schreibpfade bleiben stillgelegt)', () => {
-    expect(AUTO_PRICE_WRITE_ENABLED).toBe(false);
+  // SICHERHEITSKRITISCH (Pflichtbestandteil der strikten Grenzen): Teil 4/5 (2026-09-13) setzt
+  // AUTO_PRICE_WRITE_ENABLED auf true — das ist NUR zulässig, weil applyRaiseOnly() im selben PR
+  // die automatischen Pfade (price-monitor.ts checkOne(), index.ts check-all-prices) auf
+  // ausschließliches Anheben beschränkt. Siehe describe-Block "applyRaiseOnly" unten für den
+  // Nachweis, dass diese beiden Pfade nie mehr senken können.
+  test('AUTO_PRICE_WRITE_ENABLED ist true (Teil 4/5) — nur zulässig, weil die Automatik jetzt ausschließlich anheben kann', () => {
+    expect(AUTO_PRICE_WRITE_ENABLED).toBe(true);
   });
 });
 
@@ -320,6 +323,63 @@ describe('applyDecreaseCap — Teil 2D "Senkungsbremse": computeMinSellPrice() l
         expect((currentPrice - price) / currentPrice).toBeLessThanOrEqual(MAX_PRICE_DECREASE_PERCENT / 100);
       }
     }
+  });
+});
+
+describe('applyRaiseOnly — Teil 4/5: automatische Pfade dürfen AUSSCHLIESSLICH anheben, nie senken', () => {
+  // a) Mindestpreis höher als aktuell → wird angehoben
+  test('a) Mindestpreis höher als aktueller Preis → anheben', () => {
+    const result = applyRaiseOnly(15.00, 18.95);
+    expect(result).toEqual({ action: 'raise', price: 18.95, wasBelowBreakEven: true, isInitialPrice: false });
+  });
+
+  // b) Mindestpreis niedriger als aktuell → KEIN Schreibvorgang (reale Fälle aus dem Auftrag:
+  // stele-141 23,95€→10,95€, stele-123 35,95€→12,95€ — beides würde applyDecreaseCap gedeckelt
+  // auf einen niedrigeren Preis SENKEN; applyRaiseOnly tut hier NICHTS)
+  test('b) Mindestpreis niedriger als aktueller Preis → KEIN Schreibvorgang (kein Senken, auch nicht gedeckelt)', () => {
+    const stele141 = applyRaiseOnly(23.95, 10.95);
+    expect(stele141).toEqual({ action: 'none', price: 23.95, wasBelowBreakEven: false, isInitialPrice: false });
+
+    const stele123 = applyRaiseOnly(35.95, 12.95);
+    expect(stele123).toEqual({ action: 'none', price: 35.95, wasBelowBreakEven: false, isInitialPrice: false });
+  });
+
+  // c) Mindestpreis gleich aktuellem Preis → KEIN Schreibvorgang (zählt ausdrücklich NICHT als
+  // Anheben um 0€ — Grenzfall aus dem Auftrag)
+  test('c) Mindestpreis gleich aktuellem Preis → KEIN Schreibvorgang', () => {
+    const result = applyRaiseOnly(18.95, 18.95);
+    expect(result).toEqual({ action: 'none', price: 18.95, wasBelowBreakEven: false, isInitialPrice: false });
+  });
+
+  test('kein bisheriger Preis (Erst-Setzung) → anheben, aber NICHT als "lag unter Break-Even" markiert', () => {
+    const result = applyRaiseOnly(null, 12.95);
+    expect(result).toEqual({ action: 'raise', price: 12.95, wasBelowBreakEven: false, isInitialPrice: true });
+    expect(applyRaiseOnly(undefined, 12.95)).toEqual({ action: 'raise', price: 12.95, wasBelowBreakEven: false, isInitialPrice: true });
+  });
+
+  // Regressionsschutz: applyRaiseOnly darf in KEINEM Fall einen Preis unter den aktuellen Preis
+  // zurückgeben — das ist die eigentliche Sicherheitsgarantie von Teil 4/5, geprüft über eine
+  // breite Fallmatrix inkl. der realen 32-von-34-Produkte-Situation aus dem Auftrag.
+  test('Regressionsschutz: das Ergebnis liegt NIE unter dem aktuellen Preis', () => {
+    const cases: Array<[number, number]> = [
+      [15.00, 18.95],   // anheben
+      [23.95, 10.95],   // stele-141 — würde mit applyDecreaseCap gesenkt, hier nicht
+      [35.95, 12.95],   // stele-123 — größte im Auftrag genannte Differenz
+      [20.95, 10.95],   // stele-110
+      [18.95, 18.95],   // gleich
+      [9.95, 9.94],     // hauchdünn niedriger
+    ];
+    for (const [currentPrice, computedMinPrice] of cases) {
+      const { price } = applyRaiseOnly(currentPrice, computedMinPrice);
+      expect(price).toBeGreaterThanOrEqual(currentPrice);
+    }
+  });
+
+  test('wasBelowBreakEven ist NUR bei tatsächlichem Anheben mit vorhandenem Altpreis true', () => {
+    expect(applyRaiseOnly(15.00, 18.95).wasBelowBreakEven).toBe(true);   // raise, Altpreis vorhanden
+    expect(applyRaiseOnly(18.95, 18.95).wasBelowBreakEven).toBe(false);  // none
+    expect(applyRaiseOnly(23.95, 10.95).wasBelowBreakEven).toBe(false);  // none (würde senken)
+    expect(applyRaiseOnly(null, 12.95).wasBelowBreakEven).toBe(false);   // Erst-Setzung, kein Altpreis
   });
 });
 
