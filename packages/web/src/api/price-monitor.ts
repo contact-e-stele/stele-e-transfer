@@ -650,11 +650,14 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
     } catch (e) {
       console.error(`[PriceMonitor] Fehler bei ${product.id}:`, e);
-      Sentry.setContext('price_calculation', {
-        productId: product.id,
-        calculatedPrice: calculatedSellPrice ?? null,
+      Sentry.captureException(e, {
+        contexts: {
+          price_calculation: {
+            productId: product.id,
+            calculatedPrice: calculatedSellPrice ?? null,
+          },
+        },
       });
-      Sentry.captureException(e);
       errors++;
     }
   }

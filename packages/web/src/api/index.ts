@@ -840,12 +840,13 @@ const app = new Hono()
   // ─── Rechnung/Quittung PDF (Ein-Klick-Download, on-demand generiert) ─────────
   .get('/ebay/orders/:orderId/invoice', async (c) => {
     const orderId = c.req.param('orderId');
+    let orderTotal: number | undefined;
     try {
       const allOrders = await getAllOrders();
       const order = allOrders.find(o => o.orderId === orderId);
       if (!order) return c.json({ error: 'Bestellung nicht gefunden' }, 404);
 
-      Sentry.setContext('order_processing', { ebayOrderId: orderId, total: order.total });
+      orderTotal = order.total;
 
       const { generateInvoicePdf } = await import('./invoice');
       const pdf = await generateInvoicePdf({
@@ -873,7 +874,9 @@ const app = new Hono()
         },
       });
     } catch (e) {
-      Sentry.captureException(e);
+      Sentry.captureException(e, {
+        contexts: { order_processing: { ebayOrderId: orderId, total: orderTotal ?? null } },
+      });
       return c.json({ error: String(e) }, 500);
     }
   })
@@ -893,6 +896,7 @@ const app = new Hono()
   // ─── Bestellungs-Zusatzinfos speichern (AliExpress-Bestellnummer, Rechnung-URL, manuell versendet) ──
   .patch('/order-notes/:ebayOrderId', async (c) => {
     const ebayOrderId = c.req.param('ebayOrderId');
+    let manualBuyPriceCtx: number | null | undefined;
     try {
       const body = await c.req.json() as {
         aliexpressOrderId?: string;
@@ -934,10 +938,7 @@ const app = new Hono()
       if (body.markCustomerNotified) update.customerNotifiedAt = new Date().toISOString();
       if (body.markThankYouSent) update.thankYouSentAt = new Date().toISOString();
 
-      Sentry.setContext('order_processing', {
-        ebayOrderId,
-        manualBuyPrice: body.manualBuyPrice ?? null,
-      });
+      manualBuyPriceCtx = body.manualBuyPrice ?? null;
 
       await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
         .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });
@@ -969,7 +970,9 @@ const app = new Hono()
 
       return c.json({ ok: true, ...(ebayResult ? { ebay: ebayResult } : {}) }, 200);
     } catch (e) {
-      Sentry.captureException(e);
+      Sentry.captureException(e, {
+        contexts: { order_processing: { ebayOrderId, manualBuyPrice: manualBuyPriceCtx ?? null } },
+      });
       return c.json({ error: String(e) }, 500);
     }
   })
@@ -1226,6 +1229,7 @@ const app = new Hono()
 
   // ─── Vom Nutzer bestätigte Preise anwenden (P-8, P-27/P-28) ──────────────────────────────
   .post('/ebay/listings/recalculate-apply', async (c) => {
+    let currentPriceCtx: { productId: number; calculatedPrice: number } | undefined;
     try {
       const body = await c.req.json() as { itemIds: string[] };
       if (!Array.isArray(body.itemIds) || body.itemIds.length === 0) {
@@ -1294,7 +1298,7 @@ const app = new Hono()
           continue;
         }
         const oldPrice = product.sellPrice ?? undefined;
-        Sentry.setContext('price_calculation', { productId: product.id, calculatedPrice: newPrice });
+        currentPriceCtx = { productId: product.id, calculatedPrice: newPrice };
 
         let ok: boolean;
         let tradingError: string | undefined;
@@ -1329,7 +1333,14 @@ const app = new Hono()
       return c.json({ results }, 200);
     } catch (e) {
       console.error('[recalculate-apply]', e);
-      Sentry.captureException(e);
+      Sentry.captureException(e, {
+        contexts: {
+          price_calculation: {
+            productId: currentPriceCtx?.productId ?? null,
+            calculatedPrice: currentPriceCtx?.calculatedPrice ?? null,
+          },
+        },
+      });
       return c.json({ error: String(e) }, 500);
     }
   })
