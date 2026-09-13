@@ -30,7 +30,7 @@ function decodeEntities(str: string): string {
 }
 
 function cleanText(text: string): string {
-  return decodeEntities(text)
+  const cleaned = decodeEntities(text)
     .replace(/([a-zäöüß]{4,})([A-ZÄÖÜ])/g, "$1 $2")
     .replace(/\b(.{10,40}?)\s+\1\b/gi, "$1")
     .replace(/\s{2,}/g, " ")
@@ -38,6 +38,34 @@ function cleanText(text: string): string {
     .replace(/\b\d+\/\d+\s*(st[üu]ck?|pcs?|pieces?)?\b/gi, "")
     .replace(/aliexpress\s*\d*/gi, "")
     .replace(/\b200\d{6,}\b/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return stripSupplierContact(cleaned);
+}
+
+// ─── Dritt-Kontakt-Filter (P-Verstoß-Reparatur Phase 2) ─────────────────────
+// Entfernt aus übernommenem Lieferantentext (AliExpress description/specs/bullets)
+// alles, was eBays "Handel außerhalb von eBay"-Prüfung auslöst: E-Mail-Adressen,
+// Telefonnummern, Links zu Nicht-eBay-Domains und Kontaktaufnahme-Floskeln.
+// Greift hier bei der Erzeugung (cleanText) — NICHT rückwirkend in der DB, und
+// NICHT auf die fest verdrahteten Impressum/AGB/Widerruf-Blöcke, die diese
+// Funktion nie durchlaufen.
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const PHONE_RUN_RE = /\+?\d[\d \-/().]{7,}\d/g;
+const NON_EBAY_URL_RE = /\b(?:https?:\/\/|www\.)(?!(?:[a-z0-9-]+\.)?ebay\.[a-z.]+)[^\s"'<>]+/gi;
+const CONTACT_PHRASE_RE = /\b(contact us|kontaktieren sie uns|schreiben sie uns|direkt bestellen|wechat|telegram|whatsapp)\b/gi;
+
+function stripSupplierContact(text: string): string {
+  return text
+    .replace(EMAIL_RE, "")
+    .replace(NON_EBAY_URL_RE, "")
+    .replace(PHONE_RUN_RE, (m) => {
+      // Ziffern-Läufe mit 8–15 Stellen sind Telefonnummer-Kandidaten (E.164-Bereich);
+      // kürzere/längere Ziffernfolgen (Maße, Mengen) bleiben unangetastet.
+      const digits = m.replace(/\D/g, "");
+      return digits.length >= 8 && digits.length <= 15 ? "" : m;
+    })
+    .replace(CONTACT_PHRASE_RE, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -189,7 +217,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     outroText = cleanText(outroM?.[1]?.trim() ?? "");
 
     if (bulletsM) {
-      const lines = bulletsM[1].split("\n").map(l => l.replace(/^[\-\*•]\s*/, "").trim()).filter(l => l.length > 10 && !isGarbage(l));
+      const lines = bulletsM[1].split("\n").map(l => cleanText(l.replace(/^[\-\*•]\s*/, "").trim())).filter(l => l.length > 10 && !isGarbage(l));
       bullets.push(...lines.slice(0, 8));
     }
   } else {
@@ -299,22 +327,16 @@ export function buildEbayHTML(product: ScrapedProduct): string {
 
 <!-- INFO BOXEN -->
 <div style="display:table;width:100%;border-collapse:collapse;background:#111108;">
-  <div style="display:table-cell;width:33%;border-right:1px solid #C9A84C;vertical-align:top;">
+  <div style="display:table-cell;width:50%;border-right:1px solid #C9A84C;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
       <div style="font-size:11px;color:#8a7040;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
     </div>
   </div>
-  <div style="display:table-cell;width:33%;border-right:1px solid #C9A84C;vertical-align:top;">
+  <div style="display:table-cell;width:50%;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">30 TAGE R&Uuml;CKGABE</div>
       <div style="font-size:11px;color:#8a7040;line-height:1.7;">Einfache R&uuml;ckgabe<br/>K&auml;uferschutz &uuml;ber eBay</div>
-    </div>
-  </div>
-  <div style="display:table-cell;width:33%;vertical-align:top;">
-    <div style="padding:18px 15px;text-align:center;">
-      <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">KUNDENSERVICE</div>
-      <div style="font-size:11px;color:#8a7040;line-height:1.7;">contact@stele-e-transfer.com<br/>Wir helfen gerne weiter</div>
     </div>
   </div>
 </div>
@@ -486,7 +508,7 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     introText = cleanText(introM?.[1]?.trim() ?? "");
     outroText = cleanText(outroM?.[1]?.trim() ?? "");
     if (bulletsM) {
-      const lines = bulletsM[1].split("\n").map(l => l.replace(/^[\-\*•]\s*/, "").trim()).filter(l => l.length > 10 && !isGarbage(l));
+      const lines = bulletsM[1].split("\n").map(l => cleanText(l.replace(/^[\-\*•]\s*/, "").trim())).filter(l => l.length > 10 && !isGarbage(l));
       bullets.push(...lines.slice(0, 8));
     }
   } else {
@@ -591,22 +613,16 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
 
 <!-- INFO BOXEN -->
 <div style="display:table;width:100%;border-collapse:collapse;background:#fdf9f0;">
-  <div style="display:table-cell;width:33%;border-right:1px solid #e8d8a0;vertical-align:top;">
+  <div style="display:table-cell;width:50%;border-right:1px solid #e8d8a0;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
       <div style="font-size:12px;color:#555555;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
     </div>
   </div>
-  <div style="display:table-cell;width:33%;border-right:1px solid #e8d8a0;vertical-align:top;">
+  <div style="display:table-cell;width:50%;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">30 TAGE R&Uuml;CKGABE</div>
       <div style="font-size:12px;color:#555555;line-height:1.7;">Einfache R&uuml;ckgabe<br/>K&auml;uferschutz &uuml;ber eBay</div>
-    </div>
-  </div>
-  <div style="display:table-cell;width:33%;vertical-align:top;">
-    <div style="padding:18px 15px;text-align:center;">
-      <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">KUNDENSERVICE</div>
-      <div style="font-size:12px;color:#555555;line-height:1.7;">contact@stele-e-transfer.com<br/>Wir helfen gerne weiter</div>
     </div>
   </div>
 </div>
