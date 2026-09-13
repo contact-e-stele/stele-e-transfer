@@ -4,7 +4,7 @@
 > Architektur-Details: `docs/ARCHITECTURE.md`.
 
 ## NOCH OFFEN
--11. **Preis-Fundament Teil 4/5 (2026-09-13, Draft-PR wartet auf manuelle Freigabe — PR-Nummer wird nach dem Erstellen hier nachgetragen):** "Automatik nur anheben, nie senken" — SICHERHEITSKRITISCH, Geld-Logik. Voraussetzung (Teil 3/PR #89) vor Start verifiziert: `variant_sell_prices`-Spalte existiert, Version v1.11 in beiden Stellen.
+-11. **Preis-Fundament Teil 4/5 (2026-09-13, Draft #97, wartet auf manuelle Freigabe):** "Automatik nur anheben, nie senken" — SICHERHEITSKRITISCH, Geld-Logik. Voraussetzung (Teil 3/PR #89) vor Start verifiziert: `variant_sell_prices`-Spalte existiert, Version v1.11 in beiden Stellen.
    - **Neue Funktion `applyRaiseOnly()`** (`shared/pricing.ts`): alleiniges Gate für die beiden komplett unbeaufsichtigten Pfade `price-monitor.ts checkOne()` und `index.ts POST /products/check-all-prices`. `computedMinPrice > currentPrice` → anheben; sonst (niedriger ODER gleich) → `action:'none'`, kein Schreibvorgang, kein eBay-Call. `applyDecreaseCap()` bleibt unverändert im Code und weiterhin gültig für die MANUELLEN Pfade (`recalculate-preview`/`-apply`) — dort wurde nichts geändert, per grep bestätigt (kein Treffer für `AUTO_PRICE_WRITE_ENABLED` in diesen beiden Handlern).
    - **`AUTO_PRICE_WRITE_ENABLED` auf `true`** — im selben PR wie `applyRaiseOnly()`, wie vom Nutzer verbindlich verlangt ("einzeln wäre jeder Schritt gefährlich"). Alter Kommentar (Teil 2B, Grund für die ursprüngliche Sperre) erhalten, neuer Absatz ergänzt statt gelöscht.
    - **Pflicht-Log bei jeder Anhebung** (Auftragspunkt 4+5): SKU, alter Preis, neuer Preis, auslösender Einkaufspreis, `wasBelowBreakEven` als ⚠️-Warnung — in beiden Pfaden identisch formatiert.
