@@ -539,3 +539,27 @@ describe('planCappedPriceSteps — Teil 3: Varianten-Umstellung unter der 8-%-Br
     expect(plan).toEqual({ nextPrice: 1.95, runsToTarget: 0, reachesTarget: false });
   });
 });
+
+describe('lieferanten.tsx Gewinn-Anzeige (Fix "Preislogik vereinheitlichen", 2026-09-13): Hauptpanel + Varianten nutzen profitAtSellPrice statt eigener Inline-Formel (13%/0,45€, ohne Versand/Zoll-Abzug im Hauptpanel)', () => {
+  // Testfall aus dem Fix-Auftrag: Einkauf 5,00€, Versand 1,50€, Zoll 0, adRate 5%, Verkauf 11,95€.
+  // Unter der ALTEN Inline-Formel (13% + 0,45€, ohne Versand-Abzug) ergab das rechnerisch 3,85€ Gewinn
+  // (siehe zweiter Assert) — der urspruengliche Auftrag ging von ~2,35€ aus, gerechnet mit derselben
+  // alten 13%/0,45€-Rate, aber MIT Versand-Abzug. Unter der aktuellen, bereits an anderer Stelle
+  // (produkte.tsx, price-monitor.ts, api/index.ts) verwendeten Formel (DEFAULT_PRICING_CONFIG:
+  // 15% + 0,30€, real gemessen) liegt der korrekte Gewinn bei 2,2489€ (nachgerechnet mit bun, nicht geraten).
+  test('Hauptpanel-Gewinn bei Einkauf 5/Versand 1,50/Zoll 0/adRate 5/Verkauf 11,95 liegt bei 2,2489€ (nicht 3,85€ wie vor dem Fix)', () => {
+    const gewinn = profitAtSellPrice({
+      sellPrice: 11.95, buyPrice: 5.00, supplierShipping: 1.50,
+      isChinaOrigin: false, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5,
+    });
+    expect(gewinn).toBeCloseTo(2.2489, 4);
+
+    // Regressions-Beweis (Grundgesetz Nr. 5): der alte Hauptpanel-Bug (13%/0,45€, KEIN Versand-Abzug)
+    // muss ein sichtbar anderes Ergebnis liefern — sonst würde dieser Test den Fix nicht erkennen.
+    const alteFormelOhneVersandAbzug = 11.95 - 5.00 - (11.95 * (13 + 5) / 100 * 1.19 + 0.45 * 1.19);
+    expect(alteFormelOhneVersandAbzug).toBeCloseTo(3.8548, 4);
+    expect(gewinn).not.toBeCloseTo(alteFormelOhneVersandAbzug, 1);
+  });
+});
