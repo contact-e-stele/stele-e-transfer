@@ -36,4 +36,4 @@ Hinweis zum Arbeitsablauf: Der Branch `fix/p69-p74-versand-rundung` (vorherige S
 
 Tests: Frontend-Typecheck (`bun run typecheck`) gruen, Server-Typecheck (`bun run typecheck:server`) gruen, `bun test src/shared/pricing.test.ts`: 55 pass/0 fail/150 expect() (neuer Test fuer den Dashboard-Fix eingerechnet). Voller `bun test`: 97 pass/2 fail/2 errors — dieselben 2 vorbestehenden, nicht durch diese Aenderung verursachten Windows-`/tmp`-DB-Fehler wie in der PR-#94-Session dokumentiert (unveraendert, nur andere absolute Zahl weil inzwischen mehr Tests im Repo sind).
 Keine Aenderung an `DEFAULT_PRICING_CONFIG`/Gebuehrensaetzen, `AUTO_PRICE_WRITE_ENABLED` bleibt `false` (in dashboard.tsx gar nicht referenziert, per grep bestaetigt), keine DB-Migration, keine Auth-Aenderung.
-Branch: `fix/herkunft-toggle-und-dashboard-gewinn`. PR: (wird nach Erstellung eingetragen)
+Branch: `fix/herkunft-toggle-und-dashboard-gewinn`. PR: https://github.com/contact-e-stele/stele-e-transfer/pull/95 (Draft, nicht gemergt).
