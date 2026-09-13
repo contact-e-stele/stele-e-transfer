@@ -563,3 +563,24 @@ describe('lieferanten.tsx Gewinn-Anzeige (Fix "Preislogik vereinheitlichen", 202
     expect(gewinn).not.toBeCloseTo(alteFormelOhneVersandAbzug, 1);
   });
 });
+
+describe('dashboard.tsx Gesamtgewinn/Ø-Gewinn (Fix "Herkunft-Umschalter + Dashboard-Gewinn", 2026-09-13): nutzt jetzt profitAtSellPrice statt eigener Inline-Formel (13%/0,45€, kein Versand/Zoll-Abzug)', () => {
+  // Testfall aus dem Fix-Auftrag: Einkauf 5,00€, Versand 1,50€, Zoll 0 (isChinaOrigin: false), adRate 5%,
+  // Verkauf 11,95€ — erwarteter Gewinn ca. 2,25€ (exakt 2,2489€, identisch zur lieferanten.tsx-Formel
+  // oben, da dashboard.tsx dieselbe zentrale Funktion mit denselben Eingaben aufruft).
+  test('Gesamtgewinn-Berechnung bei Einkauf 5/Versand 1,50/Zoll 0/adRate 5/Verkauf 11,95 liegt bei 2,2489€ (nicht 3,85€ wie vor dem Fix)', () => {
+    const gewinn = profitAtSellPrice({
+      sellPrice: 11.95, buyPrice: 5.00, supplierShipping: 1.50,
+      isChinaOrigin: false, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5,
+    });
+    expect(gewinn).toBeCloseTo(2.2489, 4);
+
+    // Regressions-Beweis: der alte dashboard.tsx-Bug (13%/0,45€, KEIN Versand/Zoll-Abzug) muss ein
+    // sichtbar anderes Ergebnis liefern — sonst würde dieser Test den Fix nicht erkennen.
+    const alteFormelOhneVersandAbzug = 11.95 - 11.95 * (13 + 5) / 100 * 1.19 - 0.45 * 1.19 - 5.00;
+    expect(alteFormelOhneVersandAbzug).toBeCloseTo(3.8548, 4);
+    expect(gewinn).not.toBeCloseTo(alteFormelOhneVersandAbzug, 1);
+  });
+});
