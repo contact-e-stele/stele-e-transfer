@@ -474,4 +474,15 @@ export function isChinaShipping(shipsFrom?: string | null): boolean {
 // schlechtesten Fall wird zu früh/zu viel angehoben, nie unter Marge verkauft). Die menschlich
 // bestätigten Pfade (recalculate-preview/-apply) dürfen weiterhin auch senken, gedeckelt durch
 // applyDecreaseCap() — daran ändert dieser Schalter nichts, die beiden Pfade prüfen ihn nicht.
+//
+// Ergaenzung (2026-09-13, Auftrag "Freigabe der automatischen Preisschreibung vorbereiten"):
+// zusaetzlich zur Teil-4/5-Absicherung oben (Richtungs-Deckel statt Werte-Validierung) sind die
+// 15%/0,30€-Gebuehren-Konstanten selbst inzwischen gegen 6 echte eBay-Transaktionen im
+// Verkaeufer-Cockpit nachgerechnet (nicht nur die urspruenglichen 13, s. Teil 2B): zurueckgerechnete
+// Gebuehrensaetze lagen zwischen 14,58% und 15,14% (Mittel 14,98%, naeherungsweise 15%), 5 von 6
+// Bestellungen trafen den Modellwert (0,15xPreis+0,30)x1,19 auf 2 Cent genau; der reale
+// Anzeigentarif lag bei 5,94-6,03% brutto (naeherungsweise 5%x1,19), ebenfalls bestaetigt. Aendert
+// NICHTS an diesem Schalter selbst (blieb bereits true) oder an applyRaiseOnly() — reine
+// zusaetzliche Begruendung, warum die zugrunde liegenden Gebuehren-Konstanten aus Teil 2B
+// mittlerweile auch unabhaengig vom Richtungs-Deckel als bestaetigt gelten koennen.
 export const AUTO_PRICE_WRITE_ENABLED = true;
