@@ -10,6 +10,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
+import { buildProductLookups, findProductForSku as findProductForSkuShared } from './order-matching';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
@@ -693,27 +694,10 @@ const app = new Hono()
         ebayListingId: schema.products.ebayListingId,
         variantPrices: schema.products.variantPrices,
       }).from(schema.products).all();
-      const productById = new Map(allProducts.map(p => [p.id, p]));
-      const productByAsin = new Map(
-        allProducts.filter(p => p.asin && !p.asin.startsWith('ali_')).map(p => [p.asin!.toUpperCase(), p])
-      );
-
-      const findProductForSku = (sku: string | null) => {
-        if (!sku) return null;
-        const steleMatch = sku.match(/^stele-(\d+)/);
-        if (steleMatch) return productById.get(parseInt(steleMatch[1])) ?? null;
-        // Direkter ASIN-Match (z.B. "B0CR9RWDSW")
-        const direct = productByAsin.get(sku.toUpperCase());
-        if (direct) return direct;
-        // Base64-dekodierte ASIN (alte Ecomsniper-Listings, z.B. "QjA3UUhXM1o2Tg==" → "B07QHW3Z6N")
-        try {
-          const decoded = Buffer.from(sku, 'base64').toString('utf8');
-          if (/^[A-Z0-9]{8,12}$/.test(decoded)) {
-            return productByAsin.get(decoded.toUpperCase()) ?? null;
-          }
-        } catch { /* kein gültiges Base64 */ }
-        return null;
-      };
+      // Teil 3B (2026-09-13): Matching-Regeln nach src/api/order-matching.ts ausgelagert (reiner
+      // Extract, identische Logik), damit das Verkaufszahlen-Berichtsskript dieselbe Zuordnung nutzt.
+      const productLookups = buildProductLookups(allProducts);
+      const findProductForSku = (sku: string | null) => findProductForSkuShared(sku, productLookups);
 
       const merged = (orders as import('./ebay').EbayOrder[]).map(order => {
         const note = notesByOrderId.get(order.orderId) ?? null;
