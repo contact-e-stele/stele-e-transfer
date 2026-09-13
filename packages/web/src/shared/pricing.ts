@@ -360,6 +360,38 @@ export function applyDecreaseCap(
   return { price: capped, wasCapped: true, uncappedPrice: computedMinPrice };
 }
 
+export interface RaiseOnlyDecision {
+  action: 'raise' | 'none';        // 'raise' → sellPrice/eBay dürfen geschrieben werden; 'none' → NICHTS anfassen
+  price: number;                   // bei 'raise' = computedMinPrice; bei 'none' = unveränderter currentPrice
+  wasBelowBreakEven: boolean;      // true nur, wenn ein bisheriger Preis existierte UND er unter dem Mindestpreis lag
+  isInitialPrice: boolean;         // true, wenn zuvor noch kein Preis gesetzt war (Erst-Setzung, kein "Senken" möglich)
+}
+
+// Teil 4/5 (2026-09-13), Entscheidung des Nutzers: die vollautomatischen Pfade (price-monitor.ts
+// checkOne(), index.ts POST /products/check-all-prices) dürfen AUSSCHLIESSLICH ANHEBEN, nie
+// senken — auch nicht gedeckelt über applyDecreaseCap(). Hintergrund: bei 32 von 34 Produkten lag
+// der berechnete Mindestpreis am 13.09. deutlich unter dem damaligen Preis; ein automatisches
+// Senken hätte bestehende Marge tagelang abgebaut (stele-123: 35,95€ → 12,95€, nur durch die
+// 8-%-Bremse aus Teil 2D gebremst). applyDecreaseCap() bleibt unverändert gültig für die
+// MANUELLEN Pfade (recalculate-preview/-apply) — dort entscheidet weiterhin der Mensch und darf
+// auch senken. Diese Funktion ist die einzige Stelle, die für die automatischen Pfade entscheidet,
+// ob geschrieben wird — kein Schreibvorgang, kein eBay-Call, wenn computedMinPrice <= currentPrice.
+//
+// computedMinPrice === currentPrice zählt ausdrücklich als "nichts tun" (kein Schreibvorgang) —
+// nicht als Anheben um 0€.
+export function applyRaiseOnly(
+  currentPrice: number | null | undefined,
+  computedMinPrice: number
+): RaiseOnlyDecision {
+  if (currentPrice == null) {
+    return { action: 'raise', price: computedMinPrice, wasBelowBreakEven: false, isInitialPrice: true };
+  }
+  if (computedMinPrice > currentPrice) {
+    return { action: 'raise', price: computedMinPrice, wasBelowBreakEven: true, isInitialPrice: false };
+  }
+  return { action: 'none', price: currentPrice, wasBelowBreakEven: false, isInitialPrice: false };
+}
+
 export interface CappedStepPlan {
   nextPrice: number;      // Preis, den der NÄCHSTE Lauf tatsächlich setzt (Bremse berücksichtigt)
   runsToTarget: number;   // Anzahl Läufe, bis der Zielpreis erreicht ist
@@ -427,14 +459,19 @@ export function isChinaShipping(shipsFrom?: string | null): boolean {
   return shipsFrom.toLowerCase().includes('china');
 }
 
-// Teil 2B (2026-09-10), SICHERHEITSKRITISCH: die neuen Gebühren-Konstanten (15%/0,30€) sind noch
-// NICHT gegen einen vollen Preiszyklus mit echten Bestellungen bestätigt (nur gegen 13
-// vergangene Bestellungen rückgerechnet, ±0,05€ Restunsicherheit). Bis zur manuellen Freigabe
-// durch den Nutzer darf KEIN automatischer, unbeaufsichtigter Pfad einen mit der neuen Formel
-// berechneten Verkaufspreis in die DB schreiben oder an eBay senden — nur die menschlich
-// bestätigten Preview→Übernehmen-Abläufe (recalculate-preview/-apply, Erst-/Re-Listing,
-// Varianten-Reparatur) bleiben aktiv, da dort vor jedem Schreibvorgang eine Vorschau mit den
-// neuen Zahlen gezeigt wird. Betrifft konkret: price-monitor.ts checkOne() (8h-Cron, komplett
-// unbeaufsichtigt) und index.ts POST /products/check-all-prices (schreibt+pusht ohne
-// Zwischenschritt, sobald der Job läuft). Auf true setzen, sobald die neue Formel freigegeben ist.
-export const AUTO_PRICE_WRITE_ENABLED = false;
+// Teil 2B (2026-09-10 — SICHERHEITSKRITISCH, historischer Grund für die ursprüngliche Sperre):
+// die neuen Gebühren-Konstanten (15%/0,30€) waren zum damaligen Zeitpunkt noch nicht gegen einen
+// vollen Preiszyklus bestätigt. Bis zur Freigabe durch den Nutzer schrieb KEIN automatischer,
+// unbeaufsichtigter Pfad einen berechneten Verkaufspreis in die DB oder an eBay — nur die
+// menschlich bestätigten Preview→Übernehmen-Abläufe (recalculate-preview/-apply, Erst-/
+// Re-Listing, Varianten-Reparatur) blieben aktiv.
+//
+// Teil 4/5 (2026-09-13): jetzt auf true gesetzt — aber NUR weil im selben PR gleichzeitig
+// applyRaiseOnly() (s.o.) als alleiniges Gate für price-monitor.ts checkOne() und index.ts
+// POST /products/check-all-prices eingeführt wurde. Diese beiden komplett unbeaufsichtigten
+// Pfade können ab jetzt AUSSCHLIESSLICH anheben, nie senken (auch nicht gedeckelt) — deshalb ist
+// das Restrisiko der noch nicht per vollem Zyklus bestätigten Formel jetzt einseitig (im
+// schlechtesten Fall wird zu früh/zu viel angehoben, nie unter Marge verkauft). Die menschlich
+// bestätigten Pfade (recalculate-preview/-apply) dürfen weiterhin auch senken, gedeckelt durch
+// applyDecreaseCap() — daran ändert dieser Schalter nichts, die beiden Pfade prüfen ihn nicht.
+export const AUTO_PRICE_WRITE_ENABLED = true;

@@ -2899,7 +2899,7 @@ const app = new Hono()
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
         const { isChinaShipping } = await import('./price-monitor');
-        const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
+        const { computeMinSellPrice, applyRaiseOnly, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         for (const product of all) {
           const url = product.sourceUrl || product.amazonUrl;
@@ -2942,28 +2942,34 @@ const app = new Hono()
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
               rounding: 'nearest95',
             }).minSellPrice;
-            // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
-            // Zielpreis — ohne Deckel würde dieser komplett unbeaufsichtigte Job ein laufendes
-            // Angebot in einem Lauf bis auf die Untergrenze herunterziehen. Anheben uneingeschränkt.
-            const newSellPrice = applyDecreaseCap(product.sellPrice, rawNewSellPrice, MAX_PRICE_DECREASE_PERCENT).price;
+            // Teil 4/5 (2026-09-13): dieser Job ist komplett unbeaufsichtigt und darf
+            // AUSSCHLIESSLICH anheben, nie senken — applyDecreaseCap() (Senkungsbremse) wird hier
+            // bewusst NICHT mehr aufgerufen, sie bleibt für recalculate-preview/-apply gültig.
+            // applyRaiseOnly() ist das alleinige Gate: computedMinPrice <= aktueller Preis →
+            // 'none', kein Schreibvorgang, kein eBay-Call.
+            const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice);
+            const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
-            // Teil 2B SICHERHEITSKRITISCH: solange AUTO_PRICE_WRITE_ENABLED false ist (neue
-            // Gebühren-Konstanten 15%/0,30€ noch nicht gegen einen vollen Preiszyklus bestätigt),
-            // bleibt sellPrice unangetastet und es wird nichts an eBay gepusht — buyPrice/
-            // priceChanged (Tatsachen-Sync/Anzeige-Flag) werden weiterhin geschrieben.
+
+            if (decision.action === 'raise') {
+              // Pflicht-Log (Auftragspunkt 4+5): SKU, alter Preis, neuer Preis, auslösender
+              // Einkaufspreis, ob der Preis vorher unter Break-Even/Zielmarge lag.
+              console.log(`[check-all-prices] stele-${product.id}: ANGEHOBEN ${product.sellPrice != null ? product.sellPrice.toFixed(2) + '€' : '–'} → ${decision.price.toFixed(2)}€ (auslösender Einkaufspreis: ${newPrice.toFixed(2)}€)${decision.wasBelowBreakEven ? ' ⚠️ lag vorher UNTER Zielmarge/Break-Even' : decision.isInitialPrice ? ' (kein bisheriger Preis — initial gesetzt)' : ''}${willWrite ? '' : ' (AUTO_PRICE_WRITE_ENABLED=false — nur beobachtet, nicht geschrieben)'}`);
+            }
+
             await db.update(schema.products).set({
               buyPrice: newPrice,
-              sellPrice: (AUTO_PRICE_WRITE_ENABLED && priceChanged) ? newSellPrice : product.sellPrice,
+              ...(willWrite ? { sellPrice: decision.price } : {}),
               lastPriceCheck: new Date().toISOString(),
               priceChanged,
               updatedAt: new Date().toISOString(),
             }).where(eq(schema.products.id, product.id));
 
-            // eBay Listing Preis automatisch aktualisieren wenn Preis gestiegen/gesunken
-            // Inventory API (neue Listings) zuerst, dann Trading API Fallback
-            // Teil 2B: hinter AUTO_PRICE_WRITE_ENABLED stillgelegt, s.o.
+            // eBay Listing Preis automatisch aktualisieren — nur bei einer tatsächlichen
+            // Anhebung (nie bei 'none'). Inventory API (neue Listings) zuerst, dann Trading API
+            // Fallback.
             let ebayUpdated = false;
-            if (AUTO_PRICE_WRITE_ENABLED && priceChanged && product.ebayListingId && product.ebayStatus === 'listed') {
+            if (willWrite && product.ebayListingId && product.ebayStatus === 'listed') {
               try {
                 const { getAccessToken } = await import('./ebay');
                 const ebayToken = await getAccessToken();
@@ -2985,7 +2991,7 @@ const app = new Hono()
                       await fetch(`https://api.ebay.com/sell/inventory/v1/offer/${offer.offerId}`, {
                         method: 'PUT',
                         headers: { 'Authorization': `Bearer ${ebayToken}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
-                        body: JSON.stringify({ sku: offer.sku, marketplaceId: 'EBAY_DE', pricingSummary: { price: { value: newSellPrice.toFixed(2), currency: 'EUR' } } }),
+                        body: JSON.stringify({ sku: offer.sku, marketplaceId: 'EBAY_DE', pricingSummary: { price: { value: decision.price.toFixed(2), currency: 'EUR' } } }),
                       });
                     }
                     invOk = true;
@@ -2997,7 +3003,7 @@ const app = new Hono()
                   ebayUpdated = true;
                 } else {
                   // 2. Fallback: Trading API (alte Listings)
-                  const reviseXml = `<?xml version="1.0" encoding="utf-8"?><ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${ebayToken}</eBayAuthToken></RequesterCredentials><InventoryStatus><ItemID>${product.ebayListingId}</ItemID><StartPrice>${newSellPrice.toFixed(2)}</StartPrice></InventoryStatus></ReviseInventoryStatusRequest>`;
+                  const reviseXml = `<?xml version="1.0" encoding="utf-8"?><ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${ebayToken}</eBayAuthToken></RequesterCredentials><InventoryStatus><ItemID>${product.ebayListingId}</ItemID><StartPrice>${decision.price.toFixed(2)}</StartPrice></InventoryStatus></ReviseInventoryStatusRequest>`;
                   const ebayRes = await fetch('https://api.ebay.com/ws/api.dll', {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/xml', 'X-EBAY-API-SITEID': '77', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus', 'X-EBAY-API-APP-NAME': process.env.EBAY_CLIENT_ID ?? '' },
@@ -3009,7 +3015,7 @@ const app = new Hono()
               } catch { /* eBay Update fehlgeschlagen, nicht kritisch */ }
             }
 
-            job.results.push({ id: product.id, title: product.generatedTitle, status: priceChanged ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice, newSellPrice: priceChanged ? newSellPrice : undefined, ebayUpdated });
+            job.results.push({ id: product.id, title: product.generatedTitle, status: priceChanged ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice, newSellPrice: decision.action === 'raise' ? decision.price : undefined, ebayUpdated });
           } catch {
             job.results.push({ id: product.id, title: product.generatedTitle, status: 'error' });
           }

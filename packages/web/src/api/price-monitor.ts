@@ -7,14 +7,14 @@ import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } fro
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
 import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
-import { CHINA_ZOLL_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
-import { computeMinSellPrice, applyDecreaseCap, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { CHINA_ZOLL_EUR } from '../shared/constants';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { Sentry } from '../instrument';
 
 // P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
 // ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
 // bestehende Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
-export { isChinaShipping, computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
+export { isChinaShipping, computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
 
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
@@ -600,44 +600,47 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'nearest95',
       }).minSellPrice;
-      // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
-      // Zielpreis — ohne Deckel würde dieser komplett unbeaufsichtigte 8h-Cron ein laufendes
-      // Angebot in einem Lauf bis auf die Untergrenze herunterziehen. Anheben bleibt uneingeschränkt.
-      const { price: newSellPrice, wasCapped } = applyDecreaseCap(product.sellPrice, rawNewSellPrice, MAX_PRICE_DECREASE_PERCENT);
-      calculatedSellPrice = newSellPrice;
-      const isAlert = product.sellPrice == null || Math.abs(newSellPrice - product.sellPrice) >= ALERT_THRESHOLD;
+      // Teil 4/5 (2026-09-13): dieser Pfad ist komplett unbeaufsichtigt (8h-Cron) und darf
+      // AUSSCHLIESSLICH anheben, nie senken — auch nicht gedeckelt über applyDecreaseCap() (die
+      // bleibt für die manuellen Pfade recalculate-preview/-apply gültig, wird hier bewusst nicht
+      // mehr aufgerufen). applyRaiseOnly() ist das alleinige Gate: computedMinPrice <= aktueller
+      // Preis → 'none', kein Schreibvorgang, kein eBay-Call.
+      const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice);
+      calculatedSellPrice = decision.price;
+      const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
 
-      if (isAlert || buyPriceDiff > 0.01) {
-        console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€, VK ${product.sellPrice ?? '–'}→${newSellPrice.toFixed(2)}€${isAlert ? ' ⚠️' : ''}${wasCapped ? ` (Senkungsbremse: unabgedeckelt wären ${rawNewSellPrice.toFixed(2)}€ herausgekommen, max. ${MAX_PRICE_DECREASE_PERCENT}% Absenkung pro Lauf)` : ''}${AUTO_PRICE_WRITE_ENABLED ? '' : ' (AUTO_PRICE_WRITE_ENABLED=false — nur beobachtet, nicht geschrieben)'}`);
+      if (decision.action === 'raise' || buyPriceDiff > 0.01) {
+        if (decision.action === 'raise') {
+          // Pflicht-Log (Auftragspunkt 4+5): SKU, alter Preis, neuer Preis, auslösender
+          // Einkaufspreis, und ob der Preis vorher unter Break-Even/Zielmarge lag — als Warnung
+          // sichtbar, damit im Render-Log nachvollziehbar ist, wo/warum ein Preis gestiegen ist.
+          console.log(`[PriceMonitor] stele-${product.id} "${product.title?.slice(0, 40)}": ANGEHOBEN ${product.sellPrice != null ? product.sellPrice.toFixed(2) + '€' : '–'} → ${decision.price.toFixed(2)}€ (auslösender Einkaufspreis: ${newBuyPrice.toFixed(2)}€)${decision.wasBelowBreakEven ? ' ⚠️ lag vorher UNTER Zielmarge/Break-Even' : decision.isInitialPrice ? ' (kein bisheriger Preis — initial gesetzt)' : ''}${willWrite ? '' : ' (AUTO_PRICE_WRITE_ENABLED=false — nur beobachtet, nicht geschrieben)'}`);
+        } else {
+          console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}": Einkaufspreis ${oldBuyPrice.toFixed(2)}→${newBuyPrice.toFixed(2)}€, Verkaufspreis unverändert (berechneter Mindestpreis ${rawNewSellPrice.toFixed(2)}€ liegt nicht über dem aktuellen Preis ${product.sellPrice?.toFixed(2) ?? '–'}€ — automatischer Pfad senkt nie)`);
+        }
 
-        // Teil 2B SICHERHEITSKRITISCH: die neuen Gebühren-Konstanten (15%/0,30€) sind noch nicht
-        // gegen einen vollen Preiszyklus bestätigt — solange AUTO_PRICE_WRITE_ENABLED false ist,
-        // bleibt der bisherige sellPrice unangetastet und es wird NICHTS an eBay gepusht. buyPrice/
-        // priceChanged werden weiterhin geschrieben (reine Tatsachen-Synchronisation/Anzeige-Flag,
-        // kein mit der neuen Formel berechneter Verkaufspreis).
         await db.update(schema.products).set({
           buyPrice: newBuyPrice,
-          ...(AUTO_PRICE_WRITE_ENABLED ? { sellPrice: newSellPrice } : {}),
+          ...(willWrite ? { sellPrice: decision.price } : {}),
           lastPriceCheck: new Date().toISOString(),
-          priceChanged: isAlert,
+          priceChanged: decision.action === 'raise',
           updatedAt: new Date().toISOString()
         }).where(eq(schema.products.id, product.id));
         updated++;
 
         // eBay Listing Preis automatisch aktualisieren (falls verknüpft) — nur Nicht-Varianten-
-        // Produkte, unverändertes bestehendes Verhalten (kein neuer automatischer Write hier).
-        // Teil 2B: hinter AUTO_PRICE_WRITE_ENABLED stillgelegt, s.o.
-        if (AUTO_PRICE_WRITE_ENABLED && product.ebayListingId && product.ebayStatus === 'listed') {
-          console.log(`[PriceMonitor] ${product.id}: eBay Listing ${product.ebayListingId} — aktualisiere auf ${newSellPrice.toFixed(2)}€`);
+        // Produkte, und nur bei einer tatsächlichen Anhebung (nie bei 'none').
+        if (willWrite && product.ebayListingId && product.ebayStatus === 'listed') {
+          console.log(`[PriceMonitor] ${product.id}: eBay Listing ${product.ebayListingId} — aktualisiere auf ${decision.price.toFixed(2)}€`);
           // Erst Inventory API versuchen (neue Listings), dann Trading API als Fallback
-          let ok = await updateEbayPriceInventory(product.id, newSellPrice);
+          let ok = await updateEbayPriceInventory(product.id, decision.price);
           if (!ok) {
             console.log(`[PriceMonitor] ${product.id}: Inventory API fehlgeschlagen, versuche Trading API...`);
-            ok = (await updateEbayPriceTrading(product.ebayListingId, newSellPrice)).ok;
+            ok = (await updateEbayPriceTrading(product.ebayListingId, decision.price)).ok;
           }
           if (ok) {
             ebayUpdated++;
-            console.log(`[PriceMonitor] ✅ eBay ${product.ebayListingId}: ${newSellPrice.toFixed(2)}€`);
+            console.log(`[PriceMonitor] ✅ eBay ${product.ebayListingId}: ${decision.price.toFixed(2)}€`);
           }
         }
       } else {
