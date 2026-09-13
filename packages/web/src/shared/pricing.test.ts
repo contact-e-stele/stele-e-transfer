@@ -15,7 +15,7 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, applyDecreaseCap, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, computeVariantSellPrices, profitAtSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
@@ -320,5 +320,124 @@ describe('applyDecreaseCap — Teil 2D "Senkungsbremse": computeMinSellPrice() l
         expect((currentPrice - price) / currentPrice).toBeLessThanOrEqual(MAX_PRICE_DECREASE_PERCENT / 100);
       }
     }
+  });
+});
+
+describe('computeVariantSellPrices — Teil 3: Varianten mit eigenen Preisen (Anker = teuerste Variante)', () => {
+  // Reale Daten stele-110 (Varianten-Einkaufspreise vom Nutzer in Teil 1 mitgeteilt, heutiger
+  // sellPrice 19,95€). Der Auftrag gibt die erwarteten Preise explizit vor (Pflichtpunkt 7) —
+  // dieser Test hält sie als Fixture fest.
+  const stele110Eks = [7.69, 4.99, 4.19, 3.35, 2.55, 2.15];
+  const stele110Variants = stele110Eks.map((ek, i) => ({ skuId: `stele-110-v${i + 1}`, buyPrice: ek }));
+
+  function planForStele110(customsFlat: number) {
+    return computeVariantSellPrices({
+      variants: stele110Variants,
+      anchorSellPrice: 19.95,
+      supplierShipping: 0,
+      isChinaOrigin: customsFlat > 0,
+      customsFlat,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+      ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+      adRatePercent: DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+      targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur,
+    });
+  }
+
+  test('Pflichtpunkt 7: stele-110 ergibt exakt 19,95 / 15,95 / 14,95 / 13,95 / 12,95 / 12,95', () => {
+    const plan = planForStele110(DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur);
+    expect(plan.rows.map(r => r.sellPrice)).toEqual([19.95, 15.95, 14.95, 13.95, 12.95, 12.95]);
+    expect(plan.anchorSkuId).toBe('stele-110-v1'); // teuerste Variante (EK 7,69€)
+    expect(plan.targetProfitSource).toBe('anchor');
+  });
+
+  // Die Zollpauschale ist für alle Varianten desselben Produkts gleich und kürzt sich in der
+  // Gleich-Gewinn-Rechnung heraus: sie senkt den Ankergewinn um denselben Betrag, um den sie die
+  // Kosten jeder Variante erhöht. Deshalb ergeben China- und EU-Herkunft dieselben Preise —
+  // erklärt, warum Punkt 7 unabhängig von der (aus der Sandbox nicht einsehbaren) shipsFrom-Angabe
+  // von stele-110 zutrifft.
+  test('Zollpauschale kürzt sich heraus — dieselben Preise mit und ohne China-Zoll', () => {
+    expect(planForStele110(0).rows.map(r => r.sellPrice))
+      .toEqual(planForStele110(DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur).rows.map(r => r.sellPrice));
+  });
+
+  // Gegenprobe zum BEFUND des Auftrags ("stele-110: 3,15 bis 8,69 EUR", Spanne 5,54): beim heutigen
+  // EINHEITSPREIS 19,95€ driften die Gewinne genau so auseinander. Reproduziert die Zahlen des
+  // Nutzers unabhängig nach und belegt damit die Annahmen (sellPrice 19,95€, Zoll 4,00€, adRate 5%).
+  test('Befund des Auftrags reproduziert: Einheitspreis 19,95€ ergibt Gewinne 3,15 … 8,69€', () => {
+    const profits = stele110Eks.map(ek => profitAtSellPrice({
+      sellPrice: 19.95, buyPrice: ek, supplierShipping: 0,
+      isChinaOrigin: true, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+      ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+      adRatePercent: DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+    }));
+    expect(Math.min(...profits)).toBeCloseTo(3.15, 2);
+    expect(Math.max(...profits)).toBeCloseTo(8.69, 2);
+    expect(Math.max(...profits) - Math.min(...profits)).toBeCloseTo(5.54, 2);
+  });
+
+  test('nach der Neuberechnung liegen alle Varianten-Gewinne dicht am Ankergewinn (nur ,95-Rundungsdrift)', () => {
+    const plan = planForStele110(DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur);
+    for (const row of plan.rows) {
+      expect(Math.abs(row.profit - plan.targetProfit)).toBeLessThanOrEqual(0.40);
+    }
+  });
+
+  test('Anker behält EXAKT den heutigen Preis, auch ohne ,95-Endung (keine Nachrundung)', () => {
+    const plan = computeVariantSellPrices({
+      variants: [{ skuId: 'a', buyPrice: 7.69 }, { skuId: 'b', buyPrice: 2.15 }],
+      anchorSellPrice: 20.00, supplierShipping: 0, isChinaOrigin: true, customsFlat: 4.00,
+      ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
+    });
+    expect(plan.rows[0].sellPrice).toBe(20.00);
+    expect(plan.rows[0].isAnchor).toBe(true);
+    expect(plan.rows[1].sellPrice).toBe(12.95);
+  });
+
+  test('harte Schranke: kein Variantenpreis über dem heutigen sellPrice (nie erhöhen)', () => {
+    // Zwei Varianten mit identischem höchsten EK: die Gleich-Gewinn-Rechnung der zweiten landet bei
+    // 19,95€ und damit ÜBER dem heutigen Preis 19,50€ — muss auf 19,50€ begrenzt werden.
+    const plan = computeVariantSellPrices({
+      variants: [{ skuId: 'a', buyPrice: 7.69 }, { skuId: 'b', buyPrice: 7.69 }],
+      anchorSellPrice: 19.50, supplierShipping: 0, isChinaOrigin: true, customsFlat: 4.00,
+      ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
+    });
+    expect(plan.rows[1].sellPrice).toBe(19.50);
+    expect(plan.rows[1].limitedByAnchorPrice).toBe(true);
+    for (const row of plan.rows) expect(row.sellPrice).toBeLessThanOrEqual(19.50);
+  });
+
+  test('harte Schranke: liegt der Ankergewinn unter targetMarginEur, gilt targetMarginEur', () => {
+    const plan = computeVariantSellPrices({
+      variants: [{ skuId: 'a', buyPrice: 15.00 }, { skuId: 'b', buyPrice: 2.15 }],
+      anchorSellPrice: 19.95, supplierShipping: 0, isChinaOrigin: true, customsFlat: 4.00,
+      ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
+    });
+    expect(plan.targetProfitSource).toBe('targetMargin');
+    expect(plan.targetProfit).toBe(2.00);
+    expect(plan.anchorProfit).toBeCloseTo(-4.1551, 3); // Anker verkauft heute mit Verlust …
+    expect(plan.rows[0].sellPrice).toBe(19.95);        // … behält aber seinen Preis (nie erhöhen)
+    expect(plan.rows[1].sellPrice).toBe(10.95);        // die andere Variante rechnet auf 2,00€ Zielgewinn
+  });
+
+  test('leere Variantenliste ergibt einen leeren Plan statt eines Absturzes', () => {
+    const plan = computeVariantSellPrices({
+      variants: [], anchorSellPrice: 19.95, supplierShipping: 0, isChinaOrigin: false, customsFlat: 4.00,
+      ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
+    });
+    expect(plan.rows).toEqual([]);
+  });
+
+  test('profitAtSellPrice entspricht der Formel aus dem Auftrag', () => {
+    // Gewinn = Preis − (EK + Versand + Zoll) − (Preis × (15% + adRate) × 1,19 + 0,30 × 1,19)
+    const sellPrice = 19.95, buyPrice = 7.69, versand = 0, zoll = 4.00, adRate = 5;
+    const erwartet = sellPrice - (buyPrice + versand + zoll) - (sellPrice * ((15 + adRate) / 100) * 1.19 + 0.30 * 1.19);
+    expect(profitAtSellPrice({
+      sellPrice, buyPrice, supplierShipping: versand, isChinaOrigin: true, customsFlat: zoll,
+      ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: adRate,
+    })).toBeCloseTo(erwartet, 10);
   });
 });

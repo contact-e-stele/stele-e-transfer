@@ -97,6 +97,172 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   return { totalCost, customs, baseFeeRateGross, totalFeeRateGross, fixedFeeGross, rawMinSellPrice, minSellPrice };
 }
 
+// ─── Teil 3 (2026-09-13): Verkaufspreis JE VARIANTE ───────────────────────────────────────────
+//
+// Datenmodell-Entscheidung (Auftragspunkt 1, Begründung): der Verkaufspreis je Variante lebt
+// WEITERHIN als Feld `ebayPrice` am jeweiligen Eintrag der bestehenden `variantPrices`-JSON-Spalte
+// — er wird hier nur erstmals als verbindlicher Teil des Datenmodells festgeschrieben und
+// dokumentiert, statt eine zweite, parallele Struktur anzulegen. Gründe:
+//   1. Das Feld EXISTIERT bereits und wird bereits gelesen: `ebay.ts:1299` nimmt beim Listing
+//      `varPriceEntry?.ebayPrice` als Preis für die Varianten-SKU, `produkte.tsx:1613` zeigt es an,
+//      `lieferanten.tsx:624` schreibt es beim Import. Eine zweite Struktur hätte zwei konkurrierende
+//      Quellen für denselben Wert ergeben — genau das Problem, das Teil 2A gerade beseitigt hat.
+//   2. EK (`price`) und VK (`ebayPrice`) gehören pro SKU zusammen. Eine separate Spalte hätte
+//      zusammengehörende Daten über zwei Orte verteilt und die SKU-Zuordnung dupliziert.
+//   3. `variantPrices` ist eine TEXT/JSON-Spalte — ein zusätzliches Feld IN dieser Struktur braucht
+//      KEINE Schema-Migration. Eine additive Migration wäre hier also reine Attrappe. Siehe
+//      PR-Beschreibung: das ist eine bewusste, begründete Abweichung von der Auftragsvorgabe
+//      "Additive DB-Migration", nicht ein übersehener Punkt.
+// Was tatsächlich fehlte, war nicht das Feld, sondern eine VERBINDLICHE REGEL, welcher Preis dort
+// stehen soll — die liefert computeVariantSellPrices() unten.
+export interface VariantPriceEntry {
+  skuId: string;
+  attrs?: Record<string, string>;
+  price: number;           // EINKAUFSpreis der Variante (AliExpress) — Bestand, unverändert
+  ebayPrice?: number;      // VERKAUFSpreis der Variante (eBay) — ab Teil 3 der maßgebliche Wert je SKU
+  originalPrice?: number;
+  stock?: number;
+  imageUrl?: string;
+}
+
+export interface ProfitAtSellPriceInput {
+  sellPrice: number;
+  buyPrice: number;
+  supplierShipping: number;
+  isChinaOrigin: boolean;
+  customsFlat: number;
+  ebayFeeRatePercent: number;
+  ebayFixedFeeEur: number;
+  vatFactor: number;
+  adRatePercent: number;
+}
+
+// Gewinn bei einem GEGEBENEN Verkaufspreis — die Umkehrung von computeMinSellPrice(), exakt die
+// Formel aus dem Teil-3-Auftrag:
+//   Gewinn = Preis − (Varianten-EK + Lieferantenversand + Zollpauschale)
+//            − (Preis × (15% + adRate) × 1,19 + 0,30 × 1,19)
+export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
+  const customs = input.isChinaOrigin ? input.customsFlat : 0;
+  const totalCost = input.buyPrice + input.supplierShipping + customs;
+  const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
+  const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
+  return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);
+}
+
+export interface VariantSellPriceInput {
+  variants: Array<{ skuId: string; buyPrice: number; attrs?: Record<string, string> }>;
+  anchorSellPrice: number;    // heutiger Verkaufspreis des Produkts — den behält die teuerste Variante exakt
+  supplierShipping: number;
+  isChinaOrigin: boolean;
+  customsFlat: number;
+  ebayFeeRatePercent: number;
+  ebayFixedFeeEur: number;
+  vatFactor: number;
+  adRatePercent: number;
+  targetMarginEur: number;    // Untergrenze, falls der Ankergewinn darunter liegt
+}
+
+export interface VariantSellPriceRow {
+  skuId: string;
+  attrs: Record<string, string>;
+  buyPrice: number;
+  sellPrice: number;              // neuer Verkaufspreis dieser Variante
+  profit: number;                 // Gewinn bei diesem Preis
+  isAnchor: boolean;              // teuerste Variante — behält anchorSellPrice exakt
+  limitedByAnchorPrice: boolean;  // Preis wurde auf anchorSellPrice gedeckelt (harte Schranke "nie erhöhen")
+}
+
+export interface VariantSellPricePlan {
+  anchorSkuId: string;
+  anchorSellPrice: number;
+  anchorProfit: number;                          // Gewinn der teuersten Variante beim heutigen Preis
+  targetProfit: number;                          // Zielgewinn für ALLE Varianten
+  targetProfitSource: 'anchor' | 'targetMargin'; // welche der beiden Schranken gegriffen hat
+  rows: VariantSellPriceRow[];
+}
+
+// Preisregel Teil 3 (Vorgabe des Nutzers, verbindlich):
+// Anker ist die TEUERSTE Variante (höchster Einkaufspreis) — sie behält exakt den heutigen
+// sellPrice. Der daraus resultierende Gewinn ist der Zielgewinn für ALLE Varianten dieses Produkts;
+// jede andere Variante bekommt den Preis, der denselben Gewinn ergibt, gerundet mit
+// roundToNearest95(). Zwei harte Schranken:
+//   - kein Variantenpreis darf über dem heutigen sellPrice liegen (nie erhöhen)
+//   - liegt der Ankergewinn unter targetMarginEur, gilt targetMarginEur als Untergrenze
+//
+// Wichtig (Befund aus dem Auftrag): die heutigen Gewinne liegen fast überall DEUTLICH über dem
+// Zielgewinn (stele-110: 3,15 bis 8,69 €). Die Varianten dürfen deshalb ausdrücklich NICHT auf den
+// über computeMinSellPrice() berechneten Mindestpreis gesetzt werden — das würde den Gewinn
+// zerstören. Diese Funktion setzt sie stattdessen auf GLEICHEN GEWINN wie die Ankervariante.
+//
+// Die Umkehrrechnung (Preis für einen gegebenen Zielgewinn) ist rechnerisch identisch mit
+// computeMinSellPrice(targetMarginEur = Zielgewinn, safetyBufferEur = 0) — deshalb wird bewusst
+// dieselbe Funktion wiederverwendet statt die Formel ein zweites Mal zu schreiben (Teil-2A-Prinzip:
+// genau eine Kalkulations-Quelle).
+export function computeVariantSellPrices(input: VariantSellPriceInput): VariantSellPricePlan {
+  if (input.variants.length === 0) {
+    return {
+      anchorSkuId: '', anchorSellPrice: input.anchorSellPrice, anchorProfit: 0,
+      targetProfit: input.targetMarginEur, targetProfitSource: 'targetMargin', rows: [],
+    };
+  }
+
+  const costContext = {
+    supplierShipping: input.supplierShipping,
+    isChinaOrigin: input.isChinaOrigin,
+    customsFlat: input.customsFlat,
+    ebayFeeRatePercent: input.ebayFeeRatePercent,
+    ebayFixedFeeEur: input.ebayFixedFeeEur,
+    vatFactor: input.vatFactor,
+    adRatePercent: input.adRatePercent,
+  };
+
+  // Anker = teuerste Variante. Bei Gleichstand gewinnt die erste — deterministisch, damit zwei
+  // Läufe über dieselben Daten nie unterschiedliche Pläne ergeben.
+  const anchor = input.variants.reduce((best, v) => (v.buyPrice > best.buyPrice ? v : best), input.variants[0]);
+  const anchorProfit = profitAtSellPrice({ ...costContext, sellPrice: input.anchorSellPrice, buyPrice: anchor.buyPrice });
+  const targetProfit = Math.max(anchorProfit, input.targetMarginEur);
+  const targetProfitSource: 'anchor' | 'targetMargin' = targetProfit === anchorProfit ? 'anchor' : 'targetMargin';
+
+  const rows: VariantSellPriceRow[] = input.variants.map(v => {
+    const attrs = v.attrs ?? {};
+    // Die Ankervariante behält exakt den heutigen Preis — bewusst NICHT neu gerundet/gerechnet,
+    // sonst würde die Vorgabe "behält exakt den heutigen sellPrice" durch die ,95-Rundung verfehlt.
+    if (v.skuId === anchor.skuId) {
+      return {
+        skuId: v.skuId, attrs, buyPrice: v.buyPrice,
+        sellPrice: input.anchorSellPrice,
+        profit: anchorProfit,
+        isAnchor: true, limitedByAnchorPrice: false,
+      };
+    }
+    const computed = computeMinSellPrice({
+      ...costContext,
+      buyPrice: v.buyPrice,
+      targetMarginEur: targetProfit,
+      safetyBufferEur: 0,
+      rounding: 'nearest95',
+    }).minSellPrice;
+    // Harte Schranke: nie über den heutigen sellPrice erhöhen.
+    const limitedByAnchorPrice = computed > input.anchorSellPrice;
+    const sellPrice = limitedByAnchorPrice ? input.anchorSellPrice : computed;
+    return {
+      skuId: v.skuId, attrs, buyPrice: v.buyPrice,
+      sellPrice,
+      profit: profitAtSellPrice({ ...costContext, sellPrice, buyPrice: v.buyPrice }),
+      isAnchor: false, limitedByAnchorPrice,
+    };
+  });
+
+  return {
+    anchorSkuId: anchor.skuId,
+    anchorSellPrice: input.anchorSellPrice,
+    anchorProfit,
+    targetProfit,
+    targetProfitSource,
+    rows,
+  };
+}
+
 export interface DecreaseCapResult {
   price: number;           // finaler Preis (gedeckelt oder unverändert)
   wasCapped: boolean;      // true, wenn die Absenkung auf maxDecreasePercent begrenzt wurde

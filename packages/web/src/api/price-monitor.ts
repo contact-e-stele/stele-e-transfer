@@ -88,6 +88,28 @@ export function safeUniformVariantPrice(rows: VariantPriceRow[]): number | null 
 // bei der Listing-Erstellung (ebay.ts) — gegen die ECHTEN eBay-SKUs (getInventoryItemGroupSkus),
 // kein Raten. Für eine reale SKU, der keine Zeile eindeutig zugeordnet werden kann, greift
 // safeUniformVariantPrice() als Fallback NUR für GENAU diese eine SKU (nicht für alle).
+// Baut die eBay-Varianten-SKU für eine Variante — dieselbe Regel, nach der ebay.ts die SKUs beim
+// Listing-Erstellen vergibt (`stele-{id}-{slugify(attrs)}`).
+//
+// P-27/P-28-Fix (2026-09-09, Live-Fund Produkte 71/77/92/95): attrs kann Felder wie "Ships From"
+// enthalten, die NIE Teil der echten eBay-SKU sind (ebay.ts baut Varianten-SKUs nur aus den echten
+// Varianten-GRUPPEN, nicht aus Zusatzfeldern wie Ships From). Ohne diesen Filter verlängert sich
+// die erwartete SKU um ein Segment (z.B. "-CHINA-MAINLAND"), das real nicht existiert → kein Match
+// → der Preis bleibt für die betroffene(n) Variante(n) unverändert. NON_VARIATION_ASPECTS ist
+// dieselbe Liste, die ebay.ts beim Listing-Erstellen für Item-Aspekte nutzt — eine Quelle, kein
+// Duplikat.
+//
+// Teil 3 (2026-09-13): aus updateEbayVariantPricesIndividually() herausgezogen (reiner Extract,
+// identische Logik), damit das Berichts-Skript für den Varianten-Preisplan gegen GENAU dieselbe
+// SKU-Zuordnung läuft wie der spätere Schreibvorgang, statt sie ein zweites Mal nachzubauen.
+export function buildVariantSku(productId: number, attrs: Record<string, string> | undefined): string {
+  const relevant = Object.fromEntries(
+    Object.entries(attrs ?? {}).filter(([k]) => !NON_VARIATION_ASPECTS.has(k))
+  );
+  const suffix = Object.values(relevant).map(slugify).filter(Boolean).join('-');
+  return `stele-${productId}-${suffix}`;
+}
+
 export async function updateEbayVariantPricesIndividually(
   productId: number,
   rows: VariantPriceRow[]
@@ -101,18 +123,7 @@ export async function updateEbayVariantPricesIndividually(
 
     const rowBySku = new Map<string, VariantPriceRow>();
     for (const row of rows) {
-      // P-27/P-28-Fix (2026-09-09, Live-Fund Produkte 71/77/92/95): row.attrs kann Felder wie
-      // "Ships From" enthalten, die NIE Teil der echten eBay-SKU sind (ebay.ts baut Varianten-
-      // SKUs nur aus den echten Varianten-GRUPPEN, nicht aus Zusatzfeldern wie Ships From).
-      // Ohne diesen Filter verlängerte sich die hier erwartete SKU um ein Segment (z.B.
-      // "-CHINA-MAINLAND"), das real nicht existiert → kein Match → Preis blieb für die
-      // betroffene(n) Variante(n) unverändert. NON_VARIATION_ASPECTS ist dieselbe Liste, die
-      // ebay.ts beim Listing-Erstellen für Item-Aspekte nutzt — eine Quelle, kein Duplikat.
-      const attrs = Object.fromEntries(
-        Object.entries(row.attrs ?? {}).filter(([k]) => !NON_VARIATION_ASPECTS.has(k))
-      );
-      const suffix = Object.values(attrs).map(slugify).filter(Boolean).join('-');
-      rowBySku.set(`stele-${productId}-${suffix}`, row);
+      rowBySku.set(buildVariantSku(productId, row.attrs), row);
     }
     const fallbackPrice = safeUniformVariantPrice(rows);
 
