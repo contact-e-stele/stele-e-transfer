@@ -2326,7 +2326,22 @@ const app = new Hono()
       const existing = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
       if (existing.length === 0) return c.json({ error: 'Produkt nicht gefunden' }, 404);
       const old = existing[0];
-      const priceChanged = old.buyPrice !== null && Math.abs((old.buyPrice ?? 0) - body.buyPrice) > 0.01;
+      // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): dieser Endpunkt ist das manuelle
+      // Gegenstück zu price-monitor.ts checkOne() (produkte.tsx-Button "Preis erneut prüfen") und
+      // schrieb bisher priceChanged rein aus der Einkaufspreis-Differenz — dieselbe falsche
+      // Bedeutung wie im automatischen Pfad, hier korrigiert nach demselben Muster
+      // (evaluatePriceAlarm() in shared/pricing.ts). Dieser Endpunkt setzt weiterhin NIE
+      // eigenständig einen neuen Verkaufspreis — nur die priceChanged-Bedeutung wird korrigiert.
+      const { isChinaShipping } = await import('./price-monitor');
+      const { evaluatePriceAlarm, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+      const priceChanged = evaluatePriceAlarm({
+        currentSellPrice: old.sellPrice,
+        variants: [{ buyPrice: body.buyPrice }],
+        supplierShipping: old.shippingCost ?? 0, isChinaOrigin: isChinaShipping(old.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: old.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+        targetMarginEur: old.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+      }).isAlarm;
 
       // Preis-Historie speichern
       await db.insert(schema.priceHistory).values({
@@ -2899,7 +2914,7 @@ const app = new Hono()
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
         const { isChinaShipping } = await import('./price-monitor');
-        const { computeMinSellPrice, applyRaiseOnly, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
+        const { computeMinSellPrice, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         for (const product of all) {
           const url = product.sourceUrl || product.amazonUrl;
@@ -2927,7 +2942,6 @@ const app = new Hono()
               job.done++;
               continue;
             }
-            const priceChanged = product.buyPrice !== null && Math.abs((product.buyPrice ?? 0) - newPrice) > 0.01;
             // P-27/P-28-Konsolidierung (2026-09-08): vorher eine eigene, abweichende Formel hier
             // (fester 18%-Satz statt (13+adRate)%×1.19, kein Sicherheitspuffer, keine Bestell-
             // gebühr, Cent- statt ,95-Rundung) — jetzt dieselbe zentrale Funktion wie überall sonst.
@@ -2949,6 +2963,20 @@ const app = new Hono()
             // 'none', kein Schreibvorgang, kein eBay-Call.
             const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice);
             const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
+            // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): vorher hier eine reine
+            // Quellpreis-Diff (Math.abs(alter EK − neuer EK) > 0,01€) — feuerte bei JEDER
+            // AliExpress-Preisschwankung, unabhängig davon, ob die Marge betroffen war (Root
+            // Cause für den Grossteil der 50/53 gemeldeten "Preisalarme"). Jetzt derselbe exakte
+            // Gewinn-unter-Zielmarge-Vergleich wie in price-monitor.ts checkOne() — siehe
+            // evaluatePriceAlarm() in shared/pricing.ts.
+            const alarm = evaluatePriceAlarm({
+              currentSellPrice: product.sellPrice,
+              variants: [{ buyPrice: newPrice }],
+              supplierShipping: versand, isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+              targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+            }).isAlarm;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
 
             if (decision.action === 'raise') {
@@ -2961,7 +2989,7 @@ const app = new Hono()
               buyPrice: newPrice,
               ...(willWrite ? { sellPrice: decision.price } : {}),
               lastPriceCheck: new Date().toISOString(),
-              priceChanged,
+              priceChanged: alarm,
               updatedAt: new Date().toISOString(),
             }).where(eq(schema.products.id, product.id));
 
@@ -3015,7 +3043,7 @@ const app = new Hono()
               } catch { /* eBay Update fehlgeschlagen, nicht kritisch */ }
             }
 
-            job.results.push({ id: product.id, title: product.generatedTitle, status: priceChanged ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice, newSellPrice: decision.action === 'raise' ? decision.price : undefined, ebayUpdated });
+            job.results.push({ id: product.id, title: product.generatedTitle, status: decision.action === 'raise' ? 'changed' : 'unchanged', oldPrice: product.buyPrice, newPrice, newSellPrice: decision.action === 'raise' ? decision.price : undefined, ebayUpdated });
           } catch {
             job.results.push({ id: product.id, title: product.generatedTitle, status: 'error' });
           }

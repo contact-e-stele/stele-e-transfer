@@ -198,6 +198,66 @@ export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
   return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);
 }
 
+// Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): VORHER wurde an mehreren Stellen (siehe
+// PR-Beschreibung, Aufgabe 1) geprüft, ob der aktuelle Verkaufspreis vom NEU BERECHNETEN Preis
+// ABWEICHT — mit Math.abs(), also auch dann "Alarm", wenn der aktuelle Preis über dem berechneten
+// liegt (gut verdienendes Produkt, kein Problem). computeMinSellPrice() ist eine EINSTIEGS-
+// Untergrenze für Neueinstellungen, kein Zielpreis für laufende Produkte — ein bestehender Preis
+// darüber ist normal und gewünscht.
+//
+// Diese Funktion ist die EINE Stelle, die den korrigierten Alarm entscheidet: alarmwürdig ist
+// ausschließlich der Fall "aktueller Verkaufspreis liegt unter dem Mindestpreis", gleichbedeutend
+// mit "der bei diesem Preis erzielte Gewinn (profitAtSellPrice) liegt unter der Zielmarge". Beide
+// Formulierungen aus dem Auftrag sind hierüber abgedeckt — es wird bewusst NICHT computeMinSellPrice()
+// (gerundet auf ,95) gegen den aktuellen Preis verglichen, sondern der exakte, ungerundete Gewinn
+// gegen die Zielmarge, um keine Falsch-Alarme durch die ,95-Rundung zu erzeugen.
+//
+// `variants` nimmt ein ODER mehrere {buyPrice}-Zeilen entgegen — für Einzelartikel genau eine
+// Zeile, für Varianten-Produkte eine Zeile pro SKU (derselbe `rows`-Aufbau wie
+// computeVariantPriceRows() ihn liefert). Alarmwürdig ist ein Varianten-Produkt, sobald
+// MINDESTENS EINE Variante beim aktuellen (einheitlichen) Verkaufspreis unter die Zielmarge fällt
+// — dieselbe "schlechteste Variante entscheidet"-Logik wie bei safeUniformVariantPrice()
+// (Maximum der Mindestpreise), nur nicht über den gerundeten Preis, sondern direkt über den Gewinn.
+//
+// Kein aktueller Verkaufspreis (Erst-Setzung, noch nie bepreist) → kein Alarm: es gibt keinen
+// bestehenden Preis, der "unter" irgendetwas liegen könnte.
+export interface PriceAlarmInput {
+  currentSellPrice: number | null | undefined;
+  variants: Array<{ buyPrice: number }>;
+  supplierShipping: number;
+  isChinaOrigin: boolean;
+  customsFlat: number;
+  ebayFeeRatePercent: number;
+  ebayFixedFeeEur: number;
+  vatFactor: number;
+  adRatePercent: number;
+  targetMarginEur: number;
+}
+
+export interface PriceAlarmResult {
+  isAlarm: boolean;             // true nur, wenn currentSellPrice gesetzt ist UND mindestens eine Variante darunter die Zielmarge verfehlt
+  worstProfit: number | null;   // niedrigster Gewinn aller Varianten beim aktuellen Preis (null ohne currentSellPrice)
+}
+
+export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
+  if (input.currentSellPrice == null || input.variants.length === 0) {
+    return { isAlarm: false, worstProfit: null };
+  }
+  const profits = input.variants.map(v => profitAtSellPrice({
+    sellPrice: input.currentSellPrice as number,
+    buyPrice: v.buyPrice,
+    supplierShipping: input.supplierShipping,
+    isChinaOrigin: input.isChinaOrigin,
+    customsFlat: input.customsFlat,
+    ebayFeeRatePercent: input.ebayFeeRatePercent,
+    ebayFixedFeeEur: input.ebayFixedFeeEur,
+    vatFactor: input.vatFactor,
+    adRatePercent: input.adRatePercent,
+  }));
+  const worstProfit = Math.min(...profits);
+  return { isAlarm: worstProfit < input.targetMarginEur, worstProfit };
+}
+
 export interface VariantSellPriceInput {
   variants: Array<{ skuId: string; buyPrice: number; attrs?: Record<string, string> }>;
   anchorSellPrice: number;    // heutiger Verkaufspreis des Produkts — den behält die teuerste Variante exakt

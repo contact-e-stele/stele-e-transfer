@@ -296,15 +296,19 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Preis-Alert */}
+            {/* Preisalarm — Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): priceChanged
+                bedeutet jetzt "Verkaufspreis unter Mindestpreis, Marge gefährdet" statt jeder
+                Preisänderung (s. produkte.tsx, shared/pricing.ts evaluatePriceAlarm()). */}
             {product.priceChanged && (
               <div style={{
                 display: "flex", alignItems: "center", gap: 6,
                 fontSize: 11, color: "#92400E", background: "#FFFBEB",
                 border: "1px solid #FCD34D", padding: "6px 10px", borderRadius: 6, marginTop: 6, fontWeight: 600,
-              }}>
+              }}
+                title="Verkaufspreis liegt unter dem berechneten Mindestpreis — Marge gefährdet"
+              >
                 <AlertTriangle size={12} />
-                Preisänderung erkannt — EK: {product.buyPrice?.toFixed(2)}€ → VK: {product.sellPrice?.toFixed(2)}€
+                Preisalarm — VK {product.sellPrice?.toFixed(2)}€ liegt unter dem Mindestpreis
               </div>
             )}
 

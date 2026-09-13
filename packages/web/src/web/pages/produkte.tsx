@@ -1281,10 +1281,13 @@ export default function Produkte() {
             { label: "Gesamt", value: stats.total, color: "#8B5CF6", bg: "#F5F3FF" },
             { label: "eBay aktiv", value: stats.listed, color: "#16A34A", bg: "#F0FDF4" },
             { label: "Fehler", value: stats.errors, color: "#DC2626", bg: "#FEF2F2" },
-            { label: "Preisalarm", value: stats.priceAlerts, color: "#F59E0B", bg: "#FFFBEB" },
+            // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): Tooltip erklärt die korrigierte
+            // Bedeutung — Alarm = Verkaufspreis unter Mindestpreis (Marge gefährdet), nicht mehr
+            // jede Preisänderung/-abweichung.
+            { label: "Preisalarm", value: stats.priceAlerts, color: "#F59E0B", bg: "#FFFBEB", title: "Verkaufspreis liegt unter dem berechneten Mindestpreis — Marge gefährdet" },
             { label: "AliExpress nicht verfügbar", value: stats.aliexpressUnavailable, color: "#C2410C", bg: "#FFEDD5" },
           ].map(s => (
-            <div key={s.label} style={{ background: s.bg, borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
+            <div key={s.label} title={s.title} style={{ background: s.bg, borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.value}</div>
               <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
             </div>
@@ -1358,7 +1361,7 @@ export default function Produkte() {
             <div key={product.id} style={{
               // Schritt 3 (P-27/P-28 PR 6, 2026-09-09): AliExpress-Quelle nicht verfügbar
               // bekommt eine eigene, auffällige orange Kennzeichnung — unterscheidbar vom
-              // gelben Preisänderungs-Rahmen (priceChanged).
+              // gelben Preisalarm-Rahmen (priceChanged — Preis unter Mindestpreis, s.o.).
               background: product.ebayStatus === "unavailable" ? "#FFF7ED" : "#fff",
               borderRadius: 16, padding: 18,
               boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 12,
@@ -1429,8 +1432,12 @@ export default function Produkte() {
                     })()}
                     <StatusBadge status={product.ebayStatus} listingId={product.ebayListingId} />
                     {product.priceChanged && (
-                      <span style={{ fontSize: 11, background: "#FFFBEB", color: "#92400E", padding: "2px 8px", borderRadius: 6, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                        <AlertTriangle size={10} /> Preisänderung
+                      // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): priceChanged bedeutet
+                      // jetzt ausschließlich "Verkaufspreis liegt unter dem Mindestpreis, Marge
+                      // gefährdet" (nicht mehr jede Preisänderung) — Text + Tooltip entsprechend
+                      // umbenannt, keine reine Preisänderungsmeldung mehr.
+                      <span title="Verkaufspreis liegt unter dem berechneten Mindestpreis — Marge gefährdet" style={{ fontSize: 11, background: "#FFFBEB", color: "#92400E", padding: "2px 8px", borderRadius: 6, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <AlertTriangle size={10} /> Preisalarm
                       </span>
                     )}
                   </div>
