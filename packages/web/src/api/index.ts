@@ -11,6 +11,7 @@ import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
 import { buildProductLookups, findProductForSku as findProductForSkuShared } from './order-matching';
+import { Sentry } from '../instrument';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
@@ -456,6 +457,11 @@ const app = new Hono()
   .use('*', authMiddleware)
   .get('/ping', (c) => c.json({ message: `Pong! ${Date.now()}` }, 200))
   .get('/health', (c) => c.json({ status: 'ok' }, 200))
+  // ─── TESTCODE: löst einen kontrollierten Fehler aus, um die Sentry-Anbindung zu verifizieren ──
+  // Nur zum manuellen Nachweis der Fehlerüberwachung gedacht, nicht Teil der Fachlogik.
+  .get('/sentry-test-error', () => {
+    throw new Error('[Sentry-Testfehler] Kontrolliert ausgelöst zur Verifikation der Fehlerüberwachung');
+  })
   .get('/scrape-amazon', async (c) => {
     let url = c.req.query('url');
     if (!url) return c.json({ error: 'url fehlt' }, 400);
@@ -839,6 +845,8 @@ const app = new Hono()
       const order = allOrders.find(o => o.orderId === orderId);
       if (!order) return c.json({ error: 'Bestellung nicht gefunden' }, 404);
 
+      Sentry.setContext('order_processing', { ebayOrderId: orderId, total: order.total });
+
       const { generateInvoicePdf } = await import('./invoice');
       const pdf = await generateInvoicePdf({
         orderId: order.orderId,
@@ -865,6 +873,7 @@ const app = new Hono()
         },
       });
     } catch (e) {
+      Sentry.captureException(e);
       return c.json({ error: String(e) }, 500);
     }
   })
@@ -925,6 +934,11 @@ const app = new Hono()
       if (body.markCustomerNotified) update.customerNotifiedAt = new Date().toISOString();
       if (body.markThankYouSent) update.thankYouSentAt = new Date().toISOString();
 
+      Sentry.setContext('order_processing', {
+        ebayOrderId,
+        manualBuyPrice: body.manualBuyPrice ?? null,
+      });
+
       await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
         .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });
 
@@ -955,6 +969,7 @@ const app = new Hono()
 
       return c.json({ ok: true, ...(ebayResult ? { ebay: ebayResult } : {}) }, 200);
     } catch (e) {
+      Sentry.captureException(e);
       return c.json({ error: String(e) }, 500);
     }
   })
@@ -1279,6 +1294,7 @@ const app = new Hono()
           continue;
         }
         const oldPrice = product.sellPrice ?? undefined;
+        Sentry.setContext('price_calculation', { productId: product.id, calculatedPrice: newPrice });
 
         let ok: boolean;
         let tradingError: string | undefined;
@@ -1313,6 +1329,7 @@ const app = new Hono()
       return c.json({ results }, 200);
     } catch (e) {
       console.error('[recalculate-apply]', e);
+      Sentry.captureException(e);
       return c.json({ error: String(e) }, 500);
     }
   })
@@ -3394,6 +3411,14 @@ app.get('/products/check-duplicate', async (c) => {
   } catch (e) {
     return c.json({ error: String(e) }, 500);
   }
+});
+
+// Globaler Fallback für ungefangene Fehler in Routen (z.B. den Sentry-Testfehler) — meldet an Sentry,
+// ersetzt aber nicht die lokalen try/catch-Blöcke, die spezifischere Fehlermeldungen liefern.
+app.onError((err, c) => {
+  console.error('[Hono onError]', err);
+  Sentry.captureException(err);
+  return c.json({ error: String(err) }, 500);
 });
 
 export type AppType = typeof app;

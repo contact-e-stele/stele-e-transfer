@@ -27,6 +27,8 @@
     "@libsql/client": "^0.17.2",
     "@radix-ui/react-slot": "^1.2.4",
     "@runablehq/website-runtime": "^0.10.0",
+    "@sentry/bun": "^10.74.0",
+    "@sentry/react": "^10.74.0",
     "@sparticuz/chromium": "^149.0.0",
     "@tanstack/react-query": "^5.100.6",
     "class-variance-authority": "^0.7.1",
