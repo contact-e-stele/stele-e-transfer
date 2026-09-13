@@ -337,6 +337,74 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
   return { variantPrices, variants };
 }
 
+// ── Bestellstatus / Sendungsnummer ("Sendungsnummer automatisch übernehmen", 2026-09-14) ──────
+// Methode empirisch bestätigt (nicht geraten): gegen den echten Access-Token + reale Bestellung
+// 3076306514497211 getestet. aliexpress.ds.order.get existiert NICHT (InvalidApiPath) — die
+// korrekte Dropshipper-Methode heißt aliexpress.trade.ds.order.get, Pflichtparameter
+// "single_order_query" (JSON-String, NICHT "order_id" direkt als Top-Level-Feld). Realer Treffer:
+// order_status="WAIT_BUYER_ACCEPT_GOODS", logistics_status="SELLER_SEND_GOODS",
+// logistics_info_list.aeop_order_logistics_info[0].logistics_no = die Sendungsnummer.
+// Scope reicht: derselbe bestehende, automatisch per ensureFreshAliToken() erneuerte Token (P-2)
+// hat den Call ohne Berechtigungsfehler beantwortet.
+export interface AliOrderTrackingInfo {
+  orderStatus: string;
+  logisticsStatus: string | null;
+  trackingNumber: string | null;
+  logisticsService: string | null; // z.B. "CAINIAO_FULFILLMENT_STD" — kein eBay-Carrier-Code, nur informativ
+}
+
+export async function getAliOrderTracking(aliOrderId: string, accessToken: string): Promise<AliOrderTrackingInfo | null> {
+  try {
+    const method = 'aliexpress.trade.ds.order.get';
+    const params: Record<string, string> = {
+      app_key: APP_KEY,
+      method,
+      timestamp: String(Date.now()),
+      format: 'json',
+      sign_method: 'md5',
+      v: '2.0',
+      access_token: accessToken,
+      single_order_query: JSON.stringify({ order_id: aliOrderId }),
+    };
+    params.sign = iopSign(APP_SECRET, params);
+
+    const res = await fetch(IOP_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json() as Record<string, unknown>;
+
+    const resp = data['aliexpress_trade_ds_order_get_response'] as Record<string, unknown> | undefined;
+    if (!resp) {
+      console.error(`[AliExpress API] getAliOrderTracking(${aliOrderId}): Error:`, JSON.stringify(data).slice(0, 400));
+      return null;
+    }
+    const result = (resp.result as Record<string, unknown>) || resp;
+
+    const orderStatus = String(result.order_status ?? '');
+    const logisticsStatus = result.logistics_status ? String(result.logistics_status) : null;
+
+    const logisticsList = (
+      result.logistics_info_list as { aeop_order_logistics_info?: Array<{ logistics_no?: string; logistics_service?: string }> } | undefined
+    )?.aeop_order_logistics_info ?? [];
+    const withTracking = logisticsList.find(l => l.logistics_no && l.logistics_no.trim());
+
+    console.log(`[AliExpress API] getAliOrderTracking(${aliOrderId}): order_status=${orderStatus} logistics_status=${logisticsStatus ?? '–'} tracking=${withTracking?.logistics_no ?? 'keine'}`);
+
+    return {
+      orderStatus,
+      logisticsStatus,
+      trackingNumber: withTracking?.logistics_no?.trim() || null,
+      logisticsService: withTracking?.logistics_service ?? null,
+    };
+  } catch (e) {
+    console.error(`[AliExpress API] getAliOrderTracking(${aliOrderId}) error:`, e);
+    return null;
+  }
+}
+
 // ── Versandkosten (P-69) ─────────────────────────────────────────────────────
 // aliexpress.ds.product.get liefert KEIN Frachtfeld (verifiziert per Live-Call —
 // logistics_info_dto enthält nur delivery_time/ship_to_country). Versandpreis kommt
