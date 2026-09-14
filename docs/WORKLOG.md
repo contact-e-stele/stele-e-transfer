@@ -118,4 +118,4 @@ Regressions-Beweis (Grundgesetz Regel 5): `ALIEXPRESS_TRACKING_SYNC_ENABLED` tes
 
 Tests: Frontend-Typecheck (`bun run typecheck`) gruen. Server-Typecheck (`bun run typecheck:server`) gruen. `bun test src/api/tracking-sync.test.ts`: 9 pass, 0 fail, 25 expect(). Voller `bun test`: 117 pass, 2 fail — dieselben 2 vorbestehenden `/tmp/aliexpress-test.db`-Sandbox-Fehler (Windows-Pfadproblem, unabhaengig von dieser Aenderung, bereits in fruaheren Sessions dokumentiert).
 Keine Aenderung an `AUTO_PRICE_WRITE_ENABLED` oder Preislogik (per Diff bestaetigt: nur `tracking-sync.ts`/`tracking-sync.test.ts`/neues Skript betroffen). Keine DB-Migration. Kein Kundennachricht-Versand aus diesem Job (unveraendert — `syncTrackingNumbers()` ruft an keiner Stelle eine Nachrichten-/Notify-Funktion auf, per Code-Lesung bestaetigt).
-Branch: `fix/p2-tracking-sync-enable` (isoliertes Worktree unter `.worktrees/`, Basis `origin/main`). PR: (wird nach Erstellung eingetragen)
+Branch: `fix/p2-tracking-sync-enable` (isoliertes Worktree unter `.worktrees/`, Basis `origin/main`). PR: https://github.com/contact-e-stele/stele-e-transfer/pull/102 (Draft, nicht gemergt).
