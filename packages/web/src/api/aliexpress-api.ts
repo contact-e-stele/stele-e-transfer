@@ -349,39 +349,100 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
 export interface AliOrderTrackingInfo {
   orderStatus: string;
   logisticsStatus: string | null;
-  trackingNumber: string | null;
+  trackingNumber: string | null; // NIE ein AP-Präfix (s. isAliInternalLogisticsId unten) — echte Zusteller-Nummer oder null
   logisticsService: string | null; // z.B. "CAINIAO_FULFILLMENT_STD" — kein eBay-Carrier-Code, nur informativ
+}
+
+// P2-Korrektur (2026-09-14, Live-Fund, manuell auf der Sendungsverfolgungs-Seite gegengeprüft):
+// logistics_no ist AliExpress' EIGENE interne Sendungs-ID (Präfix "AP"), NICHT die Nummer des
+// tatsächlichen Zustellers (z.B. DHL). Beleg: 3076306514497211 → logistics_no AP00843143208329,
+// DHL-Seite zeigt 00340434886289512140; 3075188992327211 → logistics_no AP00832504143414,
+// DHL-Seite zeigt 00340434886283998797. Der ursprüngliche PR-#99-Kommentar oben ("deckte sich mit
+// dem manuell gefundenen Wert") war NICHT selbst gegengeprüft, sondern aus dem damaligen Erst-Fund
+// unbelegt übernommen — Grundgesetz-Regel-3-Verstoß, hiermit korrigiert.
+//
+// Gesucht (P2-Korrektur, Aufgabe 1+2): welches Feld die echte Zusteller-Nummer trägt. Volle,
+// ungefilterte Feldliste von aliexpress.trade.ds.order.get geprüft (scripts/inspect-ali-order-fields.ts,
+// echter Lauf gegen beide Bestellungen oben): Top-Level result-Objekt hat NUR
+// `child_order_list, gmt_create, logistics_info_list, logistics_status, order_amount,
+// order_paidtime_string, order_status, pay_timeout_second, store_info, user_order_amount`;
+// `logistics_info_list.aeop_order_logistics_info[]` hat NUR zwei Felder:
+// `logistics_service` (z.B. "CAINIAO_FULFILLMENT_STD") und `logistics_no` (die AP-Nummer). Kein
+// Zusteller-Namensfeld, keine Zusteller-Nummer.
+//
+// Zweiter, gezielt gesuchter Endpunkt (scripts/probe-ali-logistics-endpoints.ts, empirisch per
+// Parameter-Iteration gefunden, nicht geraten): `aliexpress.logistics.ds.trackinginfo.query`
+// EXISTIERT (Pflichtparameter: logistics_no, to_area, service_name, origin, out_ref) und liefert
+// bei echtem Aufruf gegen 3075188992327211 ein reales Ergebnis mit `official_website:
+// "https://www.dhl.de/"` (bestätigt: Zusteller ist DHL) und ein `details[]`-Array mit
+// Sendungsereignissen (event_desc/event_date/address) — ABER die vollständige, per
+// `Object.keys()` erschöpfend geprüfte Feldliste dieser Antwort enthält KEIN Feld mit der
+// DHL-Nummer selbst (`official_website, details, result_success, request_id, _trace_id_` —
+// sonst nichts, auch nicht verschachtelt: kein Treffer für "00340"/"mail_no"/"tracking"/
+// "waybill" im vollständigen Roh-JSON).
+//
+// Ergebnis (Aufgabe 2, ausdrücklich gesagt statt geraten): mit den beiden hier geprüften
+// AliExpress-Open-API-Methoden ist die echte Zusteller-Nummer NICHT abrufbar — weder im
+// Order-Get- noch im dedizierten Tracking-Endpunkt als Feld vorhanden. Sie erscheint laut
+// Auftrag nur auf der Sendungsverfolgungs-WEBSEITE der Bestellung (HTML, kein JSON-API-Feld) —
+// vermutlich nur per Browser-Scraping erreichbar (dieses Projekt hat dafür bereits eine
+// Playwright-Infrastruktur, s. aliexpress.ts, aber NICHT für diesen Zweck ausgebaut/getestet —
+// eigener, separater Auftrag nötig). Deshalb bewusst NICHT auf die AP-Nummer ausgewichen (Auftrag
+// Aufgabe 3): isAliInternalLogisticsId() filtert sie unten konsequent heraus, wodurch
+// trackingNumber für JEDEN bisher beobachteten Fall null bleibt — der Cron schreibt aktuell
+// dadurch NICHTS, bis eine echte Quelle für die Zusteller-Nummer gefunden ist.
+//
+// Gemeinsamer Roh-Fetch extrahiert (Regel 8), damit getAliOrderTracking() UND das Diagnose-Skript
+// (scripts/inspect-ali-order-fields.ts) exakt denselben Request/dieselbe Antwort verwenden.
+export function isAliInternalLogisticsId(no: string): boolean {
+  return /^AP\d+$/i.test(no.trim());
+}
+async function fetchAliOrderResult(aliOrderId: string, accessToken: string): Promise<Record<string, unknown> | null> {
+  const method = 'aliexpress.trade.ds.order.get';
+  const params: Record<string, string> = {
+    app_key: APP_KEY,
+    method,
+    timestamp: String(Date.now()),
+    format: 'json',
+    sign_method: 'md5',
+    v: '2.0',
+    access_token: accessToken,
+    single_order_query: JSON.stringify({ order_id: aliOrderId }),
+  };
+  params.sign = iopSign(APP_SECRET, params);
+
+  const res = await fetch(IOP_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json() as Record<string, unknown>;
+
+  const resp = data['aliexpress_trade_ds_order_get_response'] as Record<string, unknown> | undefined;
+  if (!resp) {
+    console.error(`[AliExpress API] getAliOrderTracking(${aliOrderId}): Error:`, JSON.stringify(data).slice(0, 400));
+    return null;
+  }
+  return (resp.result as Record<string, unknown>) || resp;
+}
+
+// Reiner Diagnose-Helfer (P2-Korrektur, Aufgabe 1) — liefert das VOLLE, ungefilterte result-Objekt,
+// damit alle Felder unter logistics_info_list.aeop_order_logistics_info[] sichtbar sind, nicht nur
+// die von getAliOrderTracking() bereits ausgewählten.
+export async function getAliOrderRaw(aliOrderId: string, accessToken: string): Promise<Record<string, unknown> | null> {
+  try {
+    return await fetchAliOrderResult(aliOrderId, accessToken);
+  } catch (e) {
+    console.error(`[AliExpress API] getAliOrderRaw(${aliOrderId}) error:`, e);
+    return null;
+  }
 }
 
 export async function getAliOrderTracking(aliOrderId: string, accessToken: string): Promise<AliOrderTrackingInfo | null> {
   try {
-    const method = 'aliexpress.trade.ds.order.get';
-    const params: Record<string, string> = {
-      app_key: APP_KEY,
-      method,
-      timestamp: String(Date.now()),
-      format: 'json',
-      sign_method: 'md5',
-      v: '2.0',
-      access_token: accessToken,
-      single_order_query: JSON.stringify({ order_id: aliOrderId }),
-    };
-    params.sign = iopSign(APP_SECRET, params);
-
-    const res = await fetch(IOP_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(params),
-      signal: AbortSignal.timeout(20000),
-    });
-    const data = await res.json() as Record<string, unknown>;
-
-    const resp = data['aliexpress_trade_ds_order_get_response'] as Record<string, unknown> | undefined;
-    if (!resp) {
-      console.error(`[AliExpress API] getAliOrderTracking(${aliOrderId}): Error:`, JSON.stringify(data).slice(0, 400));
-      return null;
-    }
-    const result = (resp.result as Record<string, unknown>) || resp;
+    const result = await fetchAliOrderResult(aliOrderId, accessToken);
+    if (!result) return null;
 
     const orderStatus = String(result.order_status ?? '');
     const logisticsStatus = result.logistics_status ? String(result.logistics_status) : null;
@@ -390,13 +451,20 @@ export async function getAliOrderTracking(aliOrderId: string, accessToken: strin
       result.logistics_info_list as { aeop_order_logistics_info?: Array<{ logistics_no?: string; logistics_service?: string }> } | undefined
     )?.aeop_order_logistics_info ?? [];
     const withTracking = logisticsList.find(l => l.logistics_no && l.logistics_no.trim());
+    const rawNo = withTracking?.logistics_no?.trim() || null;
 
-    console.log(`[AliExpress API] getAliOrderTracking(${aliOrderId}): order_status=${orderStatus} logistics_status=${logisticsStatus ?? '–'} tracking=${withTracking?.logistics_no ?? 'keine'}`);
+    // P2-Korrektur: rawNo ist AliExpress' interne AP-ID, NICHT die Zusteller-Nummer (s. Kommentar
+    // oben) — niemals als trackingNumber zurückgeben, sonst würde sie fälschlich als echte
+    // Sendungsnummer in order_notes/an den Käufer gelangen.
+    const isInternalOnly = rawNo != null && isAliInternalLogisticsId(rawNo);
+    const trackingNumber = isInternalOnly ? null : rawNo;
+
+    console.log(`[AliExpress API] getAliOrderTracking(${aliOrderId}): order_status=${orderStatus} logistics_status=${logisticsStatus ?? '–'} tracking=${trackingNumber ?? (isInternalOnly ? `nur AliExpress-interne ID vorhanden (${rawNo}), keine Zusteller-Nummer — verworfen` : 'keine')}`);
 
     return {
       orderStatus,
       logisticsStatus,
-      trackingNumber: withTracking?.logistics_no?.trim() || null,
+      trackingNumber,
       logisticsService: withTracking?.logistics_service ?? null,
     };
   } catch (e) {
