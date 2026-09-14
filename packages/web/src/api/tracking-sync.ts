@@ -4,8 +4,13 @@
 // versendet. Bisher musste jemand dort von Hand nachsehen und sie im Bestellungen-Tab eintragen —
 // passiert das nicht, wartet der Kunde grundlos (konkreter Fall: Bestellung Yuecel Karakoca, eBay
 // 20-15127-76586, AliExpress 3076306514497211, lag seit dem 09.09. ohne Sendungsnummer, obwohl
-// AliExpress bereits "SELLER_SEND_GOODS" mit Sendungsnummer AP00843143208329 meldete — per echtem
-// Testlauf gegen die Produktions-DB bestätigt, siehe scripts/preview-tracking-sync.ts).
+// AliExpress bereits "SELLER_SEND_GOODS" meldete).
+//
+// P2-KORREKTUR (2026-09-14, Live-Fund, s. aliexpress-api.ts getAliOrderTracking()-Kommentar für
+// die vollständige Herleitung): der urspruenglich hier genannte Wert "AP00843143208329" ist NICHT
+// die Sendungsnummer, sondern AliExpress' eigene interne Sendungs-ID — die echte Zusteller-Nummer
+// (DHL) ist ueber die bisher getesteten AliExpress-Open-API-Methoden NICHT abrufbar. Der Schalter
+// unten bleibt deshalb auf `false`, bis eine echte Quelle gefunden ist (s. Kommentar dort).
 //
 // Root Cause (Aufgabe 3, im Code geprüft): PATCH /order-notes/:ebayOrderId (index.ts) macht bei
 // gespeicherter trackingNumber bereits zwei Dinge automatisch:
@@ -39,14 +44,16 @@
 import { eq, and, isNotNull, or, isNull } from 'drizzle-orm';
 import { ensureFreshAliToken, getAliAccessToken, getAliOrderTracking, type AliOrderTrackingInfo } from './aliexpress-api';
 
-// SCHALTER — P2 (2026-09-14): auf true gesetzt, NACHDEM der volle Trockenlauf gegen die echte
-// Produktions-DB gesichtet wurde (scripts/output/tracking-sync-preview-alle-offenen.md, Aufgabe 1
-// dieses PRs) und der Doppelschreib-Schutz (s. writeTrackingNumberToDb() oben) ergänzt wurde.
-// Historie: ursprünglich in PR #99 bewusst AUS angelegt ("Der Cron-Job wird in diesem PR angelegt,
-// aber hinter einem Schalter, der standardmäßig AUS ist. Erst nach Sichtung des Testlaufs schalten
-// wir ihn ein."), Einzel-Trockenlauf gegen eine reale Bestellung (3076306514497211) bereits damals
-// bestätigt korrekt (siehe Kommentar oben). Dieser PR schaltet ihn scharf.
-export const ALIEXPRESS_TRACKING_SYNC_ENABLED = true;
+// SCHALTER — P2-KORREKTUR (2026-09-14): bleibt auf `false`. Der ursprüngliche P2-PR hatte ihn
+// auf `true` gesetzt, gestützt auf einen NICHT gegengeprüften Treffer (s. Korrektur-Kommentar
+// oben) — beim manuellen Gegencheck auf der Sendungsverfolgungs-Seite stellte sich heraus, dass
+// die von der API gelieferte "Sendungsnummer" AliExpress' eigene interne ID war (Präfix "AP"),
+// nicht die echte Zusteller-Nummer (DHL). getAliOrderTracking() filtert AP-Werte jetzt konsequent
+// heraus (isAliInternalLogisticsId(), aliexpress-api.ts) — dadurch liefert die Funktion für jeden
+// bisher beobachteten Fall trackingNumber=null, der Cron würde also aktuell NICHTS schreiben.
+// Bleibt trotzdem explizit AUS: erst wieder auf `true` setzen, wenn eine echte Quelle für die
+// Zusteller-Nummer gefunden UND per Trockenlauf gegen die echte DB bestätigt ist.
+export const ALIEXPRESS_TRACKING_SYNC_ENABLED = false;
 
 const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // alle 4 Stunden (Vorschlag aus dem Auftrag)
 const SYNC_PAUSE_MS = 1500; // Rate-Limiting zwischen AliExpress-Abrufen, analog runAvailabilityCheck()

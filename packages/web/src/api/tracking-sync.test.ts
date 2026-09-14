@@ -3,8 +3,8 @@ import { syncTrackingNumbers, ALIEXPRESS_TRACKING_SYNC_ENABLED, type TrackingSyn
 import type { AliOrderTrackingInfo } from './aliexpress-api';
 
 describe('ALIEXPRESS_TRACKING_SYNC_ENABLED', () => {
-  test('P2 (2026-09-14): scharf geschaltet, nachdem der volle Trockenlauf gegen die echte DB gesichtet wurde', () => {
-    expect(ALIEXPRESS_TRACKING_SYNC_ENABLED).toBe(true);
+  test('P2-Korrektur (2026-09-14): bleibt AUS, solange keine echte Quelle für die Zusteller-Nummer gefunden ist', () => {
+    expect(ALIEXPRESS_TRACKING_SYNC_ENABLED).toBe(false);
   });
 });
 
@@ -17,7 +17,7 @@ describe('syncTrackingNumbers — Kernverhalten', () => {
     const fetchFn = mock(async (_aliId: string, _token: string): Promise<AliOrderTrackingInfo> => ({
       orderStatus: 'WAIT_BUYER_ACCEPT_GOODS',
       logisticsStatus: 'SELLER_SEND_GOODS',
-      trackingNumber: 'AP00843143208329',
+      trackingNumber: '00340434886289512140',
       logisticsService: 'CAINIAO_FULFILLMENT_STD',
     }));
     const writeFn = mock(async (_ebayOrderId: string, _trackingNumber: string) => {});
@@ -27,10 +27,10 @@ describe('syncTrackingNumbers — Kernverhalten', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(fetchFn.mock.calls[0][0]).toBe('3076306514497211');
     expect(writeFn).toHaveBeenCalledTimes(1);
-    expect(writeFn.mock.calls[0]).toEqual(['20-15127-76586', 'AP00843143208329']);
+    expect(writeFn.mock.calls[0]).toEqual(['20-15127-76586', '00340434886289512140']);
     expect(result).toEqual({
       checked: 1, found: 1, written: 1, errors: 0,
-      rows: [{ ebayOrderId: '20-15127-76586', aliexpressOrderId: '3076306514497211', orderStatus: 'WAIT_BUYER_ACCEPT_GOODS', trackingFound: true, trackingNumber: 'AP00843143208329', written: true }],
+      rows: [{ ebayOrderId: '20-15127-76586', aliexpressOrderId: '3076306514497211', orderStatus: 'WAIT_BUYER_ACCEPT_GOODS', trackingFound: true, trackingNumber: '00340434886289512140', written: true }],
     });
   });
 
@@ -55,7 +55,7 @@ describe('syncTrackingNumbers — Kernverhalten', () => {
   test('dryRun:true → Sendungsnummer wird gefunden UND gemeldet, aber writeFn NIE aufgerufen (Aufgabe 6)', async () => {
     const fetchFn = mock(async (): Promise<AliOrderTrackingInfo> => ({
       orderStatus: 'WAIT_BUYER_ACCEPT_GOODS', logisticsStatus: 'SELLER_SEND_GOODS',
-      trackingNumber: 'AP00843143208329', logisticsService: 'CAINIAO_FULFILLMENT_STD',
+      trackingNumber: '00340434886289512140', logisticsService: 'CAINIAO_FULFILLMENT_STD',
     }));
     const writeFn = mock(async () => {});
 
@@ -138,7 +138,7 @@ describe('Strikte Grenze: kein automatischer eBay-"verschickt"-Marker', () => {
   test('writeFn wird mit genau (ebayOrderId, trackingNumber) aufgerufen — kein drittes carrier-Argument', async () => {
     const fetchFn = mock(async (): Promise<AliOrderTrackingInfo> => ({
       orderStatus: 'WAIT_BUYER_ACCEPT_GOODS', logisticsStatus: 'SELLER_SEND_GOODS',
-      trackingNumber: 'AP00843143208329', logisticsService: 'CAINIAO_FULFILLMENT_STD',
+      trackingNumber: '00340434886289512140', logisticsService: 'CAINIAO_FULFILLMENT_STD',
     }));
     const writeFn = mock(async (_ebayOrderId: string, _trackingNumber: string) => {});
 
