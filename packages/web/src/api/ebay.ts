@@ -313,6 +313,11 @@ export interface EbayListingInput {
     phone: string;
   };
   manualAspects?: Record<string, string>; // P-88: vom Nutzer manuell nachgetragene Pflichtfelder (überschreiben Auto-Heal)
+  // P-82: Shop-Kategorie-Pfad (z.B. "/Wohnen & Möbel/Sofas"), wie sie storeCategoryNames am Offer
+  // erwartet (max. 2 Pfade laut Sell-Inventory-API-Doku, hier bewusst nur 1 — s. Aufgabe 4/Schema).
+  // Aufgabe 5: ist am Produkt keine Kategorie hinterlegt, bleibt dieses Feld undefined — dann wird
+  // storeCategoryNames im Offer-Body GAR NICHT mitgeschickt (kein "Sonstiges"-Ersatzwert).
+  storeCategoryName?: string;
 }
 
 // Gender-Wert → eBay "Abteilung" normalisieren
@@ -826,6 +831,9 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
         adRateStrategy: 'FIXED',
       },
     } : {}),
+    // P-82 Aufgabe 4/5: storeCategoryNames NUR mitsenden, wenn am Produkt eine Shop-Kategorie
+    // hinterlegt ist — sonst wird das Feld komplett weggelassen (kein "Sonstiges"-Ersatzwert).
+    ...buildStoreCategoryBlock(input.storeCategoryName),
     // Artikelmerkmale direkt im Offer (eBay verlangt es beim publishOffer)
     itemSpecifics: {
       aspects: Object.fromEntries(Object.entries(aspects).map(([k, v]) => [k, v])),
@@ -924,6 +932,15 @@ export async function publishOfferByInventoryItemGroup(inventoryItemGroupKey: st
 // ─── GPSR Helper ─────────────────────────────────────────────────────────────
 // Baut das productSafety-Objekt für eBay aus strukturierten GPSR-Feldern.
 // Wenn gpsr=undefined → Stele-E-Transfer als Fallback (EU Verantwortlicher).
+
+// P-82: storeCategoryNames NUR ins Offer-Objekt aufnehmen, wenn eine Shop-Kategorie vorliegt —
+// Aufgabe 5 verlangt ausdrücklich, dass ohne hinterlegte Kategorie GAR NICHTS mitgesendet wird
+// (kein Fallback auf "Sonstiges" oder eine Default-Kategorie). Sell-Inventory-API-Doku (Aufgabe 4):
+// storeCategoryNames nimmt bis zu 2 volle Pfade wie "/Fashion/Men/Shirts" — hier bewusst nur einer,
+// da am Produkt (Schema) nur eine Kategorie gespeichert wird.
+export function buildStoreCategoryBlock(storeCategoryName?: string): { storeCategoryNames?: string[] } {
+  return storeCategoryName?.trim() ? { storeCategoryNames: [storeCategoryName.trim()] } : {};
+}
 
 interface GpsrData { name: string; address: string; city: string; email: string; phone: string; }
 
@@ -1329,6 +1346,8 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         paymentPolicyId: policies.paymentPolicyId,
         returnPolicyId: policies.returnPolicyId,
       },
+      // P-82 Aufgabe 4/5: identisch zu createOffer() — nur mitsenden, wenn hinterlegt.
+      ...buildStoreCategoryBlock(input.storeCategoryName),
       // P-89: Artikelmerkmale (inkl. EAN-Sentinel) direkt im Offer — eBay verlangt es beim
       // publish_by_inventory_item_group, das Inventory Item allein reicht nicht (siehe createOffer()).
       itemSpecifics: {
@@ -1806,6 +1825,129 @@ export function hasAlreadyLeftFeedback(entries: ReceivedFeedbackEntry[], buyerUs
     e.commentingUser.toLowerCase() === buyerUsername.toLowerCase() &&
     (!itemId || !e.itemId || e.itemId === itemId)
   );
+}
+
+// ─── P-82: Shop-Kategorien des eigenen eBay-Shops auslesen (Trading API GetStore) ──────────────
+// Aufgabe 1: welcher Endpunkt liefert den Kategoriebaum? Recherchiert (developer.ebay.com,
+// GetStore/GetStoreRequestType/StoreCustomCategoryType) — GetStore mit CategoryStructureOnly=true
+// liefert exakt das, ohne den Rest der Shop-Konfiguration mitzuschicken. Response-Struktur laut
+// Doku: Store.CustomCategories.CustomCategory[], jede mit CategoryID/Name/Order, optional
+// verschachtelten ChildCategory-Elementen (eBay Stores unterstützen bis zu 3 Ebenen: CustomCategory
+// + 2 × ChildCategory). Dieselbe Trading-API-Authentifizierung (RequesterCredentials/eBayAuthToken
+// mit dem bestehenden OAuth Access Token) wie bei den bereits produktiv genutzten Aufrufen
+// GetFeedback/GetSellerList/ReviseFixedPriceItem oben — in der Doku kein zusätzlicher OAuth-Scope
+// für GetStore gefunden (anders als bei manchen REST-Endpunkten, die einen eigenen Scope
+// dokumentieren). HINWEIS wie bei getRecentlyReceivedFeedback() oben: Feldnamen/Struktur gegen
+// eBays Doku recherchiert, in dieser Sandbox NICHT gegen die echte API verifizierbar — es sind
+// keine EBAY_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN in dieser Umgebung vorhanden (leer, s. .env),
+// bereits derselbe dokumentierte Sandbox-Blocker wie das "401 invalid_client" in PR #97. Ein
+// Live-Aufruf scheitert hier schon bei getAccessToken() selbst, bevor GetStore überhaupt erreicht
+// wird — kein Workaround gebaut, ausdrücklich hier benannt statt verschwiegen.
+export interface StoreCategory {
+  categoryId: string;
+  name: string;
+  level: number;      // 1 = oberste Ebene, 2/3 = ChildCategory-Ebenen
+  fullPath: string;    // z.B. "/Wohnen & Möbel/Sofas" — genau das Format, das storeCategoryNames am Offer erwartet (Aufgabe 4)
+}
+
+// Extrahiert die direkten <CustomCategory>/<ChildCategory>-Kindelemente EINER Ebene aus einem
+// XML-Fragment, ohne in tiefer verschachtelte Elemente hineinzumatchen — per Klammerzählung
+// (Tag-Tiefe), da eine einfache non-greedy Regex bei gleichnamigen verschachtelten Tags
+// (ChildCategory in ChildCategory) die falschen Grenzen träfe.
+// Gegenstück zu escapeXml() oben — Standard-XML-Entities zurück in echte Zeichen wandeln. eBay
+// liefert Kategorienamen mit Sonderzeichen (z.B. "Wohnen & Möbel") als Entity-kodiertes "&amp;".
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function extractDirectChildBlocks(xml: string, tagName: string): string[] {
+  const blocks: string[] = [];
+  const openTag = `<${tagName}>`;
+  const closeTag = `</${tagName}>`;
+  let pos = 0;
+  while (pos < xml.length) {
+    const start = xml.indexOf(openTag, pos);
+    if (start === -1) break;
+    let depth = 1;
+    let cursor = start + openTag.length;
+    while (depth > 0 && cursor < xml.length) {
+      const nextOpen = xml.indexOf(openTag, cursor);
+      const nextClose = xml.indexOf(closeTag, cursor);
+      if (nextClose === -1) { cursor = xml.length; break; }
+      if (nextOpen !== -1 && nextOpen < nextClose) {
+        depth++;
+        cursor = nextOpen + openTag.length;
+      } else {
+        depth--;
+        cursor = nextClose + closeTag.length;
+      }
+    }
+    blocks.push(xml.slice(start + openTag.length, cursor - closeTag.length));
+    pos = cursor;
+  }
+  return blocks;
+}
+
+function parseCategoryNode(block: string, parentPath: string, level: number): StoreCategory[] {
+  // CategoryID/Name direkt in DIESEM Block (nicht in verschachtelten ChildCategory-Blöcken) lesen
+  // — dafür zuerst alle verschachtelten ChildCategory-Blöcke aus dem Text entfernen, dann die
+  // Top-Level-Felder per einfacher Regex extrahieren.
+  const childBlocks = extractDirectChildBlocks(block, 'ChildCategory');
+  let ownFieldsText = block;
+  for (const child of childBlocks) ownFieldsText = ownFieldsText.replace(`<ChildCategory>${child}</ChildCategory>`, '');
+
+  const categoryId = ownFieldsText.match(/<CategoryID>([^<]+)<\/CategoryID>/)?.[1] ?? '';
+  // Live-Fund beim ersten echten Testlauf (Grundgesetz Regel 1, Fixture statt echter API):
+  // Kategorienamen mit "&" (z.B. "Wohnen & Möbel") kommen im XML als Entity "&amp;" — ohne
+  // Dekodierung stünde der rohe Entity-Text im Namen UND im an eBay gesendeten storeCategoryNames.
+  const name = decodeXmlEntities(ownFieldsText.match(/<Name>([^<]+)<\/Name>/)?.[1] ?? '');
+  if (!categoryId || !name) return [];
+
+  const fullPath = `${parentPath}/${name}`;
+  const self: StoreCategory = { categoryId, name, level, fullPath };
+  const children = childBlocks.flatMap(child => parseCategoryNode(child, fullPath, level + 1));
+  return [self, ...children];
+}
+
+// Reine Parser-Funktion, aus getStoreCategories() extrahiert (Grundgesetz Regel 2) — testbar mit
+// einer realistischen XML-Fixture (Struktur laut eBay-Doku, s. Kommentar bei StoreCategory oben),
+// ohne echten eBay-API-Zugriff zu brauchen.
+export function parseGetStoreResponseXml(text: string): StoreCategory[] {
+  const errorMsg = text.match(/<ShortMessage>([^<]+)<\/ShortMessage>/)?.[1];
+  const ackFailed = /<Ack>Failure<\/Ack>/.test(text);
+  if (ackFailed) {
+    throw new Error(`GetStore fehlgeschlagen: ${errorMsg ?? text.slice(0, 300)}`);
+  }
+
+  const customCategoryBlocks = extractDirectChildBlocks(text, 'CustomCategory');
+  return customCategoryBlocks.flatMap(block => parseCategoryNode(block, '', 1));
+}
+
+export async function getStoreCategories(token: string): Promise<StoreCategory[]> {
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<GetStoreRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <CategoryStructureOnly>true</CategoryStructureOnly>
+</GetStoreRequest>`;
+
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'GetStore',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+  });
+  const text = await res.text();
+  return parseGetStoreResponseXml(text);
 }
 
 // ─── Bestellungen (Fulfillment API) ────────────────────────────────────────────

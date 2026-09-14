@@ -116,6 +116,11 @@ const migrations = [
   // Varianten denselben Preis bekamen und die Gewinne innerhalb einer Anzeige stark auseinander
   // liefen. Additiv, keine bestehende Spalte angefasst.
   `ALTER TABLE products ADD COLUMN variant_sell_prices TEXT`,
+  // P-82 (2026-09-14): Shop-Kategorie beim Listen mitsenden — separat von der bereits bestehenden
+  // ebay_category-Spalte (eBay-LEAF-Kategorie/Taxonomy). Additiv, beide nullable, keine bestehende
+  // Spalte verändert.
+  `ALTER TABLE products ADD COLUMN store_category_id TEXT`,
+  `ALTER TABLE products ADD COLUMN store_category_name TEXT`,
 ];
 
 export async function runMigrations() {

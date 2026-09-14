@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -522,6 +522,30 @@ const app = new Hono()
       return c.json({ message: 'Erfolgreich! Refresh Token in Server-Logs.', expires_in: tokens.expires_in }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── P-82: Shop-Kategorien des eigenen eBay-Shops abrufen (Server-Cache 1h) ─────────────────
+  // Kategorien ändern sich selten — analog zum Listings-Cache unten (Muster übernommen, TTL
+  // länger, da hier keine Preis-/Bestandsdaten drinstehen, die zeitnah aktuell sein müssen).
+  .get('/ebay/store-categories', async (c) => {
+    const CACHE_TTL = 60 * 60 * 1000; // 1 Stunde
+    const cacheKey = 'ebay_store_categories';
+    const cached = (globalThis as Record<string, unknown>)[cacheKey] as { ts: number; data: unknown } | undefined;
+    const forceRefresh = c.req.query('refresh') === '1';
+
+    if (!forceRefresh && cached && (Date.now() - cached.ts) < CACHE_TTL) {
+      return c.json({ categories: cached.data }, 200);
+    }
+
+    try {
+      const token = await getAccessToken();
+      const categories = await getStoreCategories(token);
+      (globalThis as Record<string, unknown>)[cacheKey] = { ts: Date.now(), data: categories };
+      return c.json({ categories }, 200);
+    } catch (e) {
+      console.error('[eBay] getStoreCategories fehlgeschlagen:', e);
+      return c.json({ error: e instanceof Error ? e.message : String(e), categories: [] }, 502);
     }
   })
 
@@ -1888,6 +1912,8 @@ const app = new Hono()
         gpsrHtml?: string;
         shipsFrom?: string;
         shippingCost?: number;
+        storeCategoryId?: string;
+        storeCategoryName?: string;
       };
 
       // Titel + Beschreibung parallel generieren (schneller)
@@ -1920,6 +1946,8 @@ const app = new Hono()
           gpsrHtml: body.gpsrHtml ?? undefined,
           shipsFrom: body.shipsFrom ?? undefined,
           shippingCost: body.shippingCost ?? undefined,
+          storeCategoryId: body.storeCategoryId ?? undefined,
+          storeCategoryName: body.storeCategoryName ?? undefined,
           updatedAt: new Date().toISOString(),
         }).where(eq(schema.products.asin, body.asin));
         return c.json({ id: existing[0].id, updated: true }, 200);
@@ -1947,6 +1975,8 @@ const app = new Hono()
         gpsrHtml: body.gpsrHtml ?? null,
         shipsFrom: body.shipsFrom ?? null,
         shippingCost: body.shippingCost ?? 0,
+        storeCategoryId: body.storeCategoryId ?? null,
+        storeCategoryName: body.storeCategoryName ?? null,
         ebayStatus: 'none',
         aliexpressItemId: (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null,
       }).returning({ id: schema.products.id });
@@ -2200,6 +2230,9 @@ const app = new Hono()
         handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
         manualAspects,
+        // P-82 Aufgabe 4/5: nur mitgeben, wenn am Produkt hinterlegt — buildStoreCategoryBlock()
+        // (ebay.ts) sendet storeCategoryNames dann komplett gar nicht mit, kein "Sonstiges"-Fallback.
+        storeCategoryName: product.storeCategoryName ?? undefined,
       });
 
       await db.update(schema.products).set({

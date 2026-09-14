@@ -303,11 +303,34 @@ export default function Lieferanten() {
   } | null>(null);
   const [duplicateChecking, setDuplicateChecking] = useState(false);
 
+  // P-82: Shop-Kategorie beim Import auswählen — echte Kategorien des eigenen eBay-Shops (kein
+  // Freitext, Aufgabe 3). "" = keine Kategorie gewählt → Aufgabe 5: wird dann gar nicht gespeichert
+  // bzw. beim Listen gar nicht mitgesendet.
+  const [storeCategories, setStoreCategories] = useState<Array<{ categoryId: string; name: string; level: number; fullPath: string }>>([]);
+  const [storeCategoriesError, setStoreCategoriesError] = useState<string | null>(null);
+  const [selectedStoreCategoryId, setSelectedStoreCategoryId] = useState("");
+
   // Meine Shops laden
   useEffect(() => {
     fetch('/api/trusted-suppliers').then(r => r.json()).then(data => {
       if (Array.isArray(data)) setTrustedSuppliers(data);
     }).catch(() => {});
+  }, []);
+
+  // P-82: Shop-Kategorien des eigenen eBay-Shops laden (Server-Cache 1h, s. index.ts) — best
+  // effort: schlägt der Abruf fehl (z.B. kein eBay-Zugriff), bleibt die Auswahl einfach leer statt
+  // die Seite zu blockieren; storeCategoriesError zeigt den Grund im Dropdown-Bereich an.
+  useEffect(() => {
+    fetch('/api/ebay/store-categories')
+      .then(r => r.json())
+      .then((data: { categories?: typeof storeCategories; error?: string }) => {
+        if (Array.isArray(data.categories) && data.categories.length > 0) {
+          setStoreCategories(data.categories);
+        } else if (data.error) {
+          setStoreCategoriesError(data.error);
+        }
+      })
+      .catch(e => setStoreCategoriesError(e instanceof Error ? e.message : String(e)));
   }, []);
 
   const handleAddShopManual = async () => {
@@ -641,6 +664,12 @@ export default function Lieferanten() {
           adRate: adRate,
           shippingCost: parseFloat(shippingCost.replace(",", ".")) || 0,
           shipsFrom: shipsFromInfo?.country,
+          // P-82 Aufgabe 2/5: nur mitschicken, wenn tatsächlich eine Kategorie gewählt wurde —
+          // sonst bleiben beide Felder weg (POST /products lässt sie dann null, wie bisher).
+          ...(selectedStoreCategoryId ? {
+            storeCategoryId: selectedStoreCategoryId,
+            storeCategoryName: storeCategories.find(c => c.categoryId === selectedStoreCategoryId)?.fullPath,
+          } : {}),
         }),
       });
       setSaveResult(data);
@@ -1715,6 +1744,36 @@ export default function Lieferanten() {
                 </div>
                 <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
                   Wird beim Speichern für dieses Produkt gespeichert — gilt danach auch für die laufende automatische Preisprüfung und jede spätere Neuberechnung, nicht nur für diesen Import.
+                </div>
+              </div>
+
+              {/* P-82 (2026-09-14): Shop-Kategorie — echte Kategorien des eigenen eBay-Shops, aus
+                  GetStore geladen (Aufgabe 1+3). Bewusst kein Freitext: nur was in storeCategories
+                  steht, ist wählbar. Leere Auswahl (Default) bedeutet "keine Kategorie" — Aufgabe 5:
+                  dann wird beim Listen nichts mitgesendet, nicht ersatzweise "Sonstiges". */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>
+                  Shop-Kategorie
+                </label>
+                <select
+                  value={selectedStoreCategoryId}
+                  onChange={e => setSelectedStoreCategoryId(e.target.value)}
+                  style={{ ...inputStyle, cursor: "pointer" }}
+                  disabled={storeCategories.length === 0}
+                >
+                  <option value="">— keine Kategorie (Standard, wie bisher) —</option>
+                  {storeCategories.map(cat => (
+                    <option key={cat.categoryId} value={cat.categoryId}>
+                      {"　".repeat(Math.max(0, cat.level - 1))}{cat.name}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
+                  {storeCategories.length > 0
+                    ? "Wird beim Listen als Shop-Kategorie mitgesendet. Ohne Auswahl landet das Angebot wie bisher unkategorisiert (\"Sonstiges\") und muss von Hand nachgetragen werden."
+                    : storeCategoriesError
+                      ? `Shop-Kategorien konnten nicht geladen werden (${storeCategoriesError}) — Auswahl bleibt leer, Speichern funktioniert trotzdem normal.`
+                      : "Lade Shop-Kategorien…"}
                 </div>
               </div>
 
