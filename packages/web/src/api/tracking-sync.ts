@@ -40,23 +40,39 @@
 // Sandbox (401 invalid_client, wie bereits in PR #97 dokumentiert) ist das nicht live testbar.
 // Statt eine möglicherweise falsch adressierte Notiz zu riskieren, wird das hier ausdrücklich
 // offengelassen (Aufgabe 4 erlaubt es ausdrücklich nur — "darf", kein "muss").
+//
+// P2 TEIL 2 (2026-09-14): Quelle komplett umgestellt — AliExpress-API (aliexpress-api.ts
+// getAliOrderTracking()) durch die AliExpress-Logistik-Mails ersetzt (gmail.ts
+// searchRecentPackageStatusEmails()/parsePackageStatusEmail()). Grund: PR #102 hat belegt, dass
+// die echte Zusteller-Nummer über die API nicht abrufbar ist, wohl aber per Mail (Betreff "Package
+// <Nummer>: <Status>", Bestellzuordnung über den o_ids=-Parameter im rohen HTML-Body). Statt pro
+// Bestellung EINEN API-Call zu machen, läuft jetzt EINE Gmail-Suche für den ganzen Lauf (kein
+// Rate-Limiting/Pause zwischen Bestellungen mehr nötig — SYNC_PAUSE_MS entfällt ersatzlos), deren
+// Treffer zu einer Map AliExpress-Bestellnr. → Zusteller-Nummer zusammengefasst werden. Der
+// atomare Doppelschreib-Schutz aus der P2-Korrektur (writeTrackingNumberToDb() unten) ist
+// unverändert geblieben.
 
 import { eq, and, isNotNull, or, isNull } from 'drizzle-orm';
-import { ensureFreshAliToken, getAliAccessToken, getAliOrderTracking, type AliOrderTrackingInfo } from './aliexpress-api';
+import { searchRecentPackageStatusEmails, type PackageStatusEmailMatch } from './gmail';
 
-// SCHALTER — P2-KORREKTUR (2026-09-14): bleibt auf `false`. Der ursprüngliche P2-PR hatte ihn
-// auf `true` gesetzt, gestützt auf einen NICHT gegengeprüften Treffer (s. Korrektur-Kommentar
-// oben) — beim manuellen Gegencheck auf der Sendungsverfolgungs-Seite stellte sich heraus, dass
-// die von der API gelieferte "Sendungsnummer" AliExpress' eigene interne ID war (Präfix "AP"),
-// nicht die echte Zusteller-Nummer (DHL). getAliOrderTracking() filtert AP-Werte jetzt konsequent
-// heraus (isAliInternalLogisticsId(), aliexpress-api.ts) — dadurch liefert die Funktion für jeden
-// bisher beobachteten Fall trackingNumber=null, der Cron würde also aktuell NICHTS schreiben.
-// Bleibt trotzdem explizit AUS: erst wieder auf `true` setzen, wenn eine echte Quelle für die
-// Zusteller-Nummer gefunden UND per Trockenlauf gegen die echte DB bestätigt ist.
+// SCHALTER — bleibt auf `false`, bis der Trockenlauf gegen die echte DB UND das echte
+// Gmail-Postfach die erwarteten Zusteller-Nummern belegt (Auftrag P2 Teil 2, strikte Grenze).
+// In dieser Sandbox nicht möglich: kein GOOGLE_GMAIL_CLIENT_ID/_SECRET in .env (anders als
+// TURSO_DATABASE_URL/TURSO_AUTH_TOKEN, die vorhanden sind) — `getGmailAccessToken()` schlägt mit
+// `[Gmail] Token-Refresh fehlgeschlagen: 400 {"error":"invalid_request","error_description":
+// "Could not determine client ID from request."}` fehl (echte Fehlermeldung aus einem echten
+// Laufversuch, s. PR-Beschreibung). scripts/inspect-package-status-emails.ts steht bereit und
+// läuft NUR LESEND, sobald Gmail-Zugangsdaten verfügbar sind (lokal mit echten Credentials, oder
+// als einmaliger Render-Shell-Task in der Produktionsumgebung, die Gmail bereits nutzt).
 export const ALIEXPRESS_TRACKING_SYNC_ENABLED = false;
 
 const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // alle 4 Stunden (Vorschlag aus dem Auftrag)
-const SYNC_PAUSE_MS = 1500; // Rate-Limiting zwischen AliExpress-Abrufen, analog runAvailabilityCheck()
+
+// P2 Teil 2, Aufgabe 4: mindestens 90 Tage — PR #102 hat gezeigt, dass eine Bestellung 41 Tage
+// alt sein kann, ohne dass die Sendungsnummer eingetragen wurde; ein kürzeres Fenster hätte deren
+// Mail (wie schon das 30-Tage-Fenster von searchRecentDeliveryEmails() bei derselben Bestellung,
+// s. PR #102-Zusatzbefund) strukturell verpasst.
+const MAIL_SEARCH_WINDOW_DAYS = 90;
 
 export interface TrackingSyncOrder {
   ebayOrderId: string;
@@ -67,7 +83,6 @@ export interface TrackingSyncOrder {
 export interface TrackingSyncRow {
   ebayOrderId: string;
   aliexpressOrderId: string;
-  orderStatus: string | null;
   trackingFound: boolean;
   trackingNumber: string | null;
   written: boolean;
@@ -124,40 +139,61 @@ async function writeTrackingNumberToDb(ebayOrderId: string, trackingNumber: stri
   ));
 }
 
+// Fasst mehrere Mail-Treffer zu einer Map AliExpress-Bestellnr. → Zusteller-Nummer zusammen. Eine
+// Bestellung kann mehrere Status-Mails bekommen ("at customs", "has cleared customs", "in your
+// country/region", …) — die tragen für dieselbe physische Sendung dieselbe Zusteller-Nummer, daher
+// wird pro Bestellung nur EIN Wert übernommen (der erste gefundene). Falls zwei Mails für
+// dieselbe Bestellung WIDERSPRÜCHLICHE Nummern liefern (sollte bei derselben Sendung nicht
+// vorkommen), wird das als Warnung geloggt und der zuerst gefundene Wert behalten, statt
+// stillschweigend zu überschreiben.
+function buildOrderIdToTrackingMap(matches: PackageStatusEmailMatch[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const m of matches) {
+    const existing = map.get(m.aliexpressOrderId);
+    if (existing === undefined) {
+      map.set(m.aliexpressOrderId, m.trackingNumber);
+    } else if (existing !== m.trackingNumber) {
+      console.warn(`[TrackingSync] AliExpress ${m.aliexpressOrderId}: widersprüchliche Zusteller-Nummern in verschiedenen Mails gefunden (${existing} vs. ${m.trackingNumber}) — behalte ${existing}`);
+    }
+  }
+  return map;
+}
+
 // Reine Orchestrierungs-Funktion, DI-testbar wie runAvailabilityCheck()/repairVariantPricesForProduct()
-// (siehe price-monitor.ts) — orders/fetchFn/writeFn/accessToken als Parameter, damit Tests ohne
-// echten DB-/AliExpress-Zugriff laufen. dryRun=true (Aufgabe 6) führt den Abruf aus, schreibt aber
+// (siehe price-monitor.ts) — orders/matches/writeFn als Parameter, damit Tests ohne echten DB-/
+// Gmail-Zugriff laufen. dryRun=true (Aufgabe 6, Teil 1) führt die Zuordnung aus, schreibt aber
 // nichts (auch writeFn wird dann nicht aufgerufen).
 export async function syncTrackingNumbers(options: {
   orders?: TrackingSyncOrder[];
-  fetchFn?: typeof getAliOrderTracking;
+  matches?: PackageStatusEmailMatch[]; // Test-Override — überspringt den echten Gmail-Aufruf komplett
+  searchFn?: typeof searchRecentPackageStatusEmails; // Test-Override für den Fehlerpfad (z.B. rejectet)
+  searchDays?: number;
   writeFn?: (ebayOrderId: string, trackingNumber: string) => Promise<void>;
-  accessToken?: string | null; // explizit übergeben (auch null) überspringt ensureFreshAliToken()/getAliAccessToken() — für Tests
   dryRun?: boolean;
-  pauseMs?: number;
 } = {}): Promise<TrackingSyncSummary> {
   const {
-    fetchFn = getAliOrderTracking,
     writeFn = writeTrackingNumberToDb,
+    searchFn = searchRecentPackageStatusEmails,
     dryRun = false,
-    pauseMs = SYNC_PAUSE_MS,
+    searchDays = MAIL_SEARCH_WINDOW_DAYS,
   } = options;
 
   const orders = options.orders ?? await loadTargetsFromDb();
   const targets = orders.filter(o => o.aliexpressOrderId?.trim() && !o.trackingNumber?.trim());
   console.log(`[TrackingSync] ${targets.length} Bestellungen mit AliExpress-Nr. ohne Sendungsnummer`);
 
-  let accessToken: string | null;
-  if (options.accessToken !== undefined) {
-    accessToken = options.accessToken;
-  } else {
-    await ensureFreshAliToken();
-    accessToken = await getAliAccessToken();
-  }
-  if (!accessToken) {
-    console.error('[TrackingSync] Kein AliExpress-Access-Token verfügbar (P-2) — Abbruch, nichts geprüft');
+  if (targets.length === 0) {
     return { checked: 0, found: 0, written: 0, errors: 0, rows: [] };
   }
+
+  let matches: PackageStatusEmailMatch[];
+  try {
+    matches = options.matches ?? await searchFn(searchDays);
+  } catch (e) {
+    console.error('[TrackingSync] Gmail-Suche fehlgeschlagen — Abbruch, nichts geprüft:', e);
+    return { checked: 0, found: 0, written: 0, errors: 0, rows: [] };
+  }
+  const trackingByOrderId = buildOrderIdToTrackingMap(matches);
 
   const rows: TrackingSyncRow[] = [];
   let found = 0, written = 0, errors = 0;
@@ -165,34 +201,24 @@ export async function syncTrackingNumbers(options: {
   for (const order of targets) {
     const aliId = order.aliexpressOrderId!.trim();
     try {
-      const info: AliOrderTrackingInfo | null = await fetchFn(aliId, accessToken);
-
-      if (!info) {
-        errors++;
-        rows.push({ ebayOrderId: order.ebayOrderId, aliexpressOrderId: aliId, orderStatus: null, trackingFound: false, trackingNumber: null, written: false, error: 'Abruf fehlgeschlagen' });
-        console.log(`[TrackingSync] eBay=${order.ebayOrderId} AliExpress=${aliId} status=– tracking=nein übernommen=nein (Abruf fehlgeschlagen — übersprungen)`);
-        continue;
-      }
-
-      const trackingFound = !!info.trackingNumber;
+      const trackingNumber = trackingByOrderId.get(aliId) ?? null;
+      const trackingFound = trackingNumber !== null;
       if (trackingFound) found++;
 
       let didWrite = false;
       if (trackingFound && !dryRun) {
-        await writeFn(order.ebayOrderId, info.trackingNumber!);
+        await writeFn(order.ebayOrderId, trackingNumber!);
         didWrite = true;
         written++;
       }
 
-      rows.push({ ebayOrderId: order.ebayOrderId, aliexpressOrderId: aliId, orderStatus: info.orderStatus, trackingFound, trackingNumber: info.trackingNumber, written: didWrite });
-      // Pflicht-Log (Auftragspunkt 5): eBay-Bestellnr., AliExpress-Bestellnr., gefundener Status, übernommen ja/nein.
-      console.log(`[TrackingSync] eBay=${order.ebayOrderId} AliExpress=${aliId} status=${info.orderStatus} tracking=${trackingFound ? `ja (${info.trackingNumber})` : 'nein'} übernommen=${didWrite ? 'ja' : (dryRun ? 'nein (Dry-Run)' : 'nein')}`);
+      rows.push({ ebayOrderId: order.ebayOrderId, aliexpressOrderId: aliId, trackingFound, trackingNumber, written: didWrite });
+      console.log(`[TrackingSync] eBay=${order.ebayOrderId} AliExpress=${aliId} tracking=${trackingFound ? `ja (${trackingNumber})` : 'nein (keine passende Mail im Suchfenster gefunden)'} übernommen=${didWrite ? 'ja' : (dryRun ? 'nein (Dry-Run)' : 'nein')}`);
     } catch (e) {
       errors++;
-      rows.push({ ebayOrderId: order.ebayOrderId, aliexpressOrderId: aliId, orderStatus: null, trackingFound: false, trackingNumber: null, written: false, error: String(e) });
+      rows.push({ ebayOrderId: order.ebayOrderId, aliexpressOrderId: aliId, trackingFound: false, trackingNumber: null, written: false, error: String(e) });
       console.error(`[TrackingSync] eBay=${order.ebayOrderId} AliExpress=${aliId}: Fehler — übersprungen, weiter mit nächster Bestellung`, e);
     }
-    if (pauseMs > 0) await new Promise(r => setTimeout(r, pauseMs));
   }
 
   console.log(`[TrackingSync] Fertig — geprüft: ${targets.length}, Sendungsnummer gefunden: ${found}, übernommen: ${written}, Fehler: ${errors}`);

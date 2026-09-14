@@ -7,6 +7,7 @@
  * bewusst beim Menschen (siehe /gmail/tracking-suggestions in index.ts + bestellungen.tsx).
  */
 import { eq } from 'drizzle-orm';
+import { isAliInternalLogisticsId } from './aliexpress-api';
 
 const CLIENT_ID = process.env.GOOGLE_GMAIL_CLIENT_ID ?? '';
 const CLIENT_SECRET = process.env.GOOGLE_GMAIL_CLIENT_SECRET ?? '';
@@ -201,6 +202,78 @@ export function parseDeliveryEmail(subject: string, bodyText: string): DeliveryE
   return { trackingNumber: subjectMatch[1], ...address, emailDate: '' };
 }
 
+// ─── P2 Teil 2 (2026-09-14): Paket-Status-Mail parsen — Zusteller-Nummer + AliExpress-Bestellnr. ──
+// Grund (s. PR #102, Korrektur): die AliExpress-API liefert unter logistics_no nur AliExpress'
+// EIGENE interne Sendungs-ID (Präfix "AP"), nicht die echte DHL-Nummer. Die DHL-Nummer kommt aber
+// per Mail — Betreff-Muster laut Auftrag (mehrere Status-Varianten, gemeinsamer Präfix "Package
+// <Nummer>"): "Package 00340434886289512140: at customs", "... has cleared customs",
+// "... in your country/region". ANDERS als parseTrackingEmail()/parseDeliveryEmail() oben matcht
+// dieser Parser NICHT auf einen festen Status-Suffix, sondern auf JEDEN "Package <Nummer>"-Betreff
+// dieses Absenders — die konkrete Statusphrase ist für die Nummer irrelevant.
+//
+// P2-Teil-2-Nachbesserung (2026-09-14, Live-Fund im echten Postfach): AliExpress verschickt diese
+// Serie je nach Bestellung/Sprache in STARK unterschiedlichem Wortlaut, deutsch UND englisch —
+// "Package <Nummer>" traf nur die englischen Varianten, alle acht echten Mails zur Bestellung
+// 3075188992327211 waren deutsch und wurden dadurch übersehen. Belegte echte Betreffzeilen:
+//   "Paket 00340434886283998797 wurde zugestellt"
+//   "Packstück 00340434886283998797: mit lokalem Kurier"
+//   "Packstück 00340434886283998797: beim Zoll"
+//   "Zollabfertigung für 00340434886283998797 wurde beendet"
+//   "Package 00340434886289512140 has cleared customs"
+//   "Package 00340434886289512140: at customs"
+// Der Parser matcht deshalb NICHT mehr auf ein einleitendes Wort — er zieht jede zusammenhängende
+// Ziffernfolge ab 10 Stellen aus dem Betreff und filtert sie über looksLikeCarrierTrackingNumber()/
+// isAliInternalLogisticsId(). Das einleitende Wort (Package/Paket/Packstück/"Zollabfertigung für"/…)
+// spielt dadurch keine Rolle mehr. Einziger verbleibender Filter: der Absender
+// (transaction@notice.aliexpress.com, s. searchRecentPackageStatusEmails() unten) — ein
+// Betreff-Suchbegriff entfällt bewusst, weil kein gemeinsames Wort mehr über alle Sprachvarianten
+// hinweg existiert.
+//
+// Die AliExpress-Bestellnr. steckt NICHT im Betreff, sondern im Query-Parameter `o_ids=` der
+// Tracking-Links im Mail-Body — und zwar NUR im rohen HTML (der Aufrufer MUSS findRawHtmlBody()
+// übergeben, nicht den Klartext-/gestrippten Body wie bei den beiden Parsern oben): beim Umwandeln
+// von HTML zu Klartext (findHtmlBodyAsText()/htmlToPlainText()) werden Attribut-Query-Parameter
+// mitten in einem <a href="...">-Tag zerstört, bevor eine Regex sie noch sehen könnte.
+export interface PackageStatusEmailMatch {
+  trackingNumber: string;
+  aliexpressOrderId: string;
+  emailDate: string;
+}
+
+// Plausibilitäts-Check (Auftrag Aufgabe 2, zusätzlich zu isAliInternalLogisticsId()): eine echte
+// Zusteller-Nummer ist rein numerisch und deutlich länger als eine typische Produkt-/Bestell-ID
+// (beide bisher bekannten echten DHL-Nummern: 20 Ziffern) — 10 als konservative Untergrenze
+// gewählt, um auch kürzere Zusteller-Nummer-Formate anderer Fälle nicht von vornherein
+// auszuschließen, ohne offensichtlich zu kurze/unplausible Treffer (z.B. Bruchstücke) zuzulassen.
+export function looksLikeCarrierTrackingNumber(no: string): boolean {
+  return /^\d{10,}$/.test(no.trim());
+}
+
+export function parsePackageStatusEmail(subject: string, rawHtmlBody: string): PackageStatusEmailMatch | null {
+  // Jede zusammenhängende Ziffernfolge ab 10 Stellen im Betreff als Kandidat — wortlautunabhängig
+  // (s. Kommentar oben). Der erste Kandidat, der beide Plausibilitäts-Checks besteht, gewinnt; in
+  // allen sechs echten Beispiel-Betreffzeilen steht ohnehin nur eine einzige Ziffernfolge.
+  //
+  // Hinweis zu isAliInternalLogisticsId() hier: eine reine \d{10,}-Ziffernfolge kann NIE das
+  // AP-Präfix enthalten (isAliInternalLogisticsId prüft /^AP\d+$/i, \d matcht keine Buchstaben) —
+  // der Aufruf ist für DIESE Extraktionsart also strukturell ein No-op. Trotzdem bewusst
+  // beibehalten (Auftrag verlangt es ausdrücklich, Grundgesetz Regel 8: dieselbe Quelle wie in
+  // PR #102 statt einer zweiten Prüfung) und als Absicherung, falls die Extraktion künftig auf
+  // ganze Wörter statt reiner Ziffernfolgen umgestellt wird.
+  const digitCandidates = subject.match(/\d{10,}/g) ?? [];
+  const trackingNumber = digitCandidates.find(no => looksLikeCarrierTrackingNumber(no) && !isAliInternalLogisticsId(no));
+  if (!trackingNumber) return null;
+
+  // Live-Fund beim ersten echten Testlauf (Grundgesetz Regel 1): HTML-Mails kodieren das "&"
+  // zwischen Query-Parametern in href-Attributen standardmäßig als Entity "&amp;", nicht als
+  // rohes "&" — ein reines `[?&]o_ids=` verfehlte den Parameter deshalb komplett (0 Treffer in
+  // einer realistischen Fixture). Jetzt wird das optionale "amp;" mit abgedeckt.
+  const orderIdMatch = rawHtmlBody.match(/[?&](?:amp;)?o_ids=(\d+)/i);
+  if (!orderIdMatch) return null;
+
+  return { trackingNumber, aliexpressOrderId: orderIdMatch[1], emailDate: '' };
+}
+
 // ─── Base64url-MIME-Payload → Klartext ────────────────────────────────────────
 interface GmailMessagePart {
   mimeType?: string;
@@ -219,40 +292,46 @@ function findPlainTextBody(part: GmailMessagePart): string | null {
   return null;
 }
 
-// Fallback falls keine text/plain-Variante existiert — grobe HTML-Bereinigung, weniger
-// zuverlässig als der Klartext-Pfad (Zeilenumbrüche können sich verschieben).
-function findHtmlBodyAsText(part: GmailMessagePart): string | null {
+// P2 Teil 2 (2026-09-14): der ROHE HTML-Body, UNVERÄNDERT — wird für die o_ids=-Extraktion aus den
+// Tracking-Links gebraucht (s. parsePackageStatusEmail() unten). Der bisherige "grobe
+// HTML-Bereinigung"-Fallback (Klartext aus HTML, falls keine text/plain-Variante existiert) baut
+// jetzt auf DIESER Rohfassung auf (s. htmlToPlainText() unten) — Tag-Entfernung würde
+// Query-Parameter zerstören, die mitten in einem <a href="...">-Attribut stehen (bestätigt am
+// Auftrag: "im geprüften Beispiel" wird der Parameter beim Umwandeln in Klartext zerstört),
+// deshalb bekommt der o_ids-Parser explizit die rohe, ungestrippte Fassung.
+function findRawHtmlBody(part: GmailMessagePart): string | null {
   if (part.mimeType === 'text/html' && part.body?.data) {
-    const html = Buffer.from(part.body.data, 'base64url').toString('utf8');
-    return html
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|div|tr|li)>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&');
+    return Buffer.from(part.body.data, 'base64url').toString('utf8');
   }
   for (const sub of part.parts ?? []) {
-    const found = findHtmlBodyAsText(sub);
+    const found = findRawHtmlBody(sub);
     if (found) return found;
   }
   return null;
 }
 
-// ─── Gmail durchsuchen + jede Treffer-Mail mit dem übergebenen Parser auswerten ─
-// Gemeinsame Grundlage für P-84 (Abflug) und P-85 (Zustellung) — beide unterscheiden
-// sich nur in Suchbegriff und Parser-Funktion.
-async function searchAndParseEmails<T extends { emailDate: string }>(
-  subjectPhrases: string[],
-  days: number,
-  parser: (subject: string, bodyText: string) => T | null
-): Promise<T[]> {
+interface FetchedGmailMessage {
+  subject: string;
+  plainText: string | null;
+  rawHtml: string | null;
+  internalDate: string | null;
+}
+
+// ─── Gmail durchsuchen + rohe Nachrichten (Betreff, Klartext-Body, roher HTML-Body) liefern ────
+// Gemeinsame Grundlage für ALLE drei AliExpress-Logistik-Mail-Typen (P-84 Abflug, P-85 Zustellung,
+// P2-Teil-2 Paket-Status/o_ids) — reiner Fetch+Parse-Auftrenn-Schritt, unterscheiden sich nur in
+// Suchbegriff und dem, was sie mit plainText/rawHtml jeweils anfangen (Grundgesetz Regel 8: die
+// Gmail-List-/Fetch-/Pagination-Logik existiert dadurch nur einmal).
+async function fetchAliexpressMessages(subjectQuery: string | undefined, days: number): Promise<FetchedGmailMessage[]> {
   const token = await getGmailAccessToken();
   if (!token) throw new Error('Gmail nicht verbunden');
 
-  // P-106: mehrere Sprachvarianten als OR-Gruppe (Gmail-Suchsyntax) — AliExpress verschickt je
-  // nach Bestellung Deutsch oder Englisch, siehe Kommentar bei parseTrackingEmail() oben.
-  const subjectQuery = subjectPhrases.map(p => (p.includes(' ') ? `"${p}"` : p)).join(' OR ');
-  const q = `from:transaction@notice.aliexpress.com subject:(${subjectQuery}) newer_than:${days}d`;
+  // subjectQuery === undefined (P2-Teil-2-Nachbesserung): kein Betreff-Filter — nötig für
+  // searchRecentPackageStatusEmails(), weil kein gemeinsames Wort mehr über alle Sprachvarianten
+  // hinweg existiert (s. parsePackageStatusEmail()-Kommentar). Absender bleibt der einzige Filter.
+  const q = subjectQuery
+    ? `from:transaction@notice.aliexpress.com subject:(${subjectQuery}) newer_than:${days}d`
+    : `from:transaction@notice.aliexpress.com newer_than:${days}d`;
   const listRes = await fetch(`${GMAIL_API}/messages?q=${encodeURIComponent(q)}&maxResults=50`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -261,9 +340,12 @@ async function searchAndParseEmails<T extends { emailDate: string }>(
     throw new Error(`Gmail-Suche fehlgeschlagen: ${listRes.status} ${text.slice(0, 300)}`);
   }
   const listData = await listRes.json() as { messages?: Array<{ id: string }> };
-  const results: T[] = [];
+  const results: FetchedGmailMessage[] = [];
 
   for (const { id } of listData.messages ?? []) {
+    // NUR LESEND (P2 Teil 2, Auftrag): GET /messages/{id} liest die Mail, ändert nichts an ihr
+    // (kein modify/trash-Aufruf irgendwo in diesem Modul) — Gmail markiert Nachrichten beim
+    // reinen Lesen über die API NICHT automatisch als gelesen (anders als das Öffnen im Web-UI).
     const msgRes = await fetch(`${GMAIL_API}/messages/${id}?format=full`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -274,16 +356,54 @@ async function searchAndParseEmails<T extends { emailDate: string }>(
     };
     const subject = msg.payload?.headers?.find(h => h.name.toLowerCase() === 'subject')?.value ?? '';
     if (!msg.payload) continue;
-    const bodyText = findPlainTextBody(msg.payload) ?? findHtmlBodyAsText(msg.payload);
+
+    results.push({
+      subject,
+      plainText: findPlainTextBody(msg.payload),
+      rawHtml: findRawHtmlBody(msg.payload),
+      internalDate: msg.internalDate ?? null,
+    });
+  }
+
+  return results;
+}
+
+// ─── Gmail durchsuchen + jede Treffer-Mail (Klartext bevorzugt) mit dem übergebenen Parser
+// auswerten — unveränderte Fassung/Verhalten aus P-84/P-85, jetzt auf fetchAliexpressMessages()
+// aufgesetzt statt die List-/Fetch-Logik ein zweites Mal zu bauen.
+async function searchAndParseEmails<T extends { emailDate: string }>(
+  subjectPhrases: string[],
+  days: number,
+  parser: (subject: string, bodyText: string) => T | null
+): Promise<T[]> {
+  // P-106: mehrere Sprachvarianten als OR-Gruppe (Gmail-Suchsyntax) — AliExpress verschickt je
+  // nach Bestellung Deutsch oder Englisch, siehe Kommentar bei parseTrackingEmail() oben.
+  const subjectQuery = subjectPhrases.map(p => (p.includes(' ') ? `"${p}"` : p)).join(' OR ');
+  const messages = await fetchAliexpressMessages(subjectQuery, days);
+  const results: T[] = [];
+
+  for (const msg of messages) {
+    const bodyText = msg.plainText ?? (msg.rawHtml ? htmlToPlainText(msg.rawHtml) : null);
     if (!bodyText) continue;
 
-    const parsed = parser(subject, bodyText);
+    const parsed = parser(msg.subject, bodyText);
     if (!parsed) continue;
     parsed.emailDate = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : '';
     results.push(parsed);
   }
 
   return results;
+}
+
+// Reine HTML→Text-Bereinigung, aus findHtmlBodyAsText() extrahiert (Regel 8: dieselbe Logik, jetzt
+// auf dem bereits geladenen rawHtml, statt den MIME-Baum ein zweites Mal zu durchsuchen).
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li)>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
 }
 
 // ─── Kürzlich eingegangene Logistik-Mails suchen + parsen ────────────────────
@@ -298,6 +418,38 @@ export async function searchRecentTrackingEmails(days = 14): Promise<TrackingEma
 // von 14 auf 30 Tage erhöht, da Zustellungen bei Auslandsversand oft erst nach 2+ Wochen kommen.
 export async function searchRecentDeliveryEmails(days = 30): Promise<DeliveryEmailMatch[]> {
   return searchAndParseEmails(['zugestellt', 'delivered'], days, parseDeliveryEmail);
+}
+
+// ─── P2 Teil 2: Paket-Status-Mails suchen + parsen (Zusteller-Nummer + Bestellnr.) ──────────────
+// NICHT auf searchAndParseEmails() aufgesetzt — der übergibt Parsern den Klartext-Body (Plaintext
+// bevorzugt, sonst HTML→Text-gestrippt), parsePackageStatusEmail() braucht aber zwingend den ROHEN
+// HTML-Body für die o_ids=-Extraktion (s. Kommentar dort). Eigener, kurzer Loop auf
+// fetchAliexpressMessages() (derselbe geteilte Gmail-List-/Fetch-Schritt wie oben, Regel 8).
+//
+// KEIN Betreff-Suchbegriff (P2-Teil-2-Nachbesserung, Live-Fund im echten Postfach): die
+// Mail-Serie kommt deutsch UND englisch, mit stark unterschiedlichem Wortlaut ("Package X: at
+// customs" / "Paket X wurde zugestellt" / "Packstück X: beim Zoll" / "Zollabfertigung für X
+// wurde beendet" / …) — kein gemeinsames Wort existiert mehr über alle Varianten hinweg. Der
+// ursprüngliche Suchbegriff "Package" (nur englisch) hätte alle acht echten Mails zur Bestellung
+// 3075188992327211 (durchgehend deutsch) verpasst. Absender bleibt der einzige Gmail-seitige
+// Filter — parsePackageStatusEmail() filtert danach per Ziffernfolge + Plausibilität + o_ids.
+//
+// Tage-Fenster bewusst NICHT auf 30 Tage begrenzt (Default-Parameter unten, 90 Tage) — Auftrag
+// P2 Teil 2 Aufgabe 4: PR #102 hat eine echte Bestellung mit 41 Tagen ohne Sendungsnummer gezeigt,
+// ein 30-Tage-Fenster hätte deren Zustellmail strukturell nie gefunden.
+export async function searchRecentPackageStatusEmails(days = 90): Promise<PackageStatusEmailMatch[]> {
+  const messages = await fetchAliexpressMessages(undefined, days);
+  const results: PackageStatusEmailMatch[] = [];
+
+  for (const msg of messages) {
+    if (!msg.rawHtml) continue; // ohne rohen HTML-Body keine o_ids-Extraktion möglich
+    const parsed = parsePackageStatusEmail(msg.subject, msg.rawHtml);
+    if (!parsed) continue;
+    parsed.emailDate = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : '';
+    results.push(parsed);
+  }
+
+  return results;
 }
 
 // ─── Adressabgleich ────────────────────────────────────────────────────────────
