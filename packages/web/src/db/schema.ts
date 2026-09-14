@@ -37,6 +37,12 @@ export const products = sqliteTable('products', {
   ebayMissingAspect: text('ebay_missing_aspect'), // P-88: exakter Feldname aus dem letzten 25002-Fehler (z.B. "Produktart"), fürs manuelle Eingabefeld
   manualAspects: text('manual_aspects'),          // P-88: JSON {"Produktart":"Tasche"} — vom Nutzer nachgetragene Pflichtfelder, überschreiben Auto-Heal
   ebayCategory: text('ebay_category'),           // manuell gesetzte eBay Kategorie-ID
+  // P-82 (2026-09-14): Shop-Kategorie (Cockpit-Begriff), NICHT dieselbe wie ebayCategory oben —
+  // ebayCategory ist die eBay-LEAF-Kategorie (Taxonomy, z.B. "79720"), storeCategoryId/-Name ist
+  // die selbst angelegte Kategorie IM eigenen eBay-Shop (z.B. "Wohnen & Möbel"), separat gepflegt.
+  // Additiv, beide nullable, keine bestehende Spalte verändert (s. migrate.ts).
+  storeCategoryId: text('store_category_id'),     // eBay Store-Kategorie-ID (aus GetStore, informativ/fürs Dropdown-Matching)
+  storeCategoryName: text('store_category_name'), // vollständiger Pfad wie "/Wohnen & Möbel/Sofas" — genau das Format für storeCategoryNames am Offer
   ean: text('ean'),                              // EAN/GTIN Barcode — meist manuell gepflegt, AliExpress liefert i.d.R. keine echte EAN
   variantContents: text('variant_contents'), // JSON: {"SET1":"10 kleine + 10 große","SET2":"..."}
   gpsrRaw: text('gpsr_raw'),                 // Rohtext aus Import-Feld (legacy)
