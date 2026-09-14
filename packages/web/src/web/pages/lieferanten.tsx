@@ -1671,12 +1671,28 @@ export default function Lieferanten() {
                 }} />
               </div>
 
-              {/* Anzeigentarif */}
+              {/* Anzeigentarif (%) — P-81 Stufe 1 (2026-09-14): Vorgabe bleibt 5, aber "0" ist jetzt
+                  ausdrücklich wählbar und bedeutet "keine Anzeige" (vorher verhinderte min="1"+
+                  "v > 0" das Setzen von 0 komplett). Wichtig für eine spätere automatische
+                  Anzeigen-Schaltung (P-81 Stufe 2, NICHT Teil dieses PRs): 9 von 13 echten
+                  Bestellungen hatten eine Anzeigen-Gebührenzeile, 4 nicht — bei einigen Angeboten
+                  hat der Nutzer Anzeigen bewusst gestoppt, weil die Preise dort falsch waren. Eine
+                  Automatik darf das nie pauschal überschreiben. */}
               <div style={{ marginBottom: 14 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>
-                  Anzeigentarif (Promoted Listings)
+                  Anzeigentarif (%) (Promoted Listings)
                 </label>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => { setAdRate(0); localStorage.setItem("stele_ad_rate", "0"); }}
+                    style={{
+                      padding: "7px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                      border: `2px solid ${adRate === 0 ? "#DC2626" : "#E2E8F0"}`,
+                      background: adRate === 0 ? "#FEF2F2" : "#F8FAFC",
+                      color: adRate === 0 ? "#DC2626" : "#64748B",
+                      cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+                    }}
+                  >Keine Anzeige</button>
                   {[2, 3, 5, 8, 10].map(rate => (
                     <button
                       key={rate}
@@ -1693,21 +1709,21 @@ export default function Lieferanten() {
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 11, color: "#94A3B8", fontWeight: 600 }}>Eigener:</span>
                     <input
-                      type="number" min="1" max="20" step="0.5"
-                      value={![2, 3, 5, 8, 10].includes(adRate) ? adRate : ""}
+                      type="number" min="0" max="20" step="0.5"
+                      value={![0, 2, 3, 5, 8, 10].includes(adRate) ? adRate : ""}
                       placeholder="z.B. 7"
                       onChange={e => {
                         const v = parseFloat(e.target.value);
-                        if (!isNaN(v) && v > 0 && v <= 20) {
+                        if (!isNaN(v) && v >= 0 && v <= 20) {
                           setAdRate(v);
                           localStorage.setItem("stele_ad_rate", String(v));
                         }
                       }}
                       style={{
                         width: 64, padding: "7px 10px", fontSize: 13, fontWeight: 600,
-                        border: `2px solid ${![2, 3, 5, 8, 10].includes(adRate) ? "#FFD700" : "#E2E8F0"}`,
+                        border: `2px solid ${![0, 2, 3, 5, 8, 10].includes(adRate) ? "#FFD700" : "#E2E8F0"}`,
                         borderRadius: 8, outline: "none", fontFamily: "inherit",
-                        background: ![2, 3, 5, 8, 10].includes(adRate) ? "#FFF8DC" : "#F8FAFC",
+                        background: ![0, 2, 3, 5, 8, 10].includes(adRate) ? "#FFF8DC" : "#F8FAFC",
                         color: "#0F172A",
                       }}
                     />
@@ -1715,7 +1731,9 @@ export default function Lieferanten() {
                   </div>
                 </div>
                 <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
-                  eBay {DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + Anzeige {adRate}% = {(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate)}% gesamt (× {DEFAULT_PRICING_CONFIG.vatFactor} MwSt)
+                  {adRate > 0
+                    ? <>eBay {DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + Anzeige {adRate}% = {(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate)}% gesamt (× {DEFAULT_PRICING_CONFIG.vatFactor} MwSt)</>
+                    : "0% = keine Anzeige (Promoted Listings bleibt aus). Wird am Produkt gespeichert."}
                 </div>
               </div>
 
