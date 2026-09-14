@@ -39,11 +39,14 @@
 import { eq, and, isNotNull, or, isNull } from 'drizzle-orm';
 import { ensureFreshAliToken, getAliAccessToken, getAliOrderTracking, type AliOrderTrackingInfo } from './aliexpress-api';
 
-// SCHALTER — steht standardmäßig AUS (Auftrag: "Der Cron-Job wird in diesem PR angelegt, aber
-// hinter einem Schalter, der standardmäßig AUS ist. Erst nach Sichtung des Testlaufs schalten wir
-// ihn ein."). Auf true setzen erst nach Prüfung von scripts/output/tracking-sync-preview-*.md
-// gegen die echte DB.
-export const ALIEXPRESS_TRACKING_SYNC_ENABLED = false;
+// SCHALTER — P2 (2026-09-14): auf true gesetzt, NACHDEM der volle Trockenlauf gegen die echte
+// Produktions-DB gesichtet wurde (scripts/output/tracking-sync-preview-alle-offenen.md, Aufgabe 1
+// dieses PRs) und der Doppelschreib-Schutz (s. writeTrackingNumberToDb() oben) ergänzt wurde.
+// Historie: ursprünglich in PR #99 bewusst AUS angelegt ("Der Cron-Job wird in diesem PR angelegt,
+// aber hinter einem Schalter, der standardmäßig AUS ist. Erst nach Sichtung des Testlaufs schalten
+// wir ihn ein."), Einzel-Trockenlauf gegen eine reale Bestellung (3076306514497211) bereits damals
+// bestätigt korrekt (siehe Kommentar oben). Dieser PR schaltet ihn scharf.
+export const ALIEXPRESS_TRACKING_SYNC_ENABLED = true;
 
 const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // alle 4 Stunden (Vorschlag aus dem Auftrag)
 const SYNC_PAUSE_MS = 1500; // Rate-Limiting zwischen AliExpress-Abrufen, analog runAvailabilityCheck()
@@ -90,6 +93,16 @@ async function loadTargetsFromDb(): Promise<TrackingSyncOrder[]> {
 
 // Schreibt NUR trackingNumber (+ shippedAt, P-100) — siehe Root-Cause-/Abweichungs-Kommentar oben,
 // warum hier bewusst kein carrier gesetzt wird.
+//
+// P2-Aufgabe 5 (Doppelschreib-Schutz): loadTargetsFromDb() filtert zwar schon beim Laden auf
+// "keine Sendungsnummer vorhanden", aber zwischen dem Laden (Start des Laufs) und diesem Schreiben
+// (nach Rate-Limit-Pausen, s. syncTrackingNumbers()) könnte theoretisch jemand die Nummer manuell
+// im Bestellungen-Tab eingetragen haben — reines Überschreiben nach ebayOrderId würde das dann
+// klammheimlich zurücksetzen. Deshalb hier dieselbe Leer/NULL-Bedingung zusätzlich ATOMAR in der
+// WHERE-Klausel dieses Updates, nicht nur beim Laden: das Update greift nur, wenn die Spalte zum
+// Zeitpunkt des Schreibens IMMER NOCH leer ist. trackingEbaySubmitted ist dafür NICHT die richtige
+// Bedingung (s. PR-Beschreibung) — dieses Flag beschreibt nur, ob eine BEREITS gespeicherte Nummer
+// erfolgreich an eBay übermittelt wurde, nicht ob gerade JETZT schon eine Nummer dasteht.
 async function writeTrackingNumberToDb(ebayOrderId: string, trackingNumber: string): Promise<void> {
   const { db } = await import('../db/index');
   const schema = await import('../db/schema');
@@ -98,7 +111,10 @@ async function writeTrackingNumberToDb(ebayOrderId: string, trackingNumber: stri
     trackingNumber,
     shippedAt: now,
     updatedAt: now,
-  }).where(eq(schema.orderNotes.ebayOrderId, ebayOrderId));
+  }).where(and(
+    eq(schema.orderNotes.ebayOrderId, ebayOrderId),
+    or(isNull(schema.orderNotes.trackingNumber), eq(schema.orderNotes.trackingNumber, ''))
+  ));
 }
 
 // Reine Orchestrierungs-Funktion, DI-testbar wie runAvailabilityCheck()/repairVariantPricesForProduct()

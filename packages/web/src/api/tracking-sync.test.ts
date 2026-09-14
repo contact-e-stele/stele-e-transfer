@@ -3,8 +3,8 @@ import { syncTrackingNumbers, ALIEXPRESS_TRACKING_SYNC_ENABLED, type TrackingSyn
 import type { AliOrderTrackingInfo } from './aliexpress-api';
 
 describe('ALIEXPRESS_TRACKING_SYNC_ENABLED', () => {
-  test('steht standardmäßig AUS (Auftrag: Schalter erst nach Sichtung des Testlaufs einschalten)', () => {
-    expect(ALIEXPRESS_TRACKING_SYNC_ENABLED).toBe(false);
+  test('P2 (2026-09-14): scharf geschaltet, nachdem der volle Trockenlauf gegen die echte DB gesichtet wurde', () => {
+    expect(ALIEXPRESS_TRACKING_SYNC_ENABLED).toBe(true);
   });
 });
 
