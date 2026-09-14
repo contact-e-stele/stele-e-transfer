@@ -55,16 +55,16 @@
 import { eq, and, isNotNull, or, isNull } from 'drizzle-orm';
 import { searchRecentPackageStatusEmails, type PackageStatusEmailMatch } from './gmail';
 
-// SCHALTER — bleibt auf `false`, bis der Trockenlauf gegen die echte DB UND das echte
-// Gmail-Postfach die erwarteten Zusteller-Nummern belegt (Auftrag P2 Teil 2, strikte Grenze).
-// In dieser Sandbox nicht möglich: kein GOOGLE_GMAIL_CLIENT_ID/_SECRET in .env (anders als
-// TURSO_DATABASE_URL/TURSO_AUTH_TOKEN, die vorhanden sind) — `getGmailAccessToken()` schlägt mit
-// `[Gmail] Token-Refresh fehlgeschlagen: 400 {"error":"invalid_request","error_description":
-// "Could not determine client ID from request."}` fehl (echte Fehlermeldung aus einem echten
-// Laufversuch, s. PR-Beschreibung). scripts/inspect-package-status-emails.ts steht bereit und
-// läuft NUR LESEND, sobald Gmail-Zugangsdaten verfügbar sind (lokal mit echten Credentials, oder
-// als einmaliger Render-Shell-Task in der Produktionsumgebung, die Gmail bereits nutzt).
-export const ALIEXPRESS_TRACKING_SYNC_ENABLED = false;
+// SCHALTER — P2 FINALE (2026-09-14): auf `true` gesetzt. Der Nutzer hat den echten Pagination-Fix
+// (PR #104) in der Render-Shell gegen das echte Gmail-Postfach laufen lassen
+// (scripts/inspect-package-status-emails.ts) — BEIDE im Auftrag benannten Referenzwerte wurden
+// exakt gefunden: 3076306514497211 → 00340434886289512140, 3075188992327211 → 00340434886283998797.
+// Vor dem Pagination-Fix fehlte der zweite, weil die Gmail-Ergebnisliste serverseitig abgeschnitten
+// wurde (s. PR #104). Aus dieser Sandbox war dieser Beweis weiterhin nicht selbst führbar (kein
+// GOOGLE_GMAIL_CLIENT_ID/_SECRET in .env — `[Gmail] Token-Refresh fehlgeschlagen: 400
+// {"error":"invalid_request","error_description":"Could not determine client ID from request."}`,
+// s. scripts/output/tracking-sync-final-preview.md) — der Nutzer hat ihn selbst erbracht.
+export const ALIEXPRESS_TRACKING_SYNC_ENABLED = true;
 
 const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // alle 4 Stunden (Vorschlag aus dem Auftrag)
 

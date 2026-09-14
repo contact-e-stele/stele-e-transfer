@@ -3,8 +3,8 @@ import { syncTrackingNumbers, ALIEXPRESS_TRACKING_SYNC_ENABLED, type TrackingSyn
 import type { PackageStatusEmailMatch } from './gmail';
 
 describe('ALIEXPRESS_TRACKING_SYNC_ENABLED', () => {
-  test('bleibt AUS, solange kein echter Trockenlauf gegen DB+Gmail die richtigen Zusteller-Nummern belegt hat', () => {
-    expect(ALIEXPRESS_TRACKING_SYNC_ENABLED).toBe(false);
+  test('P2 FINALE (2026-09-14): scharf geschaltet, nachdem der echte Gmail-Trockenlauf (Render-Shell, nach PR #104) beide Referenzwerte exakt belegt hat', () => {
+    expect(ALIEXPRESS_TRACKING_SYNC_ENABLED).toBe(true);
   });
 });
 
