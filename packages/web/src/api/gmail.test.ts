@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { parsePackageStatusEmail, looksLikeCarrierTrackingNumber } from './gmail';
+import { describe, expect, test, mock } from 'bun:test';
+import { parsePackageStatusEmail, looksLikeCarrierTrackingNumber, collectPaginatedIds } from './gmail';
 
 // P2 Teil 2 (2026-09-14) + Nachbesserung (2026-09-14, wortlautunabhängig): Subject-Zeilen und der
 // o_ids=-Parameter sind WÖRTLICH aus dem Auftrag übernommen — der Nutzer hat sie manuell aus
@@ -108,5 +108,62 @@ describe('looksLikeCarrierTrackingNumber', () => {
 
   test('AP-Werte als GANZES Wort (nicht rein numerisch) gelten NICHT als plausibel', () => {
     expect(looksLikeCarrierTrackingNumber('AP00843143208329')).toBe(false);
+  });
+});
+
+// P2-Teil-2-Nachbesserung (2026-09-14, Live-Fund in der Render-Shell): eine echte, im Postfach
+// nachweislich vorhandene Mail (04.08.2026, innerhalb des 90-Tage-Fensters) fehlte im Ergebnis —
+// der echte Lauf lieferte nur 26 Treffer, ältester davon 04.09.2026. Ursache: Gmail's
+// `messages.list` garantiert NICHT, dass eine Antwort bis zu `maxResults` Treffer enthält, auch
+// wenn mehr verfügbar sind — ohne Verfolgung von `nextPageToken` wurden ältere Treffer stillschweigend
+// abgeschnitten. collectPaginatedIds() ist die extrahierte, DI-testbare Akkumulations-Schleife
+// (s. gmail.ts) — hier gegen einen fingierten mehrseitigen Datensatz geprüft, ohne echten
+// Gmail-Zugriff (der ist aus dieser Sandbox ohnehin nicht möglich, s. andere Tests/PR-Beschreibung).
+describe('collectPaginatedIds — P2-Teil-2-Nachbesserung (Live-Fund: stillschweigend abgeschnittene Seiten)', () => {
+  test('sammelt IDs über mehrere Seiten hinweg, bis kein nextPageToken mehr da ist', async () => {
+    const fetchPage = mock(async (pageToken: string | undefined) => {
+      if (pageToken === undefined) return { ids: ['a', 'b'], nextPageToken: 'page-2' };
+      if (pageToken === 'page-2') return { ids: ['c'], nextPageToken: undefined };
+      throw new Error(`unerwarteter pageToken: ${pageToken}`);
+    });
+
+    const ids = await collectPaginatedIds(fetchPage);
+
+    expect(ids).toEqual(['a', 'b', 'c']);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  test('genau der beobachtete Live-Fund: erste Seite liefert 26 IDs UND ein nextPageToken → zweite Seite wird trotzdem abgerufen', async () => {
+    const page1Ids = Array.from({ length: 26 }, (_, i) => `msg-${i}`);
+    const fetchPage = mock(async (pageToken: string | undefined) => {
+      if (pageToken === undefined) return { ids: page1Ids, nextPageToken: 'older-page' };
+      return { ids: ['msg-04-08-2026'], nextPageToken: undefined }; // die vorher fehlende ältere Mail
+    });
+
+    const ids = await collectPaginatedIds(fetchPage);
+
+    expect(ids).toHaveLength(27);
+    expect(ids).toContain('msg-04-08-2026');
+  });
+
+  test('genau EINE Seite ohne nextPageToken → kein zweiter Aufruf (Normalfall, kein unnötiger Request)', async () => {
+    const fetchPage = mock(async () => ({ ids: ['a'], nextPageToken: undefined }));
+
+    const ids = await collectPaginatedIds(fetchPage);
+
+    expect(ids).toEqual(['a']);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  test('Obergrenze gegen Endlos-/Runaway-Lauf: bricht bei maxPages ab, auch wenn immer ein nextPageToken kommt', async () => {
+    const fetchPage = mock(async (pageToken: string | undefined) => ({
+      ids: [`id-${pageToken ?? 'first'}`],
+      nextPageToken: 'always-more', // simuliert einen Server, der nie aufhört
+    }));
+
+    const ids = await collectPaginatedIds(fetchPage, 3);
+
+    expect(fetchPage).toHaveBeenCalledTimes(3);
+    expect(ids).toHaveLength(3);
   });
 });

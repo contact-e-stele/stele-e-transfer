@@ -322,6 +322,42 @@ interface FetchedGmailMessage {
 // P2-Teil-2 Paket-Status/o_ids) — reiner Fetch+Parse-Auftrenn-Schritt, unterscheiden sich nur in
 // Suchbegriff und dem, was sie mit plainText/rawHtml jeweils anfangen (Grundgesetz Regel 8: die
 // Gmail-List-/Fetch-/Pagination-Logik existiert dadurch nur einmal).
+// P2-Teil-2-Nachbesserung (2026-09-14, Live-Fund in der Render-Shell): eine echte, im Postfach
+// nachweislich vorhandene Mail (04.08.2026, innerhalb des 90-Tage-Fensters) fehlte im Ergebnis —
+// der echte Lauf lieferte nur 26 Treffer, ältester davon 04.09.2026. Ursache: Gmail's
+// `messages.list` GARANTIERT NICHT, dass eine Antwort bis zu `maxResults` Treffer enthält, auch
+// wenn mehr verfügbar sind — sie kann früher abschneiden und stattdessen ein `nextPageToken`
+// zurückgeben, das man verfolgen MUSS, um an die übrigen (typischerweise älteren) Treffer zu
+// kommen (dokumentiertes Verhalten der Gmail API, keine Bun/Fetch-Eigenheit). Ohne Pagination
+// wurde dieses Token bisher ignoriert — das 90-Tage-Fenster war im `q`-Parameter korrekt gesetzt,
+// griff aber nie, weil die Ergebnisliste vorher (serverseitig) abgeschnitten wurde.
+const GMAIL_LIST_PAGE_SIZE = 50;
+// Obergrenze gegen einen Endlos-/Runaway-Lauf, falls Gmail z.B. dauerhaft ein nextPageToken
+// zurückgibt — 20 Seiten × 50 = bis zu 1000 Treffer, weit über dem bisher beobachteten Bereich
+// (26 Treffer/90 Tage) und großzügig genug für absehbares Mail-Aufkommen dieses Absenders.
+const GMAIL_LIST_MAX_PAGES = 20;
+
+// Reine, DI-testbare Paginierungs-Schleife — extrahiert (statt inline in fetchAliexpressMessages()),
+// damit der Terminierungs-/Akkumulations-Mechanismus (alle Seiten sammeln, bis kein nextPageToken
+// mehr da ist ODER die Obergrenze erreicht ist) unabhängig von einem echten Gmail-Zugriff getestet
+// werden kann (Grundgesetz Regel 2) — genau das war die Lücke, die den P2-Teil-2-Live-Fund
+// verursacht hat.
+export async function collectPaginatedIds(
+  fetchPage: (pageToken: string | undefined) => Promise<{ ids: string[]; nextPageToken?: string }>,
+  maxPages: number = GMAIL_LIST_MAX_PAGES
+): Promise<string[]> {
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  let page = 0;
+  do {
+    const result = await fetchPage(pageToken);
+    ids.push(...result.ids);
+    pageToken = result.nextPageToken;
+    page++;
+  } while (pageToken && page < maxPages);
+  return ids;
+}
+
 async function fetchAliexpressMessages(subjectQuery: string | undefined, days: number): Promise<FetchedGmailMessage[]> {
   const token = await getGmailAccessToken();
   if (!token) throw new Error('Gmail nicht verbunden');
@@ -332,17 +368,24 @@ async function fetchAliexpressMessages(subjectQuery: string | undefined, days: n
   const q = subjectQuery
     ? `from:transaction@notice.aliexpress.com subject:(${subjectQuery}) newer_than:${days}d`
     : `from:transaction@notice.aliexpress.com newer_than:${days}d`;
-  const listRes = await fetch(`${GMAIL_API}/messages?q=${encodeURIComponent(q)}&maxResults=50`, {
-    headers: { Authorization: `Bearer ${token}` },
+
+  const messageIds = await collectPaginatedIds(async (pageToken) => {
+    const params = new URLSearchParams({ q, maxResults: String(GMAIL_LIST_PAGE_SIZE) });
+    if (pageToken) params.set('pageToken', pageToken);
+    const listRes = await fetch(`${GMAIL_API}/messages?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!listRes.ok) {
+      const text = await listRes.text();
+      throw new Error(`Gmail-Suche fehlgeschlagen: ${listRes.status} ${text.slice(0, 300)}`);
+    }
+    const listData = await listRes.json() as { messages?: Array<{ id: string }>; nextPageToken?: string };
+    return { ids: (listData.messages ?? []).map(m => m.id), nextPageToken: listData.nextPageToken };
   });
-  if (!listRes.ok) {
-    const text = await listRes.text();
-    throw new Error(`Gmail-Suche fehlgeschlagen: ${listRes.status} ${text.slice(0, 300)}`);
-  }
-  const listData = await listRes.json() as { messages?: Array<{ id: string }> };
+
   const results: FetchedGmailMessage[] = [];
 
-  for (const { id } of listData.messages ?? []) {
+  for (const id of messageIds) {
     // NUR LESEND (P2 Teil 2, Auftrag): GET /messages/{id} liest die Mail, ändert nichts an ihr
     // (kein modify/trash-Aufruf irgendwo in diesem Modul) — Gmail markiert Nachrichten beim
     // reinen Lesen über die API NICHT automatisch als gelesen (anders als das Öffnen im Web-UI).
