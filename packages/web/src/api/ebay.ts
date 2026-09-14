@@ -141,6 +141,12 @@ export function getOAuthUrl(state: string): string {
       'https://api.ebay.com/oauth/api_scope/sell.inventory',
       'https://api.ebay.com/oauth/api_scope/sell.account',
       'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+      // P-81 Stufe 1 (2026-09-14): ergänzt, damit eine künftige Neu-Autorisierung durch den
+      // Nutzer den Marketing-Scope gleich mitgewährt — s. ausführliche Begründung bei
+      // getMarketingAccessToken() unten. Ändert NICHTS an getAccessToken() oben (bewusst
+      // unverändert, damit bestehende Funktionen nicht am fehlenden Scope des ALTEN Tokens
+      // scheitern können) — erst NACH einer Neu-Autorisierung nutzbar.
+      'https://api.ebay.com/oauth/api_scope/sell.marketing',
     ].join(' '),
     state,
   });
@@ -1948,6 +1954,110 @@ export async function getStoreCategories(token: string): Promise<StoreCategory[]
   });
   const text = await res.text();
   return parseGetStoreResponseXml(text);
+}
+
+// ─── P-81 Stufe 1: Anzeigentarif automatisch setzen (VORBEREITUNG — noch kein Schreib-Call) ────
+// Aufgabe 1: welcher OAuth-Scope? Recherchiert (developer.ebay.com, getCampaigns-Doku): die eBay
+// Sell Marketing API verlangt `sell.marketing.readonly` (nur lesen, z.B. getCampaigns) oder
+// `sell.marketing` (lesen UND schreiben, z.B. später Angebote einer Kampagne zuordnen/Gebote
+// ändern). Hat der aktuelle Token diesen Scope bereits? NEIN — per Code-Prüfung (nicht Vermutung)
+// belegt: getOAuthUrl() unten UND getAccessToken() oben fordern beim Autorisieren/Refresh exakt
+// drei Scopes an (`sell.inventory`, `sell.account`, `sell.fulfillment`) — `sell.marketing` war nie
+// Teil der Anfrage. Ein OAuth-Refresh-Token trägt nur die beim ursprünglichen Consent gewährten
+// Scopes; kein nachträglicher Code-Trick verschafft Zugriff, den der Nutzer nie erteilt hat.
+// **Der Nutzer muss die App einmal neu autorisieren** (GET /api/ebay/auth erneut durchlaufen) —
+// ausdrücklich gesagt, kein Workaround gebaut.
+//
+// getOAuthUrl() unten fordert ab jetzt zusätzlich die BREITERE `sell.marketing` (nicht nur
+// `.readonly`) an — bewusste Entscheidung (Grundgesetz Regel 6, hier offengelegt): so muss der
+// Nutzer nur EINMAL neu autorisieren, nicht ein zweites Mal, wenn eine spätere Stufe tatsächlich
+// schreibt (Kampagnen-Zuordnung/Gebote). `sell.marketing` deckt laut eBay-Scope-Modell auch
+// Lesezugriffe ab (die breitere Berechtigung schließt die engere ein).
+//
+// getAccessToken() oben wird HIER BEWUSST NICHT verändert: dieselbe Funktion wird von JEDEM
+// bestehenden Inventory-/Account-/Fulfillment-Aufruf verwendet. Würde man dort `sell.marketing` in
+// die Scope-Liste eines refresh_token-Grants aufnehmen, den der Nutzer nie gewährt hat, ist nicht
+// dokumentiert/hier nicht verifizierbar, ob eBay den gesamten Refresh dann ablehnt (Risiko: ALLE
+// bestehenden Funktionen brechen, bis neu autorisiert wurde) oder ihn still auf die gewährten
+// Scopes zurückstuft. Deshalb: eigene, ISOLIERTE Token-Funktion unten — schlägt nur der
+// Marketing-Teil fehl, wenn der Scope (noch) fehlt, nie der Rest der App.
+function getMarketingScopeList(): string[] {
+  return ['https://api.ebay.com/oauth/api_scope/sell.marketing'];
+}
+
+let cachedMarketingToken: { token: string; expiresAt: number } | null = null;
+
+export async function getMarketingAccessToken(): Promise<string> {
+  if (cachedMarketingToken && Date.now() < cachedMarketingToken.expiresAt - 60_000) {
+    return cachedMarketingToken.token;
+  }
+  const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch(`${BASE_URL}/identity/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${credentials}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: EBAY_REFRESH_TOKEN,
+      scope: getMarketingScopeList().join(' '),
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`eBay Marketing-OAuth failed: ${res.status} ${text}`);
+  }
+  const data = await res.json() as { access_token: string; expires_in: number };
+  cachedMarketingToken = { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return cachedMarketingToken.token;
+}
+
+// Aufgabe 2: existiert bereits eine Kampagne? Die Marketing API braucht eine Kampagne, BEVOR
+// einzelne Angebote beworben werden können — reiner Lesezugriff (GET), keine Kampagne wird hier
+// angelegt (Aufgabe 2 verlangt ausdrücklich: "sagen, nicht selbst anlegen").
+export interface EbayCampaign {
+  campaignId: string;
+  campaignName: string;
+  campaignStatus: string;        // z.B. RUNNING, PAUSED, ENDED, DRAFT
+  campaignTargetingType: string | null; // "Typ" laut Aufgabe 2 — z.B. PROMOTED_LISTINGS_ADVANCED
+  fundingModel: string | null;   // COST_PER_SALE | COST_PER_CLICK — zusätzliche Typ-Information
+}
+
+export function parseGetCampaignsResponse(json: unknown): EbayCampaign[] {
+  const data = json as {
+    campaigns?: Array<{
+      campaignId?: string;
+      campaignName?: string;
+      campaignStatus?: string;
+      campaignTargetingType?: string;
+      fundingStrategy?: { fundingModel?: string };
+    }>;
+  };
+  return (data.campaigns ?? [])
+    .filter(c => c.campaignId && c.campaignName)
+    .map(c => ({
+      campaignId: c.campaignId!,
+      campaignName: c.campaignName!,
+      campaignStatus: c.campaignStatus ?? 'UNBEKANNT',
+      campaignTargetingType: c.campaignTargetingType ?? null,
+      fundingModel: c.fundingStrategy?.fundingModel ?? null,
+    }));
+}
+
+export async function getCampaigns(token: string): Promise<EbayCampaign[]> {
+  const res = await fetch(`${BASE_URL}/sell/marketing/v1/ad_campaign`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`getCampaigns failed: ${res.status} ${text}`);
+  }
+  const data = await res.json();
+  return parseGetCampaignsResponse(data);
 }
 
 // ─── Bestellungen (Fulfillment API) ────────────────────────────────────────────

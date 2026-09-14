@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -166,5 +166,58 @@ describe('buildStoreCategoryBlock — Aufgabe 5: ohne Kategorie wird NICHTS mitg
 
   test('Kategorie hinterlegt → storeCategoryNames mit genau einem Pfad', () => {
     expect(buildStoreCategoryBlock('/Wohnen & Möbel/Sofas')).toEqual({ storeCategoryNames: ['/Wohnen & Möbel/Sofas'] });
+  });
+});
+
+// P-81 Stufe 1 (2026-09-14): Feldnamen laut eBay-Doku recherchiert (developer.ebay.com,
+// getCampaigns) — in dieser Sandbox nicht gegen die echte API verifizierbar (kein eBay-Zugriff,
+// s. PR-Beschreibung). Diese Fixture bildet die dokumentierte Struktur nach, ist keine echte
+// API-Antwort.
+describe('parseGetCampaignsResponse', () => {
+  test('echte Feldstruktur laut Doku — campaignId/campaignName/campaignStatus/campaignTargetingType/fundingStrategy.fundingModel', () => {
+    const response = {
+      campaigns: [
+        {
+          campaignId: '10123456789',
+          campaignName: 'Herbst-Kampagne',
+          campaignStatus: 'RUNNING',
+          campaignTargetingType: 'PROMOTED_LISTINGS_ADVANCED',
+          fundingStrategy: { fundingModel: 'COST_PER_SALE', biddingStrategy: 'FIXED' },
+        },
+      ],
+    };
+
+    expect(parseGetCampaignsResponse(response)).toEqual([
+      { campaignId: '10123456789', campaignName: 'Herbst-Kampagne', campaignStatus: 'RUNNING', campaignTargetingType: 'PROMOTED_LISTINGS_ADVANCED', fundingModel: 'COST_PER_SALE' },
+    ]);
+  });
+
+  test('keine Kampagnen → leeres Array, kein Absturz', () => {
+    expect(parseGetCampaignsResponse({ campaigns: [] })).toEqual([]);
+    expect(parseGetCampaignsResponse({})).toEqual([]);
+  });
+
+  test('fehlendes fundingStrategy/campaignTargetingType → null statt Absturz', () => {
+    const response = { campaigns: [{ campaignId: '1', campaignName: 'X', campaignStatus: 'DRAFT' }] };
+    expect(parseGetCampaignsResponse(response)).toEqual([
+      { campaignId: '1', campaignName: 'X', campaignStatus: 'DRAFT', campaignTargetingType: null, fundingModel: null },
+    ]);
+  });
+
+  test('Kampagne ohne campaignId/campaignName wird übersprungen statt mit leeren Feldern übernommen', () => {
+    const response = { campaigns: [{ campaignStatus: 'ENDED' }] };
+    expect(parseGetCampaignsResponse(response)).toEqual([]);
+  });
+
+  test('mehrere Kampagnen, gemischter Status', () => {
+    const response = {
+      campaigns: [
+        { campaignId: '1', campaignName: 'A', campaignStatus: 'RUNNING', fundingStrategy: { fundingModel: 'COST_PER_CLICK' } },
+        { campaignId: '2', campaignName: 'B', campaignStatus: 'PAUSED', fundingStrategy: { fundingModel: 'COST_PER_SALE' } },
+      ],
+    };
+    expect(parseGetCampaignsResponse(response).map(c => [c.campaignId, c.campaignStatus])).toEqual([
+      ['1', 'RUNNING'], ['2', 'PAUSED'],
+    ]);
   });
 });
