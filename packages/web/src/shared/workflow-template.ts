@@ -40,6 +40,17 @@
 // (git-Historie dieser Datei bestätigt: kein früherer Commit enthielt ihn). Sonst nichts
 // verändert, insbesondere Phase 0 unangetastet.
 //
+// P-79-Update (2026-09-14, nach Live-Fund: eine Instanz hat mit veraltetem Text eine
+// AliExpress-Bestellung gar nicht erst vorbereitet): vier gezielte Ergänzungen/Korrekturen,
+// nichts gelöscht — 1) neue "Vorrang-Regel" direkt unter Rolle: eine offene Bestellung geht vor
+// allem anderen; 2) Schritt 2 um "NICHT als Standardadresse setzen" ergänzt; 3) Schritt 3 um den
+// Hinweis auf den richtigen Shop/Anbieter ergänzt (Verwechslungsgefahr nach Alternativ-Suche);
+// 4) Schritt 5 von einer vagen "geschätzte Einfuhrabgaben"-Formulierung auf die exakte, mit
+// DEFAULT_PRICING_CONFIG (Teil 2B) übereinstimmende Gebührenformel umgestellt, plus neuer
+// IOSS-Hinweis: unter der IOSS-Grenze steckt der Zoll schon im AliExpress-Gesamtpreis — die
+// 4,00-EUR-Pauschale der App darf dann nicht zusätzlich abgezogen werden. Bestehende Struktur
+// (Rolle, Phase 0, Schritte 1-11, Effizienz-Hinweis) unverändert.
+//
 // Platzhalter, die beim Kopieren einer konkreten Bestellung ersetzt werden:
 //   {{ORDER_ID}}           — eBay-Bestellnummer
 //   {{EBAY_LISTING_URL}}   — Link zum eBay-Listing (oder Hinweistext, falls keiner bekannt)
@@ -57,6 +68,8 @@ export const WORKFLOW_TEMPLATE_PLACEHOLDERS = [
 export const DEFAULT_WORKFLOW_TEMPLATE = `## Rolle
 
 Du hilfst mir, eine offene Bestellung im Dropshipping-Geschäft **stele-e-transfer** bis kurz vor dem Kauf bei AliExpress vorzubereiten. Du analysierst, vergleichst und bereitest alles vor — **die eigentliche Zahlung löse ausschließlich ich selbst manuell aus.**
+
+**Vorrang-Regel (P-79):** Eine offene Bestellung hat immer Vorrang vor allem anderen — diese Vorbereitung zuerst zu Ende bringen, bevor Du Dich einer parallelen Anfrage widmest. (Hintergrund: am 14.09.2026 hat eine Instanz mit veraltetem Workflow-Text eine AliExpress-Bestellung dadurch gar nicht erst vorbereitet.)
 
 ⚠️ Bestell-Workflow – bitte Schritt für Schritt abarbeiten:
 
@@ -81,14 +94,14 @@ Am Ende kurz zusammenfassen, wie viele Bestellungen in welcher Kategorie stehen 
 
 ## Schritt 2 — Lieferadresse
 
-1. **NICHT die gespeicherte/zuletzt genutzte AliExpress-Adresse ungeprüft übernehmen** (stammt oft vom vorherigen Kunden) — für diesen Käufer neu anlegen bzw. gegen die Bestelldaten der App prüfen
+1. **NICHT die gespeicherte/zuletzt genutzte AliExpress-Adresse ungeprüft übernehmen** (stammt oft vom vorherigen Kunden) — für diesen Käufer neu anlegen bzw. gegen die Bestelldaten der App prüfen. Beim Neuanlegen **NICHT als Standardadresse setzen** (P-79) — sonst erbt der nächste Käufer wieder die falsche Adresse
 2. **Lieferadresse des Käufers exakt kopieren** (Straße, Hausnummer, PLZ, Ort, Land) — nicht abtippen, direkt kopieren, um Tippfehler zu vermeiden (siehe Adresse oben, zur eBay-Seite gegenprüfen)
 
 ## Schritt 3 — AliExpress-Lieferant analysieren
 
 1. Klick auf "Zum AliExpress-Artikel" → {{ALIEXPRESS_URL}}
 2. Falls die Seite beim Öffnen des Links nicht automatisch auf der bestellten Variante landet, aktiv im Bildauswahlbereich die passende Variante anklicken und den Preis danach neu prüfen — der Link führt nicht immer zuverlässig zur richtigen Variante.
-3. Prüf: aktueller Preis für die exakt richtige Variante (SKU-Abgleich, nicht nur Produkt)
+3. Prüf: aktueller Preis für die exakt richtige Variante beim **richtigen Shop/Anbieter** (SKU-Abgleich, nicht nur Produkt) — besonders nach einer Alternativ-Anbieter-Suche (Punkt 6 unten) leicht zu verwechseln (P-79)
 4. Verfügbare Stückzahl prüfen (steht meist bei der Mengenauswahl, z.B. "Nur noch X übrig"). Bei sehr niedrigem Bestand (weniger als 5 Stück) kurz Rücksprache halten, bevor gekauft wird.
 5. **Bewertungs-Check** (wie unsere App-Ampel): Sternebewertung + Anzahl Bewertungen — bei sehr wenigen/schlechten Bewertungen kurz mit mir Rücksprache halten
 6. Optional: 1-2 alternative Anbieter desselben Produkts suchen, falls spürbar günstiger UND ähnlich gut bewertet — sonst beim bekannten Lieferanten bleiben (Zuverlässigkeit vor kleiner Ersparnis)
@@ -105,7 +118,11 @@ Am Ende kurz zusammenfassen, wie viele Bestellungen in welcher Kategorie stehen 
 
 ## Schritt 5 — Margen-Gegenprüfung
 
-Aktueller AliExpress-Preis + Versandkosten + geschätzte Einfuhrabgaben aus dem AliExpress-Checkout (nicht nur Artikelpreis + Versand!) vs. eBay-Verkaufspreis ({{ORDER_TOTAL}}) — reicht die Marge noch (inkl. eBay-Gebühren, Zoll falls China-Versand)? **Falls die Marge zu gering/negativ ist → STOPP, mich informieren, bevor irgendetwas in den Warenkorb gelegt wird**
+Aktueller AliExpress-Preis + Versandkosten (Checkout-Summe, nicht nur Artikelpreis + Versand!) vs. eBay-Verkaufspreis ({{ORDER_TOTAL}}) minus eBay-Verkaufsgebühr (15% + 0,30 EUR) × 1,19 minus Anzeigentarif (5% × 1,19) — reicht die Marge noch? (Gleiche Formel wie die App-eigene Kalkulation, siehe DEFAULT_PRICING_CONFIG.)
+
+**Zoll/IOSS-Falle (P-79):** Bei Sendungen UNTER der IOSS-Grenze stecken die Einfuhrabgaben bereits im AliExpress-Gesamtpreis (Checkout-Summe) — die 4,00-EUR-Zollpauschale der App dann NICHT zusätzlich abziehen, sonst wird die Marge fälschlich zu niedrig gerechnet. Nur bei Sendungen ÜBER der IOSS-Grenze (Zoll separat fällig, nicht im AliExpress-Preis enthalten) kommt die Zollpauschale zusätzlich zum Tragen.
+
+**Falls die Marge zu gering/negativ ist → STOPP, mich informieren, bevor irgendetwas in den Warenkorb gelegt wird**
 
 ## Schritt 6 — STOPP vor der Zahlung
 
