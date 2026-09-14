@@ -187,4 +187,4 @@ Zusatzinfo des Nutzers übernommen (kein Codeänderungsbedarf): eine zweite Mail
 
 Tests: Frontend-Typecheck (`bun run typecheck`) grün. Server-Typecheck (`bun run typecheck:server`) grün. `bun test src/api/gmail.test.ts`: 20 pass, 0 fail, 26 expect(). Voller `bun test`: 142 pass, 2 fail — dieselben 2 vorbestehenden, unabhängigen `/tmp/aliexpress-test.db`-Sandbox-Fehler.
 Keine Änderung an `AUTO_PRICE_WRITE_ENABLED`/Preislogik, keine DB-Migration, keine Kundennachricht. Mails weiterhin nicht verändert/als gelesen markiert (nur zusätzliche `GET /messages`-Aufrufe für weitere Seiten, kein `modify`/`trash`). `ALIEXPRESS_TRACKING_SYNC_ENABLED` bleibt `false`.
-Branch: `fix/p2-teil2-gmail-pagination` (isoliertes Worktree unter `.worktrees/`, Basis `origin/main`). PR: (wird nach Erstellung eingetragen)
+Branch: `fix/p2-teil2-gmail-pagination` (isoliertes Worktree unter `.worktrees/`, Basis `origin/main`). PR: https://github.com/contact-e-stele/stele-e-transfer/pull/104 (Draft, nicht gemergt).
