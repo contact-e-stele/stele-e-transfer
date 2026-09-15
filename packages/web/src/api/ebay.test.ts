@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -219,5 +219,41 @@ describe('parseGetCampaignsResponse', () => {
     expect(parseGetCampaignsResponse(response).map(c => [c.campaignId, c.campaignStatus])).toEqual([
       ['1', 'RUNNING'], ['2', 'PAUSED'],
     ]);
+  });
+});
+
+describe('getRequestedScopeList', () => {
+  test('enthält alle vier benötigten Scopes inkl. sell.marketing', () => {
+    const scopes = getRequestedScopeList();
+    expect(scopes.some(s => s.endsWith('/sell.inventory'))).toBe(true);
+    expect(scopes.some(s => s.endsWith('/sell.account'))).toBe(true);
+    expect(scopes.some(s => s.endsWith('/sell.fulfillment'))).toBe(true);
+    expect(scopes.some(s => s.endsWith('/sell.marketing'))).toBe(true);
+  });
+});
+
+describe('hasScope', () => {
+  const granted = [
+    'https://api.ebay.com/oauth/api_scope/sell.inventory',
+    'https://api.ebay.com/oauth/api_scope/sell.account',
+    'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+    'https://api.ebay.com/oauth/api_scope/sell.marketing',
+  ].join(' ');
+
+  test('erkennt vorhandenen Scope', () => {
+    expect(hasScope(granted, 'sell.marketing')).toBe(true);
+  });
+
+  test('erkennt fehlenden Scope (alter Token vor P-81)', () => {
+    const oldGrant = [
+      'https://api.ebay.com/oauth/api_scope/sell.inventory',
+      'https://api.ebay.com/oauth/api_scope/sell.account',
+      'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+    ].join(' ');
+    expect(hasScope(oldGrant, 'sell.marketing')).toBe(false);
+  });
+
+  test('leerer Scope-String → immer false', () => {
+    expect(hasScope('', 'sell.marketing')).toBe(false);
   });
 });

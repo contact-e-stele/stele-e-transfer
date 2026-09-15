@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -517,12 +517,41 @@ const app = new Hono()
     if (!code) return c.json({ error: 'Kein Code' }, 400);
     try {
       const tokens = await exchangeCodeForToken(code);
-      // In Produktion: refresh_token in DB/Env speichern
-      console.log('eBay refresh token:', tokens.refresh_token);
-      return c.json({ message: 'Erfolgreich! Refresh Token in Server-Logs.', expires_in: tokens.expires_in }, 200);
+      const grantedScopes = getRequestedScopeList().join(' ');
+      await saveEbayRefreshToken(tokens.refresh_token, grantedScopes);
+      return c.html(`
+        <html><body style="font-family:sans-serif;padding:40px;background:#111;color:#fff">
+          <h2 style="color:#4ADE80">✅ eBay erfolgreich neu verbunden!</h2>
+          <p>Der neue Refresh Token wurde gespeichert und wird ab sofort verwendet.</p>
+          <br>
+          <a href="/einstellungen" style="color:#4ADE80;font-weight:bold">→ Zurück zu den Einstellungen</a>
+        </body></html>
+      `);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
+  })
+
+  // ─── eBay Verbindungsstatus (für Einstellungen-UI) ────────────────────────────
+  .get('/ebay/status', async (c) => {
+    let dbToken: string | null = null;
+    let scopeValue: string | null = null;
+    let updatedAt: string | null = null;
+    try {
+      const { db: database } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const tokenRow = await database.select().from(appSettings).where(eq(appSettings.key, 'ebay_refresh_token')).get();
+      const scopeRow = await database.select().from(appSettings).where(eq(appSettings.key, 'ebay_refresh_token_scope')).get();
+      if (tokenRow?.value) { dbToken = tokenRow.value; updatedAt = tokenRow.updatedAt ?? null; }
+      if (scopeRow?.value) scopeValue = scopeRow.value;
+    } catch { /* DB nicht verfügbar */ }
+
+    const source: 'db' | 'env' | 'none' = dbToken ? 'db' : process.env.EBAY_REFRESH_TOKEN ? 'env' : 'none';
+    const hasRefreshToken = source !== 'none';
+    const scopes = scopeValue ? scopeValue.split(/\s+/).map(s => s.split('/').pop() ?? s) : null;
+    const hasMarketingScope = scopeValue ? hasScope(scopeValue, 'sell.marketing') : false;
+
+    return c.json({ connected: hasRefreshToken, hasRefreshToken, scopes, hasMarketingScope, source, updatedAt }, 200);
   })
 
   // ─── P-82: Shop-Kategorien des eigenen eBay-Shops abrufen (Server-Cache 1h) ─────────────────

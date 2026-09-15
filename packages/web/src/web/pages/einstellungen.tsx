@@ -8,6 +8,15 @@ interface AliStatus {
   hasRefreshToken?: boolean;
 }
 
+interface EbayStatus {
+  connected: boolean;
+  hasRefreshToken: boolean;
+  scopes: string[] | null;
+  hasMarketingScope: boolean;
+  source: "db" | "env" | "none";
+  updatedAt: string | null;
+}
+
 function formatExpiry(ts: number | null | undefined): { label: string; urgent: boolean; expired: boolean } {
   if (!ts) return { label: "Unbekannt", urgent: false, expired: false };
   const now = Date.now();
@@ -26,6 +35,7 @@ export default function Einstellungen() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [driveConnected, setDriveConnected] = useState<boolean | null>(null);
+  const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null);
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
   // P-94: zentral gespeicherte, editierbare Vorlage für den "Workflow kopieren"-Text
   const [workflowTemplate, setWorkflowTemplate] = useState<string>("");
@@ -82,12 +92,20 @@ export default function Einstellungen() {
       .then(r => r.json())
       .then(d => setGmailConnected((d as { connected?: boolean }).connected ?? false))
       .catch(() => setGmailConnected(false));
+    fetch("/api/ebay/status", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setEbayStatus(d as EbayStatus))
+      .catch(() => setEbayStatus(null));
   }, []);
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
 
   const handleAliConnect = () => {
     window.location.href = "/api/aliexpress/auth";
+  };
+
+  const handleEbayConnect = () => {
+    window.location.href = "/api/ebay/auth";
   };
 
   const handleRefresh = async () => {
@@ -258,7 +276,58 @@ export default function Einstellungen() {
           Für Listings, Preisupdate und Bestellungen. Client:{" "}
           <code style={{ background: "#F1F5F9", padding: "1px 6px", borderRadius: 4 }}>steleetr-SETDSAPP-PRD</code>
         </p>
-        <span style={badge(true)}>✅ Verbunden (Refresh Token gesetzt)</span>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 10 }}>
+          <span style={badge(ebayStatus?.connected ?? false)}>
+            {ebayStatus?.connected ? "✅ Verbunden" : "❌ Nicht verbunden"}
+          </span>
+        </div>
+
+        {ebayStatus?.scopes ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {ebayStatus.scopes.map(scope => {
+              const isMarketing = scope === "sell.marketing";
+              const ok = !isMarketing || ebayStatus.hasMarketingScope;
+              return (
+                <span key={scope} style={{
+                  fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 12,
+                  background: ok ? "#DCFCE7" : "#FEF2F2",
+                  color: ok ? "#166534" : "#991B1B",
+                }}>
+                  {scope}{isMarketing ? (ok ? " ✓" : " ✗") : ""}
+                </span>
+              );
+            })}
+            {!ebayStatus.hasMarketingScope && !ebayStatus.scopes.includes("sell.marketing") && (
+              <span style={{
+                fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 12,
+                background: "#FEF2F2", color: "#991B1B",
+              }}>
+                sell.marketing ✗ (fehlt)
+              </span>
+            )}
+          </div>
+        ) : ebayStatus?.hasRefreshToken ? (
+          <div style={{
+            marginBottom: 10, background: "#FFF7ED", border: "1px solid #FED7AA",
+            borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#92400E",
+          }}>
+            ⚠️ <strong>Marketing-Zugriff vermutlich nicht vorhanden — bitte neu verbinden.</strong> Für diesen
+            Token (aus einer Umgebungsvariable, vor dieser Funktion gesetzt) sind die Scopes unbekannt.
+          </div>
+        ) : null}
+
+        <button
+          onClick={handleEbayConnect}
+          style={{
+            background: ebayStatus?.connected ? "#F1F5F9" : "#D97706",
+            color: ebayStatus?.connected ? "#64748B" : "#fff",
+            border: "none", borderRadius: 8, padding: "8px 18px",
+            fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}
+        >
+          {ebayStatus?.connected ? "Neu verbinden" : "Mit eBay verbinden"}
+        </button>
       </div>
 
       {/* ScrapingAnt */}

@@ -1,6 +1,7 @@
 // eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
+import { eq } from 'drizzle-orm';
 import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 
 // Aspekte, die NIE als eBay-Artikelmerkmal/Pflichtfeld gesetzt werden UND (P-27/P-28-Fix,
@@ -15,7 +16,6 @@ export const NON_VARIATION_ASPECTS = new Set(['Ships From', 'Versandort', 'Herst
 
 const EBAY_CLIENT_ID = process.env.EBAY_CLIENT_ID ?? '';
 const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET ?? '';
-const EBAY_REFRESH_TOKEN = process.env.EBAY_REFRESH_TOKEN ?? '';
 const EBAY_SANDBOX = process.env.EBAY_SANDBOX === 'true';
 
 const BASE_URL = EBAY_SANDBOX
@@ -63,6 +63,7 @@ export async function getAccessToken(): Promise<string> {
   }
 
   const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+  const refreshToken = await getStoredEbayRefreshToken() ?? '';
 
   const res = await fetch(`${BASE_URL}/identity/v1/oauth2/token`, {
     method: 'POST',
@@ -72,7 +73,7 @@ export async function getAccessToken(): Promise<string> {
     },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      refresh_token: EBAY_REFRESH_TOKEN,
+      refresh_token: refreshToken,
       scope: [
         'https://api.ebay.com/oauth/api_scope/sell.inventory',
         'https://api.ebay.com/oauth/api_scope/sell.account',
@@ -128,6 +129,30 @@ export async function endListing(itemId: string, token: string): Promise<{ ok: b
   return { ok: true };
 }
 
+// ─── OAuth-Scopes für die Neu-Autorisierung ───────────────────────────────────
+// Single Source of Truth: getOAuthUrl() UND der Callback (index.ts) verwenden dieselbe
+// Liste. eBays Consent-Screen ist alles-oder-nichts — kommt der Callback mit einem Code
+// zurück, wurde exakt diese Liste gewährt. Deshalb speichert der Callback nach
+// erfolgreichem Exchange (siehe saveEbayRefreshToken unten) genau diese Liste als
+// "gewährter Scope", statt ihn zu erraten.
+export function getRequestedScopeList(): string[] {
+  return [
+    'https://api.ebay.com/oauth/api_scope/sell.inventory',
+    'https://api.ebay.com/oauth/api_scope/sell.account',
+    'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+    // P-81 Stufe 1 (2026-09-14): ergänzt, damit eine künftige Neu-Autorisierung durch den
+    // Nutzer den Marketing-Scope gleich mitgewährt.
+    'https://api.ebay.com/oauth/api_scope/sell.marketing',
+  ];
+}
+
+// Prüft, ob scopeName (z.B. "sell.marketing") in einem space-separierten Scope-String
+// (voll-qualifizierte URLs) enthalten ist.
+export function hasScope(scopeString: string, scopeName: string): boolean {
+  if (!scopeString) return false;
+  return scopeString.split(/\s+/).some(s => s === scopeName || s.endsWith(`/${scopeName}`));
+}
+
 // ─── OAuth URL generieren (für User-Auth) ─────────────────────────────────────
 
 export function getOAuthUrl(state: string): string {
@@ -137,20 +162,37 @@ export function getOAuthUrl(state: string): string {
     client_id: EBAY_CLIENT_ID,
     redirect_uri: process.env.EBAY_REDIRECT_URI ?? '',
     response_type: 'code',
-    scope: [
-      'https://api.ebay.com/oauth/api_scope/sell.inventory',
-      'https://api.ebay.com/oauth/api_scope/sell.account',
-      'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
-      // P-81 Stufe 1 (2026-09-14): ergänzt, damit eine künftige Neu-Autorisierung durch den
-      // Nutzer den Marketing-Scope gleich mitgewährt — s. ausführliche Begründung bei
-      // getMarketingAccessToken() unten. Ändert NICHTS an getAccessToken() oben (bewusst
-      // unverändert, damit bestehende Funktionen nicht am fehlenden Scope des ALTEN Tokens
-      // scheitern können) — erst NACH einer Neu-Autorisierung nutzbar.
-      'https://api.ebay.com/oauth/api_scope/sell.marketing',
-    ].join(' '),
+    scope: getRequestedScopeList().join(' '),
     state,
   });
   return `${AUTH_URL}/oauth2/authorize?${params.toString()}`;
+}
+
+// ─── eBay Refresh-Token: DB-gestützt (nach Neu-Autorisierung), Env als Fallback ───────────────
+// Identisches Muster zu getAliAccessToken()/saveAliTokens() in aliexpress-api.ts — DB hat
+// Vorrang, weil sie den zuletzt per OAuth erhaltenen Token trägt; die Env-Variable bleibt
+// Fallback für den Fall, dass nie neu autorisiert wurde. Wird NIE gelöscht, nur überschrieben,
+// und nur nach einem erfolgreichen Code-Exchange (siehe Aufrufer in index.ts) — ein
+// fehlgeschlagener Exchange erreicht diese Funktion gar nicht, der alte Token bleibt aktiv.
+export async function getStoredEbayRefreshToken(): Promise<string | null> {
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'ebay_refresh_token')).get();
+    if (row?.value) return row.value;
+  } catch { /* DB nicht verfügbar */ }
+  if (process.env.EBAY_REFRESH_TOKEN) return process.env.EBAY_REFRESH_TOKEN;
+  return null;
+}
+
+export async function saveEbayRefreshToken(refreshToken: string, grantedScopes: string): Promise<void> {
+  const { db } = await import('../db/index');
+  const { appSettings } = await import('../db/schema');
+  const now = new Date().toISOString();
+  await db.insert(appSettings).values({ key: 'ebay_refresh_token', value: refreshToken, updatedAt: now })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: refreshToken, updatedAt: now } });
+  await db.insert(appSettings).values({ key: 'ebay_refresh_token_scope', value: grantedScopes, updatedAt: now })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: grantedScopes, updatedAt: now } });
 }
 
 // Authorization Code → Refresh Token tauschen
@@ -1992,6 +2034,7 @@ export async function getMarketingAccessToken(): Promise<string> {
     return cachedMarketingToken.token;
   }
   const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+  const refreshToken = await getStoredEbayRefreshToken() ?? '';
   const res = await fetch(`${BASE_URL}/identity/v1/oauth2/token`, {
     method: 'POST',
     headers: {
@@ -2000,7 +2043,7 @@ export async function getMarketingAccessToken(): Promise<string> {
     },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      refresh_token: EBAY_REFRESH_TOKEN,
+      refresh_token: refreshToken,
       scope: getMarketingScopeList().join(' '),
     }),
   });
