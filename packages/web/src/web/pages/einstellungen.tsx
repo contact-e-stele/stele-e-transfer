@@ -298,6 +298,14 @@ export default function Einstellungen() {
                 </span>
               );
             })}
+            {!ebayStatus.hasMarketingScope && !ebayStatus.scopes.includes("sell.marketing") && (
+              <span style={{
+                fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 12,
+                background: "#FEF2F2", color: "#991B1B",
+              }}>
+                sell.marketing ✗ (fehlt)
+              </span>
+            )}
           </div>
         ) : ebayStatus?.hasRefreshToken ? (
           <div style={{
