@@ -6,12 +6,12 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
-import { matchRegulatedCategories, type RegulatedCategory } from "../../shared/regulated-categories";
+import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
-  TrendingDown, Save, Eye, EyeOff, X, Plus, Trash2,
+  TrendingDown, Save, Eye, EyeOff, X, Plus, Trash2, Unlock,
 } from "lucide-react";
 
 // Gruppen-Namen die KEINE echten Produktvarianten sind → aus eBay-Listing herausfiltern
@@ -272,6 +272,9 @@ export default function Lieferanten() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
   const [saveResult, setSaveResult] = useState<{ id?: number; error?: string } | null>(null);
+  const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideReasonText, setOverrideReasonText] = useState("");
   const [rawAliText, setRawAliText] = useState("");
   const [rawGenLoading, setRawGenLoading] = useState(false);
   const [rawGenError, setRawGenError] = useState("");
@@ -466,10 +469,15 @@ export default function Lieferanten() {
   });
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
 
-  // ─── P-66 Schritt 2: Compliance-Gate für regulierte Produktgruppen ────────
-  const regulatedMatches: RegulatedCategory[] = product
-    ? matchRegulatedCategories([product.title, editableTitle, product.description ?? ''].join(' '))
+  // ─── P-66 Schritt 2/3: Compliance-Gate für regulierte Produktgruppen ──────
+  // Schritt 3: matchRegulatedCategoriesDetailed() statt matchRegulatedCategories() — liefert
+  // zusätzlich Stichwort + Feld pro Treffer, für die Klartext-Meldung und den Übersteuerungs-
+  // Dialog. regulatedMatches bleibt als reine Kategorien-Liste erhalten (bestehende Nutzung
+  // unten unverändert).
+  const regulatedMatchesDetailed: RegulatedCategoryMatch[] = product
+    ? matchRegulatedCategoriesDetailed({ title: [product.title, editableTitle].join(' '), description: product.description ?? '' })
     : [];
+  const regulatedMatches: RegulatedCategory[] = regulatedMatchesDetailed.map(m => m.category);
   const matchedSupplier = product ? findMatchingSupplier(product.seller, trustedSuppliers) : undefined;
   const supplierVerified = matchedSupplier?.complianceStatus === 'geprueft';
   const complianceBlocked = regulatedMatches.length > 0 && !supplierVerified;
@@ -630,9 +638,9 @@ export default function Lieferanten() {
   };
 
   // ─── Speichern in DB ──────────────────────────────────────────────────────
-  const handleSave = async () => {
+  const handleSave = async (override?: { reason: string; reasonText: string }) => {
     if (!result || !product) return;
-    if (complianceBlocked) return; // P-66: harte Sperre, kein Bypass
+    if (complianceBlocked && !override) return; // P-66: harte Sperre bleibt Standard, nur expliziter Override umgeht sie
     setSaveLoading(true);
     setSaveResult(null);
     try {
@@ -669,6 +677,15 @@ export default function Lieferanten() {
           ...(selectedStoreCategoryId ? {
             storeCategoryId: selectedStoreCategoryId,
             storeCategoryName: storeCategories.find(c => c.categoryId === selectedStoreCategoryId)?.fullPath,
+          } : {}),
+          // P-66 Schritt 3: nur mitschicken, wenn der Nutzer den Bestätigungsdialog durchlaufen hat.
+          ...(override ? {
+            complianceOverride: true,
+            complianceOverrideReason: override.reason,
+            complianceOverrideReasonText: override.reason === 'sonstiges' ? override.reasonText : null,
+            complianceOverrideCategory: regulatedMatchesDetailed.map(m => m.category.labelDe).join(', '),
+            complianceOverrideKeyword: regulatedMatchesDetailed.map(m => m.keyword).join(', '),
+            complianceOverrideField: regulatedMatchesDetailed.map(m => m.field).join(', '),
           } : {}),
         }),
       });
@@ -2155,7 +2172,7 @@ export default function Lieferanten() {
                         Dieses Produkt gehört möglicherweise zu einer regulierten Kategorie. Lieferant muss erst im Lieferanten-Tab als geprüft markiert werden.
                       </p>
                       <p style={{ margin: "4px 0 0", fontSize: 11, color: "#B91C1C" }}>
-                        Erkannt als: {regulatedMatches.map(m => m.labelDe).join(', ')} — automatische Stichwort-Erkennung, keine rechtsverbindliche Prüfung.
+                        Erkannt als: {regulatedMatchesDetailed.map(m => `${m.category.labelDe} („${m.keyword}" im ${m.field === 'title' ? 'Titel' : 'Beschreibung'})`).join(', ')} — automatische Stichwort-Erkennung, keine rechtsverbindliche Prüfung.
                         {matchedSupplier
                           ? <> Lieferant „{matchedSupplier.shopName}" ist aktuell: <strong>{matchedSupplier.complianceStatus}</strong>.</>
                           : <> Erkannter Verkäufer laut Scrape: <strong>„{product?.seller || '(kein Name erkannt)'}"</strong> — dafür existiert kein Eintrag in „Meine EU-Shops" (P-109: Abgleich prüft Groß-/Kleinschreibung, Leerzeichen und Teilstring, aber keine völlig anderen Schreibweisen). Bitte Schreibweise in „Meine EU-Shops" mit dem hier angezeigten Namen abgleichen oder neu anlegen.</>}
@@ -2165,8 +2182,23 @@ export default function Lieferanten() {
                 </div>
               )}
 
+              {complianceBlocked && (
+                <button
+                  onClick={() => setOverrideDialogOpen(true)}
+                  style={{
+                    width: "100%", padding: "11px 0", borderRadius: 12, marginBottom: 14,
+                    border: "1.5px solid #FCD34D", background: "#FFFBEB", color: "#92400E",
+                    fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  }}
+                >
+                  <Unlock size={15} />
+                  Manuell übersteuern und speichern
+                </button>
+              )}
+
               <button
-                onClick={handleSave}
+                onClick={() => handleSave()}
                 disabled={saveLoading || !!saveResult?.id || complianceBlocked}
                 style={{
                   width: "100%", padding: "13px 0", borderRadius: 12,
@@ -2183,6 +2215,76 @@ export default function Lieferanten() {
               </button>
               {saveResult?.error && (
                 <p style={{ margin: "8px 0 0", color: "#DC2626", fontSize: 13, fontWeight: 600 }}>Fehler: {saveResult.error}</p>
+              )}
+
+              {overrideDialogOpen && (
+                <div style={{
+                  position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)",
+                  display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20,
+                }}>
+                  <div style={{
+                    background: "#fff", borderRadius: 20, padding: 28, maxWidth: 480, width: "100%",
+                    boxShadow: "0 12px 48px rgba(0,0,0,0.25)", maxHeight: "90vh", overflowY: "auto",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                      <span style={{ fontWeight: 800, fontSize: 16, color: "#0F172A" }}>Blockierung manuell übersteuern</span>
+                      <button onClick={() => setOverrideDialogOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+                        <X size={18} color="#64748B" />
+                      </button>
+                    </div>
+
+                    <p style={{ margin: "0 0 10px", fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
+                      Erkannt als: <strong>{regulatedMatchesDetailed.map(m => `${m.category.labelDe} („${m.keyword}" im ${m.field === 'title' ? 'Titel' : 'Beschreibung'})`).join(', ')}</strong>
+                    </p>
+                    <p style={{ margin: "0 0 16px", fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
+                      Erkannter Verkäufername laut Scrape: <strong>„{product?.seller || '(kein Name erkannt)'}"</strong>
+                    </p>
+
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#0F172A", marginBottom: 6 }}>
+                      Warum ist die Einstufung falsch?
+                    </label>
+                    <select
+                      value={overrideReason}
+                      onChange={e => setOverrideReason(e.target.value)}
+                      style={{
+                        width: "100%", padding: "10px 12px", fontSize: 13, borderRadius: 10,
+                        border: "2px solid #E2E8F0", marginBottom: 10, fontFamily: "inherit", boxSizing: "border-box",
+                      }}
+                    >
+                      <option value="">Bitte wählen…</option>
+                      {COMPLIANCE_OVERRIDE_REASONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+
+                    {overrideReason === "sonstiges" && (
+                      <textarea
+                        value={overrideReasonText}
+                        onChange={e => setOverrideReasonText(e.target.value)}
+                        placeholder="Begründung eintragen…"
+                        style={{
+                          width: "100%", minHeight: 70, padding: "10px 12px", fontSize: 13, borderRadius: 10,
+                          border: "2px solid #E2E8F0", marginBottom: 10, fontFamily: "inherit", boxSizing: "border-box", resize: "vertical",
+                        }}
+                      />
+                    )}
+
+                    <button
+                      onClick={() => {
+                        handleSave({ reason: overrideReason, reasonText: overrideReasonText });
+                        setOverrideDialogOpen(false);
+                      }}
+                      disabled={!overrideReason || (overrideReason === "sonstiges" && !overrideReasonText.trim())}
+                      style={{
+                        width: "100%", padding: "13px 0", borderRadius: 12, border: "none", marginTop: 6,
+                        background: (!overrideReason || (overrideReason === "sonstiges" && !overrideReasonText.trim())) ? "#E2E8F0" : "#0F172A",
+                        color: (!overrideReason || (overrideReason === "sonstiges" && !overrideReasonText.trim())) ? "#94A3B8" : "#C9A227",
+                        fontWeight: 700, fontSize: 14, cursor: (!overrideReason || (overrideReason === "sonstiges" && !overrideReasonText.trim())) ? "not-allowed" : "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Verstanden, trotzdem speichern
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
