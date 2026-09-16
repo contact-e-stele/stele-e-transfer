@@ -1943,7 +1943,20 @@ const app = new Hono()
         shippingCost?: number;
         storeCategoryId?: string;
         storeCategoryName?: string;
+        complianceOverride?: boolean;
+        complianceOverrideReason?: string;
+        complianceOverrideReasonText?: string | null;
+        complianceOverrideCategory?: string;
+        complianceOverrideKeyword?: string;
+        complianceOverrideField?: string;
       };
+
+      // P-66 Schritt 3: SKU früh berechnen (wird für Insert UND für das Override-Log gebraucht) —
+      // body.asin ist nur eine synthetische ID (ali_<timestamp>), NICHT die echte AliExpress-ID.
+      const aliexpressItemId = (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null;
+      if (body.complianceOverride) {
+        console.log(`[Compliance-Override] SKU=${aliexpressItemId ?? '(unbekannt)'} Kategorie=${body.complianceOverrideCategory ?? '-'} Stichwort="${body.complianceOverrideKeyword ?? '-'}" Feld=${body.complianceOverrideField ?? '-'} Grund=${body.complianceOverrideReason ?? '-'}`);
+      }
 
       // Titel + Beschreibung parallel generieren (schneller)
       const specs = body.specs ?? {};
@@ -1977,6 +1990,15 @@ const app = new Hono()
           shippingCost: body.shippingCost ?? undefined,
           storeCategoryId: body.storeCategoryId ?? undefined,
           storeCategoryName: body.storeCategoryName ?? undefined,
+          ...(body.complianceOverride ? {
+            complianceOverride: true,
+            complianceOverrideAt: new Date().toISOString(),
+            complianceOverrideReason: body.complianceOverrideReason ?? undefined,
+            complianceOverrideReasonText: body.complianceOverrideReasonText ?? undefined,
+            complianceOverrideCategory: body.complianceOverrideCategory ?? undefined,
+            complianceOverrideKeyword: body.complianceOverrideKeyword ?? undefined,
+            complianceOverrideField: body.complianceOverrideField ?? undefined,
+          } : {}),
           updatedAt: new Date().toISOString(),
         }).where(eq(schema.products.asin, body.asin));
         return c.json({ id: existing[0].id, updated: true }, 200);
@@ -2007,7 +2029,14 @@ const app = new Hono()
         storeCategoryId: body.storeCategoryId ?? null,
         storeCategoryName: body.storeCategoryName ?? null,
         ebayStatus: 'none',
-        aliexpressItemId: (body.sourceUrl ?? body.amazonUrl ?? '').match(/\/item\/(\d+)\.html/)?.[1] ?? null,
+        aliexpressItemId,
+        complianceOverride: body.complianceOverride ?? false,
+        complianceOverrideAt: body.complianceOverride ? new Date().toISOString() : null,
+        complianceOverrideReason: body.complianceOverrideReason ?? null,
+        complianceOverrideReasonText: body.complianceOverrideReasonText ?? null,
+        complianceOverrideCategory: body.complianceOverrideCategory ?? null,
+        complianceOverrideKeyword: body.complianceOverrideKeyword ?? null,
+        complianceOverrideField: body.complianceOverrideField ?? null,
       }).returning({ id: schema.products.id });
       return c.json({ id: result[0].id, created: true }, 201);
     } catch (e) {
