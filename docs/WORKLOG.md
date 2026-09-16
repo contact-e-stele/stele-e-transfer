@@ -296,3 +296,76 @@ Fehlte `order.localNote.carrier` (null), brach die Funktion HIER still ab — ke
 **Tests:** Frontend-Typecheck (`bun run typecheck`): grün, keine Ausgabe. Server-Typecheck (`bun run typecheck:server`): grün, keine Ausgabe. Voller `bun test`: 160 pass, 2 fail, 2 errors — VORBESTEHEND (Baseline vor dieser Änderung identisch gemessen, s.u.), Ursache `ConnectionFailed("Unable to open connection to local database /tmp/aliexpress-test.db: 14")`, ein Windows-Pfadproblem der lokalen Test-Fixtures, unabhängig von diesem Fix (betroffene Dateien `price-monitor.test.ts`/`variant-sales.test.ts`/zwei Fälle in `tracking-sync.test.ts`, keine davon in diesem PR geändert). Kein neuer Test geschrieben: die Guard-Logik ist eng an React-Component-State (`setEditingTracking`/`showToast`) gekoppelt, und dieses Repo hat für UI-Komponenten keine bestehende Testinfrastruktur (`@testing-library/react` nicht installiert, alle 10 bestehenden `*.test.ts`-Dateien testen ausschließlich reine Backend-/API-Funktionen) — Verifikation stattdessen durch Code-Nachweis (s.o.) + Live-Test-Anleitung für den Nutzer.
 Keine Änderung an `AUTO_PRICE_WRITE_ENABLED`/`ALIEXPRESS_TRACKING_SYNC_ENABLED`/Preislogik (per `git diff origin/main` bestätigt: nur `bestellungen.tsx` geändert). Keine DB-Migration. Keine Kundennachricht aus diesem PR versendet (der bestehende, unveränderte Thank-You-Entwurf in `bestellungen.tsx` bleibt reiner Kopier-Text wie zuvor, s. P-86-Kommentar dort).
 Branch: `worktree-fix-ebay-retry-button` (isoliertes Worktree, Basis `origin/main`). PR: https://github.com/contact-e-stele/stele-e-transfer/pull/109 (Draft, nicht gemergt).
+
+## 2026-09-16 - Claude Sonnet 5
+
+**Claim:** IMPORT-GATE: manuelle Uebersteuerung + Klartext-Hinweis (PRIO 1). Live-Fund: Import von
+https://de.aliexpress.com/item/1005009603522097.html (Katzen-Futterlabyrinth) wird beim Speichern
+blockiert ("Toy" im Titel → Spielzeug erkannt, kein Verkaeufername erkannt → Nutzer kann Lieferant
+nicht freigeben, sitzt fest). Branch `feat/p66-import-gate-uebersteuerung` (isoliertes Worktree,
+Basis `origin/main`, neu von main statt vom aktuellen `fix/p69-p74-versand-rundung`-Arbeits-
+verzeichnis, da dort unzusammenhaengende uncommitted Aenderungen lagen — Nutzer bestaetigte "neuer
+Branch von main"). Aufgabe: Button "Manuell uebersteuern und speichern" unter der Blockier-
+Meldung, Bestaetigungsdialog (Klartext-Grund inkl. erkanntem Verkaeufernamen, Pflicht-Dropdown mit
+4 Begruendungen, "Verstanden, trotzdem speichern"), Entscheidung additiv in der DB speichern
+(uebersteuert ja/nein, Zeitpunkt, Begruendung, Stichwort), Sichtbarkeit im Produkte-Tab (Badge +
+Tooltip), Blockier-Meldung um Stichwort/Feld praezisieren, PR mit Nachstellung + Typecheck/Test-
+Ausgabe. Erkennung selbst nicht abschwaechen, `AUTO_PRICE_WRITE_ENABLED`/
+`ALIEXPRESS_TRACKING_SYNC_ENABLED`/Preislogik nicht anfassen, Migration additiv, Draft-PR.
+
+**Vorgehen:** superpowers-Skills verwendet — brainstorming (Design-Dokument, User-Ergaenzungen:
+Verkaeufername im Dialog + Server-Log-Zeile), writing-plans (6-Task-Plan), executing-plans (inline,
+Task fuer Task mit Typecheck-Verifikation je Task).
+
+**Ergebnis:** Fertig. (1) `shared/regulated-categories.ts`:
+`matchRegulatedCategoriesDetailed()` liefert pro Treffer Kategorie+Stichwort+Feld (Titel vor
+Beschreibung geprueft); bestehende `matchRegulatedCategories()` unveraendert. Neue
+`COMPLIANCE_OVERRIDE_REASONS`/`complianceOverrideReasonLabel()` als einzige Quelle fuer die 4
+Begruendungen (Dropdown + Badge-Tooltip, keine Duplizierung). (2) `db/schema.ts`/`db/migrate.ts`:
+7 neue additive Spalten auf `products` (`compliance_override`, `_at`, `_reason`,
+`_reason_text`, `_category`, `_keyword`, `_field`). (3) `api/index.ts`
+(`POST /products`): nimmt die Override-Felder optional entgegen, schreibt sie nur bei
+`complianceOverride: true`, plus Server-Log-Zeile `[Compliance-Override] SKU=... Kategorie=...
+Stichwort="..." Feld=... Grund=...` (SKU = `aliexpressItemId`, nicht `asin`, da `asin` nur eine
+synthetische `ali_<timestamp>`-ID ist). (4) `lieferanten.tsx`: Klartext-Meldung zeigt jetzt
+Stichwort+Feld je Treffer; neuer Button "Manuell uebersteuern und speichern" (nur bei
+`complianceBlocked`) oeffnet Bestaetigungsdialog (zeigt denselben Klartext-Grund + erkannten
+Verkaeufernamen inkl. "(kein Name erkannt)"-Fall, Pflicht-Dropdown, Freitext bei "Sonstiges");
+`handleSave()` nimmt jetzt optional ein Override-Objekt entgegen und umgeht die bestehende
+`if (complianceBlocked) return`-Sperre NUR dann. (5) `produkte.tsx`: Badge "manuell freigegeben"
+(Muster wie bestehendes GPSR-Badge) mit nativem Tooltip (Begruendung, Stichwort/Feld/Kategorie,
+Zeitpunkt).
+
+**Live-Verifikation (mit expliziter Nutzerfreigabe je Schritt):** Migration lief real gegen die
+Produktions-Turso-DB (`bun --env-file=../../.env src/server.ts`, lokal kopiertes, gitignored `.env`
+mit `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`) — alle 7 neuen Spalten erfolgreich angelegt
+(`[migrate] ✓ ALTER TABLE products ADD COLUMN compliance_override...` usw., Rest korrekt als
+"Skip (already exists)"). Voller Browser-UI-Test (Dialog/Speichern/Badge) NICHT durchgefuehrt:
+lokales `.env` hat kein `SESSION_SECRET`/`AUTH_USER1_*` (Render-only) → `authMiddleware`
+(`api/auth.ts:79-81`) lehnt jeden API-Call inkl. Login mit 500 ab, Login lokal technisch nicht
+moeglich. Nutzer entschied nach Rueckfrage explizit gegen das Nachreichen der Secrets — Live-UI-
+Nachstellung bleibt fuer den Nutzer selbst (lokal oder nach Deploy).
+
+**Tests:** Frontend-Typecheck (`bun run typecheck`) gruen, Server-Typecheck
+(`bun run typecheck:server`) gruen — je Task einzeln verifiziert. Neue Tests
+`regulated-categories.test.ts`: 8 pass, 0 fail, 16 expect() (inkl. Katzen-Futterlabyrinth-Fixture:
+"Toy" im Titel → Spielzeug, Feld "title"). Voller `bun test`: 168 pass, 2 fail, 2 errors — die 2
+Fehlschlaege (`price-monitor.test.ts`, `variant-sales.test.ts`) sind VORBESTEHEND, nicht Teil
+dieses Diffs (per `git diff origin/main --stat` bestaetigt), Ursache ein Windows-`/tmp`-Pfadproblem
+des lokalen libsql-Test-Fixtures (`ConnectionFailed(...: 14)`), unabhaengig von dieser Aenderung.
+
+**Strikte Grenzen nachgewiesen:** `git diff origin/main -- packages/web/src/api/price-monitor.ts
+packages/web/src/shared/pricing.ts` leer, `git diff origin/main -- packages/web/src/shared/
+constants.ts packages/web/src/api/tracking-sync.ts` leer — `AUTO_PRICE_WRITE_ENABLED`,
+`ALIEXPRESS_TRACKING_SYNC_ENABLED`, Preislogik unangetastet. Migration rein additiv (7x
+`ALTER TABLE ... ADD COLUMN`, kein `DROP`, keine bestehende Spalte veraendert).
+
+**Nebenbefund (waehrend Vorbereitung des Worktrees, vor Codeaenderung):** `node_modules` fehlte im
+neuen Worktree (git worktrees teilen keine `node_modules`) — `bun install` (1545 Pakete, 231s) vor
+dem ersten Typecheck ausgefuehrt, sonst waeren alle Typecheck-Laeufe faelschlich mit "Cannot find
+module" fehlgeschlagen. Ebenso `.env` (gitignored) manuell aus dem Hauptverzeichnis in den
+Worktree kopiert, da git worktrees keine ignorierten Dateien teilen.
+
+Branch: `feat/p66-import-gate-uebersteuerung` (isoliertes Worktree unter `.worktrees/`, Basis
+`origin/main`). PR: https://github.com/contact-e-stele/stele-e-transfer/pull/110 (Draft, nicht
+gemergt).
