@@ -121,6 +121,15 @@ const migrations = [
   // Spalte verändert.
   `ALTER TABLE products ADD COLUMN store_category_id TEXT`,
   `ALTER TABLE products ADD COLUMN store_category_name TEXT`,
+  // P-66 Schritt 3 (2026-09-16): manuelle Übersteuerung der Compliance-Sperre — additiv, alle
+  // Spalten nullable/mit Default, keine bestehende Spalte verändert.
+  `ALTER TABLE products ADD COLUMN compliance_override INTEGER DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN compliance_override_at TEXT`,
+  `ALTER TABLE products ADD COLUMN compliance_override_reason TEXT`,
+  `ALTER TABLE products ADD COLUMN compliance_override_reason_text TEXT`,
+  `ALTER TABLE products ADD COLUMN compliance_override_category TEXT`,
+  `ALTER TABLE products ADD COLUMN compliance_override_keyword TEXT`,
+  `ALTER TABLE products ADD COLUMN compliance_override_field TEXT`,
 ];
 
 export async function runMigrations() {

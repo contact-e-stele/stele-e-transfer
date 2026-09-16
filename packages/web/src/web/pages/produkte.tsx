@@ -8,11 +8,12 @@ import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
   Clock, CheckCircle, XCircle, Loader, TrendingUp,
   TrendingDown, AlertTriangle, Search, Trash2, Layers, Plus, X, Eye, ShieldCheck, Edit2,
-  FileText, Upload,
+  FileText, Upload, Unlock,
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 
 interface VariantGroup {
   name: string;
@@ -65,6 +66,13 @@ interface Product {
   gpsrPhone: string | null;
   manualPdfUrl: string | null;
   certificationNote: string | null;
+  complianceOverride: boolean;
+  complianceOverrideAt: string | null;
+  complianceOverrideReason: string | null;
+  complianceOverrideReasonText: string | null;
+  complianceOverrideCategory: string | null;
+  complianceOverrideKeyword: string | null;
+  complianceOverrideField: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1579,6 +1587,23 @@ export default function Produkte() {
                   <ShieldCheck size={11} />
                   {product.gpsrName ? "GPSR ✓" : "GPSR"}
                 </button>
+
+                {/* Compliance-Übersteuerung (P-66 Schritt 3) */}
+                {product.complianceOverride && (
+                  <span
+                    title={`Grund: ${complianceOverrideReasonLabel(product.complianceOverrideReason)}${product.complianceOverrideReasonText ? ` — "${product.complianceOverrideReasonText}"` : ''}\nErkannt als: ${product.complianceOverrideCategory ?? '-'} (Stichwort "${product.complianceOverrideKeyword ?? '-'}" im Feld ${product.complianceOverrideField ?? '-'})\nÜbersteuert am: ${product.complianceOverrideAt ?? '-'}`}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8,
+                      background: "#FFFBEB", color: "#92400E",
+                      fontSize: 11, fontWeight: 700, border: "1px solid #FCD34D",
+                      fontFamily: "inherit", cursor: "default",
+                    }}
+                  >
+                    <Unlock size={11} />
+                    manuell freigegeben
+                  </span>
+                )}
 
                 {/* Produkt löschen */}
                 <button onClick={() => deleteProduct(product)} style={{
