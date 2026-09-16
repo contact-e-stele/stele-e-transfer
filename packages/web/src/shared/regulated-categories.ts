@@ -114,3 +114,48 @@ export function matchRegulatedCategories(text: string): RegulatedCategory[] {
     cat.keywordsEn.some(k => lower.includes(k.toLowerCase()))
   );
 }
+
+export interface RegulatedCategoryMatch {
+  category: RegulatedCategory;
+  keyword: string;
+  field: 'title' | 'description';
+}
+
+function findKeywordHit(cat: RegulatedCategory, title: string, description: string): { keyword: string; field: 'title' | 'description' } | undefined {
+  const titleLower = title.toLowerCase();
+  const allKeywords = [...cat.keywordsDe, ...cat.keywordsEn];
+  for (const k of allKeywords) {
+    if (titleLower.includes(k.toLowerCase())) return { keyword: k, field: 'title' };
+  }
+  const descLower = description.toLowerCase();
+  for (const k of allKeywords) {
+    if (descLower.includes(k.toLowerCase())) return { keyword: k, field: 'description' };
+  }
+  return undefined;
+}
+
+// P-66 Schritt 3: wie matchRegulatedCategories(), aber liefert zusätzlich pro Treffer das
+// konkrete Stichwort und das Feld (Titel/Beschreibung) — Titel wird vor Beschreibung geprüft.
+// Damit können Blockier-Meldung und Übersteuerungs-Dialog konkret zeigen, WAS erkannt wurde,
+// statt nur "regulierte Kategorie". matchRegulatedCategories() bleibt unverändert bestehen.
+export function matchRegulatedCategoriesDetailed(fields: { title: string; description: string }): RegulatedCategoryMatch[] {
+  const matches: RegulatedCategoryMatch[] = [];
+  for (const cat of REGULATED_CATEGORIES) {
+    const hit = findKeywordHit(cat, fields.title, fields.description);
+    if (hit) matches.push({ category: cat, keyword: hit.keyword, field: hit.field });
+  }
+  return matches;
+}
+
+// P-66 Schritt 3: die 4 im Auftrag vorgegebenen Begründungen für eine manuelle Übersteuerung —
+// eine Quelle für das Dropdown (lieferanten.tsx) UND das Badge-Tooltip (produkte.tsx).
+export const COMPLIANCE_OVERRIDE_REASONS: Array<{ value: string; label: string }> = [
+  { value: 'heimtierbedarf', label: 'Heimtierbedarf (kein Kinderspielzeug)' },
+  { value: 'lieferant_bekannt', label: 'Lieferant ist mir bekannt und geprüft' },
+  { value: 'kategorie_trifft_nicht_zu', label: 'Kategorie trifft nicht zu' },
+  { value: 'sonstiges', label: 'Sonstiges (Freitext)' },
+];
+
+export function complianceOverrideReasonLabel(value: string | null | undefined): string {
+  return COMPLIANCE_OVERRIDE_REASONS.find(r => r.value === value)?.label ?? (value || '(kein Grund angegeben)');
+}
