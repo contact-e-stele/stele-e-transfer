@@ -57,6 +57,18 @@ export const products = sqliteTable('products', {
   certificationNote: text('certification_note'), // Freitext-Notiz zu Zertifizierungen (z.B. OEKO-TEX/REACH) — nie automatisch befüllt
   handlingTimeDays: integer('handling_time_days').default(10), // Bearbeitungszeit in Tagen (eBay Fulfillment Policy)
   shipsFrom: text('ships_from'),       // Versandland (z.B. 'DE', 'China') — gesetzt beim AliExpress Import
+  // P-66 Schritt 3 (2026-09-16): manuelle Übersteuerung der Compliance-Sperre für EINEN Import,
+  // wenn die automatische Stichwort-Erkennung falsch lag (z.B. "Toy" im Titel bei einem
+  // Heimtierbedarf-Produkt). Additiv, alle Spalten nullable/mit Default — die automatische
+  // Erkennung selbst bleibt unverändert, das hier ist nur die Nachweis-Ablage der bewussten
+  // Entscheidung (für eine spätere eBay-/Behörden-Rückfrage).
+  complianceOverride: integer('compliance_override', { mode: 'boolean' }).default(false),
+  complianceOverrideAt: text('compliance_override_at'),
+  complianceOverrideReason: text('compliance_override_reason'),       // Slug, siehe COMPLIANCE_OVERRIDE_REASONS (shared/regulated-categories.ts)
+  complianceOverrideReasonText: text('compliance_override_reason_text'), // Freitext, nur bei reason = 'sonstiges'
+  complianceOverrideCategory: text('compliance_override_category'),   // erkannte Kategorie(n) als Klartext-Label (labelDe), Komma-getrennt falls mehrere
+  complianceOverrideKeyword: text('compliance_override_keyword'),     // ausgelöste(s) Stichwort(e), Komma-getrennt falls mehrere
+  complianceOverrideField: text('compliance_override_field'),         // 'title' | 'description', Komma-getrennt falls mehrere
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });
