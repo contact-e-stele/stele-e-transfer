@@ -258,7 +258,18 @@ export default function Bestellungen() {
     const order = orders.find(o => o.orderId === orderId);
     const trackingNumber = order?.localNote?.trackingNumber;
     const carrier = order?.localNote?.carrier;
-    if (!trackingNumber || !carrier) return;
+    // Bug (live gefunden, Bestellung Morgenstern 26-15134-85187): fehlte carrier (z.B. weil die
+    // Sendungsnummer über den P2-Sync-Cron automatisch eingetragen wurde, der bewusst NIEMALS
+    // carrier setzt, s. tracking-sync.ts), brach diese Funktion hier bisher stillschweigend ab —
+    // kein PATCH, kein Toast, der Knopf tat sichtbar nichts. Jetzt stattdessen die
+    // Sendungsnummer-Eingabe öffnen (Carrier vorausgewählt) und erklären, warum.
+    if (!trackingNumber || !carrier) {
+      showToast("⚠️ Carrier fehlt — bitte unten Sendungsnummer + Carrier eintragen, dann wird automatisch an eBay übermittelt");
+      setEditingTracking(orderId);
+      setTrackingNumberInput(trackingNumber ?? "");
+      setCarrierInput(carrier ?? CARRIER_OPTIONS[0]);
+      return;
+    }
     const data = await saveOrderNote(orderId, { trackingNumber, carrier });
     if (data?.ebay?.submitted) {
       showToast(`✅ Erneuter Versuch erfolgreich — an eBay übermittelt (${carrier})`);
