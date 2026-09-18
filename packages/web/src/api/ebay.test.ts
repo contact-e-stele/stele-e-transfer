@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -255,5 +255,163 @@ describe('hasScope', () => {
 
   test('leerer Scope-String → immer false', () => {
     expect(hasScope('', 'sell.marketing')).toBe(false);
+  });
+});
+
+// P-88 Schritt 1b — Live-Fund stele-163/164 (18.09.2026): AliExpress liefert den Attribut-Schlüssel
+// "Color" auch dann, wenn der Wert gar keine Farbe ist (z.B. "832pcs-No box" = Stückzahl). Ein Wert,
+// der zwischen den Varianten eines Produkts wechselt, ist entweder eine echte Variationsachse (wird
+// bereits pro Kombination gesetzt) oder genau dieser Fehlbeschriftungs-Fall — beides darf NICHT als
+// Basis-Aspekt übernommen werden (Grundgesetz Regel 4). Nur ein über ALLE Varianten hinweg
+// konstanter Wert ist eine echte Produkteigenschaft.
+describe('deriveConstantVariantAttrs', () => {
+  test('Wert konstant über alle Varianten → wird übernommen', () => {
+    const result = deriveConstantVariantAttrs([
+      { Material: 'Kunststoff', Color: 'Rot' },
+      { Material: 'Kunststoff', Color: 'Blau' },
+    ]);
+    expect(result).toEqual({ Material: 'Kunststoff' });
+  });
+
+  test('Live-Fund stele-163: "Color" enthält Stückzahl statt Farbe, wechselt pro Variante → verworfen', () => {
+    const result = deriveConstantVariantAttrs([
+      { Color: '832pcs-No box' },
+      { Color: '100pcs-No box' },
+    ]);
+    expect(result).toEqual({});
+  });
+
+  test('nur eine Variante (Einzelprodukt) → alle Attribute gelten als konstant', () => {
+    const result = deriveConstantVariantAttrs([{ Color: 'Schwarz', Material: 'Metall' }]);
+    expect(result).toEqual({ Color: 'Schwarz', Material: 'Metall' });
+  });
+
+  test('keine Varianten → leeres Objekt', () => {
+    expect(deriveConstantVariantAttrs([])).toEqual({});
+  });
+});
+
+describe('mapSpecsToAspects', () => {
+  test('bekannte AliExpress-Keys werden auf eBay-Aspektnamen gemappt', () => {
+    const result = mapSpecsToAspects({ Color: 'Rot', Material: 'Holz', UnbekannterKey: 'x' });
+    expect(result).toEqual({ Farbe: 'Rot', Material: 'Holz' });
+  });
+});
+
+describe('isAspectValueTrusted', () => {
+  test('manuell gesetzter Wert ist immer vertrauenswürdig, auch außerhalb der erlaubten Liste', () => {
+    expect(isAspectValueTrusted('Irgendwas', ['Rot', 'Blau'], true)).toBe(true);
+  });
+
+  test('Freitext-Aspekt (keine erlaubte Liste) ist immer vertrauenswürdig', () => {
+    expect(isAspectValueTrusted('Irgendwas', [], false)).toBe(true);
+  });
+
+  test('Wert aus eBays erlaubter Liste (case-insensitive) ist vertrauenswürdig', () => {
+    expect(isAspectValueTrusted('rot', ['Rot', 'Blau'], false)).toBe(true);
+  });
+
+  test('Wert NICHT in eBays erlaubter Liste ist nicht vertrauenswürdig', () => {
+    expect(isAspectValueTrusted('832pcs-No box', ['Rot', 'Blau'], false)).toBe(false);
+  });
+});
+
+// P-88 Schritt 1a — Root Cause: getRawAspectsForCategory() cachte einen einzelnen Fehlschlag (z.B.
+// 401/500) dauerhaft als [] ohne TTL/Reset, wodurch die Kategorie für den Rest des Prozesses auf
+// "keine Pflichtfelder bekannt" gesperrt war (aspectCache/rawAspectsCache, ebay.ts). Diese Tests
+// injizieren fetchFn, damit der reale Netzwerkaufruf durch eine Fixture ersetzt werden kann.
+function aspectsResponse(aspects: Array<{ name: string; required: boolean; values?: string[] }>): Response {
+  return new Response(JSON.stringify({
+    aspects: aspects.map(a => ({
+      localizedAspectName: a.name,
+      aspectConstraint: { aspectRequired: a.required },
+      aspectValues: a.values?.map(v => ({ localizedValue: v })),
+    })),
+  }), { status: 200 });
+}
+
+describe('buildAspects — Negativ-Cache-Regression (P-88 1a)', () => {
+  test('ein fehlgeschlagener Abruf (500) sperrt die Kategorie NICHT dauerhaft — nächster Aufruf mit funktionierendem Fetch liefert den echten Wert', async () => {
+    let callCount = 0;
+    const fetchFn = (async () => {
+      callCount++;
+      if (callCount === 1) return new Response('{"errorId":123}', { status: 500 });
+      return aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'] }]);
+    }) as unknown as typeof fetch;
+
+    const first = await buildAspects({}, undefined, 'CAT-A', 'token', undefined, undefined, [], fetchFn);
+    // Beim Fehlschlag ist "Farbe" eBay unbekannt (getRequiredAspects liefert {}) — buildAspects
+    // befüllt nur, was es als "required" kennt, kann hier also gar nichts setzen. Genau dieser
+    // Zustand (ein Pflichtfeld wurde nie befüllt, weil der Abruf scheiterte) ist der Kern des
+    // 1a-Bugs — 1e fängt ihn zusätzlich per findUnresolvedRequiredAspects ab (eigener Test unten).
+    expect(first['Farbe']).toBeUndefined();
+
+    const second = await buildAspects({}, undefined, 'CAT-A', 'token', undefined, undefined, [], fetchFn);
+    // Regressionsbeweis: ohne den 1a-Fix bliebe hier weiterhin "Nicht angegeben" (dauerhaft gecachtes [])
+    expect(second['Farbe']).toEqual(['Mehrfarbig']);
+    expect(callCount).toBe(2);
+  });
+});
+
+describe('buildAspects — Variantenattribute als Aspekt-Quelle (P-88 1b)', () => {
+  test('konstanter, von eBay erlaubter Variantenwert wird übernommen', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Material', required: true, values: ['Kunststoff', 'Holz'] }])) as unknown as typeof fetch;
+    const result = await buildAspects(
+      {}, undefined, 'CAT-B', 'token', undefined, undefined,
+      [{ Material: 'Kunststoff' }, { Material: 'Kunststoff' }],
+      fetchFn,
+    );
+    expect(result['Material']).toEqual(['Kunststoff']);
+  });
+
+  test('Live-Fund stele-163: Variantenwert nicht in eBays erlaubter Liste → verworfen, echter erlaubter Wert stattdessen', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'] }])) as unknown as typeof fetch;
+    const result = await buildAspects(
+      {}, undefined, 'CAT-C', 'token', undefined, undefined,
+      [{ Color: '832pcs-No box' }, { Color: '100pcs-No box' }],
+      fetchFn,
+    );
+    // "Color" wechselt pro Variante → deriveConstantVariantAttrs verwirft es bereits (eigener Test oben) —
+    // hier zusätzlich bewiesen: selbst wenn es durchrutschen würde, weist isAspectValueTrusted es zurück.
+    expect(result['Farbe']).toEqual(['Mehrfarbig']);
+  });
+
+  test('manuelles Feld überschreibt weiterhin alles, auch einen automatisch befüllten Wert', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig'] }])) as unknown as typeof fetch;
+    const result = await buildAspects(
+      {}, undefined, 'CAT-D', 'token', undefined, { Farbe: 'Regenbogen' },
+      [{ Color: 'Rot' }, { Color: 'Rot' }],
+      fetchFn,
+    );
+    expect(result['Farbe']).toEqual(['Regenbogen']);
+  });
+});
+
+// P-88 Schritt 1e — Vorab-Prüfung: ein von eBay bereits als fehlend gemeldetes Pflichtmerkmal
+// (product.ebayMissingAspect, echte eBay-Fehlermeldung aus einem vorherigen Versuch) blockiert den
+// nächsten eBay-Aufruf, solange kein vertrauenswürdiger Wert (manuell oder Auto-Heal) vorliegt.
+describe('findUnresolvedRequiredAspects', () => {
+  test('bekanntes fehlendes Merkmal ohne manuellen Wert und ohne trusted Auto-Wert → bleibt ungelöst', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'] }])) as unknown as typeof fetch;
+    const unresolved = await findUnresolvedRequiredAspects(
+      ['Farbe'], {}, 'CAT-E', 'token', {}, [{ Color: '832pcs-No box' }, { Color: '100pcs-No box' }], fetchFn,
+    );
+    expect(unresolved).toEqual([]); // "Farbe" hat einen erlaubten Fallback-Wert (Mehrfarbig) → nicht blockierend
+  });
+
+  test('manueller Wert vorhanden → gilt als gelöst', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Produktart', required: true }])) as unknown as typeof fetch;
+    const unresolved = await findUnresolvedRequiredAspects(
+      ['Produktart'], {}, 'CAT-F', 'token', { Produktart: 'Haarspange' }, [], fetchFn,
+    );
+    expect(unresolved).toEqual([]);
+  });
+
+  test('Merkmal ohne erlaubte Werteliste (Freitext) und ohne bekannten Default → bleibt ungelöst, wird namentlich genannt', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Produktart', required: true, values: [] }])) as unknown as typeof fetch;
+    const unresolved = await findUnresolvedRequiredAspects(
+      ['Produktart'], {}, 'CAT-G', 'token', {}, [], fetchFn,
+    );
+    expect(unresolved).toEqual(['Produktart']);
   });
 });

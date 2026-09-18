@@ -342,7 +342,7 @@ export interface EbayListingInput {
   imageUrls: string[];
   categoryId?: string;
   variantGroups?: VariantGroup[]; // für Variation Listings
-  variantPrices?: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; stock?: number }>; // pro-Variante Preise + Lagerbestand (P-93)
+  variantPrices?: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; stock?: number; attrs?: Record<string, string> }>; // pro-Variante Preise + Lagerbestand (P-93) + AliExpress-SKU-Attribute (P-88 1b)
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
   ean?: string; // EAN/GTIN Barcode — falls vorhanden, sonst "Nicht zutreffend"
@@ -424,64 +424,149 @@ function getAspectDefaultsForCategory(categoryId?: string): Record<string, strin
   return base;
 }
 
-// Cache: categoryId → Pflichtaspekte (Name → erster erlaubter Wert oder null)
-const aspectCache = new Map<string, Record<string, string | null>>();
+// P-88 Schritt 1c: nutzerpflegbare Default-Werte (Einstellungen-Tab, app_settings-Key
+// "aspect_defaults", gleiches Muster wie "workflow_template") — ergänzen die hartcodierten
+// ASPECT_DEFAULTS*-Konstanten oben, statt sie zu ersetzen (bestehende Kategorien bleiben ohne
+// Pflege funktionsfähig). DB-Werte haben Vorrang (bewusst vom Nutzer gepflegt). Grundgesetz Regel
+// 8: EINE Stelle für die Fallback-Kette — buildAspects() UND findUnresolvedRequiredAspects()
+// rufen dieselbe Funktion auf.
+export async function getEffectiveAspectDefaults(categoryId?: string): Promise<Record<string, string>> {
+  const hardcoded = getAspectDefaultsForCategory(categoryId);
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'aspect_defaults')).get();
+    if (!row?.value) return hardcoded;
+    const parsed = JSON.parse(row.value) as { global?: Record<string, string>; byCategory?: Record<string, Record<string, string>> };
+    return { ...hardcoded, ...(parsed.global ?? {}), ...(categoryId ? parsed.byCategory?.[categoryId] ?? {} : {}) };
+  } catch {
+    return hardcoded; // DB nicht verfügbar oder Wert kaputt — hartcodierte Defaults bleiben Fallback
+  }
+}
+
+// P-88 Schritt 1b: Key-Mapping AliExpress Spec-/Attribut-Keys → eBay Aspekt-Namen (DE). Modulweit
+// nutzbar (buildAspects UND findUnresolvedRequiredAspects brauchen dieselbe Zuordnung).
+const SPEC_KEY_MAP: Record<string, string> = {
+  'Marke': 'Marke', 'Brand': 'Marke', 'brand': 'Marke',
+  'Farbe': 'Farbe', 'Color': 'Farbe', 'color': 'Farbe', 'Colour': 'Farbe', 'colour': 'Farbe',
+  'Material': 'Material', 'material': 'Material',
+  'Größe': 'Größe', 'Groesse': 'Größe', 'Size': 'Größe', 'size': 'Größe',
+  'Gewicht': 'Gewicht', 'Weight': 'Gewicht', 'weight': 'Gewicht',
+  'Typ': 'Typ', 'Type': 'Typ', 'type': 'Typ',
+  'Stil': 'Stil', 'Style': 'Stil', 'style': 'Stil',
+  'Modell': 'Modell', 'Model': 'Modell', 'model': 'Modell',
+  'Gender': 'Abteilung', 'gender': 'Abteilung', 'Geschlecht': 'Abteilung',
+  'geschlecht': 'Abteilung', 'Abteilung': 'Abteilung',
+};
+
+export function mapSpecsToAspects(specs: Record<string, string>): Record<string, string> {
+  const aspects: Record<string, string> = {};
+  for (const [key, value] of Object.entries(specs)) {
+    const mapped = SPEC_KEY_MAP[key];
+    if (mapped && value && !aspects[mapped]) {
+      aspects[mapped] = mapped === 'Abteilung' ? normalizeAbteilung(value) : value.slice(0, 100);
+    }
+  }
+  return aspects;
+}
+
+// P-88 Schritt 1b — Live-Fund stele-163/164 (18.09.2026): AliExpress liefert den Attribut-Schlüssel
+// "Color" auch dann, wenn der Wert gar keine Farbe ist (z.B. "832pcs-No box" = Stückzahl je SKU).
+// Ein Wert, der zwischen den Varianten eines Produkts wechselt, ist entweder eine echte
+// Variationsachse (wird bereits pro Kombination gesetzt, s. listOnEbayWithVariants) oder genau
+// dieser Fehlbeschriftungs-Fall — beides darf NICHT blind als Basis-Aspekt (z.B. "Farbe")
+// übernommen werden (Grundgesetz Regel 4, keine Daten erfinden). Nur ein über ALLE
+// variantPrices-Einträge hinweg konstanter Wert ist eine echte, produktweite Eigenschaft.
+export function deriveConstantVariantAttrs(variantAttrsList: Array<Record<string, string>>): Record<string, string> {
+  if (variantAttrsList.length === 0) return {};
+  const [first, ...rest] = variantAttrsList;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(first)) {
+    if (value && rest.every(a => a[key] === value)) result[key] = value;
+  }
+  return result;
+}
+
+// P-88 Schritt 1b: ein automatisch ermittelter Wert darf bei einem Auswahl-Merkmal (feste
+// Werteliste laut eBay Taxonomy API) nur übernommen werden, wenn er auch tatsächlich in dieser
+// Liste steht — sonst lehnt eBay ihn ab (errorId 25002) oder er landet als falscher Freitext im
+// Listing. Manuell vom Nutzer eingegebene Werte sind davon ausgenommen (bewusste Nutzer-Angabe).
+export function isAspectValueTrusted(value: string, allowedValues: string[], isManual: boolean): boolean {
+  if (isManual) return true;
+  if (allowedValues.length === 0) return true; // Freitext-Aspekt — eBay validiert nicht gegen eine Liste
+  return allowedValues.some(v => v.toLowerCase() === value.toLowerCase());
+}
+
+// P-88 Schritt 1a — Root Cause (18.09.2026): beide Caches cachten einen EINZELNEN Fehlschlag
+// (z.B. 401/500/Netzwerkfehler) dauerhaft als [] bzw. {} — keine TTL, kein Reset. Ein einziger
+// transienter Fehler sperrte eine Kategorie für den Rest des Prozess-Lebenszyklus auf "keine
+// Pflichtfelder bekannt", wodurch buildAspects() für diese Kategorie faktisch nichts mehr befüllte.
+// Jetzt: TTL für ECHTE Erfolge, KEIN Cache-Eintrag bei Fehler (nächster Aufruf versucht erneut).
+const ASPECTS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+type RawAspect = {
+  localizedAspectName: string;
+  aspectConstraint?: { aspectRequired?: boolean };
+  aspectValues?: Array<{ localizedValue: string }>;
+};
+
+// Cache: categoryId → Pflichtaspekte (Name → ALLE erlaubten Werte, [] = Freitext)
+const aspectCache = new Map<string, { required: Record<string, string[]>; fetchedAt: number }>();
 
 // Cache: categoryId → ALLE Aspekte der Kategorie (ungefiltert, auch nicht als "required"
 // markierte) — P-90: eBay meldet manche Aspekte (z.B. "Produktart") nicht als required, verlangt
 // sie aber bei Variation-Listings trotzdem beim publish. Für die Selbstheilung brauchen wir dann
 // die erlaubten Werte auch für nicht-required Aspekte, sonst raten wir mit ungültigem Freitext.
-const rawAspectsCache = new Map<string, Array<{
-  localizedAspectName: string;
-  aspectConstraint?: { aspectRequired?: boolean };
-  aspectValues?: Array<{ localizedValue: string }>;
-}>>();
+const rawAspectsCache = new Map<string, { aspects: RawAspect[]; fetchedAt: number }>();
 
-async function getRawAspectsForCategory(categoryId: string, token: string): Promise<Array<{
-  localizedAspectName: string;
-  aspectConstraint?: { aspectRequired?: boolean };
-  aspectValues?: Array<{ localizedValue: string }>;
-}>> {
-  if (rawAspectsCache.has(categoryId)) return rawAspectsCache.get(categoryId)!;
+// Liefert null bei Fehlschlag (statt [] permanent zu cachen) — Aufrufer müssen den Unterschied
+// zwischen "eBay meldet: keine Aspekte" und "Abruf fehlgeschlagen" kennen, sonst wird ein
+// transienter Fehler wie eine echte "leere Kategorie" behandelt.
+async function getRawAspectsForCategory(
+  categoryId: string,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<RawAspect[] | null> {
+  const cached = rawAspectsCache.get(categoryId);
+  if (cached && Date.now() - cached.fetchedAt < ASPECTS_CACHE_TTL_MS) return cached.aspects;
+
+  const url = `${BASE_URL}/commerce/taxonomy/v1/category_tree/77/get_item_aspects_for_category?category_id=${categoryId}`;
   try {
-    const res = await fetch(
-      `${BASE_URL}/commerce/taxonomy/v1/category_tree/77/get_item_aspects_for_category?category_id=${categoryId}`,
-      { headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' } }
-    );
+    const res = await fetchFn(url, { headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' } });
     if (!res.ok) {
-      rawAspectsCache.set(categoryId, []);
-      return [];
+      // P-88 1a: Statuscode + Rohantwort wörtlich loggen, statt den Fehler stillschweigend als
+      // "keine Aspekte" zu werten.
+      const body = await res.text().catch(() => '(Body nicht lesbar)');
+      console.log(`[eBay] getItemAspectsForCategory ${categoryId} fehlgeschlagen: ${res.status} ${body.slice(0, 1000)}`);
+      return null;
     }
-    const data = await res.json() as { aspects?: Array<{
-      localizedAspectName: string;
-      aspectConstraint?: { aspectRequired?: boolean };
-      aspectValues?: Array<{ localizedValue: string }>;
-    }> };
+    const data = await res.json() as { aspects?: RawAspect[] };
     const list = data.aspects ?? [];
-    rawAspectsCache.set(categoryId, list);
+    rawAspectsCache.set(categoryId, { aspects: list, fetchedAt: Date.now() });
     return list;
-  } catch {
-    rawAspectsCache.set(categoryId, []);
-    return [];
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`[eBay] getItemAspectsForCategory ${categoryId} Netzwerkfehler: ${msg}`);
+    return null;
   }
 }
 
 // P-90: erlaubten Wert für einen konkreten Aspektnamen nachschlagen — auch wenn eBay ihn nicht
 // als "required" gemeldet hat. Liefert den ersten erlaubten Wert laut Taxonomy API, oder null
-// wenn der Aspekt Freitext ist (keine aspectValues-Liste) bzw. gar nicht existiert.
-async function getAspectAllowedValue(categoryId: string | undefined, aspectName: string, token: string): Promise<string | null> {
+// wenn der Aspekt Freitext ist (keine aspectValues-Liste) bzw. gar nicht existiert/der Abruf fehlschlug.
+async function getAspectAllowedValue(categoryId: string | undefined, aspectName: string, token: string, fetchFn: typeof fetch = fetch): Promise<string | null> {
   if (!categoryId) return null;
-  const all = await getRawAspectsForCategory(categoryId, token);
-  const match = all.find(a => a.localizedAspectName.toLowerCase() === aspectName.toLowerCase());
+  const all = await getRawAspectsForCategory(categoryId, token, fetchFn);
+  const match = all?.find(a => a.localizedAspectName.toLowerCase() === aspectName.toLowerCase());
   return match?.aspectValues?.[0]?.localizedValue ?? null;
 }
 
 // P-88: ALLE erlaubten Werte für einen Aspekt (nicht nur den ersten) — für das Dropdown im
-// manuellen Eingabefeld. Leeres Array = Freitextfeld (kein fester Wertekatalog bzw. Aspekt/Kategorie unbekannt).
-export async function getAspectAllowedValues(categoryId: string | undefined, aspectName: string, token: string): Promise<string[]> {
+// manuellen Eingabefeld. Leeres Array = Freitextfeld (kein fester Wertekatalog bzw. Aspekt/Kategorie unbekannt/Abruf fehlgeschlagen).
+export async function getAspectAllowedValues(categoryId: string | undefined, aspectName: string, token: string, fetchFn: typeof fetch = fetch): Promise<string[]> {
   if (!categoryId) return [];
-  const all = await getRawAspectsForCategory(categoryId, token);
-  const match = all.find(a => a.localizedAspectName.toLowerCase() === aspectName.toLowerCase());
+  const all = await getRawAspectsForCategory(categoryId, token, fetchFn);
+  const match = all?.find(a => a.localizedAspectName.toLowerCase() === aspectName.toLowerCase());
   return match?.aspectValues?.map(v => v.localizedValue) ?? [];
 }
 
@@ -615,20 +700,25 @@ export const KNOWN_VARIATION_CATEGORIES: Record<string, string> = {
   'default': '260,',                       // Gemischte Waren
 };
 
-// Pflichtfelder für eine Kategorie per eBay API abrufen
-async function getRequiredAspects(categoryId: string, token: string): Promise<Record<string, string | null>> {
-  if (aspectCache.has(categoryId)) return aspectCache.get(categoryId)!;
+// Pflichtfelder für eine Kategorie per eBay API abrufen. Liefert ALLE erlaubten Werte pro Aspekt
+// (P-88 1a — vorher nur aspectValues[0]), damit ein automatisch ermittelter Kandidat gegen die
+// vollständige Liste geprüft werden kann (isAspectValueTrusted). Liefert {} bei Abruf-Fehler
+// (kein Unterschied für buildAspects' Fallback-Verhalten — wie vorher, nur ohne Dauer-Cache).
+async function getRequiredAspects(categoryId: string, token: string, fetchFn: typeof fetch = fetch): Promise<Record<string, string[]>> {
+  const cached = aspectCache.get(categoryId);
+  if (cached && Date.now() - cached.fetchedAt < ASPECTS_CACHE_TTL_MS) return cached.required;
 
-  const all = await getRawAspectsForCategory(categoryId, token);
-  const required: Record<string, string | null> = {};
+  const all = await getRawAspectsForCategory(categoryId, token, fetchFn);
+  if (all === null) return {}; // Abruf fehlgeschlagen — NICHT cachen, nächster Aufruf versucht erneut
+
+  const required: Record<string, string[]> = {};
   for (const aspect of all) {
     if (aspect.aspectConstraint?.aspectRequired && !NON_VARIATION_ASPECTS.has(aspect.localizedAspectName)) {
-      // Ersten erlaubten Wert nehmen oder null
-      required[aspect.localizedAspectName] = aspect.aspectValues?.[0]?.localizedValue ?? null;
+      required[aspect.localizedAspectName] = aspect.aspectValues?.map(v => v.localizedValue) ?? [];
     }
   }
   console.log(`[eBay] Required aspects for category ${categoryId}:`, Object.keys(required));
-  aspectCache.set(categoryId, required);
+  aspectCache.set(categoryId, { required, fetchedAt: Date.now() });
   return required;
 }
 
@@ -639,65 +729,58 @@ async function getRequiredAspects(categoryId: string, token: string): Promise<Re
 // Identifier-Sentinel "Nicht zutreffend" (wie bereits bei Herstellernummer verwendet).
 const IDENTIFIER_ASPECT_NAMES = new Set(['EAN', 'GTIN', 'UPC', 'ISBN']);
 
-async function buildAspects(
+export async function buildAspects(
   specs: Record<string, string> = {},
   mpn?: string,
   categoryId?: string,
   token?: string,
   ean?: string,
-  manualAspects?: Record<string, string>
+  manualAspects?: Record<string, string>,
+  // P-88 Schritt 1b: variantPrices[].attrs aus der DB (Produkt-Identifier: nicht die Preis-,
+  // sondern die AliExpress-SKU-Attribute) — Quelle für Basis-Aspekte, die specs (fast immer NULL)
+  // nicht liefern kann.
+  variantAttrsList: Array<Record<string, string>> = [],
+  fetchFn: typeof fetch = fetch,
 ): Promise<Record<string, string[]>> {
-  // Key-Mapping: AliExpress Spec-Keys → eBay Aspekt-Namen (DE)
-  const KEY_MAP: Record<string, string> = {
-    'Marke': 'Marke', 'Brand': 'Marke', 'brand': 'Marke',
-    'Farbe': 'Farbe', 'Color': 'Farbe', 'color': 'Farbe', 'Colour': 'Farbe', 'colour': 'Farbe',
-    'Material': 'Material', 'material': 'Material',
-    'Größe': 'Größe', 'Groesse': 'Größe', 'Size': 'Größe', 'size': 'Größe',
-    'Gewicht': 'Gewicht', 'Weight': 'Gewicht', 'weight': 'Gewicht',
-    'Typ': 'Typ', 'Type': 'Typ', 'type': 'Typ',
-    'Stil': 'Stil', 'Style': 'Stil', 'style': 'Stil',
-    'Modell': 'Modell', 'Model': 'Modell', 'model': 'Modell',
-    'Gender': 'Abteilung', 'gender': 'Abteilung', 'Geschlecht': 'Abteilung',
-    'geschlecht': 'Abteilung', 'Abteilung': 'Abteilung',
-  };
-
   const aspects: Record<string, string[]> = {};
 
-  // Specs mappen
-  for (const [key, value] of Object.entries(specs)) {
-    const mapped = KEY_MAP[key];
-    if (mapped && value && !aspects[mapped]) {
-      const finalVal = mapped === 'Abteilung' ? normalizeAbteilung(value) : value.slice(0, 100);
-      aspects[mapped] = [finalVal];
-    }
+  // P-88 1b: AliExpress-Specs zuerst, dann über alle Varianten hinweg konstante Attribute
+  // ergänzen, was specs nicht liefert (specs hat Vorrang, falls beide denselben Ziel-Namen mappen).
+  const effectiveSpecs = { ...deriveConstantVariantAttrs(variantAttrsList), ...specs };
+  for (const [name, value] of Object.entries(mapSpecsToAspects(effectiveSpecs))) {
+    aspects[name] = [value];
   }
 
-  // Pflichtfelder per API abrufen und fehlende automatisch befüllen
+  // Pflichtfelder per API abrufen und fehlende (oder nicht vertrauenswürdige) automatisch befüllen
+  const catDefaults = await getEffectiveAspectDefaults(categoryId);
   if (categoryId && token) {
-    const required = await getRequiredAspects(categoryId, token);
-    for (const [name, firstAllowed] of Object.entries(required)) {
-      if (!aspects[name]) {
-        if (IDENTIFIER_ASPECT_NAMES.has(name)) {
-          // Identifier-Aspekte NIE mit Freitext-Fallback befüllen — eBay validiert das Format.
-          const fallback = ean?.trim() || 'Nicht zutreffend';
-          aspects[name] = [fallback];
-          console.log(`[eBay] Auto-filled identifier aspect "${name}" = "${fallback}"`);
-          continue;
-        }
-        // Priorität: 1. erster erlaubter Wert der API, 2. bekannter Default, 3. "Nicht angegeben"
-        const catDefaults = getAspectDefaultsForCategory(categoryId);
-        const fallback = firstAllowed ?? catDefaults[name] ?? 'Nicht angegeben';
+    const required = await getRequiredAspects(categoryId, token, fetchFn);
+    for (const [name, allowedValues] of Object.entries(required)) {
+      const current = aspects[name]?.[0];
+      // P-88 1b — Live-Fund stele-163: ein aus specs/Variantenattributen übernommener Wert wird bei
+      // Auswahl-Merkmalen (feste Werteliste) nur behalten, wenn er auch in eBays Liste steht —
+      // sonst verwerfen und unten neu befüllen, statt eine falsche Angabe (z.B. Stückzahl als
+      // "Farbe") zu senden.
+      if (current !== undefined && isAspectValueTrusted(current, allowedValues, false)) continue;
+
+      if (IDENTIFIER_ASPECT_NAMES.has(name)) {
+        // Identifier-Aspekte NIE mit Freitext-Fallback befüllen — eBay validiert das Format.
+        const fallback = ean?.trim() || 'Nicht zutreffend';
         aspects[name] = [fallback];
-        console.log(`[eBay] Auto-filled required aspect "${name}" = "${fallback}"`);
+        console.log(`[eBay] Auto-filled identifier aspect "${name}" = "${fallback}"`);
+        continue;
       }
+      // Priorität: 1. erster erlaubter Wert der API, 2. bekannter Kategorie-/globaler Default (P-88 1c), 3. "Nicht angegeben"
+      const fallback = allowedValues[0] ?? catDefaults[name] ?? 'Nicht angegeben';
+      aspects[name] = [fallback];
+      console.log(`[eBay] Auto-filled required aspect "${name}" = "${fallback}"${current !== undefined ? ` (verworfen: "${current}" nicht in eBays erlaubter Liste)` : ''}`);
     }
   }
 
   // Immer: Marke als Minimum
   if (!aspects['Marke']) aspects['Marke'] = ['Markenlos'];
 
-  // Kategorie-spezifische Defaults als Fallback (nur was fehlt, nichts überschreiben)
-  const catDefaults = getAspectDefaultsForCategory(categoryId);
+  // Kategorie-/globale Defaults als Fallback (nur was fehlt, nichts überschreiben)
   for (const [name, val] of Object.entries(catDefaults)) {
     if (!aspects[name]) {
       aspects[name] = [val];
@@ -721,6 +804,41 @@ async function buildAspects(
   return aspects;
 }
 
+// P-88 Schritt 1e: Vorab-Prüfung vor dem eigentlichen eBay-Aufruf. Simuliert NICHT alle denkbaren
+// Pflichtfelder (Fehlalarm-Risiko — die meisten haben über allowedValues[0] ohnehin einen gültigen
+// eBay-Kandidaten, s. buildAspects) — prüft stattdessen gezielt Aspekte, die eBay in einem
+// VORHERIGEN Versuch bereits konkret als fehlend gemeldet hat (product.ebayMissingAspect). Nur
+// wenn dafür weiterhin weder ein manueller noch ein neuer, vertrauenswürdiger Auto-Wert vorliegt,
+// UND kein von eBay bestätigter erlaubter Wert existiert, wird der Aufruf blockiert und das Feld
+// namentlich genannt — statt denselben bereits bekannten Fehlschlag blind zu wiederholen.
+export async function findUnresolvedRequiredAspects(
+  knownMissingAspects: string[],
+  specs: Record<string, string>,
+  categoryId: string | undefined,
+  token: string,
+  manualAspects: Record<string, string> = {},
+  variantAttrsList: Array<Record<string, string>> = [],
+  fetchFn: typeof fetch = fetch,
+): Promise<string[]> {
+  const names = [...new Set(knownMissingAspects.filter(n => n?.trim()))];
+  if (names.length === 0 || !categoryId) return [];
+
+  const required = await getRequiredAspects(categoryId, token, fetchFn);
+  const effectiveSpecs = mapSpecsToAspects({ ...deriveConstantVariantAttrs(variantAttrsList), ...specs });
+  const catDefaults = await getEffectiveAspectDefaults(categoryId);
+
+  const unresolved: string[] = [];
+  for (const name of names) {
+    if (manualAspects[name]?.trim()) continue; // manuell gelöst
+    const allowedValues = required[name] ?? [];
+    if (allowedValues.length > 0) continue; // eBays eigener erster erlaubter Wert ist ein gültiger Auto-Kandidat
+    const candidate = effectiveSpecs[name] ?? catDefaults[name];
+    if (candidate && isAspectValueTrusted(candidate, allowedValues, false)) continue;
+    unresolved.push(name);
+  }
+  return unresolved;
+}
+
 export async function createOrUpdateInventoryItem(input: EbayListingInput): Promise<void> {
   const token = await getAccessToken();
 
@@ -737,7 +855,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       title: input.title,
       description: plainDesc,
       imageUrls: input.imageUrls,
-      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects),
+      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {})),
       ...(input.ean?.trim() ? { gtin: input.ean.trim() } : {}),
     },
   };
@@ -848,7 +966,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   const fulfillmentPolicyId = input.handlingTimeDays != null
     ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
     : policies.fulfillmentPolicyId;
-  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects);
+  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}));
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
   const gpsrBlock = buildGpsrBlock(input.gpsr);
@@ -1224,7 +1342,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Pflichtaspekte einmal abrufen (gilt für alle Varianten)
   // Hinweis: input.ean ist genau EIN Wert pro Produkt (kein Feld pro Variante im Datenmodell) —
   // wird hier für alle Varianten übernommen; besser als der ungültige "Nicht angegeben"-Fallback.
-  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects);
+  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, token, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}));
 
   // Varianten-Aspekt-Namen (gemappt) — diese dürfen NICHT in baseAspects stecken
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler

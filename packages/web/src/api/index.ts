@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -1645,6 +1645,35 @@ const app = new Hono()
       return c.json({ ok: false, error: String(e) }, 500);
     }
   })
+  // ─── P-88 Schritt 1c: nutzerpflegbare Default-Werte für eBay-Pflichtmerkmale ────────────
+  // Gespeichert in app_settings (Key "aspect_defaults"), gleiches Muster wie "workflow_template".
+  // Ergänzen die hartcodierten ASPECT_DEFAULTS*-Konstanten in ebay.ts (getEffectiveAspectDefaults),
+  // ersetzen sie nicht.
+  .get('/settings/aspect-defaults', async (c) => {
+    try {
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const row = await db.select().from(appSettings).where(eq(appSettings.key, 'aspect_defaults')).get();
+      const parsed = row?.value ? JSON.parse(row.value) as { global?: Record<string, string>; byCategory?: Record<string, Record<string, string>> } : {};
+      return c.json({ global: parsed.global ?? {}, byCategory: parsed.byCategory ?? {} }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/aspect-defaults', async (c) => {
+    try {
+      const body = await c.req.json() as { global?: Record<string, string>; byCategory?: Record<string, Record<string, string>> };
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const now = new Date().toISOString();
+      const value = JSON.stringify({ global: body.global ?? {}, byCategory: body.byCategory ?? {} });
+      await db.insert(appSettings).values({ key: 'aspect_defaults', value, updatedAt: now })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   // ─── P-84: Sendungsnummer-Vorschläge aus AliExpress-Logistik-Mails ───────────
   // Liest live (kein Hintergrund-Job, keine gespeicherten Vorschläge) — nur Ergebnis bei
   // GENAU EINEM eindeutigen Adress-Treffer unter den offenen Bestellungen. Kein Auto-Save,
@@ -2236,11 +2265,11 @@ const app = new Hono()
       // Formel neu berechnet, statt einen evtl. veralteten gespeicherten Wert zu übernehmen.
       // ebay.ts:1249 hat zusätzlich einen eigenen Fallback für den Fall, dass hier trotzdem kein
       // ebayPrice ankommt (Verteidigung in der Tiefe).
-      const variantPricesForListing: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }> = (() => {
+      const variantPricesForListing: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; attrs?: Record<string, string> }> = (() => {
         try {
           const parsed = JSON.parse(product.variantPrices ?? '[]');
           if (!Array.isArray(parsed)) return [];
-          return (parsed as Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number }>).map(v => ({
+          return (parsed as Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; attrs?: Record<string, string> }>).map(v => ({
             ...v,
             ebayPrice: typeof v.price === 'number' && v.price > 0
               ? calcSellPriceForListing(v.price)
@@ -2266,6 +2295,33 @@ const app = new Hono()
           return parsed && Object.keys(parsed).length > 0 ? parsed : undefined;
         } catch { return undefined; }
       })();
+
+      // P-88 Schritt 1e: eBay hat für dieses Produkt bereits einmal ein konkretes Pflichtfeld als
+      // fehlend gemeldet (ebayMissingAspect). Bevor derselbe eBay-Aufruf blind wiederholt wird,
+      // prüfen, ob dafür inzwischen ein vertrauenswürdiger Wert vorliegt (manuell oder
+      // AliExpress-Variantenattribute) bzw. eBay selbst einen erlaubten Wert kennt — wenn nicht,
+      // Aufruf blockieren und das Feld namentlich nennen statt denselben Fehlschlag zu wiederholen.
+      if (product.ebayMissingAspect && categoryId) {
+        const token = await getAccessToken();
+        const unresolved = await findUnresolvedRequiredAspects(
+          [product.ebayMissingAspect],
+          specs,
+          categoryId,
+          token,
+          manualAspects ?? {},
+          (variantPricesForListing ?? []).map(v => v.attrs ?? {}),
+        );
+        if (unresolved.length > 0) {
+          const msg = `eBay-Pflichtfeld "${unresolved.join('", "')}" fehlt weiterhin und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen.`;
+          await db.update(schema.products).set({
+            ebayStatus: 'error',
+            ebayError: msg,
+            ebayMissingAspect: unresolved[0],
+            updatedAt: new Date().toISOString(),
+          }).where(eq(schema.products.id, body.productId));
+          return c.json({ error: msg }, 400);
+        }
+      }
 
       const listingId = await listOnEbay({
         sku: `stele-${product.id}`,
@@ -2807,6 +2863,18 @@ const app = new Hono()
       if ('manualAspects' in body) {
         const val = body.manualAspects as Record<string, string> | null;
         allowed.manualAspects = val && Object.keys(val).length > 0 ? JSON.stringify(val) : null;
+        // P-88 Schritt 1d: eBay hatte ein konkretes Pflichtfeld als fehlend gemeldet
+        // (ebayMissingAspect) — deckt der neu gespeicherte manuelle Wert genau dieses Feld ab,
+        // gilt der letzte Fehlschlag als behoben. Vorher blieb ebayMissingAspect/ebayError nach
+        // dem Speichern stehen, bis der Nutzer separat auf "Fehler zurücksetzen" klickte (wirkte
+        // wie eine Attrappe, s. task.md P-88).
+        const [current] = await db.select({ ebayMissingAspect: schema.products.ebayMissingAspect })
+          .from(schema.products).where(eq(schema.products.id, id));
+        if (current?.ebayMissingAspect && val?.[current.ebayMissingAspect]?.trim()) {
+          allowed.ebayMissingAspect = null;
+          allowed.ebayError = null;
+          allowed.ebayStatus = 'none';
+        }
       }
       if (Object.keys(allowed).length === 0) return c.json({ error: 'Keine bekannten Felder' }, 400);
       allowed.updatedAt = new Date().toISOString();
