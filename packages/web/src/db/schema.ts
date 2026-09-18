@@ -140,6 +140,12 @@ export const orderNotes = sqliteTable('order_notes', {
   aliexpressOrderId: text('aliexpress_order_id'),   // manuell eingetragene Lieferanten-Bestellnummer
   aliexpressInvoiceUrl: text('aliexpress_invoice_url'), // hochgeladene AliExpress-Rechnung (PDF/Bild)
   manualBuyPrice: real('manual_buy_price'),         // tatsaechlicher Einkaufspreis laut Rechnung (manuell, hat Vorrang vor DB-Wert)
+  // Einkaufspreis-Einfrieren (2026-09-18): einmalig berechneter, dauerhaft persistierter
+  // Einkaufspreis (computeAutoBuyPrice(), order-matching.ts) — überlebt eine spätere Löschung des
+  // referenzierten Produkts. Wird nie automatisch überschrieben, nur manualBuyPrice kann ihn
+  // korrigieren. NULL = noch nicht einfrierbar gewesen (Produkt zum Zeitpunkt unbekannt) ODER Altbestand vor diesem Fix.
+  frozenBuyPrice: real('frozen_buy_price'),
+  frozenBuyPriceAt: text('frozen_buy_price_at'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

@@ -9,8 +9,8 @@ import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTr
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
-import { buildProductLookups, findProductForSku as findProductForSkuShared } from './order-matching';
+import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
+import { buildProductLookups, findProductForSku as findProductForSkuShared, computeAutoBuyPrice } from './order-matching';
 import { Sentry } from '../instrument';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
@@ -805,27 +805,30 @@ const app = new Hono()
             : product.sourceUrl;
         }
 
-        // Manuell eingetragener Einkaufspreis hat IMMER Vorrang (z.B. exakter Betrag laut AliExpress-Rechnung)
+        // Prioritätskette (Einkaufspreis-Einfrieren, 2026-09-18 — s. docs/superpowers/specs/
+        // 2026-09-18-einkaufspreis-einfrieren-design.md):
+        // 1. manuell eingetragener Einkaufspreis hat IMMER Vorrang (z.B. exakter Betrag laut Rechnung)
         if (note?.manualBuyPrice !== null && note?.manualBuyPrice !== undefined) {
           const netto = Math.round((order.total - note.manualBuyPrice) * 100) / 100;
           return { ...order, localNote: note, nettoEinkauf: note.manualBuyPrice, nettoErgebnis: netto, nettoQuelle: 'manuell' as const, aliexpressUrl, ebayListingUrl };
         }
 
-        // Fallback: automatischer Match über SKU/ASIN + Produkt-DB
-        let einkaufBekannt = true;
-        let einkaufGesamt = 0;
-        for (const li of order.lineItems) {
-          const product = findProductForSku(li.sku);
-          if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
-          const zoll = (product.shipsFrom ?? '').toLowerCase() === 'china' ? CHINA_ZOLL_EUR : 0;
-          einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
+        // 2. einmalig eingefrorener Wert (order_notes.frozenBuyPrice) — überlebt eine spätere
+        // Löschung des referenzierten Produkts, wird nie automatisch neu berechnet.
+        if (note?.frozenBuyPrice !== null && note?.frozenBuyPrice !== undefined) {
+          const netto = Math.round((order.total - note.frozenBuyPrice) * 100) / 100;
+          return { ...order, localNote: note, nettoEinkauf: note.frozenBuyPrice, nettoErgebnis: netto, nettoQuelle: 'eingefroren' as const, aliexpressUrl, ebayListingUrl };
         }
+
+        // 3. Übergangs-Fallback: live berechnen (bis der Hintergrund-Job unten diesen Wert einmal
+        // eingefroren hat — danach greift ab dem nächsten Aufruf Stufe 2).
+        const einkaufGesamt = computeAutoBuyPrice(order.lineItems, findProductForSku);
         return {
           ...order,
           localNote: note,
-          nettoEinkauf: einkaufBekannt ? einkaufGesamt : null,
-          nettoErgebnis: einkaufBekannt ? Math.round((order.total - einkaufGesamt) * 100) / 100 : null,
-          nettoQuelle: einkaufBekannt ? ('automatisch' as const) : null,
+          nettoEinkauf: einkaufGesamt,
+          nettoErgebnis: einkaufGesamt !== null ? Math.round((order.total - einkaufGesamt) * 100) / 100 : null,
+          nettoQuelle: einkaufGesamt !== null ? ('automatisch' as const) : null,
           aliexpressUrl,
           ebayListingUrl,
         };
@@ -873,13 +876,27 @@ const app = new Hono()
                 console.error(`[Rechnung Auto-Gen] Drive-Upload fehlgeschlagen fuer ${order.orderId}, lokaler Pfad bleibt:`, driveErr);
               }
 
+              // Einkaufspreis-Einfrieren (2026-09-18): sofort beim ersten Sehen einer Bestellung,
+              // im selben Batch wie die Rechnungserstellung — nicht im Batch-Limit des separaten
+              // Altbestand-Backfills (scripts/freeze-buy-prices-*.ts), damit eine neue Bestellung
+              // nie hinter einem Rückstau alter Bestellungen wartet. Schreibt NUR einen echten Wert,
+              // nie null/0 als Platzhalter — bleibt sonst offen für spätere manuelle Eingabe.
+              const alreadyFrozen = notesByOrderId.get(order.orderId)?.frozenBuyPrice != null;
+              const freezeValue = alreadyFrozen ? null : computeAutoBuyPrice(order.lineItems, findProductForSku);
+              const now = new Date().toISOString();
+
               await db.insert(schema.orderNotes).values({
                 ebayOrderId: order.orderId,
-                invoiceGeneratedAt: new Date().toISOString(),
+                invoiceGeneratedAt: now,
                 invoicePath,
+                ...(freezeValue !== null ? { frozenBuyPrice: freezeValue, frozenBuyPriceAt: now } : {}),
               }).onConflictDoUpdate({
                 target: schema.orderNotes.ebayOrderId,
-                set: { invoiceGeneratedAt: new Date().toISOString(), invoicePath },
+                set: {
+                  invoiceGeneratedAt: now,
+                  invoicePath,
+                  ...(freezeValue !== null ? { frozenBuyPrice: freezeValue, frozenBuyPriceAt: now } : {}),
+                },
               });
             } catch (e) {
               console.error(`[Rechnung Auto-Gen] Fehler bei ${order.orderId}:`, e);

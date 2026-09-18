@@ -6,6 +6,8 @@
 // bedeutet, dass Bericht und App unterschiedliche Bestellungen demselben Produkt zuordnen — bei
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
+import { CHINA_ZOLL_EUR } from '../shared/constants';
+
 export interface ProductForSkuMatch {
   id: number;
   asin: string | null;
@@ -62,3 +64,23 @@ export const UNMATCHED_REASON_TEXT: Record<UnmatchedReason, string> = {
   produkt_ohne_varianten: 'Produkt hat nur eine Variante — nicht Teil dieses Berichts',
   variante_nicht_zuordenbar: 'Produkt gefunden, aber die SKU passt zu keiner variantPrices-Zeile',
 };
+
+// Einkaufspreis-Einfrieren (2026-09-18): aus index.ts:814-822 herausgezogen (reiner Extract,
+// identische Logik — Grundgesetz Regel 8), damit sowohl der Live-Fallback als auch der neue
+// Freeze-Job (order_notes.frozenBuyPrice) dieselbe Berechnung nutzen. Liefert null, sobald für
+// IRGENDEIN Line-Item kein Produkt oder kein bekannter Einkaufspreis gefunden wird — kein
+// Teilbetrag, kein Raten (Grundgesetz Regel 4).
+export function computeAutoBuyPrice<T extends ProductForSkuMatch & { buyPrice: number | null; shipsFrom: string | null }>(
+  lineItems: Array<{ sku: string | null; quantity: number }>,
+  findProductForSkuFn: (sku: string | null) => T | null,
+): number | null {
+  let einkaufBekannt = true;
+  let einkaufGesamt = 0;
+  for (const li of lineItems) {
+    const product = findProductForSkuFn(li.sku);
+    if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
+    const zoll = (product.shipsFrom ?? '').toLowerCase() === 'china' ? CHINA_ZOLL_EUR : 0;
+    einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
+  }
+  return einkaufBekannt ? einkaufGesamt : null;
+}
