@@ -439,6 +439,28 @@ export async function getAliOrderRaw(aliOrderId: string, accessToken: string): P
   }
 }
 
+// Einkaufspreis-Einfrieren (18./19.09.2026, Nutzer-Korrektur nach Live-Prüfung): NUR
+// order_amount.amount (Fallback user_order_amount.amount) darf als Einkaufspreis eingefroren
+// werden. Eine Rekonstruktion aus den Einzelposten (product_price/shipping_fee/actual_tax_fee)
+// ist nachweislich falsch — bei zwei live geprüften Bestellungen (3076306514497211,
+// 3075188992327211) fehlten 0,87€ bzw. 0,89€ zwischen der Summe der sichtbaren Einzelfelder und
+// dem tatsächlich gezahlten Betrag (vermutlich Gutscheine/einmalig erlassene Zollkosten — in
+// KEINEM Einzelfeld der API-Antwort sichtbar). order_amount ist die einzige Zahl, die AliExpress
+// selbst als tatsächlich gezahlt ausweist, und war in allen geprüften Fällen — auch bei zwei
+// Bestellungen, deren referenziertes Produkt längst aus der DB gelöscht war — weiterhin abrufbar.
+export function extractOrderAmount(raw: Record<string, unknown> | null): number | null {
+  const amountStr = (raw?.order_amount as { amount?: string } | undefined)?.amount
+    ?? (raw?.user_order_amount as { amount?: string } | undefined)?.amount;
+  if (!amountStr) return null;
+  const parsed = parseFloat(amountStr);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export async function fetchAliOrderTotal(aliOrderId: string, accessToken: string): Promise<number | null> {
+  const raw = await getAliOrderRaw(aliOrderId, accessToken);
+  return extractOrderAmount(raw);
+}
+
 export async function getAliOrderTracking(aliOrderId: string, accessToken: string): Promise<AliOrderTrackingInfo | null> {
   try {
     const result = await fetchAliOrderResult(aliOrderId, accessToken);

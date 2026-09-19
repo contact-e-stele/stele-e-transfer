@@ -40,7 +40,7 @@ interface Order {
   carrier: string | null;
   nettoEinkauf: number | null;
   nettoErgebnis: number | null;
-  nettoQuelle: "manuell" | "automatisch" | null;
+  nettoQuelle: "manuell" | "eingefroren" | "geschätzt" | null;
   aliexpressUrl: string | null;
   ebayListingUrl: string | null;
   localNote: {
@@ -95,8 +95,12 @@ function buildWorkflowText(order: Order, template: string): string {
     .map(li => `   - ${li.title}${li.sku ? ` (SKU: ${li.sku})` : ""} × ${li.quantity}`)
     .join("\n");
 
+  const nettoQuelleLabel =
+    order.nettoQuelle === "manuell" ? "manuell erfasster Einkaufspreis"
+    : order.nettoQuelle === "eingefroren" ? "eingefrorener, echter AliExpress-Betrag (dauerhaft gespeichert)"
+    : "geschätzt aus Produkt-DB (live, wird nie gespeichert)";
   const nettoBlock = order.nettoErgebnis != null
-    ? `${order.nettoErgebnis.toFixed(2)} ${order.currency} (${order.nettoQuelle === "manuell" ? "manuell erfasster Einkaufspreis" : "automatisch aus Produkt-DB geschätzt"})`
+    ? `${order.nettoErgebnis.toFixed(2)} ${order.currency} (${nettoQuelleLabel})`
     : "noch nicht berechnet (kein bekannter Einkaufspreis)";
 
   const hasAliOrderId = !!order.localNote?.aliexpressOrderId;
@@ -637,6 +641,8 @@ export default function Bestellungen() {
                   <span style={{ fontWeight: 700, color: order.nettoErgebnis >= 0 ? "#16A34A" : "#DC2626" }}>
                     Netto: {order.nettoErgebnis.toFixed(2)} {order.currency}
                     {order.nettoQuelle === "manuell" && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (manuell)</span>}
+                    {order.nettoQuelle === "eingefroren" && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (eingefroren)</span>}
+                    {order.nettoQuelle === "geschätzt" && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (geschätzt)</span>}
                   </span>
                 )}
                 {editingBuyPrice === order.orderId ? (

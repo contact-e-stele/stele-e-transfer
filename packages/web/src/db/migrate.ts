@@ -130,6 +130,13 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN compliance_override_category TEXT`,
   `ALTER TABLE products ADD COLUMN compliance_override_keyword TEXT`,
   `ALTER TABLE products ADD COLUMN compliance_override_field TEXT`,
+  // Einkaufspreis-Einfrieren (2026-09-18): nettoEinkauf/nettoErgebnis wurden bisher live aus der
+  // AKTUELLEN products-Tabelle nachgeschlagen — löscht man das referenzierte Produkt, kippt der
+  // Wert auch für längst abgerechnete Bestellungen auf null (Live-Fund: 2 Bestellungen betroffen,
+  // s. docs/superpowers/specs/2026-09-18-einkaufspreis-einfrieren-design.md). Additiv, beide
+  // nullable, keine bestehende Spalte verändert.
+  `ALTER TABLE order_notes ADD COLUMN frozen_buy_price REAL`,
+  `ALTER TABLE order_notes ADD COLUMN frozen_buy_price_at TEXT`,
 ];
 
 export async function runMigrations() {
