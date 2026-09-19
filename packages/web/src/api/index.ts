@@ -3,7 +3,7 @@ import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
-import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
+import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken, fetchAliOrderTotal } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
 import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail, addressMatchesEmailByStreetOnly } from './gmail';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -805,30 +805,35 @@ const app = new Hono()
             : product.sourceUrl;
         }
 
-        // Prioritätskette (Einkaufspreis-Einfrieren, 2026-09-18 — s. docs/superpowers/specs/
-        // 2026-09-18-einkaufspreis-einfrieren-design.md):
+        // Prioritätskette (Einkaufspreis-Einfrieren, 2026-09-18/19 — s. docs/superpowers/specs/
+        // 2026-09-18-einkaufspreis-einfrieren-design.md, Nutzer-Korrektur 19.09.: NUR der echte
+        // AliExpress-Betrag (order_amount.amount) darf jemals eingefroren werden, NIE eine
+        // Schätzung — s. aliexpress-api.ts extractOrderAmount()):
         // 1. manuell eingetragener Einkaufspreis hat IMMER Vorrang (z.B. exakter Betrag laut Rechnung)
         if (note?.manualBuyPrice !== null && note?.manualBuyPrice !== undefined) {
           const netto = Math.round((order.total - note.manualBuyPrice) * 100) / 100;
           return { ...order, localNote: note, nettoEinkauf: note.manualBuyPrice, nettoErgebnis: netto, nettoQuelle: 'manuell' as const, aliexpressUrl, ebayListingUrl };
         }
 
-        // 2. einmalig eingefrorener Wert (order_notes.frozenBuyPrice) — überlebt eine spätere
-        // Löschung des referenzierten Produkts, wird nie automatisch neu berechnet.
+        // 2. einmalig eingefrorener, ECHTER AliExpress-Betrag (order_notes.frozenBuyPrice) —
+        // überlebt eine spätere Löschung des referenzierten Produkts, wird nie automatisch neu
+        // berechnet oder durch eine Schätzung ersetzt.
         if (note?.frozenBuyPrice !== null && note?.frozenBuyPrice !== undefined) {
           const netto = Math.round((order.total - note.frozenBuyPrice) * 100) / 100;
           return { ...order, localNote: note, nettoEinkauf: note.frozenBuyPrice, nettoErgebnis: netto, nettoQuelle: 'eingefroren' as const, aliexpressUrl, ebayListingUrl };
         }
 
-        // 3. Übergangs-Fallback: live berechnen (bis der Hintergrund-Job unten diesen Wert einmal
-        // eingefroren hat — danach greift ab dem nächsten Aufruf Stufe 2).
-        const einkaufGesamt = computeAutoBuyPrice(order.lineItems, findProductForSku);
+        // 3. Reine Anzeige-Schätzung aus der lokalen Produkt-DB (computeAutoBuyPrice) — wird HIER
+        // NIE gespeichert, nur für diese eine Antwort zurückgegeben. Nutzer-Korrektur 19.09.:
+        // "Eine Schätzung darf NIE eingefroren werden" — der Hintergrund-Job unten schreibt
+        // ausschließlich echte AliExpress-Beträge in frozenBuyPrice, niemals diesen Wert.
+        const geschaetzt = computeAutoBuyPrice(order.lineItems, findProductForSku);
         return {
           ...order,
           localNote: note,
-          nettoEinkauf: einkaufGesamt,
-          nettoErgebnis: einkaufGesamt !== null ? Math.round((order.total - einkaufGesamt) * 100) / 100 : null,
-          nettoQuelle: einkaufGesamt !== null ? ('automatisch' as const) : null,
+          nettoEinkauf: geschaetzt,
+          nettoErgebnis: geschaetzt !== null ? Math.round((order.total - geschaetzt) * 100) / 100 : null,
+          nettoQuelle: geschaetzt !== null ? ('geschätzt' as const) : null,
           aliexpressUrl,
           ebayListingUrl,
         };
@@ -876,13 +881,26 @@ const app = new Hono()
                 console.error(`[Rechnung Auto-Gen] Drive-Upload fehlgeschlagen fuer ${order.orderId}, lokaler Pfad bleibt:`, driveErr);
               }
 
-              // Einkaufspreis-Einfrieren (2026-09-18): sofort beim ersten Sehen einer Bestellung,
-              // im selben Batch wie die Rechnungserstellung — nicht im Batch-Limit des separaten
-              // Altbestand-Backfills (scripts/freeze-buy-prices-*.ts), damit eine neue Bestellung
-              // nie hinter einem Rückstau alter Bestellungen wartet. Schreibt NUR einen echten Wert,
-              // nie null/0 als Platzhalter — bleibt sonst offen für spätere manuelle Eingabe.
-              const alreadyFrozen = notesByOrderId.get(order.orderId)?.frozenBuyPrice != null;
-              const freezeValue = alreadyFrozen ? null : computeAutoBuyPrice(order.lineItems, findProductForSku);
+              // Einkaufspreis-Einfrieren (2026-09-18/19, Nutzer-Korrektur 19.09.): sofort beim
+              // ersten Sehen einer Bestellung, im selben Batch wie die Rechnungserstellung — nicht
+              // im Batch-Limit des separaten Altbestand-Backfills (scripts/freeze-buy-prices-*.ts).
+              // Schreibt AUSSCHLIESSLICH den echten AliExpress-Betrag (order_amount.amount) — NIE
+              // eine Schätzung. Ohne hinterlegte aliexpressOrderId (bei ganz neuen Bestellungen der
+              // Normalfall, die Nummer wird meist erst später manuell eingetragen) passiert hier
+              // nichts; sobald sie nachgetragen wird, holt der nächste Lauf von
+              // scripts/freeze-buy-prices-apply.ts den echten Betrag nach.
+              const existingNote = notesByOrderId.get(order.orderId);
+              const alreadyFrozen = existingNote?.frozenBuyPrice != null;
+              const aliOrderId = existingNote?.aliexpressOrderId;
+              let freezeValue: number | null = null;
+              if (!alreadyFrozen && aliOrderId) {
+                try {
+                  const aliToken = await getAliAccessToken();
+                  if (aliToken) freezeValue = await fetchAliOrderTotal(aliOrderId, aliToken);
+                } catch (e) {
+                  console.error(`[Einkaufspreis-Freeze] Fehler bei ${order.orderId}:`, e);
+                }
+              }
               const now = new Date().toISOString();
 
               await db.insert(schema.orderNotes).values({

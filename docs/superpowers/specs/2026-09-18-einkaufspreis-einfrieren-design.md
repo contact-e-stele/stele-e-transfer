@@ -127,3 +127,48 @@ Inline-Label (Z.639) unterscheiden "eingefroren am {Datum}" von "automatisch (li
 Die 2 bereits kaputten Bestellungen (stele-93/98) bleiben `null`, bis der Nutzer die
 Werte manuell über das bestehende `manualBuyPrice`-Feld nachträgt — das ist eine separate,
 vom Nutzer selbst zu treffende Entscheidung (Backup vom 15.09. verfügbar).
+
+## Korrektur 19.09.2026 (nach Nutzer-Verifikation gegen echte AliExpress-Rechnungsdaten)
+
+**Ersetzt Architektur-Punkte 2/5 und Tests oben — nicht mehr gültig: computeAutoBuyPrice()
+(lokale DB-Schätzung) durfte laut ursprünglicher Spec eingefroren werden.**
+
+Live-Prüfung von 10 Vorschau-Werten gegen die echte AliExpress-Bestellung
+(`aliexpress.trade.ds.order.get`) zeigte: 9 von 10 `computeAutoBuyPrice()`-Werte weichen vom
+tatsächlich gezahlten Betrag ab (bis zu +4,12€) — Ursache: der pauschale `CHINA_ZOLL_EUR`
+(4,00€) trifft die real gezahlte Einfuhrabgabe nicht, und der gespeicherte `buyPrice` weicht vom
+für die konkrete Bestellung tatsächlich gezahlten Warenwert ab (Rabatte/Preisänderungen seit dem
+Import). Zusätzlich: der tatsächlich gezahlte Gesamtbetrag lässt sich NICHT aus den sichtbaren
+Einzelfeldern der API-Antwort rekonstruieren (`product_price − sale_discount_fee + shipping_fee +
+actual_tax_fee` ergab bei zwei geprüften Bestellungen 0,87€ bzw. 0,89€ MEHR als tatsächlich
+gezahlt — vermutlich Gutscheine/einmalig erlassene Zollkosten, die in keinem Einzelfeld sichtbar
+sind).
+
+**Neue Regel: NUR `order_amount.amount` (Top-Level-Feld der `aliexpress.trade.ds.order.get`-
+Antwort, Fallback `user_order_amount.amount`) darf eingefroren werden — niemals eine Schätzung.**
+Empirisch bestätigt: dieses Feld bleibt auch für abgeschlossene, 7+ Wochen alte Bestellungen
+abrufbar, UND für Bestellungen, deren referenziertes lokales Produkt bereits gelöscht wurde (die
+beiden eingangs kaputten Bestellungen 02-15151-11415/13-15069-00183 lieferten live 10,55€ bzw.
+12,29€ — brauchen dadurch vermutlich KEINE manuelle Nachtragung aus dem 15.09.-Backup mehr, s.
+Out-of-Scope-Abschnitt oben, der dadurch teilweise überholt ist).
+
+**Architektur-Änderungen:**
+- Neue Funktionen `extractOrderAmount()` (pure, testbar) + `fetchAliOrderTotal()` (Netzwerk-
+  Wrapper) in `aliexpress-api.ts`.
+- `computeAutoBuyPrice()` bleibt bestehen, wird aber NIE MEHR eingefroren — nur noch als
+  live berechnete, klar als `'geschätzt'` markierte Anzeige-Schätzung (eigener `nettoQuelle`-Wert,
+  ersetzt das vorherige `'automatisch'`), die bei jedem Request neu berechnet und NIE
+  gespeichert wird.
+- Prioritätskette: `manuell` > `eingefroren` (jetzt garantiert ein echter AliExpress-Betrag) >
+  `geschätzt` (Anzeige, nie persistiert) > `null`.
+- Freeze-Voraussetzung geändert: eine Bestellung braucht eine hinterlegte `aliexpressOrderId`,
+  damit überhaupt eingefroren werden kann (weder bei neuen noch bei Alt-Bestellungen ohne diese
+  Nummer passiert etwas) — sobald sie nachgetragen wird, greift der nächste Lauf von
+  `freeze-buy-prices-apply.ts` bzw. der Hintergrund-Job für neue Bestellungen.
+- Beide Skripte (`freeze-buy-prices-preview.ts`/`-apply.ts`) rufen jetzt live
+  `fetchAliOrderTotal()` pro Bestellung auf statt `computeAutoBuyPrice()`.
+
+**Live-Vorschau 19.09.2026 (nur lesend, alle 16 Bestellungen, 0 neu/16 alt):** 12 Bestellungen
+würden jetzt einen echten AliExpress-Betrag eingefroren bekommen (inkl. der 2 ursprünglich
+kaputten), 4 sind manuell gesetzt (bleiben unangetastet), 0 ohne AliExpress-Nummer. Report:
+`scripts/output/freeze-buy-prices-preview.md` (lokal, nicht committed).
