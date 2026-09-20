@@ -200,3 +200,9 @@ Weitere laut Code erforderlich, Render-Status nicht geprüft: GEMINI_API_KEY, RE
 SESSION_SECRET, BACKUP_API_KEY, DATABASE_URL/DATABASE_AUTH_TOKEN (Turso), ALIEXPRESS_APP_KEY/SECRET,
 EBAY_APP_ID/DEV_ID/CERT_ID/USER_TOKEN — die App läuft produktiv, was dafür spricht, dass sie gesetzt
 sind, aber das ist keine Bestätigung.
+
+## P-85 Schritt 2c (20.09.2026) — verwaiste variantPrices-Einträge warnen statt blockieren
+- Root Cause: Listing-Gate (`POST /ebay/list`, `api/index.ts`) warf Kombinationsfehler und Waisen in einen Topf → stele-97 (4/4 Kombinationen eindeutig, 1 Waise) wurde grundlos blockiert.
+- Fix: reine Funktion `evaluateVariantGate()` (`shared/variant-gate.ts`); nur Kombinationsfehler blockieren, Waisen → `console.warn` + `warnings: string[]` im Erfolgs-JSON, gelber Hinweis in `produkte.tsx`. Bei Blocker hängen Waisen als "Hinweis: "-Zeilen am Fehlertext.
+- Verifiziert gegen Produktions-DB (nur lesend): 97 listbar; 70/107/152/154/161/162 blockiert.
+- Offen: Waise nach dem Listing nur im Log + einmaliger UI-Meldung sichtbar (kein DB-Feld, bewusst).

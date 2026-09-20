@@ -804,7 +804,7 @@ export default function Produkte() {
   const [refreshingStock, setRefreshingStock] = useState<number | null>(null);
   const [stockRefreshMsg, setStockRefreshMsg] = useState<{ id: number; text: string } | null>(null);
   const [listingProduct, setListingProduct] = useState<number | null>(null);
-  const [listingResult, setListingResult] = useState<{ id: number; success: boolean; msg: string } | null>(null);
+  const [listingResult, setListingResult] = useState<{ id: number; success: boolean; warn?: boolean; msg: string } | null>(null);
   const [locationMsg, setLocationMsg] = useState("");
   const [editingPrice, setEditingPrice] = useState<number | null>(null);
   const [priceInput, setPriceInput] = useState("");
@@ -976,7 +976,7 @@ export default function Produkte() {
         body: JSON.stringify({ productId: product.id, confirmUnknownStock }),
       });
       const data = await res.json() as {
-        listingId?: string; success?: boolean; error?: string;
+        listingId?: string; success?: boolean; error?: string; warnings?: string[];
         needsStockConfirmation?: boolean; unknownStockVariants?: string[]; fallbackQuantity?: number;
       };
       if (data.needsStockConfirmation) {
@@ -991,7 +991,11 @@ export default function Produkte() {
         return;
       }
       if (data.success && data.listingId) {
-        setListingResult({ id: product.id, success: true, msg: `eBay Listing erstellt: #${data.listingId}` });
+        const warnings = data.warnings ?? [];
+        setListingResult({
+          id: product.id, success: true, warn: warnings.length > 0,
+          msg: `eBay Listing erstellt: #${data.listingId}` + warnings.map(w => `\nHinweis: ${w}`).join(""),
+        });
         load();
       } else {
         setListingResult({ id: product.id, success: false, msg: data.error ?? "Unbekannter Fehler" });
@@ -1686,8 +1690,9 @@ export default function Produkte() {
               {listingResult?.id === product.id && (
                 <div style={{
                   fontSize: 11, padding: "6px 10px", borderRadius: 6, marginTop: 8, fontWeight: 600,
-                  background: listingResult.success ? "#F0FDF4" : "#FEF2F2",
-                  color: listingResult.success ? "#16A34A" : "#DC2626",
+                  background: listingResult.warn ? "#FEFCE8" : listingResult.success ? "#F0FDF4" : "#FEF2F2",
+                  color: listingResult.warn ? "#A16207" : listingResult.success ? "#16A34A" : "#DC2626",
+                  whiteSpace: "pre-line",
                 }}>
                   {listingResult.msg}
                 </div>

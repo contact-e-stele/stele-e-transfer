@@ -12,7 +12,8 @@ import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
 import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
 import { isStringRecord } from '../shared/validation';
-import { syncDisplayValuesOnRename, findOrphanedVariantEntries, resolveVariantEntries, type VariantPriceEntry } from '../shared/variant-resolver';
+import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
+import { evaluateVariantGate } from '../shared/variant-gate';
 import { buildProductLookups, findProductForSku as findProductForSkuShared } from './order-matching';
 import { Sentry } from '../instrument';
 
@@ -2371,20 +2372,21 @@ const app = new Hono()
       // eBay-Aufruf, analog zu 1e oben — mehrdeutige/fehlende Zuordnungen (s. variant-resolver.ts)
       // blockieren den Listing-Versuch mit Klartext statt sie erst beim Preis-Write in ebay.ts
       // als generischen "Kein Preis ermittelbar"-Fehler auffliegen zu lassen.
+      // P-85 Schritt 2c (20.09.2026): nur Kombinationsfehler blockieren; verwaiste Einträge sind
+      // Warnungen (Server-Log + `warnings` im Erfolgs-JSON), s. shared/variant-gate.ts.
+      let variantWarnings: string[] = [];
       if (variantGroups.length > 0) {
-        const resolved = resolveVariantEntries(product.id, variantGroups, variantPricesForListing as VariantPriceEntry[]);
-        const combinationErrors = resolved.filter(r => r.error).map(r => r.error!);
-        const orphanErrors = findOrphanedVariantEntries(product.id, variantGroups, variantPricesForListing as VariantPriceEntry[]);
-        const allErrors = [...combinationErrors, ...orphanErrors];
-        if (allErrors.length > 0) {
-          const msg = `Varianten-Zuordnung fehlgeschlagen: ${allErrors.join(' | ')} — bitte Varianten/Preise im Produkte-Tab prüfen.`;
+        const gate = evaluateVariantGate(product.id, variantGroups, variantPricesForListing as VariantPriceEntry[]);
+        variantWarnings = gate.warnings;
+        if (gate.blockError) {
           await db.update(schema.products).set({
             ebayStatus: 'error',
-            ebayError: msg,
+            ebayError: gate.blockError,
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, body.productId));
-          return c.json({ error: msg }, 400);
+          return c.json({ error: gate.blockError }, 400);
         }
+        for (const w of variantWarnings) console.warn(`[ebay/list] Produkt ${product.id}: ${w}`);
       }
 
       const listingId = await listOnEbay({
@@ -2422,7 +2424,7 @@ const app = new Hono()
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, body.productId));
 
-      return c.json({ listingId, success: true }, 200);
+      return c.json({ listingId, success: true, warnings: variantWarnings }, 200);
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
       // P-91: lesbare Meldung fürs Frontend statt des rohen eBay-JSON-Blobs
