@@ -10,7 +10,7 @@ import Retouren from "./pages/retouren";
 import Einstellungen from "./pages/einstellungen";
 import Login from "./pages/login";
 import { Provider } from "./components/provider";
-import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
+import { AgentFeedback } from "@runablehq/website-runtime";
 import { LogOut, Menu, X } from "lucide-react";
 
 // Reihenfolge: Preise → Suche → Import → Produkte → Listings → Retouren
@@ -49,6 +49,10 @@ function TabNav() {
   return (
     <div className="stele-tabnav">
       <div className="stele-tabnav-inner">
+        <div className="stele-brand">
+          <img src="/logo-header.png" alt="" width={32} height={32} />
+          <span>STELE</span>
+        </div>
         <div className="stele-tabnav-row">
           {NAV_TABS.map(tab => (
             <button
@@ -155,16 +159,16 @@ function App() {
       <div style={{
         position: "fixed", top: 12, right: 12, zIndex: 999,
         display: "flex", alignItems: "center", gap: 8,
-        background: "#fff", borderRadius: 10, padding: "6px 12px",
+        background: "var(--stele-anthracite)", border: "1px solid var(--stele-gold-dark)", borderRadius: 10, padding: "6px 12px",
         boxShadow: "0 2px 8px rgba(0,0,0,0.12)", fontSize: 12, fontWeight: 700,
-        color: "#475569", fontFamily: "'Poppins', sans-serif",
+        color: "var(--stele-cream)", fontFamily: "'Poppins', sans-serif",
       }}>
-        <span style={{ color: "#8B5CF6" }}>{user}</span>
+        <span style={{ color: "var(--stele-gold)" }}>{user}</span>
         <button onClick={handleLogout} title="Ausloggen" style={{
           background: "none", border: "none", cursor: "pointer", padding: 2,
           display: "flex", alignItems: "center",
         }}>
-          <LogOut size={14} color="#94A3B8" />
+          <LogOut size={14} color="#D6AD63" />
         </button>
       </div>
       <TabNav />
@@ -179,7 +183,6 @@ function App() {
         <Route path="/einstellungen" component={Einstellungen} />
       </Switch>
       {import.meta.env.DEV && <AgentFeedback />}
-      {<RunableBadge />}
     </Provider>
   );
 }

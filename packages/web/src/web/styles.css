@@ -42,6 +42,16 @@
 }
 
 :root {
+  /* Marken-Tokens (Design-Vorgabe v1) */
+  --stele-black: #060604;
+  --stele-anthracite: #1E1810;
+  --stele-gold: #D6AD63;
+  --stele-gold-dark: #A8803D;
+  --stele-bronze: #825139;
+  --stele-violet: #96566B;
+  --stele-cream: #F9E9D2;
+  --stele-bg: #F9F7F2;
+
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -119,25 +129,48 @@
   }
 }
 
-/* ---- Responsive TabNav (P-76) ---- */
+/* ---- Responsive TabNav (P-76) — Markendesign v1 ---- */
 .stele-tabnav {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: #F1F5F9;
+  background: var(--stele-black);
   padding: 8px;
-  border-bottom: 1px solid #E2E8F0;
+  border-bottom: 1px solid var(--stele-gold-dark);
 }
 
 .stele-tabnav-inner {
   max-width: 1100px;
   margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 130px; /* Platz für den fixierten User-Badge */
+}
+
+.stele-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--stele-gold);
+  font-family: 'Poppins', sans-serif;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 2px;
+}
+
+.stele-brand img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
 }
 
 .stele-tabnav-row {
   display: flex;
+  flex: 1;
   gap: 4px;
-  background: #E2E8F0;
+  background: var(--stele-anthracite);
   border-radius: 14px;
   padding: 4px;
 }
@@ -147,14 +180,17 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: 100%;
-  background: #E2E8F0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  background: var(--stele-anthracite);
   border: none;
   border-radius: 14px;
   padding: 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #0F172A;
+  color: var(--stele-gold);
   font-family: 'Poppins', sans-serif;
   cursor: pointer;
 }
@@ -168,7 +204,8 @@
   border-radius: 10px;
   border: none;
   background: transparent;
-  color: #64748B;
+  color: var(--stele-cream);
+  opacity: 0.75;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -178,9 +215,10 @@
 }
 
 .stele-tab.active {
-  background: #fff;
-  color: #0F172A;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  background: var(--stele-black);
+  color: var(--stele-gold);
+  opacity: 1;
+  box-shadow: inset 0 -2px 0 var(--stele-gold);
 }
 
 .stele-tab-version {
@@ -188,7 +226,7 @@
   margin-top: 3px;
   font-size: 9px;
   font-weight: 700;
-  color: #94A3B8;
+  color: var(--stele-gold);
   letter-spacing: 1px;
   font-family: monospace;
 }
@@ -210,7 +248,7 @@
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.5);
+  background: rgba(6, 6, 4, 0.6);
   z-index: 1000;
   opacity: 0;
   transition: opacity 0.2s ease;
@@ -229,7 +267,7 @@
   z-index: 1001;
   width: 78vw;
   max-width: 300px;
-  background: #fff;
+  background: var(--stele-anthracite);
   box-shadow: 2px 0 16px rgba(0,0,0,0.18);
   transform: translateX(-100%);
   transition: transform 0.25s ease;
@@ -247,11 +285,12 @@
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  border-bottom: 1px solid #E2E8F0;
+  border-bottom: 1px solid var(--stele-gold-dark);
+  background: var(--stele-black);
   font-family: 'Poppins', sans-serif;
   font-weight: 700;
   font-size: 13px;
-  color: #0F172A;
+  color: var(--stele-gold);
 }
 
 .stele-drawer-close {
@@ -261,7 +300,7 @@
   padding: 4px;
   display: flex;
   align-items: center;
-  color: #64748B;
+  color: var(--stele-gold);
 }
 
 .stele-drawer-item {
@@ -271,7 +310,7 @@
   padding: 13px 16px;
   border: none;
   background: transparent;
-  color: #475569;
+  color: var(--stele-cream);
   font-size: 14px;
   font-weight: 600;
   font-family: 'Poppins', sans-serif;
@@ -286,9 +325,9 @@
 }
 
 .stele-drawer-item.active {
-  background: #EEF2FF;
-  color: #4338CA;
-  border-left-color: #8B5CF6;
+  background: var(--stele-black);
+  color: var(--stele-gold);
+  border-left-color: var(--stele-gold);
 }
 
 /* Ab Desktop-Breite wird der Drawer nicht benötigt */
