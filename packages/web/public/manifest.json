@@ -4,8 +4,8 @@
   "description": "eBay Preisvorschlag-Rechner von stele-e-transfer",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F8FAFC",
-  "theme_color": "#3B82F6",
+  "background_color": "#F9F7F2",
+  "theme_color": "#060604",
   "orientation": "portrait",
   "icons": [
     {
