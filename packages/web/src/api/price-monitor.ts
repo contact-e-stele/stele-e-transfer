@@ -9,6 +9,7 @@ import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryI
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
 // P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
@@ -35,6 +36,18 @@ export interface VariantPriceRow {
   attrs: Record<string, string>;
   buyPrice: number;
   correctSellPrice: number;
+  // P-85 Schritt 2b: explizite Anzeigewert-Zuordnung (s. variant-resolver.ts) — überlebt eine
+  // Umbenennung im Produkte-Tab, durchgereicht von den rohen variantPrices bis hierher.
+  displayValues?: Record<string, string>;
+}
+
+// P-85 Schritt 2b: product.variants (JSON) → VariantGroup[] — kleine, an mehreren Stellen
+// gebrauchte Parse-Hilfsfunktion (Grundgesetz Regel 8), liefert bei Fehler/fehlendem Wert [].
+export function parseVariantGroupsJson(json: string | null | undefined): VariantGroup[] {
+  try {
+    const parsed = json ? JSON.parse(json) : [];
+    return Array.isArray(parsed) ? (parsed as VariantGroup[]) : [];
+  } catch { return []; }
 }
 
 // Liest die gespeicherten (oder frisch übergebenen) Varianten-Einkaufspreise eines Produkts
@@ -48,7 +61,7 @@ export function computeVariantPriceRows(
   adRate: number | null,
   targetMarginEur?: number | null // Teil 2C: product.targetMarginEur — null/undefined → globaler Fallback
 ): VariantPriceRow[] {
-  let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
+  let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number; displayValues?: Record<string, string> }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
   const versand = shippingCost ?? 0;
   const isChina = isChinaShipping(shipsFrom);
@@ -60,6 +73,7 @@ export function computeVariantPriceRows(
       skuId: v.skuId,
       attrs: v.attrs ?? {},
       buyPrice: v.price,
+      displayValues: v.displayValues,
       correctSellPrice: computeMinSellPrice({
         buyPrice: v.price, supplierShipping: versand,
         isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
@@ -111,40 +125,60 @@ export function buildVariantSku(productId: number, attrs: Record<string, string>
   return `stele-${productId}-${suffix}`;
 }
 
+// P-85 Schritt 2b (20.09.2026): nutzt jetzt resolveVariantEntries() (variant-resolver.ts) statt
+// der eigenen buildVariantSku()-Rekonstruktion + Map (bei Dubletten gewann bisher stillschweigend
+// der LETZTE Eintrag). buildVariantSku() selbst bleibt UNVERÄNDERT bestehen (weiterhin von
+// variant-sales.ts / scripts/export-variant-*.ts genutzt, außerhalb dieses Auftrags — s.
+// PR-Beschreibung, Abschnitt OFFEN) — hier nur nicht mehr intern verwendet.
+//
+// Kein Einheitspreis-Fallback mehr für eine reale eBay-SKU ohne eindeutige Zuordnung: die Variante
+// wird übersprungen (Preis bleibt unverändert) und der Grund geloggt sowie in `errors`
+// zurückgegeben, statt ihr einen möglicherweise falschen (zu niedrigen ODER zu hohen) Preis zu
+// verpassen (Grundgesetz Regel 4).
 export async function updateEbayVariantPricesIndividually(
   productId: number,
+  variants: VariantGroup[],
   rows: VariantPriceRow[]
-): Promise<{ ok: boolean; updatedCount: number }> {
-  if (rows.length === 0) return { ok: false, updatedCount: 0 };
+): Promise<{ ok: boolean; updatedCount: number; errors: string[] }> {
+  if (rows.length === 0) return { ok: false, updatedCount: 0, errors: [] };
   try {
     const token = await getAccessToken();
     const groupSku = `stele-${productId}-GROUP`;
     const realSkus = await getInventoryItemGroupSkus(groupSku, token);
-    if (realSkus.length === 0) return { ok: false, updatedCount: 0 };
+    if (realSkus.length === 0) return { ok: false, updatedCount: 0, errors: [] };
 
-    const rowBySku = new Map<string, VariantPriceRow>();
-    for (const row of rows) {
-      rowBySku.set(buildVariantSku(productId, row.attrs), row);
-    }
-    const fallbackPrice = safeUniformVariantPrice(rows);
+    // rows tragen bereits den korrekten Verkaufspreis (correctSellPrice) je Zeile — als "price"
+    // an den Resolver übergeben, damit resolveVariantEntries() ihn 1:1 durchreicht.
+    const asEntries: VariantPriceEntry[] = rows.map(r => ({
+      skuId: r.skuId, attrs: r.attrs, price: r.correctSellPrice, displayValues: r.displayValues,
+    }));
+    const resolved = resolveVariantEntries(productId, variants, asEntries);
+    const resolvedBySku = new Map(resolved.map(r => [r.sku, r]));
 
     let updatedCount = 0;
+    const errors: string[] = [];
     for (const sku of realSkus) {
-      const row = rowBySku.get(sku);
-      const price = row ? row.correctSellPrice : fallbackPrice;
+      const match = resolvedBySku.get(sku);
+      if (!match?.entry) {
+        const msg = match?.error ?? `Reale eBay-SKU ${sku} (Produkt ${productId}) passt auf keine aktuelle Varianten-Kombination.`;
+        console.warn(`[PriceMonitor] ${productId}: ${sku} übersprungen — ${msg}`);
+        errors.push(msg);
+        continue;
+      }
+      const price = match.entry.price;
       if (price == null) continue;
       const ok = await updateOfferPriceBySku(sku, price, token);
       if (ok) {
         updatedCount++;
-        console.log(`[PriceMonitor] ${productId}: Variante ${sku} → ${price.toFixed(2)}€${row ? '' : ' (kein Zeilen-Match — sicherer Einheitspreis als Fallback für nur diese SKU)'}`);
+        console.log(`[PriceMonitor] ${productId}: Variante ${sku} → ${price.toFixed(2)}€`);
       } else {
         console.warn(`[PriceMonitor] ${productId}: Preis für ${sku} konnte nicht auf ${price.toFixed(2)}€ gesetzt werden`);
       }
     }
-    return { ok: updatedCount > 0, updatedCount };
+    return { ok: updatedCount > 0, updatedCount, errors };
   } catch (e) {
     console.warn(`[PriceMonitor] ${productId}: updateEbayVariantPricesIndividually fehlgeschlagen:`, e);
-    return { ok: false, updatedCount: 0 };
+    return { ok: false, updatedCount: 0, errors: [String(e)] };
   }
 }
 
@@ -154,13 +188,14 @@ export async function updateEbayVariantPricesIndividually(
 // Einkaufspreis nie in der normalen Vorschau auftauchen würden. `updateFn` als DI-Parameter,
 // damit dieser Aufruf in Tests ohne echten eBay-Zugriff geprüft werden kann.
 export async function repairVariantPricesForProduct(
-  product: { id: number; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null; targetMarginEur?: number | null },
+  product: { id: number; variants: string | null; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null; targetMarginEur?: number | null },
   updateFn: typeof updateEbayVariantPricesIndividually = updateEbayVariantPricesIndividually
 ): Promise<{ ok: boolean; updatedSkuCount: number; error?: string }> {
   const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
   if (rows.length === 0) return { ok: false, updatedSkuCount: 0, error: 'Keine Varianten-Einkaufspreise vorhanden' };
-  const { ok, updatedCount } = await updateFn(product.id, rows);
-  return { ok, updatedSkuCount: updatedCount };
+  const variants = parseVariantGroupsJson(product.variants);
+  const { ok, updatedCount, errors } = await updateFn(product.id, variants, rows);
+  return { ok, updatedSkuCount: updatedCount, error: errors.length > 0 ? errors.join(' | ') : undefined };
 }
 
 // P-27/P-28 PR 5 (2026-09-09, Live-Fund): PR 4s "N Produkte pro Batch" reichte nicht — ein

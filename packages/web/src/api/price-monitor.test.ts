@@ -104,10 +104,10 @@ describe('repairVariantPricesForProduct (POST /ebay/listings/repair-variant-pric
     // (falschen) Einheitspreis-Schreibvorgang nicht geändert — computeVariantPriceRows() liefert
     // also denselben Soll-Wert wie beim letzten Mal. Ein diff-basierter Endpunkt (wie
     // recalculate-preview) würde dieses Produkt deshalb NIE anfassen.
-    const product = { id: 138, variantPrices: variantPricesJson, shippingCost: 0, shipsFrom: null, adRate: 5 };
+    const product = { id: 138, variants: JSON.stringify([{ name: 'Farbe', values: ['Red', 'Blue', 'Green'] }]), variantPrices: variantPricesJson, shippingCost: 0, shipsFrom: null, adRate: 5 };
 
-    const mockUpdateFn = mock(async (_productId: number, rows: ReturnType<typeof computeVariantPriceRows>) =>
-      ({ ok: true, updatedCount: rows.length })
+    const mockUpdateFn = mock(async (_productId: number, _variants: unknown, rows: ReturnType<typeof computeVariantPriceRows>) =>
+      ({ ok: true, updatedCount: rows.length, errors: [] as string[] })
     );
 
     const result = await repairVariantPricesForProduct(product, mockUpdateFn);
@@ -115,16 +115,16 @@ describe('repairVariantPricesForProduct (POST /ebay/listings/repair-variant-pric
     expect(mockUpdateFn).toHaveBeenCalledTimes(1);
     // updateFn bekommt alle 3 Zeilen mit ihren je EIGENEN correctSellPrice-Werten übergeben —
     // nicht einen einzigen Einheitspreis für alle.
-    const [calledProductId, calledRows] = mockUpdateFn.mock.calls[0];
+    const [calledProductId, , calledRows] = mockUpdateFn.mock.calls[0];
     expect(calledProductId).toBe(138);
     expect(calledRows).toHaveLength(3);
     expect(new Set(calledRows.map(r => r.correctSellPrice)).size).toBe(3);
-    expect(result).toEqual({ ok: true, updatedSkuCount: 3 });
+    expect(result).toEqual({ ok: true, updatedSkuCount: 3, error: undefined });
   });
 
   test('meldet Fehler statt updateFn aufzurufen, wenn keine Varianten-Einkaufspreise vorhanden sind', async () => {
-    const mockUpdateFn = mock(async () => ({ ok: true, updatedCount: 0 }));
-    const product = { id: 999, variantPrices: null, shippingCost: 0, shipsFrom: null, adRate: 5 };
+    const mockUpdateFn = mock(async () => ({ ok: true, updatedCount: 0, errors: [] as string[] }));
+    const product = { id: 999, variants: null, variantPrices: null, shippingCost: 0, shipsFrom: null, adRate: 5 };
 
     const result = await repairVariantPricesForProduct(product, mockUpdateFn);
 
@@ -242,10 +242,11 @@ describe('updateEbayVariantPricesIndividually — Ships-From/Blacklist-Filterung
       { skuId: 'v1', attrs: { Color: 'Red', 'Ships From': 'China Mainland' }, buyPrice: 5, correctSellPrice: 12.95 },
       { skuId: 'v2', attrs: { Color: 'Blue', 'Ships From': 'China Mainland' }, buyPrice: 8, correctSellPrice: 17.95 },
     ];
+    const variants = [{ name: 'Farbe', values: ['Red', 'Blue'] }];
 
-    const result = await updateEbayVariantPricesIndividually(71, rows);
+    const result = await updateEbayVariantPricesIndividually(71, variants, rows);
 
-    expect(result).toEqual({ ok: true, updatedCount: 2 });
+    expect(result).toEqual({ ok: true, updatedCount: 2, errors: [] });
     // Jede SKU bekommt ihren EIGENEN Preis — kein Fallback auf den Einheitspreis, weil beide
     // trotz "Ships From" im attrs-Objekt korrekt der jeweils echten SKU zugeordnet wurden.
     expect(putBodies.get('stele-71-RED')?.value).toBe('12.95');
@@ -261,10 +262,11 @@ describe('updateEbayVariantPricesIndividually — Ships-From/Blacklist-Filterung
       { skuId: 'v2', attrs: { Color: 'Blue' }, buyPrice: 3.39, correctSellPrice: 15.95 },
       { skuId: 'v3', attrs: { Color: 'Green' }, buyPrice: 2.39, correctSellPrice: 13.95 },
     ];
+    const variants = [{ name: 'Farbe', values: ['Red', 'Blue', 'Green'] }];
 
-    const result = await updateEbayVariantPricesIndividually(138, rows);
+    const result = await updateEbayVariantPricesIndividually(138, variants, rows);
 
-    expect(result).toEqual({ ok: true, updatedCount: 3 });
+    expect(result).toEqual({ ok: true, updatedCount: 3, errors: [] });
     expect(putBodies.get('stele-138-RED')?.value).toBe('20.95');
     expect(putBodies.get('stele-138-BLUE')?.value).toBe('15.95');
     expect(putBodies.get('stele-138-GREEN')?.value).toBe('13.95');
@@ -278,10 +280,11 @@ describe('updateEbayVariantPricesIndividually — Ships-From/Blacklist-Filterung
       { skuId: 'v1', attrs: { Size: 'M', 'Ships From': 'Germany', 'Herstellungsland': 'Deutschland' }, buyPrice: 4, correctSellPrice: 14.95 },
       { skuId: 'v2', attrs: { Size: 'L', 'Ships From': 'Germany', 'Herstellungsland': 'Deutschland' }, buyPrice: 4.5, correctSellPrice: 15.95 },
     ];
+    const variants = [{ name: 'Größe', values: ['M', 'L'] }];
 
-    const result = await updateEbayVariantPricesIndividually(92, rows);
+    const result = await updateEbayVariantPricesIndividually(92, variants, rows);
 
-    expect(result).toEqual({ ok: true, updatedCount: 2 });
+    expect(result).toEqual({ ok: true, updatedCount: 2, errors: [] });
     expect(putBodies.get('stele-92-M')?.value).toBe('14.95');
     expect(putBodies.get('stele-92-L')?.value).toBe('15.95');
   });
@@ -292,6 +295,28 @@ describe('updateEbayVariantPricesIndividually — Ships-From/Blacklist-Filterung
     // echten eBay-SKUs vorkommt — der eigentliche Fix-Test oben beweist damit tatsächlich etwas.
     const realSkus = ['stele-71-RED'];
     expect(realSkus.includes('stele-71-RED-CHINA-MAINLAND')).toBe(false);
+  });
+
+  // P-85 Schritt 2b, Punkt 3 (20.09.2026): "Kein Einheitspreis-Fallback mehr für nicht
+  // zugeordnete SKUs — stattdessen Fehler loggen und SKU überspringen." Vorher hätte eine reale
+  // eBay-SKU ohne Zeilen-Match sicher (Maximum) bepreist bekommen — jetzt bleibt sie unangetastet.
+  test('reale eBay-SKU ohne eindeutigen Match bekommt KEINEN Einheitspreis mehr — wird übersprungen, im Fehler benannt', async () => {
+    const realSkus = ['stele-99-RED', 'stele-99-UNBEKANNT'];
+    const putBodies = mockEbayFetch(realSkus);
+
+    const rows = [
+      { skuId: 'v1', attrs: { Color: 'Red' }, buyPrice: 5, correctSellPrice: 12.95 },
+    ];
+    const variants = [{ name: 'Farbe', values: ['Red'] }]; // "UNBEKANNT" ist absichtlich KEIN Anzeigewert
+
+    const result = await updateEbayVariantPricesIndividually(99, variants, rows);
+
+    expect(result.ok).toBe(true); // die eine echte Zeile wurde trotzdem geschrieben
+    expect(result.updatedCount).toBe(1);
+    expect(putBodies.get('stele-99-RED')?.value).toBe('12.95');
+    expect(putBodies.has('stele-99-UNBEKANNT')).toBe(false); // NICHT mit einem geratenen Preis beschrieben
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('stele-99-UNBEKANNT');
   });
 });
 
