@@ -14,6 +14,7 @@ import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
+import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 
 interface VariantGroup {
   name: string;
@@ -146,8 +147,7 @@ function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) 
 // Lädt eBays erlaubte Werteliste für den Aspekt nach — gibt es eine, wird ein Dropdown gezeigt,
 // sonst ein Freitextfeld. Speichert in product.manualAspects (JSON), das buildAspects() beim
 // nächsten Listing-Versuch als Override mitschickt.
-function MissingAspectField({ product, onSaved }: { product: Product; onSaved: (manualAspects: Record<string, string>) => void }) {
-  const aspectName = product.ebayMissingAspect;
+function MissingAspectField({ product, aspectName, onSaved }: { product: Product; aspectName: string; onSaved: (manualAspects: Record<string, string>) => void }) {
   const [options, setOptions] = useState<string[] | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -160,8 +160,7 @@ function MissingAspectField({ product, onSaved }: { product: Product; onSaved: (
   useEffect(() => {
     setOptions(null);
     setSaved(false);
-    setText(currentAspects[aspectName ?? ""] ?? "");
-    if (!aspectName) return;
+    setText(currentAspects[aspectName] ?? "");
     let cancelled = false;
     fetch(`/api/ebay/aspect-options/${product.id}?aspect=${encodeURIComponent(aspectName)}`)
       .then(r => r.json())
@@ -170,8 +169,6 @@ function MissingAspectField({ product, onSaved }: { product: Product; onSaved: (
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aspectName, product.id]);
-
-  if (!aspectName) return null;
 
   const save = async (value: string) => {
     if (!value.trim() || saving) return;
@@ -1916,24 +1913,29 @@ export default function Produkte() {
               {product.ebayError && !listingResult && (
                 <div style={{ fontSize: 11, color: "#DC2626", background: "#FEF2F2", padding: "6px 10px", borderRadius: 6, marginTop: 8 }}>
                   {product.ebayError.slice(0, 120)}
-                  {product.ebayMissingAspect && (
+                  {parseMissingAspectNames(product.ebayMissingAspect).map(name => (
                     <MissingAspectField
+                      key={name}
                       product={product}
+                      aspectName={name}
                       onSaved={(manualAspects) => setProducts(prev => prev.map(p => {
                         if (p.id !== product.id) return p;
-                        // P-88 1d: deckt der gespeicherte Wert genau das von eBay gemeldete fehlende
-                        // Feld ab, gilt der Fehlerblock als erledigt — server-seitig spiegelt die
-                        // PATCH /products/:id-Route dasselbe (index.ts), damit es auch nach einem
-                        // Reload so bleibt.
-                        const resolved = p.ebayMissingAspect ? !!manualAspects[p.ebayMissingAspect]?.trim() : false;
+                        // P-88 1d / Nacharbeit Punkt 2: es können MEHRERE Pflichtfelder gleichzeitig
+                        // fehlen (kommagetrennt in ebayMissingAspect) — erst wenn JEDES davon einen
+                        // nicht-leeren manuellen Wert hat, gilt der Fehlerblock als erledigt.
+                        // Server-seitig spiegelt die PATCH /products/:id-Route dieselbe Logik
+                        // (index.ts), damit es auch nach einem Reload so bleibt.
+                        const stillMissing = stillMissingAspectNames(p.ebayMissingAspect, manualAspects);
                         return {
                           ...p,
                           manualAspects: JSON.stringify(manualAspects),
-                          ...(resolved ? { ebayMissingAspect: null, ebayError: null, ebayStatus: 'none' as const } : {}),
+                          ...(stillMissing.length === 0
+                            ? { ebayMissingAspect: null, ebayError: null, ebayStatus: 'none' as const }
+                            : { ebayMissingAspect: stillMissing.join(', ') }),
                         };
                       }))}
                     />
-                  )}
+                  ))}
                   <button
                     onClick={async () => {
                       await fetch(`/api/products/${product.id}/reset-error`, { method: 'POST' });

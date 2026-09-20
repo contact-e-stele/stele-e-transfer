@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -10,6 +10,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
+import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
+import { isStringRecord } from '../shared/validation';
 import { buildProductLookups, findProductForSku as findProductForSkuShared } from './order-matching';
 import { Sentry } from '../instrument';
 
@@ -1662,11 +1664,29 @@ const app = new Hono()
   })
   .put('/settings/aspect-defaults', async (c) => {
     try {
-      const body = await c.req.json() as { global?: Record<string, string>; byCategory?: Record<string, Record<string, string>> };
+      const body = await c.req.json() as { global?: unknown; byCategory?: unknown };
+      // Nacharbeit Punkt 4: nur Objekte mit reinen String-Werten annehmen — sonst landet z.B. eine
+      // Zahl/ein Array/verschachteltes Objekt roh in app_settings und bricht getAspectDefaultWithSource()
+      // (ebay.ts), das hier Record<string,string> erwartet, erst beim nächsten Listing-Versuch.
+      if (body.global !== undefined && !isStringRecord(body.global)) {
+        return c.json({ error: '"global" muss ein Objekt mit reinen String-Werten sein' }, 400);
+      }
+      if (body.byCategory !== undefined) {
+        if (typeof body.byCategory !== 'object' || body.byCategory === null || Array.isArray(body.byCategory)) {
+          return c.json({ error: '"byCategory" muss ein Objekt sein' }, 400);
+        }
+        for (const [catId, defaults] of Object.entries(body.byCategory as Record<string, unknown>)) {
+          if (!isStringRecord(defaults)) {
+            return c.json({ error: `"byCategory.${catId}" muss ein Objekt mit reinen String-Werten sein` }, 400);
+          }
+        }
+      }
+      const global = (body.global ?? {}) as Record<string, string>;
+      const byCategory = (body.byCategory ?? {}) as Record<string, Record<string, string>>;
       const { db } = await import('../db/index');
       const { appSettings } = await import('../db/schema');
       const now = new Date().toISOString();
-      const value = JSON.stringify({ global: body.global ?? {}, byCategory: body.byCategory ?? {} });
+      const value = JSON.stringify({ global, byCategory });
       await db.insert(appSettings).values({ key: 'aspect_defaults', value, updatedAt: now })
         .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
       return c.json({ ok: true }, 200);
@@ -2315,7 +2335,11 @@ const app = new Hono()
           titleSources,
         );
         if (precheck.fetchFailed) {
-          const msg = 'eBay-Pflichtmerkmale für diese Kategorie konnten nicht abgerufen werden — Listing-Versuch abgebrochen, bitte erneut versuchen.';
+          // Nacharbeit Punkt 3: den echten eBay-Grund (Statuscode + Meldung, wörtlich) mit
+          // ausgeben statt nur "konnte nicht abgerufen werden" — Beispiel stele-158: errorId 62005
+          // "category ID does not belong to specified category tree".
+          const fetchError = getLastAspectFetchError(categoryId);
+          const msg = `eBay-Pflichtmerkmale für diese Kategorie konnten nicht abgerufen werden${fetchError ? ` (${fetchError})` : ''} — Listing-Versuch abgebrochen, bitte erneut versuchen.`;
           await db.update(schema.products).set({
             ebayStatus: 'error',
             ebayError: msg,
@@ -2326,10 +2350,15 @@ const app = new Hono()
         }
         if (precheck.unresolved.length > 0) {
           const msg = `eBay-Pflichtfeld "${precheck.unresolved.join('", "')}" fehlt weiterhin und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen.`;
+          // Nacharbeit Punkt 2: ALLE fehlenden Felder speichern, nicht nur das erste — sonst musste
+          // der Nutzer nach jedem einzeln ausgefüllten Feld erneut auf "Listen" klicken, um das
+          // nächste zu sehen. Nur namentliche Pflichtfelder sind über ein manuelles Freitextfeld
+          // überhaupt behebbar (s. filterEditableAspectNames).
+          const editableMissing = filterEditableAspectNames(precheck.unresolved);
           await db.update(schema.products).set({
             ebayStatus: 'error',
             ebayError: msg,
-            ebayMissingAspect: precheck.unresolved[0],
+            ebayMissingAspect: editableMissing.length > 0 ? editableMissing.join(', ') : null,
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, body.productId));
           return c.json({ error: msg }, 400);
@@ -2876,17 +2905,24 @@ const app = new Hono()
       if ('manualAspects' in body) {
         const val = body.manualAspects as Record<string, string> | null;
         allowed.manualAspects = val && Object.keys(val).length > 0 ? JSON.stringify(val) : null;
-        // P-88 Schritt 1d: eBay hatte ein konkretes Pflichtfeld als fehlend gemeldet
-        // (ebayMissingAspect) — deckt der neu gespeicherte manuelle Wert genau dieses Feld ab,
-        // gilt der letzte Fehlschlag als behoben. Vorher blieb ebayMissingAspect/ebayError nach
-        // dem Speichern stehen, bis der Nutzer separat auf "Fehler zurücksetzen" klickte (wirkte
-        // wie eine Attrappe, s. task.md P-88).
+        // P-88 Schritt 1d / Nacharbeit Punkt 2: eBay hatte ein oder mehrere konkrete Pflichtfelder
+        // als fehlend gemeldet (ebayMissingAspect, kommagetrennt bei mehreren) — deckt der neu
+        // gespeicherte manuelle Wert ALLE davon ab, gilt der letzte Fehlschlag als behoben; deckt
+        // er nur einen Teil ab, bleiben die restlichen Namen stehen. Vorher blieb ebayMissingAspect/
+        // ebayError nach dem Speichern stehen, bis der Nutzer separat auf "Fehler zurücksetzen"
+        // klickte (wirkte wie eine Attrappe, s. task.md P-88).
         const [current] = await db.select({ ebayMissingAspect: schema.products.ebayMissingAspect })
           .from(schema.products).where(eq(schema.products.id, id));
-        if (current?.ebayMissingAspect && val?.[current.ebayMissingAspect]?.trim()) {
-          allowed.ebayMissingAspect = null;
-          allowed.ebayError = null;
-          allowed.ebayStatus = 'none';
+        const missingNames = parseMissingAspectNames(current?.ebayMissingAspect);
+        if (missingNames.length > 0) {
+          const stillMissing = stillMissingAspectNames(current?.ebayMissingAspect, val);
+          if (stillMissing.length === 0) {
+            allowed.ebayMissingAspect = null;
+            allowed.ebayError = null;
+            allowed.ebayStatus = 'none';
+          } else if (stillMissing.length < missingNames.length) {
+            allowed.ebayMissingAspect = stillMissing.join(', ');
+          }
         }
       }
       if (Object.keys(allowed).length === 0) return c.json({ error: 'Keine bekannten Felder' }, 400);

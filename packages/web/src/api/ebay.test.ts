@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -694,5 +694,33 @@ describe('checkVariantAxisCoverage', () => {
   test('keine passende Achse (anderer Gruppenname) → isAxis: false, keine Meldung', () => {
     const result = checkVariantAxisCoverage('Farbe', { allowedValues: [], mode: 'FREE_TEXT' }, [{ name: 'Größe', values: ['S', 'M'] }]);
     expect(result).toEqual({ isAxis: false, problems: [] });
+  });
+});
+
+// P-88 Nacharbeit Punkt 2 (20.09.2026)
+describe('filterEditableAspectNames', () => {
+  test('NACHWEIS: plain Aspektnamen bleiben, Achsen-Problem-Meldungen (": ") werden entfernt', () => {
+    const result = filterEditableAspectNames(['Farbe', "Produktart: Wert 'X' nicht in eBays Liste", 'Marke']);
+    expect(result).toEqual(['Farbe', 'Marke']);
+  });
+
+  test('nur Achsen-Probleme → leeres Array', () => {
+    const result = filterEditableAspectNames(["Farbe: Achsenwert ist leer"]);
+    expect(result).toEqual([]);
+  });
+});
+
+// P-88 Nacharbeit Punkt 3 (20.09.2026)
+describe('getLastAspectFetchError', () => {
+  test('NACHWEIS: nach einem Abruf-Fehlschlag liefert getLastAspectFetchError() Statuscode + eBays Meldung wörtlich', async () => {
+    const errBody = '{"errors":[{"errorId":62005,"domain":"API_TAXONOMY","category":"REQUEST","message":"The specified category ID does not belong to specified category tree."}]}';
+    const fetchFn = (async () => new Response(errBody, { status: 400 })) as unknown as typeof fetch;
+    const required = await getRequiredAspects('CAT-Q', fetchFn, testTokenFn);
+    expect(required).toBeNull();
+    expect(getLastAspectFetchError('CAT-Q')).toBe(`400 ${errBody}`);
+  });
+
+  test('Kategorie ohne vorherigen Abruf-Fehlschlag → null', () => {
+    expect(getLastAspectFetchError('CAT-NIE-ABGERUFEN')).toBeNull();
   });
 });
