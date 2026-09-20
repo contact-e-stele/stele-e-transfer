@@ -2296,25 +2296,38 @@ const app = new Hono()
         } catch { return undefined; }
       })();
 
-      // P-88 Schritt 1e: Vorab-Prüfung ALLER Pflichtmerkmale der Kategorie VOR jedem eBay-Aufruf —
-      // nicht erst nach einem eBay-Fehler abwarten (erweitert gegenüber der ursprünglichen Fassung,
-      // die nur ein bereits bekanntes ebayMissingAspect prüfte). Findet resolveRequiredAspect()
-      // keinen vertrauenswürdigen Wert UND hat eBay auch keinen eigenen erlaubten Fallback-Wert für
-      // das Merkmal, wird der Aufruf blockiert und das Feld namentlich genannt.
+      // P-88 1b Korrektur: title UND generatedTitle unabhängig als Farb-Quelle für die
+      // Pflichtmerkmal-Befüllung — ein Farbwort kann in nur einer der beiden Fassungen stehen.
+      const titleSources = [product.title, product.generatedTitle].filter((t): t is string => !!t);
+
+      // P-88 Schritt 1e — Korrektur (20.09.2026): Vorab-Prüfung ALLER Pflichtmerkmale der Kategorie
+      // VOR jedem eBay-Aufruf. Zwei getrennte Blockier-Fälle: (1) ein Pflichtmerkmal hat wirklich
+      // keinen vertrauenswürdigen Wert (AliExpress/Kategorie-/globaler Default/manuell) — namentlich
+      // genannt; (2) die Pflichtmerkmale der Kategorie konnten gar nicht erst abgerufen werden — das
+      // ist "wir wissen es nicht", kein "lückenlos", eigene Fehlermeldung.
       if (categoryId) {
-        const unresolved = await findUnresolvedRequiredAspects(
+        const precheck = await findUnresolvedRequiredAspects(
           specs,
           categoryId,
           manualAspects ?? {},
           (variantPricesForListing ?? []).map(v => v.attrs ?? {}),
-          product.generatedTitle ?? product.title,
+          titleSources,
         );
-        if (unresolved.length > 0) {
-          const msg = `eBay-Pflichtfeld "${unresolved.join('", "')}" fehlt weiterhin und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen.`;
+        if (precheck.fetchFailed) {
+          const msg = 'eBay-Pflichtmerkmale für diese Kategorie konnten nicht abgerufen werden — Listing-Versuch abgebrochen, bitte erneut versuchen.';
           await db.update(schema.products).set({
             ebayStatus: 'error',
             ebayError: msg,
-            ebayMissingAspect: unresolved[0],
+            updatedAt: new Date().toISOString(),
+          }).where(eq(schema.products.id, body.productId));
+          return c.json({ error: msg }, 502);
+        }
+        if (precheck.unresolved.length > 0) {
+          const msg = `eBay-Pflichtfeld "${precheck.unresolved.join('", "')}" fehlt weiterhin und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen.`;
+          await db.update(schema.products).set({
+            ebayStatus: 'error',
+            ebayError: msg,
+            ebayMissingAspect: precheck.unresolved[0],
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, body.productId));
           return c.json({ error: msg }, 400);
@@ -2342,6 +2355,7 @@ const app = new Hono()
         handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
         manualAspects,
+        titleSources,
         // P-82 Aufgabe 4/5: nur mitgeben, wenn am Produkt hinterlegt — buildStoreCategoryBlock()
         // (ebay.ts) sendet storeCategoryNames dann komplett gar nicht mit, kein "Sonstiges"-Fallback.
         storeCategoryName: product.storeCategoryName ?? undefined,

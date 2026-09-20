@@ -1,7 +1,12 @@
 // P-88 Teil 1 — NACHWEIS (b): reiner Lese-Trockenlauf, KEIN db.update()/insert(), KEIN eBay-Schreib-
 // Call (get_item_aspects_for_category ist ein GET). Für jedes Produkt mit eBay-Kategorie: alle
-// Pflichtmerkmale der Kategorie, gefundener Wert mit Quelle (ali/kategorie/global/manuell/eBay-
-// Vorschlag/LÜCKE). Zusammenfassung: "X von N Produkten ohne Lücke".
+// Pflichtmerkmale der Kategorie, gefundener Wert mit Quelle (ali/kategorie/global/manuell), Lücken.
+// Zusammenfassung: "X von N Produkten ohne Lücke".
+//
+// KORREKTUR 20.09.2026 (Prüfbefund "GEHIRN"): die frühere Fassung zählte "eBay-Vorschlag" (eBays
+// erster Listeneintrag, kein echter Wert) als Füllung — das ist per Definition ein erfundener Wert
+// und wurde entfernt. Ein Abruf-Fehler (getRequiredAspects() liefert jetzt null statt {}) wird jetzt
+// als eigener Fall FEHLER gezählt, NICHT als "lückenlos".
 //
 // Nutzt dieselben Funktionen wie der echte Listing-Pfad (getRequiredAspects/resolveRequiredAspect,
 // ebay.ts) — kein Nachbau der Rangfolge-Logik (Grundgesetz Regel 8).
@@ -19,7 +24,7 @@ import { db } from '../src/db/index';
 import * as schema from '../src/db/schema';
 import {
   getRequiredAspects, resolveRequiredAspect, mapSpecsToAspects, deriveConstantVariantAttrs,
-  findColorInTitle, type RequiredAspectInfo,
+  findColorInTitles, IDENTIFIER_ASPECT_NAMES,
 } from '../src/api/ebay';
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
@@ -41,7 +46,18 @@ lines.push(`Erzeugt mit \`bun scripts/p88-aspects-dryrun.ts\`. ${products.length
 lines.push('');
 
 let gapless = 0;
-let firstError: string | null = null;
+let withGap = 0;
+let fetchErrors = 0;
+
+// Für die Liste "fehlende Merkmale je Kategorie" (Punkt D des Auftrags 20.09.2026)
+interface GapEntry {
+  categoryId: string;
+  name: string;
+  productCount: number;
+  selectionOnly: boolean;
+  firstTenAllowedValues: string[];
+}
+const gapsByKey = new Map<string, GapEntry>(); // Schlüssel: `${categoryId}::${name}`
 
 for (const p of withCategory) {
   const categoryId = p.ebayCategory!;
@@ -53,48 +69,53 @@ for (const p of withCategory) {
       return Array.isArray(vp) ? (vp as Array<{ attrs?: Record<string, string> }>).map(v => v.attrs ?? {}) : [];
     } catch { return []; }
   })();
-  const title = p.generatedTitle ?? p.title;
+  const titleSources = [p.title, p.generatedTitle].filter((t): t is string => !!t);
 
-  let required: Record<string, RequiredAspectInfo>;
-  try {
-    required = await getRequiredAspects(categoryId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!firstError) firstError = msg;
-    lines.push(`## stele-${p.id} (Kategorie ${categoryId}) — ABRUF FEHLGESCHLAGEN`);
-    lines.push('```');
-    lines.push(msg);
-    lines.push('```');
+  const required = await getRequiredAspects(categoryId);
+  if (required === null) {
+    fetchErrors++;
+    lines.push(`## stele-${p.id} (Kategorie ${categoryId}) — ❌ FEHLER (Pflichtmerkmale nicht abrufbar)`);
     lines.push('');
     continue;
   }
 
   const effectiveSpecsAspects = mapSpecsToAspects({ ...deriveConstantVariantAttrs(variantAttrsList), ...specs });
   if (!effectiveSpecsAspects['Farbe']) {
-    const titleColor = findColorInTitle(title);
+    const titleColor = findColorInTitles(titleSources);
     if (titleColor) effectiveSpecsAspects['Farbe'] = titleColor;
   }
 
   const rows: Array<{ name: string; value: string; source: string }> = [];
   let hasGap = false;
   for (const [name, info] of Object.entries(required)) {
-    const resolution = await resolveRequiredAspect(name, info, effectiveSpecsAspects, categoryId, manualAspects);
-    if (resolution.source !== null && resolution.value !== null) {
-      rows.push({ name, value: resolution.value, source: resolution.source });
+    if (IDENTIFIER_ASPECT_NAMES.has(name)) {
+      // Deckt sich mit buildAspects(): Identifier-Aspekte (EAN/GTIN/UPC/ISBN) bekommen dort immer
+      // "Nicht zutreffend" (oder die echte EAN) — kein Rateversuch, keine Lücke.
+      rows.push({ name, value: 'Nicht zutreffend', source: 'identifier-fallback' });
       continue;
     }
-    // Deckt sich mit findUnresolvedRequiredAspects()/buildAspects(): ein Auswahl-Merkmal mit
-    // bekannter erlaubter Liste hat IMMER einen von eBay bestätigten Fallback-Kandidaten
-    // (allowedValues[0]) — das ist kein Rateversuch, sondern eBays eigener erster erlaubter Wert.
-    if (info.allowedValues.length > 0) {
-      rows.push({ name, value: info.allowedValues[0], source: 'eBay-Vorschlag' });
+    const resolution = await resolveRequiredAspect(name, info, effectiveSpecsAspects, categoryId, manualAspects);
+    if (resolution.value !== null && resolution.source !== null) {
+      rows.push({ name, value: resolution.value, source: resolution.source });
       continue;
     }
     rows.push({ name, value: '—', source: 'LÜCKE' });
     hasGap = true;
+
+    const key = `${categoryId}::${name}`;
+    const existing = gapsByKey.get(key);
+    if (existing) {
+      existing.productCount++;
+    } else {
+      gapsByKey.set(key, {
+        categoryId, name, productCount: 1,
+        selectionOnly: info.mode === 'SELECTION_ONLY',
+        firstTenAllowedValues: info.allowedValues.slice(0, 10),
+      });
+    }
   }
 
-  if (!hasGap) gapless++;
+  if (hasGap) withGap++; else gapless++;
 
   lines.push(`## stele-${p.id} (Kategorie ${categoryId}) — ${hasGap ? '⚠️ LÜCKE' : '✅ vollständig'}`);
   lines.push('');
@@ -106,10 +127,19 @@ for (const p of withCategory) {
 
 lines.push(`## Zusammenfassung`);
 lines.push('');
-lines.push(`**${gapless} von ${withCategory.length} Produkten ohne Lücke.**`);
-if (firstError) {
-  lines.push('');
-  lines.push(`⚠️ Mindestens ein Kategorie-Abruf ist fehlgeschlagen (erster Fehler): \`${firstError}\``);
+lines.push(`**${gapless} von ${withCategory.length} Produkten ohne Lücke.** ${withGap} mit mindestens einer Lücke, ${fetchErrors} mit Abruf-Fehler (nicht als lückenlos gezählt).`);
+lines.push('');
+
+lines.push(`## Fehlende Merkmale je Kategorie (für manuelle Standardwert-Pflege)`);
+lines.push('');
+if (gapsByKey.size === 0) {
+  lines.push('Keine offenen Lücken.');
+} else {
+  lines.push('| Kategorie | Merkmal | Anzahl Produkte | SELECTION_ONLY | Erste 10 erlaubte Werte |');
+  lines.push('|---|---|---|---|---|');
+  for (const g of [...gapsByKey.values()].sort((a, b) => b.productCount - a.productCount)) {
+    lines.push(`| ${g.categoryId} | ${g.name} | ${g.productCount} | ${g.selectionOnly ? 'ja' : 'nein'} | ${g.firstTenAllowedValues.join(', ') || '—'} |`);
+  }
 }
 
 const output = lines.join('\n');

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, getAspectDefaultWithSource, resolveRequiredAspect } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -343,6 +343,21 @@ describe('findColorInTitle', () => {
   });
 });
 
+// P-88 1b Korrektur (20.09.2026): title UND generatedTitle unabhängig durchsuchen.
+describe('findColorInTitles', () => {
+  test('erster Treffer über mehrere Quellen gewinnt', () => {
+    expect(findColorInTitles(['Katzenstreuschaufel Set', 'White Cat Litter Scoop Set'])).toBe('Weiß');
+  });
+
+  test('keine der Quellen hat ein Farbwort → null', () => {
+    expect(findColorInTitles(['Katzenstreuschaufel Set', 'Cat Litter Scoop Set'])).toBeNull();
+  });
+
+  test('leere Quellenliste → null', () => {
+    expect(findColorInTitles([])).toBeNull();
+  });
+});
+
 // P-88 1a/1b: hartcodierte Kategorie-/globale Defaults, mit Quellen-Label für den Dry-Run-Bericht.
 // Läuft ohne .env-Datei (bun test lädt keine env vars) → DB-Zugriff schlägt fehl, catch-Fallback
 // auf die hartcodierten Defaults greift — genau das testet dieser Block (kein echter DB-Zugriff nötig).
@@ -464,16 +479,14 @@ describe('buildAspects — Negativ-Cache-Regression (P-88 1a)', () => {
       return aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'] }]);
     }) as unknown as typeof fetch;
 
-    const first = await buildAspects({}, undefined, 'CAT-A', undefined, undefined, [], undefined, fetchFn, testTokenFn);
-    // Beim Fehlschlag ist "Farbe" eBay unbekannt (getRequiredAspects liefert {}) — buildAspects
-    // befüllt nur, was es als "required" kennt, kann hier also gar nichts setzen. Genau dieser
-    // Zustand (ein Pflichtfeld wurde nie befüllt, weil der Abruf scheiterte) ist der Kern des
-    // 1a-Bugs — 1e fängt ihn zusätzlich per findUnresolvedRequiredAspects ab (eigener Test unten).
-    expect(first['Farbe']).toBeUndefined();
+    // Beim Fehlschlag liefert getRequiredAspects() jetzt null (nicht mehr dauerhaft gecachtes {}) —
+    // geprüft direkt an der Quelle, unabhängig von buildAspects' (jetzt strengerer) Auto-Füllung.
+    const first = await getRequiredAspects('CAT-A', fetchFn, testTokenFn);
+    expect(first).toBeNull();
 
-    const second = await buildAspects({}, undefined, 'CAT-A', undefined, undefined, [], undefined, fetchFn, testTokenFn);
-    // Regressionsbeweis: ohne den 1a-Fix bliebe hier weiterhin "Nicht angegeben" (dauerhaft gecachtes [])
-    expect(second['Farbe']).toEqual(['Mehrfarbig']);
+    // Regressionsbeweis: ohne den 1a-Fix bliebe hier weiterhin null/leer (dauerhaft gecachter Fehlschlag)
+    const second = await getRequiredAspects('CAT-A', fetchFn, testTokenFn);
+    expect(second).toEqual({ Farbe: { allowedValues: ['Mehrfarbig', 'Schwarz'], mode: undefined, cardinality: undefined } });
     expect(callCount).toBe(2);
   });
 });
@@ -525,16 +538,18 @@ describe('buildAspects — Variantenattribute als Aspekt-Quelle (P-88 1b)', () =
     expect(result['Material']).toEqual(['Kunststoff']);
   });
 
-  test('Live-Fund stele-163: Variantenwert nicht in eBays erlaubter Liste → verworfen, echter erlaubter Wert stattdessen', async () => {
-    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'] }])) as unknown as typeof fetch;
+  test('Live-Fund stele-163 (KORRIGIERT 20.09.2026): Variantenwert nicht vertrauenswürdig UND kein Kategorie-/globaler Default → Farbe bleibt LEER, kein erfundener Wert mehr', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
     const result = await buildAspects(
       {}, undefined, 'CAT-C', undefined, undefined,
       [{ Color: '832pcs-No box' }, { Color: '100pcs-No box' }],
       undefined, fetchFn, testTokenFn,
     );
-    // "Color" wechselt pro Variante → deriveConstantVariantAttrs verwirft es bereits (eigener Test oben) —
-    // hier zusätzlich bewiesen: selbst wenn es durchrutschen würde, weist isAspectValueTrusted es zurück.
-    expect(result['Farbe']).toEqual(['Mehrfarbig']);
+    // "Color" wechselt pro Variante → deriveConstantVariantAttrs verwirft es bereits (eigener Test oben).
+    // Vor der Korrektur wäre hier "Mehrfarbig" (eBays erster Listeneintrag) eingesetzt worden — ein
+    // erfundener Wert, keine echte Produkteigenschaft (Prüfbefund "GEHIRN", 20.09.2026). Jetzt bleibt
+    // das Feld leer und wird von findUnresolvedRequiredAspects() namentlich gemeldet (eigener Test unten).
+    expect(result['Farbe']).toBeUndefined();
   });
 
   test('manuelles Feld überschreibt weiterhin alles, auch einen automatisch befüllten Wert', async () => {
@@ -546,45 +561,95 @@ describe('buildAspects — Variantenattribute als Aspekt-Quelle (P-88 1b)', () =
     );
     expect(result['Farbe']).toEqual(['Regenbogen']);
   });
+
+  test('KORREKTUR: Rangfolge Kategorie-Default vor Empfehlungsliste — allowedValues[0] wird NIE mehr verwendet', async () => {
+    // Kategorie 179247 (Brillen) hat einen hartcodierten Default Rahmenmaterial="Kunststoff".
+    // eBays Empfehlungsliste nennt "Titan" zuerst — vor der Korrektur hätte buildAspects()
+    // "Titan" (allowedValues[0]) genommen, obwohl der Kategorie-Default "Kunststoff" verfügbar
+    // UND gültig ist (steht in der Liste).
+    const fetchFn = (async () => aspectsResponse([{ name: 'Rahmenmaterial', required: true, values: ['Titan', 'Kunststoff', 'Metall'], mode: 'SELECTION_ONLY' }])) as unknown as typeof fetch;
+    const result = await buildAspects({}, undefined, '179247', undefined, undefined, [], undefined, fetchFn, testTokenFn);
+    expect(result['Rahmenmaterial']).toEqual(['Kunststoff']);
+  });
+
+  test('KORREKTUR: title UND generatedTitle unabhängig durchsucht (titleSources)', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: [], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
+    // Farbwort steht nur in der zweiten Quelle (generatedTitle, Original-AliExpress-Titel meist
+    // Englisch) — die erste (title) hat keins.
+    const result = await buildAspects({}, undefined, 'CAT-L', undefined, undefined, [], ['Katzenstreuschaufel Set', 'White Cat Litter Scoop Set'], fetchFn, testTokenFn);
+    expect(result['Farbe']).toEqual(['Weiß']);
+  });
 });
 
 // P-88 Schritt 1e — Vorab-Prüfung: prüft PROAKTIV alle Pflichtmerkmale einer Kategorie, bevor der
-// eBay-Aufruf überhaupt versucht wird — nicht erst nach einem eBay-Fehler abwarten (Nutzer-Auftrag
-// 20.09.2026, erweitert gegenüber der ursprünglichen 1e-Fassung, die nur bereits bekannte
-// ebayMissingAspect-Namen prüfte).
+// eBay-Aufruf überhaupt versucht wird — nicht erst nach einem eBay-Fehler abwarten.
+//
+// KORREKTUR 20.09.2026 (Prüfbefund "GEHIRN"): das alte "allowedValues.length > 0 → nicht
+// blockierend"-Überspringen ist ENTFERNT. Ein Pflichtmerkmal mit einer Empfehlungsliste, aber ohne
+// echten AliExpress-/Kategorie-/globalen/manuellen Kandidaten, gilt jetzt korrekt als ungelöst —
+// buildAspects() würde dafür sonst nur eBays ersten Listeneintrag raten (genau der Bug, der hiermit
+// behoben wird). Rückgabetyp jetzt AspectPreCheckResult ({unresolved, fetchFailed}) statt string[],
+// damit ein Abruf-Fehler ("wir wissen es nicht") von "wirklich kein Pflichtmerkmal offen"
+// unterscheidbar ist.
 describe('findUnresolvedRequiredAspects', () => {
-  test('Pflichtmerkmal mit eigenem erlaubten Fallback-Wert → nicht blockierend, auch ohne manuellen/Auto-Wert', async () => {
-    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'] }])) as unknown as typeof fetch;
-    const unresolved = await findUnresolvedRequiredAspects(
+  test('KORREKTUR: FREE_TEXT-Merkmal mit Empfehlungsliste, aber OHNE echten Kandidaten → Lücke (vorher fälschlich "gelöst")', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
+    const result = await findUnresolvedRequiredAspects(
       {}, 'CAT-E', {}, [{ Color: '832pcs-No box' }, { Color: '100pcs-No box' }], undefined, fetchFn, testTokenFn,
     );
-    expect(unresolved).toEqual([]); // "Farbe" hat einen erlaubten Fallback-Wert (Mehrfarbig) → nicht blockierend
+    expect(result).toEqual({ unresolved: ['Farbe'], fetchFailed: false });
   });
 
   test('manueller Wert vorhanden → gilt als gelöst', async () => {
     const fetchFn = (async () => aspectsResponse([{ name: 'Produktart', required: true }])) as unknown as typeof fetch;
-    const unresolved = await findUnresolvedRequiredAspects(
+    const result = await findUnresolvedRequiredAspects(
       {}, 'CAT-F', { Produktart: 'Haarspange' }, [], undefined, fetchFn, testTokenFn,
     );
-    expect(unresolved).toEqual([]);
+    expect(result).toEqual({ unresolved: [], fetchFailed: false });
   });
 
   test('Merkmal ohne erlaubte Werteliste (Freitext) und ohne bekannten Default → bleibt ungelöst, wird namentlich genannt', async () => {
     const fetchFn = (async () => aspectsResponse([{ name: 'Produktart', required: true, values: [] }])) as unknown as typeof fetch;
-    const unresolved = await findUnresolvedRequiredAspects(
+    const result = await findUnresolvedRequiredAspects(
       {}, 'CAT-G', {}, [], undefined, fetchFn, testTokenFn,
     );
-    expect(unresolved).toEqual(['Produktart']);
+    expect(result).toEqual({ unresolved: ['Produktart'], fetchFailed: false });
   });
 
   test('proaktiv: auch ohne vorherigen eBay-Fehlschlag werden ALLE Pflichtmerkmale der Kategorie geprüft', async () => {
     const fetchFn = (async () => aspectsResponse([
-      { name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'] },
+      { name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'], mode: 'FREE_TEXT' },
       { name: 'Produktart', required: true, values: [] },
     ])) as unknown as typeof fetch;
-    // Kein bekannter Fehlschlag, keine manuellen Werte — trotzdem wird "Produktart" gefunden,
-    // weil es proaktiv (nicht nur reaktiv nach einem eBay-Fehler) geprüft wird.
-    const unresolved = await findUnresolvedRequiredAspects({}, 'CAT-J', {}, [], undefined, fetchFn, testTokenFn);
-    expect(unresolved).toEqual(['Produktart']);
+    const result = await findUnresolvedRequiredAspects({}, 'CAT-J', {}, [], undefined, fetchFn, testTokenFn);
+    expect(result).toEqual({ unresolved: ['Farbe', 'Produktart'], fetchFailed: false });
+  });
+
+  test('Kategorie-Default wird genommen, wenn vorhanden — kein Rückgriff auf die Empfehlungsliste', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Rahmenmaterial', required: true, values: ['Metall', 'Titan'], mode: 'SELECTION_ONLY' }])) as unknown as typeof fetch;
+    // Kategorie 2635 (ebenfalls Brillen, eigene ID um Cache-Überschneidung mit dem 179247-Test
+    // oben zu vermeiden — aspectCache ist modulweit und categoryId-basiert) hat denselben
+    // hartcodierten Default Rahmenmaterial="Kunststoff" — der steht NICHT in ['Metall','Titan'],
+    // darf also trotzdem NICHT einfach durchgewunken werden.
+    const result = await findUnresolvedRequiredAspects({}, '2635', {}, [], undefined, fetchFn, testTokenFn);
+    expect(result).toEqual({ unresolved: ['Rahmenmaterial'], fetchFailed: false });
+  });
+
+  test('KORREKTUR: Abruf-Fehler ist ein SEPARATER Fall (fetchFailed=true), zählt NICHT als "lückenlos"', async () => {
+    const fetchFn = (async () => new Response('{"errorId":123}', { status: 500 })) as unknown as typeof fetch;
+    const result = await findUnresolvedRequiredAspects({}, 'CAT-K', {}, [], undefined, fetchFn, testTokenFn);
+    expect(result).toEqual({ unresolved: [], fetchFailed: true });
+  });
+
+  test('Live-Fund Kategorie 57920: Farbe UND Produktart ohne Default werden beide namentlich gemeldet', async () => {
+    const fetchFn = (async () => aspectsResponse([
+      { name: 'Marke', required: true, values: [], mode: 'FREE_TEXT' },
+      { name: 'Farbe', required: true, values: ['Beige', 'Blau', 'Rot'], mode: 'FREE_TEXT' },
+      { name: 'Produktart', required: true, values: ['Haarspange', 'Haarreif'], mode: 'FREE_TEXT' },
+    ])) as unknown as typeof fetch;
+    // "Marke" löst sich über den globalen Default (Markenlos) — Farbe/Produktart haben weder
+    // AliExpress-Daten noch Kategorie-/globalen Default für Kategorie 57920.
+    const result = await findUnresolvedRequiredAspects({}, '57920', {}, [], undefined, fetchFn, testTokenFn);
+    expect(result).toEqual({ unresolved: ['Farbe', 'Produktart'], fetchFailed: false });
   });
 });
