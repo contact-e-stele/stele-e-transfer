@@ -2296,20 +2296,18 @@ const app = new Hono()
         } catch { return undefined; }
       })();
 
-      // P-88 Schritt 1e: eBay hat für dieses Produkt bereits einmal ein konkretes Pflichtfeld als
-      // fehlend gemeldet (ebayMissingAspect). Bevor derselbe eBay-Aufruf blind wiederholt wird,
-      // prüfen, ob dafür inzwischen ein vertrauenswürdiger Wert vorliegt (manuell oder
-      // AliExpress-Variantenattribute) bzw. eBay selbst einen erlaubten Wert kennt — wenn nicht,
-      // Aufruf blockieren und das Feld namentlich nennen statt denselben Fehlschlag zu wiederholen.
-      if (product.ebayMissingAspect && categoryId) {
-        const token = await getAccessToken();
+      // P-88 Schritt 1e: Vorab-Prüfung ALLER Pflichtmerkmale der Kategorie VOR jedem eBay-Aufruf —
+      // nicht erst nach einem eBay-Fehler abwarten (erweitert gegenüber der ursprünglichen Fassung,
+      // die nur ein bereits bekanntes ebayMissingAspect prüfte). Findet resolveRequiredAspect()
+      // keinen vertrauenswürdigen Wert UND hat eBay auch keinen eigenen erlaubten Fallback-Wert für
+      // das Merkmal, wird der Aufruf blockiert und das Feld namentlich genannt.
+      if (categoryId) {
         const unresolved = await findUnresolvedRequiredAspects(
-          [product.ebayMissingAspect],
           specs,
           categoryId,
-          token,
           manualAspects ?? {},
           (variantPricesForListing ?? []).map(v => v.attrs ?? {}),
+          product.generatedTitle ?? product.title,
         );
         if (unresolved.length > 0) {
           const msg = `eBay-Pflichtfeld "${unresolved.join('", "')}" fehlt weiterhin und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen.`;
@@ -2390,8 +2388,7 @@ const app = new Hono()
       if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
 
       const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
-      const token = await getAccessToken();
-      const values = await getAspectAllowedValues(categoryId ?? undefined, aspectName, token);
+      const values = await getAspectAllowedValues(categoryId ?? undefined, aspectName);
       return c.json({ values }, 200);
     } catch (e) {
       return c.json({ error: 'eBay-Anfrage fehlgeschlagen' }, 503);
