@@ -77,6 +77,46 @@ export default function Einstellungen() {
     }
   };
 
+  // P-88 Schritt 1c: nutzerpflegbare Default-Werte für eBay-Pflichtmerkmale (global + je Kategorie)
+  const [aspectDefaults, setAspectDefaults] = useState<{ global: Record<string, string>; byCategory: Record<string, Record<string, string>> }>({ global: {}, byCategory: {} });
+  const [aspectDefaultsLoading, setAspectDefaultsLoading] = useState(true);
+  const [savingAspectDefaults, setSavingAspectDefaults] = useState(false);
+  const [aspectDefaultsMsg, setAspectDefaultsMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [newGlobalName, setNewGlobalName] = useState("");
+  const [newGlobalValue, setNewGlobalValue] = useState("");
+  const [newCatId, setNewCatId] = useState("");
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatValue, setNewCatValue] = useState("");
+
+  useEffect(() => {
+    setAspectDefaultsLoading(true);
+    fetch("/api/settings/aspect-defaults", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setAspectDefaults(d as { global: Record<string, string>; byCategory: Record<string, Record<string, string>> }))
+      .catch(() => setAspectDefaultsMsg({ ok: false, text: "Laden fehlgeschlagen — Netzwerkfehler" }))
+      .finally(() => setAspectDefaultsLoading(false));
+  }, []);
+
+  const saveAspectDefaults = async (next: typeof aspectDefaults) => {
+    setAspectDefaults(next);
+    setSavingAspectDefaults(true);
+    setAspectDefaultsMsg(null);
+    try {
+      const r = await fetch("/api/settings/aspect-defaults", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(next),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      setAspectDefaultsMsg(d.ok ? { ok: true, text: "Gespeichert ✓" } : { ok: false, text: d.error || "Speichern fehlgeschlagen" });
+    } catch {
+      setAspectDefaultsMsg({ ok: false, text: "Netzwerkfehler beim Speichern" });
+    } finally {
+      setSavingAspectDefaults(false);
+    }
+  };
+
   const loadStatus = useCallback(() => {
     setLoading(true);
     fetch("/api/aliexpress/status", { credentials: "include" })
@@ -445,6 +485,116 @@ export default function Einstellungen() {
                 <span style={{ fontSize: 12, fontWeight: 600, color: templateMsg.ok ? "#16A34A" : "#DC2626" }}>
                   {templateMsg.text}
                 </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* P-88 Schritt 1c: Standardwerte für eBay-Pflichtmerkmale */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>🏷️</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>eBay-Pflichtmerkmale — Standardwerte</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
+          Greift nur, wenn AliExpress-Daten/Variantenattribute und eBays eigener erlaubter Wert für ein Pflichtfeld nicht ausreichen. Globale Werte gelten für alle Kategorien, Kategorie-Werte haben Vorrang.
+        </p>
+        {aspectDefaultsLoading ? (
+          <span style={{ fontSize: 13, color: "#94A3B8" }}>Lade…</span>
+        ) : (
+          <>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1E293B", margin: "12px 0 6px" }}>Global</div>
+            {Object.entries(aspectDefaults.global).map(([name, value]) => (
+              <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "#334155", minWidth: 140 }}>{name}</span>
+                <input
+                  value={value}
+                  onChange={e => setAspectDefaults(prev => ({ ...prev, global: { ...prev.global, [name]: e.target.value } }))}
+                  onBlur={() => saveAspectDefaults(aspectDefaults)}
+                  style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", flex: 1, maxWidth: 220 }}
+                />
+                <button
+                  onClick={() => {
+                    const { [name]: _removed, ...rest } = aspectDefaults.global;
+                    saveAspectDefaults({ ...aspectDefaults, global: rest });
+                  }}
+                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "none", background: "#FEE2E2", color: "#DC2626", cursor: "pointer" }}
+                >
+                  Entfernen
+                </button>
+              </div>
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+              <input placeholder="Merkmalname (z.B. Farbe)" value={newGlobalName} onChange={e => setNewGlobalName(e.target.value)}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", minWidth: 140 }} />
+              <input placeholder="Wert" value={newGlobalValue} onChange={e => setNewGlobalValue(e.target.value)}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", flex: 1, maxWidth: 220 }} />
+              <button
+                onClick={() => {
+                  if (!newGlobalName.trim() || !newGlobalValue.trim()) return;
+                  saveAspectDefaults({ ...aspectDefaults, global: { ...aspectDefaults.global, [newGlobalName.trim()]: newGlobalValue.trim() } });
+                  setNewGlobalName(""); setNewGlobalValue("");
+                }}
+                style={{ fontSize: 11, padding: "4px 10px", borderRadius: 4, border: "none", background: "#1E293B", color: "#fff", cursor: "pointer" }}
+              >
+                + Hinzufügen
+              </button>
+            </div>
+
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1E293B", margin: "18px 0 6px" }}>Je eBay-Kategorie</div>
+            {Object.entries(aspectDefaults.byCategory).map(([catId, values]) => (
+              <div key={catId} style={{ border: "1px solid #E2E8F0", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#7C3AED", marginBottom: 6 }}>Kategorie {catId}</div>
+                {Object.entries(values).map(([name, value]) => (
+                  <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, color: "#334155", minWidth: 140 }}>{name}</span>
+                    <input
+                      value={value}
+                      onChange={e => setAspectDefaults(prev => ({ ...prev, byCategory: { ...prev.byCategory, [catId]: { ...prev.byCategory[catId], [name]: e.target.value } } }))}
+                      onBlur={() => saveAspectDefaults(aspectDefaults)}
+                      style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", flex: 1, maxWidth: 220 }}
+                    />
+                    <button
+                      onClick={() => {
+                        const { [name]: _removed, ...rest } = aspectDefaults.byCategory[catId];
+                        const byCategory = { ...aspectDefaults.byCategory, [catId]: rest };
+                        if (Object.keys(rest).length === 0) delete byCategory[catId];
+                        saveAspectDefaults({ ...aspectDefaults, byCategory });
+                      }}
+                      style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "none", background: "#FEE2E2", color: "#DC2626", cursor: "pointer" }}
+                    >
+                      Entfernen
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              <input placeholder="Kategorie-ID" value={newCatId} onChange={e => setNewCatId(e.target.value)}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", width: 100 }} />
+              <input placeholder="Merkmalname" value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", minWidth: 140 }} />
+              <input placeholder="Wert" value={newCatValue} onChange={e => setNewCatValue(e.target.value)}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", flex: 1, maxWidth: 220 }} />
+              <button
+                onClick={() => {
+                  if (!newCatId.trim() || !newCatName.trim() || !newCatValue.trim()) return;
+                  saveAspectDefaults({
+                    ...aspectDefaults,
+                    byCategory: { ...aspectDefaults.byCategory, [newCatId.trim()]: { ...aspectDefaults.byCategory[newCatId.trim()], [newCatName.trim()]: newCatValue.trim() } },
+                  });
+                  setNewCatId(""); setNewCatName(""); setNewCatValue("");
+                }}
+                style={{ fontSize: 11, padding: "4px 10px", borderRadius: 4, border: "none", background: "#1E293B", color: "#fff", cursor: "pointer" }}
+              >
+                + Hinzufügen
+              </button>
+            </div>
+            <div style={{ marginTop: 10, minHeight: 18 }}>
+              {savingAspectDefaults && <span style={{ fontSize: 12, color: "#94A3B8" }}>Speichere…</span>}
+              {!savingAspectDefaults && aspectDefaultsMsg && (
+                <span style={{ fontSize: 12, fontWeight: 600, color: aspectDefaultsMsg.ok ? "#16A34A" : "#DC2626" }}>{aspectDefaultsMsg.text}</span>
               )}
             </div>
           </>

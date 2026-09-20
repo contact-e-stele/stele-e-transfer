@@ -150,10 +150,17 @@ function MissingAspectField({ product, onSaved }: { product: Product; onSaved: (
   const aspectName = product.ebayMissingAspect;
   const [options, setOptions] = useState<string[] | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [text, setText] = useState("");
+
+  const currentAspects: Record<string, string> = (() => {
+    try { return product.manualAspects ? JSON.parse(product.manualAspects) : {}; } catch { return {}; }
+  })();
 
   useEffect(() => {
     setOptions(null);
     setSaved(false);
+    setText(currentAspects[aspectName ?? ""] ?? "");
     if (!aspectName) return;
     let cancelled = false;
     fetch(`/api/ebay/aspect-options/${product.id}?aspect=${encodeURIComponent(aspectName)}`)
@@ -161,24 +168,26 @@ function MissingAspectField({ product, onSaved }: { product: Product; onSaved: (
       .then((d: { values?: string[] }) => { if (!cancelled) setOptions(d.values ?? []); })
       .catch(() => { if (!cancelled) setOptions([]); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aspectName, product.id]);
 
   if (!aspectName) return null;
 
-  const currentAspects: Record<string, string> = (() => {
-    try { return product.manualAspects ? JSON.parse(product.manualAspects) : {}; } catch { return {}; }
-  })();
-
   const save = async (value: string) => {
-    if (!value.trim()) return;
+    if (!value.trim() || saving) return;
+    setSaving(true);
     const merged = { ...currentAspects, [aspectName]: value.trim() };
-    await fetch(`/api/products/${product.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ manualAspects: merged }),
-    });
-    setSaved(true);
-    onSaved(merged);
+    try {
+      await fetch(`/api/products/${product.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manualAspects: merged }),
+      });
+      setSaved(true);
+      onSaved(merged);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -196,14 +205,24 @@ function MissingAspectField({ product, onSaved }: { product: Product; onSaved: (
           {options.map(v => <option key={v} value={v}>{v}</option>)}
         </select>
       ) : (
-        <input
-          defaultValue={currentAspects[aspectName] ?? ""}
-          placeholder="Wert eingeben"
-          onBlur={(e) => save(e.currentTarget.value)}
-          style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A", width: 140, fontFamily: "inherit" }}
-        />
+        <>
+          <input
+            value={text}
+            placeholder="Wert eingeben"
+            onChange={(e) => setText(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") save(text); }}
+            style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A", width: 140, fontFamily: "inherit" }}
+          />
+          <button
+            onClick={() => save(text)}
+            disabled={saving || !text.trim()}
+            style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "none", background: saving || !text.trim() ? "#CBD5E1" : "#7C3AED", color: "#fff", cursor: saving || !text.trim() ? "default" : "pointer", fontFamily: "inherit" }}
+          >
+            {saving ? "Speichert…" : "Speichern"}
+          </button>
+        </>
       )}
-      {saved && <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓ gespeichert — beim nächsten Listen-Versuch mitgeschickt</span>}
+      {saved && <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>✓ "{aspectName}" gespeichert — beim nächsten Listen-Versuch mitgeschickt</span>}
     </div>
   );
 }
@@ -1900,7 +1919,19 @@ export default function Produkte() {
                   {product.ebayMissingAspect && (
                     <MissingAspectField
                       product={product}
-                      onSaved={(manualAspects) => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, manualAspects: JSON.stringify(manualAspects) } : p))}
+                      onSaved={(manualAspects) => setProducts(prev => prev.map(p => {
+                        if (p.id !== product.id) return p;
+                        // P-88 1d: deckt der gespeicherte Wert genau das von eBay gemeldete fehlende
+                        // Feld ab, gilt der Fehlerblock als erledigt — server-seitig spiegelt die
+                        // PATCH /products/:id-Route dasselbe (index.ts), damit es auch nach einem
+                        // Reload so bleibt.
+                        const resolved = p.ebayMissingAspect ? !!manualAspects[p.ebayMissingAspect]?.trim() : false;
+                        return {
+                          ...p,
+                          manualAspects: JSON.stringify(manualAspects),
+                          ...(resolved ? { ebayMissingAspect: null, ebayError: null, ebayStatus: 'none' as const } : {}),
+                        };
+                      }))}
                     />
                   )}
                   <button
