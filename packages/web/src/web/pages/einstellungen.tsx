@@ -498,7 +498,7 @@ export default function Einstellungen() {
           <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>eBay-Pflichtmerkmale — Standardwerte</span>
         </div>
         <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
-          Greift nur, wenn AliExpress-Daten/Variantenattribute und eBays eigener erlaubter Wert für ein Pflichtfeld nicht ausreichen. Globale Werte gelten für alle Kategorien, Kategorie-Werte haben Vorrang.
+          Rangfolge: AliExpress-Daten/Variantenattribute zuerst, dann der Kategorie-Wert hier, dann der globale Wert hier — ein manuell am Produkt eingetragener Wert gewinnt immer, unabhängig von allen anderen Quellen. Globale Werte gelten für alle Kategorien, Kategorie-Werte haben Vorrang vor dem globalen Wert.
         </p>
         {aspectDefaultsLoading ? (
           <span style={{ fontSize: 13, color: "#94A3B8" }}>Lade…</span>

@@ -2,3 +2,7 @@
 node_modules
 # packages/**/dist
 packages/**/dist-electron
+# P-88 Nacharbeit Punkt 5: Trockenlauf-/Diagnose-Ausgaben nicht mehr versionieren (aendern sich bei
+# jedem Lauf, gehoeren nicht ins Diff eines Feature-PRs). Bereits eingecheckte Dateien in diesem
+# Ordner bleiben davon unberuehrt, nur neue/geaenderte werden nicht mehr automatisch erfasst.
+packages/web/scripts/output/

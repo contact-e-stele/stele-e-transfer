@@ -582,6 +582,18 @@ const aspectCache = new Map<string, { required: Record<string, RequiredAspectInf
 // die erlaubten Werte auch für nicht-required Aspekte, sonst raten wir mit ungültigem Freitext.
 const rawAspectsCache = new Map<string, { aspects: RawAspect[]; fetchedAt: number }>();
 
+// P-88 Nacharbeit Punkt 3 (20.09.2026): letzter Abruf-Fehler je Kategorie (Statuscode + eBays
+// echte Meldung wörtlich) — für die Klartext-Fehlermeldung am Produkt, statt nur "konnte nicht
+// abgerufen werden" (Beispiel stele-158: errorId 62005 "category ID does not belong to specified
+// category tree"). Bewusst NICHT Teil des Rückgabewerts von getRawAspectsForCategory/
+// getRequiredAspects — vermeidet eine Signaturänderung in allen bestehenden Aufrufern
+// (buildAspects, Tests, Dry-Run-Skript).
+const lastAspectFetchError = new Map<string, string>();
+
+export function getLastAspectFetchError(categoryId: string): string | null {
+  return lastAspectFetchError.get(categoryId) ?? null;
+}
+
 // Liefert null bei Fehlschlag (statt [] permanent zu cachen) — Aufrufer müssen den Unterschied
 // zwischen "eBay meldet: keine Aspekte" und "Abruf fehlgeschlagen" kennen, sonst wird ein
 // transienter Fehler wie eine echte "leere Kategorie" behandelt.
@@ -607,14 +619,17 @@ async function getRawAspectsForCategory(
       // "keine Aspekte" zu werten.
       const body = await res.text().catch(() => '(Body nicht lesbar)');
       console.log(`[eBay] getItemAspectsForCategory ${categoryId} fehlgeschlagen: ${res.status} ${body.slice(0, 1000)}`);
+      lastAspectFetchError.set(categoryId, `${res.status} ${body.slice(0, 300)}`);
       return null;
     }
+    lastAspectFetchError.delete(categoryId);
     const data = await res.json() as { aspects?: RawAspect[] };
     const list = data.aspects ?? [];
     rawAspectsCache.set(categoryId, { aspects: list, fetchedAt: Date.now() });
     return list;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    lastAspectFetchError.set(categoryId, `Netzwerkfehler: ${msg}`);
     console.log(`[eBay] getItemAspectsForCategory ${categoryId} Netzwerkfehler: ${msg}`);
     return null;
   }
@@ -1013,6 +1028,16 @@ export function checkVariantAxisCoverage(
     }
   }
   return { isAxis: true, problems };
+}
+
+// P-88 Nacharbeit Punkt 2 (20.09.2026): welche Einträge aus AspectPreCheckResult.unresolved sind
+// echte Aspektnamen (über ein manuelles Freitextfeld behebbar), und welche sind Achsen-Probleme
+// (checkVariantAxisCoverage-Meldungen wie "Farbe: Wert 'X' nicht in eBays Liste")? Ein Achsen-
+// Problem lässt sich NICHT über manualAspects beheben — listOnEbayWithVariants filtert Achsen-
+// Aspektnamen bewusst aus den Basis-Aspekten heraus — deshalb bekommt nur die erste Gruppe ein
+// Eingabefeld im Produkte-Tab (ebayMissingAspect).
+export function filterEditableAspectNames(unresolved: string[]): string[] {
+  return unresolved.filter(n => !n.includes(': '));
 }
 
 // P-88 Schritt 1e — Korrektur (20.09.2026, Prüfbefund): prüft ALLE Pflichtmerkmale der Kategorie
