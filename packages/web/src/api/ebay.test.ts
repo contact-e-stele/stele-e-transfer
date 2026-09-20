@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -595,7 +595,7 @@ describe('findUnresolvedRequiredAspects', () => {
   test('KORREKTUR: FREE_TEXT-Merkmal mit Empfehlungsliste, aber OHNE echten Kandidaten → Lücke (vorher fälschlich "gelöst")', async () => {
     const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
     const result = await findUnresolvedRequiredAspects(
-      {}, 'CAT-E', {}, [{ Color: '832pcs-No box' }, { Color: '100pcs-No box' }], undefined, fetchFn, testTokenFn,
+      {}, 'CAT-E', {}, [{ Color: '832pcs-No box' }, { Color: '100pcs-No box' }], [], undefined, fetchFn, testTokenFn,
     );
     expect(result).toEqual({ unresolved: ['Farbe'], fetchFailed: false });
   });
@@ -603,7 +603,7 @@ describe('findUnresolvedRequiredAspects', () => {
   test('manueller Wert vorhanden → gilt als gelöst', async () => {
     const fetchFn = (async () => aspectsResponse([{ name: 'Produktart', required: true }])) as unknown as typeof fetch;
     const result = await findUnresolvedRequiredAspects(
-      {}, 'CAT-F', { Produktart: 'Haarspange' }, [], undefined, fetchFn, testTokenFn,
+      {}, 'CAT-F', { Produktart: 'Haarspange' }, [], [], undefined, fetchFn, testTokenFn,
     );
     expect(result).toEqual({ unresolved: [], fetchFailed: false });
   });
@@ -611,7 +611,7 @@ describe('findUnresolvedRequiredAspects', () => {
   test('Merkmal ohne erlaubte Werteliste (Freitext) und ohne bekannten Default → bleibt ungelöst, wird namentlich genannt', async () => {
     const fetchFn = (async () => aspectsResponse([{ name: 'Produktart', required: true, values: [] }])) as unknown as typeof fetch;
     const result = await findUnresolvedRequiredAspects(
-      {}, 'CAT-G', {}, [], undefined, fetchFn, testTokenFn,
+      {}, 'CAT-G', {}, [], [], undefined, fetchFn, testTokenFn,
     );
     expect(result).toEqual({ unresolved: ['Produktart'], fetchFailed: false });
   });
@@ -621,7 +621,7 @@ describe('findUnresolvedRequiredAspects', () => {
       { name: 'Farbe', required: true, values: ['Mehrfarbig', 'Schwarz'], mode: 'FREE_TEXT' },
       { name: 'Produktart', required: true, values: [] },
     ])) as unknown as typeof fetch;
-    const result = await findUnresolvedRequiredAspects({}, 'CAT-J', {}, [], undefined, fetchFn, testTokenFn);
+    const result = await findUnresolvedRequiredAspects({}, 'CAT-J', {}, [], [], undefined, fetchFn, testTokenFn);
     expect(result).toEqual({ unresolved: ['Farbe', 'Produktart'], fetchFailed: false });
   });
 
@@ -631,13 +631,13 @@ describe('findUnresolvedRequiredAspects', () => {
     // oben zu vermeiden — aspectCache ist modulweit und categoryId-basiert) hat denselben
     // hartcodierten Default Rahmenmaterial="Kunststoff" — der steht NICHT in ['Metall','Titan'],
     // darf also trotzdem NICHT einfach durchgewunken werden.
-    const result = await findUnresolvedRequiredAspects({}, '2635', {}, [], undefined, fetchFn, testTokenFn);
+    const result = await findUnresolvedRequiredAspects({}, '2635', {}, [], [], undefined, fetchFn, testTokenFn);
     expect(result).toEqual({ unresolved: ['Rahmenmaterial'], fetchFailed: false });
   });
 
   test('KORREKTUR: Abruf-Fehler ist ein SEPARATER Fall (fetchFailed=true), zählt NICHT als "lückenlos"', async () => {
     const fetchFn = (async () => new Response('{"errorId":123}', { status: 500 })) as unknown as typeof fetch;
-    const result = await findUnresolvedRequiredAspects({}, 'CAT-K', {}, [], undefined, fetchFn, testTokenFn);
+    const result = await findUnresolvedRequiredAspects({}, 'CAT-K', {}, [], [], undefined, fetchFn, testTokenFn);
     expect(result).toEqual({ unresolved: [], fetchFailed: true });
   });
 
@@ -649,7 +649,50 @@ describe('findUnresolvedRequiredAspects', () => {
     ])) as unknown as typeof fetch;
     // "Marke" löst sich über den globalen Default (Markenlos) — Farbe/Produktart haben weder
     // AliExpress-Daten noch Kategorie-/globalen Default für Kategorie 57920.
-    const result = await findUnresolvedRequiredAspects({}, '57920', {}, [], undefined, fetchFn, testTokenFn);
+    const result = await findUnresolvedRequiredAspects({}, '57920', {}, [], [], undefined, fetchFn, testTokenFn);
     expect(result).toEqual({ unresolved: ['Farbe', 'Produktart'], fetchFailed: false });
+  });
+
+  // P-88 1e Korrektur 2 (20.09.2026, Prüfbefund GEHIRN): listOnEbayWithVariants() setzt ein
+  // Pflichtmerkmal, das einer Variantenachse entspricht, PRO VARIANTE (nicht in den Basis-
+  // Aspekten) — die Vorab-Prüfung kannte das bisher nicht und meldete es fälschlich als Lücke.
+  test('KORREKTUR 2: Variantenachse "Farbe" deckt Pflichtmerkmal "Farbe" — keine Lücke mehr', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: [], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
+    const result = await findUnresolvedRequiredAspects(
+      {}, 'CAT-M', {}, [], [{ name: 'Farbe', values: ['Rot', 'Blau'] }], undefined, fetchFn, testTokenFn,
+    );
+    expect(result).toEqual({ unresolved: [], fetchFailed: false });
+  });
+
+  test('KORREKTUR 2: leerer Achsenwert innerhalb der Variantenachse bleibt eine Lücke', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: [], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
+    const result = await findUnresolvedRequiredAspects(
+      {}, 'CAT-N', {}, [], [{ name: 'Farbe', values: ['Rot', ''] }], undefined, fetchFn, testTokenFn,
+    );
+    expect(result).toEqual({ unresolved: ['Farbe: Achsenwert ist leer'], fetchFailed: false });
+  });
+
+  test('KORREKTUR 2: SELECTION_ONLY-Achsenwert außerhalb eBays Liste wird namentlich mit dem Wert gemeldet', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Rot', 'Blau'], mode: 'SELECTION_ONLY' }])) as unknown as typeof fetch;
+    const result = await findUnresolvedRequiredAspects(
+      {}, 'CAT-O', {}, [], [{ name: 'Farbe', values: ['Rot', 'Lila'] }], undefined, fetchFn, testTokenFn,
+    );
+    expect(result).toEqual({ unresolved: ["Farbe: Wert 'Lila' nicht in eBays Liste"], fetchFailed: false });
+  });
+
+  test('Live-Fund stele-163/164 (Nachweis): Variantengruppe "Varianten" mappt NICHT auf "Farbe" — keine Achsen-Deckung, "Farbe" bleibt normal geprüft und bleibt Lücke', async () => {
+    expect(mapVariantGroupName('Varianten')).toBe('Varianten'); // kein Eintrag in VARIANT_GROUP_MAP
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Beige', 'Blau', 'Rot'], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
+    const result = await findUnresolvedRequiredAspects(
+      {}, 'CAT-P', {}, [], [{ name: 'Varianten', values: ['832pcs-No box', '100pcs-No box'] }], undefined, fetchFn, testTokenFn,
+    );
+    expect(result).toEqual({ unresolved: ['Farbe'], fetchFailed: false });
+  });
+});
+
+describe('checkVariantAxisCoverage', () => {
+  test('keine passende Achse (anderer Gruppenname) → isAxis: false, keine Meldung', () => {
+    const result = checkVariantAxisCoverage('Farbe', { allowedValues: [], mode: 'FREE_TEXT' }, [{ name: 'Größe', values: ['S', 'M'] }]);
+    expect(result).toEqual({ isAxis: false, problems: [] });
   });
 });

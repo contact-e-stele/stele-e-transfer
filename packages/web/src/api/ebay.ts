@@ -983,6 +983,38 @@ export interface AspectPreCheckResult {
   fetchFailed: boolean; // true = Pflichtmerkmale der Kategorie konnten nicht abgerufen werden (anderer Fall als "unresolved")
 }
 
+export interface VariantAxisCoverage {
+  isAxis: boolean; // true = dieses Pflichtmerkmal ist eine Variantenachse (via mapVariantGroupName)
+  problems: string[]; // leer = vollständig gedeckt; sonst eine Meldung je fehlerhaftem Achsenwert
+}
+
+// P-88 1e Korrektur 2 (20.09.2026, Prüfbefund GEHIRN): listOnEbayWithVariants() setzt ein
+// Pflichtmerkmal, das einer Variantenachse entspricht, NICHT in den Basis-Aspekten, sondern PRO
+// VARIANTE einzeln (s. dort: variantAspectNames/variantAspects) — die Vorab-Prüfung kannte das
+// bisher nicht und meldete es fälschlich als Lücke. Nutzt dieselbe mapVariantGroupName()-Funktion
+// wie listOnEbayWithVariants (Grundgesetz Regel 8 — keine Kopie der Zuordnung).
+export function checkVariantAxisCoverage(
+  name: string,
+  info: RequiredAspectInfo,
+  variantGroups: VariantGroup[],
+): VariantAxisCoverage {
+  const group = variantGroups.find(g => mapVariantGroupName(g.name) === name);
+  if (!group) return { isAxis: false, problems: [] };
+
+  const trustList = info.mode === 'SELECTION_ONLY' ? info.allowedValues : [];
+  const problems: string[] = [];
+  for (const v of group.values) {
+    if (!v?.trim()) {
+      problems.push(`${name}: Achsenwert ist leer`);
+      continue;
+    }
+    if (!isAspectValueTrusted(v, trustList, false)) {
+      problems.push(`${name}: Wert '${v}' nicht in eBays Liste`);
+    }
+  }
+  return { isAxis: true, problems };
+}
+
 // P-88 Schritt 1e — Korrektur (20.09.2026, Prüfbefund): prüft ALLE Pflichtmerkmale der Kategorie
 // proaktiv (nicht erst nach einem eBay-Fehler abwarten). Nutzt dieselbe Rangfolge wie buildAspects()
 // über resolveRequiredAspect() — KEIN Überspringen mehr bei vorhandener allowedValues-Liste (das
@@ -995,6 +1027,7 @@ export async function findUnresolvedRequiredAspects(
   categoryId: string | undefined,
   manualAspects: Record<string, string> = {},
   variantAttrsList: Array<Record<string, string>> = [],
+  variantGroups: VariantGroup[] = [],
   titleSources: string[] = [],
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAppToken,
@@ -1013,6 +1046,15 @@ export async function findUnresolvedRequiredAspects(
   const unresolved: string[] = [];
   for (const [name, info] of Object.entries(required)) {
     if (IDENTIFIER_ASPECT_NAMES.has(name)) continue; // hat einen eigenen, immer greifenden Fallback (EAN/"Nicht zutreffend")
+
+    const axisCheck = checkVariantAxisCoverage(name, info, variantGroups);
+    if (axisCheck.isAxis) {
+      // wird pro Variante einzeln gesetzt (s. listOnEbayWithVariants) — nicht über
+      // resolveRequiredAspect (Basis-Aspekte) prüfen, sonst fälschliche Lücken-Meldung
+      unresolved.push(...axisCheck.problems);
+      continue;
+    }
+
     const resolution = await resolveRequiredAspect(name, info, effectiveSpecsAspects, categoryId, manualAspects);
     if (resolution.value === null) unresolved.push(name);
   }
@@ -1409,7 +1451,7 @@ const VARIANT_GROUP_MAP: Record<string, string> = {
   'type': 'Typ',
 };
 
-function mapVariantGroupName(name: string): string {
+export function mapVariantGroupName(name: string): string {
   return VARIANT_GROUP_MAP[normalizeGroupKey(name)] ?? name;
 }
 

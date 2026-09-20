@@ -8,6 +8,12 @@
 // und wurde entfernt. Ein Abruf-Fehler (getRequiredAspects() liefert jetzt null statt {}) wird jetzt
 // als eigener Fall FEHLER gezählt, NICHT als "lückenlos".
 //
+// KORREKTUR 2 (20.09.2026, Prüfbefund "GEHIRN"): ein Pflichtmerkmal, das einer Variantenachse
+// entspricht (listOnEbayWithVariants setzt es PRO VARIANTE, nicht in den Basis-Aspekten), wird
+// jetzt über checkVariantAxisCoverage() erkannt — Quelle "variante" mit den Achsenwerten, statt
+// fälschlich als LÜCKE gezählt zu werden. Dieselbe Funktion wie in der Vorab-Prüfung (index.ts) —
+// keine eigene Nachbau-Logik (Grundgesetz Regel 8).
+//
 // Nutzt dieselben Funktionen wie der echte Listing-Pfad (getRequiredAspects/resolveRequiredAspect,
 // ebay.ts) — kein Nachbau der Rangfolge-Logik (Grundgesetz Regel 8).
 //
@@ -24,7 +30,8 @@ import { db } from '../src/db/index';
 import * as schema from '../src/db/schema';
 import {
   getRequiredAspects, resolveRequiredAspect, mapSpecsToAspects, deriveConstantVariantAttrs,
-  findColorInTitles, IDENTIFIER_ASPECT_NAMES,
+  findColorInTitles, IDENTIFIER_ASPECT_NAMES, checkVariantAxisCoverage, mapVariantGroupName,
+  type VariantGroup,
 } from '../src/api/ebay';
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
@@ -70,6 +77,12 @@ for (const p of withCategory) {
     } catch { return []; }
   })();
   const titleSources = [p.title, p.generatedTitle].filter((t): t is string => !!t);
+  const variantGroups: VariantGroup[] = (() => {
+    try {
+      const parsed = JSON.parse(p.variants);
+      return Array.isArray(parsed) ? (parsed as VariantGroup[]) : [];
+    } catch { return []; }
+  })();
 
   const required = await getRequiredAspects(categoryId);
   if (required === null) {
@@ -94,6 +107,28 @@ for (const p of withCategory) {
       rows.push({ name, value: 'Nicht zutreffend', source: 'identifier-fallback' });
       continue;
     }
+    const axisCheck = checkVariantAxisCoverage(name, info, variantGroups);
+    if (axisCheck.isAxis) {
+      if (axisCheck.problems.length === 0) {
+        const group = variantGroups.find(g => mapVariantGroupName(g.name) === name);
+        rows.push({ name, value: (group?.values ?? []).join(', '), source: 'variante' });
+        continue;
+      }
+      for (const problem of axisCheck.problems) {
+        rows.push({ name, value: '—', source: `LÜCKE (${problem})` });
+      }
+      hasGap = true;
+      const key = `${categoryId}::${name}`;
+      const existing = gapsByKey.get(key);
+      if (existing) existing.productCount++;
+      else gapsByKey.set(key, {
+        categoryId, name, productCount: 1,
+        selectionOnly: info.mode === 'SELECTION_ONLY',
+        firstTenAllowedValues: info.allowedValues.slice(0, 10),
+      });
+      continue;
+    }
+
     const resolution = await resolveRequiredAspect(name, info, effectiveSpecsAspects, categoryId, manualAspects);
     if (resolution.value !== null && resolution.source !== null) {
       rows.push({ name, value: resolution.value, source: resolution.source });

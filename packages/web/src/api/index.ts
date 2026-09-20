@@ -2311,6 +2311,7 @@ const app = new Hono()
           categoryId,
           manualAspects ?? {},
           (variantPricesForListing ?? []).map(v => v.attrs ?? {}),
+          variantGroups,
           titleSources,
         );
         if (precheck.fetchFailed) {
@@ -2318,6 +2319,7 @@ const app = new Hono()
           await db.update(schema.products).set({
             ebayStatus: 'error',
             ebayError: msg,
+            ebayMissingAspect: null,
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, body.productId));
           return c.json({ error: msg }, 502);
