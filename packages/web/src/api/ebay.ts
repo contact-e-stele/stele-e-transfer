@@ -3,16 +3,16 @@
 
 import { eq } from 'drizzle-orm';
 import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import {
+  NON_VARIATION_ASPECTS, slugify, resolveVariantEntries,
+  type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
+} from '../shared/variant-resolver';
 
-// Aspekte, die NIE als eBay-Artikelmerkmal/Pflichtfeld gesetzt werden UND (P-27/P-28-Fix,
-// 2026-09-09, Live-Fund Produkte 71/77/92/95) NIE Teil einer Varianten-SKU sind — würden sie in
-// row.attrs mitgezählt, verlängert sich die beim Reparieren/Aktualisieren erwartete SKU um ein
-// Segment (z.B. "-CHINA-MAINLAND"), das in der echten eBay-SKU nicht existiert → kein Match →
-// Preis kann für die betroffene(n) Variante(n) nicht individuell gesetzt werden. Modulweit
-// exportiert, damit jede Stelle, die eine Varianten-SKU baut oder Item-Aspekte filtert
-// (hier UND price-monitor.ts), dieselbe Liste nutzt statt eigener, potenziell auseinanderlaufender
-// Kopien.
-export const NON_VARIATION_ASPECTS = new Set(['Ships From', 'Versandort', 'Herstellungsland', 'Country/Region of Manufacture']);
+// P-85 Schritt 2b (20.09.2026): NON_VARIATION_ASPECTS und slugify() leben jetzt in
+// src/shared/variant-resolver.ts (werden dort UND von price-monitor.ts gebraucht — Regel 8, EINE
+// Quelle). Re-Export hier, damit bestehende Importe (`from './ebay'`, z.B. price-monitor.ts,
+// index.ts) unverändert weiterfunktionieren.
+export { NON_VARIATION_ASPECTS, slugify };
 
 const EBAY_CLIENT_ID = process.env.EBAY_CLIENT_ID ?? '';
 const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET ?? '';
@@ -342,7 +342,10 @@ export interface EbayListingInput {
   imageUrls: string[];
   categoryId?: string;
   variantGroups?: VariantGroup[]; // für Variation Listings
-  variantPrices?: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; stock?: number; attrs?: Record<string, string> }>; // pro-Variante Preise + Lagerbestand (P-93) + AliExpress-SKU-Attribute (P-88 1b)
+  // P-85 Schritt 2b: skuId (die AliExpress-eigene SKU-ID, s. variant-resolver.ts) und
+  // displayValues (explizite, beim Umbenennen mitgeschriebene Anzeigewert-Zuordnung) ergänzt —
+  // beide wurden vorher schon per unsicherem Cast gelesen (imageUrl) bzw. fehlten ganz (skuId).
+  variantPrices?: Array<{ sku?: string; skuId?: string; name?: string; ebayPrice?: number; price?: number; stock?: number; attrs?: Record<string, string>; imageUrl?: string; displayValues?: Record<string, string> }>; // pro-Variante Preise + Lagerbestand (P-93) + AliExpress-SKU-Attribute (P-88 1b)
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // AliExpress Produkt-ID als MPN
   ean?: string; // EAN/GTIN Barcode — falls vorhanden, sonst "Nicht zutreffend"
@@ -1402,10 +1405,6 @@ function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
   return result;
 }
 
-export function slugify(s: string): string {
-  return s.toUpperCase().replace(/[^A-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
-}
-
 // P-93: echte Varianten-Stückzahl aus dem AliExpress-Scrape statt einer für alle Varianten
 // identischen Fantasiezahl, damit eine ausverkaufte Variante (stock=0) korrekt auch bei eBay
 // als ausverkauft erscheint. Fällt nur zurück auf `fallback`, wenn stock im Scrape ganz fehlt
@@ -1573,6 +1572,14 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const combos = buildCombinations(groups);
   const groupSku = `${input.sku}-GROUP`;
 
+  // P-85 Schritt 2b (20.09.2026): EINE exakte Zuordnung Kombination→SKU/Preis/Bild statt der
+  // vorherigen Substring-Suche (die live u.a. "50pcs"→"150pcs", "1"→"10", "Indigo Pink"→"Indigo
+  // Pink Base Set" fälschlich zusammenführte) — s. variant-resolver.ts. `combos` (oben, gemappte
+  // Aspektnamen als Key) und `resolved` (rohe Gruppennamen als Key) durchlaufen dieselben Gruppen
+  // in derselben Reihenfolge → identischer Index = dieselbe Kombination.
+  const productId = parseInt(input.sku.replace(/^stele-/, ''), 10);
+  const resolved = resolveVariantEntries(productId, groups as SharedVariantGroup[], (input.variantPrices ?? []) as VariantPriceEntry[]);
+
   // Cleanup: alte Item Group + alte Offers löschen vor Re-Listing.
   // Erst die real zur Gruppe gehörenden SKUs auslesen (aus einem evtl. vorherigen,
   // fehlgeschlagenen Versuch), DANN die Gruppe löschen — sonst sind die SKUs weg.
@@ -1602,10 +1609,10 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 
   // 1. Pro Kombination: Inventory Item anlegen
   const variantSkus: string[] = [];
-  const variantSkuCombos: Array<{ sku: string; combo: Record<string, string>; aspects: Record<string, string[]> }> = [];
-  for (const combo of combos) {
-    const suffix = Object.values(combo).map(slugify).filter(Boolean).join('-');
-    const varSku = `${input.sku}-${suffix}`;
+  const variantSkuCombos: Array<{ sku: string; combo: Record<string, string>; aspects: Record<string, string[]>; resolvedEntry: ResolvedVariantEntry | null; resolvedError: string | null }> = [];
+  for (let i = 0; i < combos.length; i++) {
+    const combo = combos[i];
+    const { sku: varSku, entry: matchedEntry, error: matchedError } = resolved[i];
     variantSkus.push(varSku);
 
     // Varianten-Aspekte: gefilterte Basis-Aspekte + spezifischer Kombo-Wert (1 Wert pro Variante)
@@ -1616,19 +1623,13 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     // P-89: dieselben Aspekte (inkl. EAN-Sentinel aus P-71) auch für den weiter unten erstellten
     // Offer mitnehmen — nur ins Inventory Item zu schreiben reicht nicht, eBay validiert beim
     // publish_by_inventory_item_group die Merkmale am Offer (siehe itemSpecifics in createOffer()).
-    variantSkuCombos.push({ sku: varSku, combo, aspects: variantAspects });
+    variantSkuCombos.push({ sku: varSku, combo, aspects: variantAspects, resolvedEntry: matchedEntry, resolvedError: matchedError });
 
-    // Varianten-Foto: aus variantPrices das passende Bild für diese Kombination suchen
-    const comboValsLower = Object.values(combo).map(v => v.toLowerCase());
-    const matchedVP = input.variantPrices?.find(vp => {
-      if (!vp || typeof vp !== 'object') return false;
-      const attrsVal = Object.values((vp as { attrs?: Record<string, string> }).attrs ?? {}).map(v => v.toLowerCase());
-      return comboValsLower.every(cv => attrsVal.some(av => av.includes(cv) || cv.includes(av)));
-    });
-    const varImageUrls = (matchedVP as { imageUrl?: string } | undefined)?.imageUrl
-      ? [(matchedVP as { imageUrl: string }).imageUrl, ...input.imageUrls.slice(0, 7)]
+    // Varianten-Foto + Menge: aus der P-85-Zuordnung (s.o.) statt eigener Substring-Suche.
+    const varImageUrls = matchedEntry?.imageUrl
+      ? [matchedEntry.imageUrl, ...input.imageUrls.slice(0, 7)]
       : input.imageUrls;
-    const varQuantity = resolveVariantQuantity((matchedVP as { stock?: number } | undefined)?.stock, input.quantity);
+    const varQuantity = resolveVariantQuantity(matchedEntry?.stock, input.quantity);
 
     const varBody = {
       availability: { shipToLocationAvailability: { quantity: varQuantity } },
@@ -1712,22 +1713,20 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const gpsr = buildGpsrBlock(input.gpsr);
 
   const offerIds: string[] = [];
-  for (const { sku: varSku, combo: varCombo, aspects: varAspects } of variantSkuCombos) {
-    // Pro-Variante Preis: attrs-Werte aus combo mit variantPrices.attrs matchen
-    const comboValues = Object.values(varCombo).map(v => v.toLowerCase());
-    const varPriceEntry = input.variantPrices?.find(vp => {
-      if (!vp || typeof vp !== 'object') return false;
-      const attrsVal = Object.values((vp as { attrs?: Record<string, string> }).attrs ?? {}).map(v => v.toLowerCase());
-      // Match wenn alle combo-Werte in attrs vorkommen
-      return comboValues.every(cv => attrsVal.some(av => av.includes(cv) || cv.includes(av)));
-    });
+  for (const { sku: varSku, aspects: varAspects, resolvedEntry: varPriceEntry, resolvedError } of variantSkuCombos) {
+    // P-85 Schritt 2b: dieselbe Zuordnung wie beim Inventory Item oben (resolved[i], s.o.) — keine
+    // eigene Substring-Suche mehr. Kein Treffer/mehrdeutig/kein skuId → resolvedError trägt den
+    // Klartext-Grund direkt aus variant-resolver.ts.
+    if (!varPriceEntry) {
+      throw new Error(resolvedError ?? `Keine eindeutige Varianten-Zuordnung für ${varSku} ermittelbar.`);
+    }
     // P-27/P-28-Konsolidierung (2026-09-08): vorher fiel eine fehlende .ebayPrice auf
     // varPriceEntry.price (roher AliExpress-EINKAUFSPREIS!) und dann erst auf input.price zurück
     // — konnte eine Variante zum Einkaufspreis listen (live bestätigter Verlustfall stele-98).
     // Jetzt: fehlt .ebayPrice, aber der Einkaufspreis (.price) ist bekannt → live über die
     // zentrale Formel nachberechnen. Ist auch das nicht bekannt → hart blockieren statt zu raten.
-    const varPrice: number | undefined = varPriceEntry?.ebayPrice ??
-      (varPriceEntry?.price != null && varPriceEntry.price > 0
+    const varPrice: number | undefined = varPriceEntry.ebayPrice ??
+      (varPriceEntry.price != null && varPriceEntry.price > 0
         ? computeMinSellPrice({
             buyPrice: varPriceEntry.price, supplierShipping: input.shippingCost ?? 0,
             isChinaOrigin: isChinaShipping(input.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
@@ -1740,8 +1739,8 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     if (varPrice == null) {
       throw new Error(`Kein Preis für Variante ${varSku} ermittelbar — weder ebayPrice noch Einkaufspreis (price) in variantPrices vorhanden. Bitte Varianten-Preise im Produkt pflegen, bevor gelistet wird.`);
     }
-    const offerQuantity = resolveVariantQuantity(varPriceEntry?.stock, input.quantity);
-    console.log(`[eBay] ${varSku} → combo=${JSON.stringify(varCombo)} priceEntry=${JSON.stringify(varPriceEntry)} → price=${varPrice} qty=${offerQuantity}`);
+    const offerQuantity = resolveVariantQuantity(varPriceEntry.stock, input.quantity);
+    console.log(`[eBay] ${varSku} → priceEntry=${JSON.stringify(varPriceEntry)} → price=${varPrice} qty=${offerQuantity}`);
 
     const offerBody = {
       sku: varSku,

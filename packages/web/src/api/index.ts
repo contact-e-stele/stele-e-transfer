@@ -12,6 +12,7 @@ import { authRouter, authMiddleware } from './auth';
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
 import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
 import { isStringRecord } from '../shared/validation';
+import { syncDisplayValuesOnRename, findOrphanedVariantEntries, resolveVariantEntries, type VariantPriceEntry } from '../shared/variant-resolver';
 import { buildProductLookups, findProductForSku as findProductForSkuShared } from './order-matching';
 import { Sentry } from '../instrument';
 
@@ -1295,6 +1296,7 @@ const app = new Hono()
       const {
         isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice,
         updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading,
+        parseVariantGroupsJson,
       } = await import('./price-monitor');
       const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
@@ -1359,9 +1361,9 @@ const app = new Hono()
         let ok: boolean;
         let tradingError: string | undefined;
         if (isVariant) {
-          const result = await updateEbayVariantPricesIndividually(product.id, variantRows);
+          const result = await updateEbayVariantPricesIndividually(product.id, parseVariantGroupsJson(product.variants), variantRows);
           ok = result.ok;
-          if (!ok) tradingError = 'Keine der Varianten-SKUs konnte aktualisiert werden';
+          if (!ok) tradingError = result.errors.length > 0 ? result.errors.join(' | ') : 'Keine der Varianten-SKUs konnte aktualisiert werden';
         } else {
           // Einzelartikel: NUR über die Inventory API, mit Trading-API-Fallback falls das
           // Listing (noch) über die ältere Trading API läuft.
@@ -2285,11 +2287,11 @@ const app = new Hono()
       // Formel neu berechnet, statt einen evtl. veralteten gespeicherten Wert zu übernehmen.
       // ebay.ts:1249 hat zusätzlich einen eigenen Fallback für den Fall, dass hier trotzdem kein
       // ebayPrice ankommt (Verteidigung in der Tiefe).
-      const variantPricesForListing: Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; attrs?: Record<string, string> }> = (() => {
+      const variantPricesForListing: Array<{ sku?: string; skuId?: string; name?: string; ebayPrice?: number; price?: number; attrs?: Record<string, string>; imageUrl?: string; displayValues?: Record<string, string> }> = (() => {
         try {
           const parsed = JSON.parse(product.variantPrices ?? '[]');
           if (!Array.isArray(parsed)) return [];
-          return (parsed as Array<{ sku?: string; name?: string; ebayPrice?: number; price?: number; attrs?: Record<string, string> }>).map(v => ({
+          return (parsed as Array<{ sku?: string; skuId?: string; name?: string; ebayPrice?: number; price?: number; attrs?: Record<string, string>; imageUrl?: string; displayValues?: Record<string, string> }>).map(v => ({
             ...v,
             ebayPrice: typeof v.price === 'number' && v.price > 0
               ? calcSellPriceForListing(v.price)
@@ -2359,6 +2361,26 @@ const app = new Hono()
             ebayStatus: 'error',
             ebayError: msg,
             ebayMissingAspect: editableMissing.length > 0 ? editableMissing.join(', ') : null,
+            updatedAt: new Date().toISOString(),
+          }).where(eq(schema.products.id, body.productId));
+          return c.json({ error: msg }, 400);
+        }
+      }
+
+      // P-85 Schritt 2b (20.09.2026): Vorab-Prüfung der Varianten-SKU/Preis-Zuordnung VOR jedem
+      // eBay-Aufruf, analog zu 1e oben — mehrdeutige/fehlende Zuordnungen (s. variant-resolver.ts)
+      // blockieren den Listing-Versuch mit Klartext statt sie erst beim Preis-Write in ebay.ts
+      // als generischen "Kein Preis ermittelbar"-Fehler auffliegen zu lassen.
+      if (variantGroups.length > 0) {
+        const resolved = resolveVariantEntries(product.id, variantGroups, variantPricesForListing as VariantPriceEntry[]);
+        const combinationErrors = resolved.filter(r => r.error).map(r => r.error!);
+        const orphanErrors = findOrphanedVariantEntries(product.id, variantGroups, variantPricesForListing as VariantPriceEntry[]);
+        const allErrors = [...combinationErrors, ...orphanErrors];
+        if (allErrors.length > 0) {
+          const msg = `Varianten-Zuordnung fehlgeschlagen: ${allErrors.join(' | ')} — bitte Varianten/Preise im Produkte-Tab prüfen.`;
+          await db.update(schema.products).set({
+            ebayStatus: 'error',
+            ebayError: msg,
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, body.productId));
           return c.json({ error: msg }, 400);
@@ -2790,8 +2812,22 @@ const app = new Hono()
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
+      const { parseVariantGroupsJson } = await import('./price-monitor');
+      // P-85 Schritt 2b: beim Umbenennen eines Anzeigewerts die explizite displayValues-Zuordnung
+      // in variantPrices mitschreiben (s. syncDisplayValuesOnRename, variant-resolver.ts) — sonst
+      // verliert die spätere Preis-/SKU-Zuordnung (ebay.ts, price-monitor.ts) die Verbindung
+      // zwischen umbenanntem Anzeigewert und dem ursprünglichen AliExpress-Eintrag.
+      const [current] = await db.select({ variants: schema.products.variants, variantPrices: schema.products.variantPrices })
+        .from(schema.products).where(eq(schema.products.id, id));
+      const oldVariants = parseVariantGroupsJson(current?.variants ?? null);
+      const currentVariantPrices: VariantPriceEntry[] = (() => {
+        try { const p = current?.variantPrices ? JSON.parse(current.variantPrices) : []; return Array.isArray(p) ? p : []; } catch { return []; }
+      })();
+      const syncedVariantPrices = syncDisplayValuesOnRename(id, oldVariants, body.variants, currentVariantPrices);
+
       await db.update(schema.products).set({
         variants: JSON.stringify(body.variants),
+        variantPrices: JSON.stringify(syncedVariantPrices),
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, id));
       return c.json({ ok: true }, 200);

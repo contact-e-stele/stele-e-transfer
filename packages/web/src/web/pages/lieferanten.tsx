@@ -8,6 +8,7 @@ import { safeJson } from "../lib/safeFetch";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -657,9 +658,20 @@ export default function Lieferanten() {
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           variants: editedVariants
             .filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
-          variantPrices: (product.variantPrices ?? []).map(v => ({
+          // P-85 Schritt 2b: hat die Nutzerin während des Imports einen Anzeigewert umbenannt
+          // (editedVariants weicht vom ursprünglichen Scrape product.variants ab), wird die
+          // explizite displayValues-Zuordnung gleich mitgespeichert — sonst verliert die spätere
+          // Preis-/SKU-Zuordnung (ebay.ts/price-monitor.ts) die Verbindung zum
+          // AliExpress-Original. productId hier bewusst 0 (Produkt existiert noch nicht) — fließt
+          // nicht in die zurückgegebenen displayValues ein, nur in ein hier ungenutztes sku-Feld.
+          variantPrices: syncDisplayValuesOnRename(
+            0,
+            (product.variants ?? []).filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
+            editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
+            product.variantPrices ?? [],
+          ).map(v => ({
             ...v,
-            ebayPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined,
+            ebayPrice: v.skuId ? (parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined) : undefined,
           })),
           variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
           gpsrRaw: gpsrHersteller.trim() || undefined,
