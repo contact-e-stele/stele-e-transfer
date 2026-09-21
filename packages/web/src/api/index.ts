@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
+import { parseGpsrRaw, resolveGpsrForListing } from '../shared/gpsr-parser';
+import { neutralizeGpsrTab, findForeignEmails } from '../shared/gpsr-description';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -18,6 +20,20 @@ import { buildProductLookups, findProductForSku as findProductForSkuShared } fro
 import { Sentry } from '../instrument';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
+// Paket 3 (A3): beim Import die VERANTWORTLICHE PERSON IN DER EU aus gpsrRaw in die Einzelfelder parsen.
+// Nur erkannte Felder (nie geraten), nur wenn ein EU-Block gefunden wurde — der Hersteller bleibt draußen.
+function gpsrFieldsFromRaw(raw: string | null | undefined, onlyIfComplete = false) {
+  const g = parseGpsrRaw(raw);
+  if (!g.euBlockFound) return {};
+  // Re-Import (Update-Zweig): nur alle fünf Felder gemeinsam überschreiben, sonst blieben Reste einer anderen Firma stehen.
+  if (onlyIfComplete && g.confidence !== 'vollstaendig') return {};
+  return {
+    ...(g.name ? { gpsrName: g.name } : {}), ...(g.address ? { gpsrAddress: g.address } : {}),
+    ...(g.city ? { gpsrCity: g.city } : {}), ...(g.email ? { gpsrEmail: g.email } : {}),
+    ...(g.phone ? { gpsrPhone: g.phone } : {}),
+  };
+}
+
 function generateFallbackDescription(
   title: string,
   specs: Record<string, string>,
@@ -1076,6 +1092,43 @@ const app = new Hono()
     }
   })
 
+  // ─── Paket 3: Einzel-Nachzieh-Weg für EIN laufendes Angebot (KEIN Bulk) ─────────────────────
+  // Bereinigt die gespeicherte Beschreibung (GPSR-Tab: Rohtext mit Kontakten Dritter → neutraler
+  // Hinweis) und lädt sie für dieses eine Angebot hoch (Trading-API wie PATCH .../content).
+  // Standard ist ein reiner Probelauf (nichts wird geschrieben); nur `{ "confirm": true }` schreibt.
+  // Bleibt nach der Bereinigung noch eine fremde E-Mail-Adresse im Text, wird NICHT hochgeladen (422).
+  // Die strukturierten Felder (`regulatory`) setzt diese Route nicht — sie gelten beim Listing (ebay.ts).
+  .post('/ebay/products/:productId/refresh-description', async (c) => {
+    try {
+      const productId = Number(c.req.param('productId'));
+      const body = await c.req.json().catch(() => ({})) as { confirm?: boolean };
+      const { db, schema } = await import('../db/index').then(async m => {
+        const sc = await import('../db/schema');
+        return { db: m.db, schema: sc };
+      });
+      const product = await db.select().from(schema.products).where(eq(schema.products.id, productId)).get();
+      if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+      if (!product.ebayListingId) return c.json({ error: 'Produkt hat kein laufendes eBay-Angebot' }, 400);
+      const before = product.htmlDescription ?? '';
+      if (!before) return c.json({ error: 'Keine gespeicherte Beschreibung vorhanden' }, 400);
+      const after = neutralizeGpsrTab(before);
+      const foreignBefore = findForeignEmails(before);
+      const foreignAfter = findForeignEmails(after);
+      if (foreignAfter.length > 0) {
+        return c.json({ error: 'Nach der Bereinigung steht noch mindestens eine fremde E-Mail-Adresse im Text — nicht hochgeladen', foreignEmails: foreignAfter }, 422);
+      }
+      if (body.confirm !== true) {
+        return c.json({ ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, foreignEmailsBefore: foreignBefore, foreignEmailsAfter: foreignAfter }, 200);
+      }
+      const result = await reviseListingContent(product.ebayListingId, { htmlDescription: after });
+      if (!result.ok) return c.json({ error: result.error }, 400);
+      await db.update(schema.products).set({ htmlDescription: after, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, productId));
+      return c.json({ ok: true, dryRun: false, itemId: product.ebayListingId, foreignEmailsBefore: foreignBefore }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
   // ─── eBay Listing Titel/Beschreibung live ändern (Sync-Funktion, von Listings- UND Produkte-Tab genutzt) ──
   .patch('/ebay/listings/:itemId/content', async (c) => {
     const itemId = c.req.param('itemId');
@@ -2064,6 +2117,7 @@ const app = new Hono()
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
           gpsrRaw: body.gpsrRaw ?? undefined,
           gpsrHtml: body.gpsrHtml ?? undefined,
+          ...gpsrFieldsFromRaw(body.gpsrRaw, true),
           shipsFrom: body.shipsFrom ?? undefined,
           shippingCost: body.shippingCost ?? undefined,
           storeCategoryId: body.storeCategoryId ?? undefined,
@@ -2102,6 +2156,7 @@ const app = new Hono()
         variantContents: body.variantContents ? JSON.stringify(body.variantContents) : null,
         gpsrRaw: body.gpsrRaw ?? null,
         gpsrHtml: body.gpsrHtml ?? null,
+        ...gpsrFieldsFromRaw(body.gpsrRaw),
         shipsFrom: body.shipsFrom ?? null,
         shippingCost: body.shippingCost ?? 0,
         storeCategoryId: body.storeCategoryId ?? null,
@@ -2285,6 +2340,16 @@ const app = new Hono()
       fullDescription = buildEbayHTMLLight(templateProduct);
     }
 
+    // Paket 3: Kontakte Dritter gehören nicht in den Beschreibungstext (eBay-Verstoßserie). Den GPSR-Tab
+    // neutralisieren; bleibt danach noch eine fremde E-Mail-Adresse stehen, wird mit Klartext blockiert.
+    fullDescription = neutralizeGpsrTab(fullDescription);
+    const foreignEmails = findForeignEmails(fullDescription);
+    if (foreignEmails.length > 0) {
+      const msg = `Beschreibung enthält fremde E-Mail-Adresse(n): ${foreignEmails.join(', ')} — eBay verbietet Kontaktdaten Dritter im Text. Bitte Beschreibung bereinigen.`;
+      await db.update(schema.products).set({ ebayStatus: 'error', ebayError: msg, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
+      return c.json({ error: msg }, 400);
+    }
+
     try {
       const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
 
@@ -2328,14 +2393,15 @@ const app = new Hono()
         return [];
       })();
 
-      // GPSR aus Produkt — strukturierte Felder haben Vorrang, sonst Fallback auf Stele-Adresse
-      const gpsrFromProduct = (product.gpsrName || product.gpsrEmail) ? {
-        name:    product.gpsrName    ?? 'Stele-E-Transfer',
-        address: product.gpsrAddress ?? 'Am Hochfeld 47',
-        city:    product.gpsrCity    ?? '65205 Wiesbaden',
-        email:   product.gpsrEmail   ?? 'contact@stele-e-transfer.com',
-        phone:   product.gpsrPhone   ?? '+4915904826737',
-      } : undefined;
+      // Paket 3: GPSR aus den strukturierten Feldern, leere aus gpsrRaw ergänzt (nur im Speicher).
+      // Kein Stele-/Hersteller-Ersatz mehr — fehlt eine Pflichtangabe, wird oben blockiert.
+      const gpsrResolved = resolveGpsrForListing(product);
+      if (!gpsrResolved.eu) {
+        const msg = `GPSR-Pflichtangaben fehlen (strukturierte eBay-Felder): ${gpsrResolved.missing.join('; ')}. Bitte im Produkt nachtragen — es wird nichts ersatzweise in den Text geschrieben.`;
+        await db.update(schema.products).set({ ebayStatus: 'error', ebayError: msg, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
+        return c.json({ error: msg }, 400);
+      }
+      const gpsrFromProduct = gpsrResolved;
 
       // P-88: manuell nachgetragene Pflichtfelder (aus einem vorherigen fehlgeschlagenen Versuch)
       const manualAspects: Record<string, string> | undefined = (() => {

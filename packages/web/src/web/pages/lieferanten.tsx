@@ -675,7 +675,8 @@ export default function Lieferanten() {
           })),
           variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
           gpsrRaw: gpsrHersteller.trim() || undefined,
-          gpsrHtml: gpsrHersteller.trim() ? `<div class="gpsr-block"><h3>Produktsicherheit (GPSR)</h3><pre>${gpsrHersteller.trim()}</pre></div>` : undefined,
+          // Paket 3: kein gpsrHtml mehr — der Rohtext mit Kontakten Dritter gehört nicht in HTML (Verstoßserie);
+          // die EU-Person wird serverseitig aus gpsrRaw in die strukturierten Felder geparst.
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,

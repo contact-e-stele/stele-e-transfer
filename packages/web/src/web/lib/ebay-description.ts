@@ -3,6 +3,8 @@
  * Erzeugt die vollständige Black & Gold HTML-Vorlage mit echtem Produktinhalt.
  */
 
+import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
+
 export interface ScrapedProduct {
   title: string;
   images?: string[];
@@ -465,7 +467,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     <div class="stet-content" id="stet-c5">
       <h3>Produktsicherheit (GPSR)</h3>
       <p style="font-size:12px;color:#8a7040;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
-      <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#c8b878;line-height:1.8;background:#111108;padding:14px;border-radius:4px;border:1px solid #3a2a0a;">${product.gpsrRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
+      <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#c8b878;line-height:1.8;background:#111108;padding:14px;border-radius:4px;border:1px solid #3a2a0a;">${GPSR_DESCRIPTION_NOTICE}</pre>
     </div>` : ""}
 
   </div>
@@ -735,7 +737,7 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     <div class="stet-l-content" id="stet-lc5">
       <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:8px;">Produktsicherheit (GPSR)</h3>
       <p style="font-size:12px;color:#666;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
-      <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.8;background:#f9f6f0;padding:14px;border-radius:4px;border:1px solid #e5d9c0;">${product.gpsrRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
+      <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.8;background:#f9f6f0;padding:14px;border-radius:4px;border:1px solid #e5d9c0;">${GPSR_DESCRIPTION_NOTICE}</pre>
     </div>` : ""}
 
   </div>
