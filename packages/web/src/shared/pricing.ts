@@ -38,25 +38,40 @@ export function roundToNearest95(price: number): number {
   return Math.round((nearestInt + 0.95) * 100) / 100;
 }
 
+// Nachtrag Paket 2 (21.09.2026, Entscheidung des Nutzers): erlaubte Gewinn-Unterschreitung des
+// Zielgewinns beim Runden für die Übernehmen-Knöpfe (Modus 'nearest95-min'), in EUR.
+export const PROFIT_TOLERANCE_EUR = 0.10;
+
 // Paket 2 / A2+A4 (2026-09-21): EINE Rundungsregel für beide Übernehmen-Knöpfe im Import-Modal
 // (Artikel-Knopf "≥X € Gewinn →" und "Alle Preisvorschläge übernehmen"). Rundet auf die
-// nächstgelegene ,95-Marke, auch abwärts — ABER niemals unter den Mindestpreis, der den
-// Zielgewinn erst erreicht (rawMin = rawMinSellPrice aus computeMinSellPrice, Zielgewinn schon
-// eingerechnet). Liegt die Abwärts-Marke darunter, wird die nächste ,95-Marke nach OBEN genommen.
-// Das präzisiert die Preisregel vom 13.09.2026 (Rohwert 2,10 → 1,95) genau dort, wo sie den
-// Mindestgewinn verletzt: roundToNearest95() allein unterschritt ihn live um bis zu ~0,34 €
-// (Produkt 182: 10 von 23 Varianten zwischen +1,66 und +1,95 € bei ≥2,00 € Versprechen).
-// Toleranz 1e-9 nur gegen Gleitkomma-Rauschen (14,950000000000001 ist "auf der Marke").
-export function roundToNearest95NotBelow(rawMin: number): number {
+// nächstgelegene ,95-Marke, auch abwärts — solange der Gewinn dadurch höchstens
+// PROFIT_TOLERANCE_EUR unter dem Zielgewinn liegt; sonst wird auf die nächste ,95-Marke nach OBEN
+// gerundet. rawMin ist rawMinSellPrice aus computeMinSellPrice (Zielgewinn schon eingerechnet).
+//
+// Warum ohne Toleranz nur "immer aufrunden" herauskäme: jede Abwärts-Marke liegt unter rawMin, also
+// unter dem Zielgewinn (nachgerechnet über 5901 Rohwerte 1,00–60,00 €: nie abwärts). Erst die
+// Toleranz gibt der Preisregel vom 13.09.2026 (Rohwert 2,10 → 1,95) wieder Wirkung. Ohne jede
+// Regel unterschritt roundToNearest95() den Zielgewinn live um bis zu ~0,34 € (Produkt 182:
+// 10 von 23 Varianten zwischen +1,66 und +1,95 € bei Ziel 2,00 €).
+//
+// Die Toleranz liegt auf dem GEWINN, nicht auf dem Preis: ein um X € niedrigerer Preis senkt den
+// Gewinn nur um X × (1 − totalFeeRateGross), weil die Gebühren mitsinken. Deshalb bekommt diese
+// Funktion die erlaubte PREIS-Unterschreitung (allowedPriceShortfall = Toleranz / (1 − Gebührensatz))
+// von computeMinSellPrice, wo der Gebührensatz bekannt ist — kein fester Preisbetrag. Der Parameter
+// allowedPriceShortfall ist deshalb in PREIS-Einheit (EUR), nicht Gewinn; Standard 0 = nie abwärts.
+// Bezugsgröße ist rawMin, also Zielgewinn + safetyBufferEur (die Übernehmen-Knöpfe nutzen Puffer 0).
+// Toleranz siehe PROFIT_TOLERANCE_EUR.
+// 1e-9 nur gegen Gleitkomma-Rauschen (14,950000000000001 ist "auf der Marke").
+export function roundToNearest95NotBelow(rawMin: number, allowedPriceShortfall = 0): number {
   const nearest = roundToNearest95(rawMin);
-  return nearest + 1e-9 >= rawMin ? nearest : roundUpToX95(rawMin);
+  return nearest + allowedPriceShortfall + 1e-9 >= rawMin ? nearest : roundUpToX95(rawMin);
 }
 
-function applyRounding(price: number, mode: RoundingMode): number {
+function applyRounding(price: number, mode: RoundingMode, allowedPriceShortfall = 0): number {
   switch (mode) {
     case 'up95': return roundUpToX95(price);
     case 'nearest95': return roundToNearest95(price);
-    case 'nearest95-min': return roundToNearest95NotBelow(price);
+    case 'nearest95-min': return roundToNearest95NotBelow(price, allowedPriceShortfall);
     case 'cent': return Math.ceil(price * 100) / 100;
     case 'none': return price;
   }
@@ -82,6 +97,7 @@ export interface PricingInput {
   targetMarginEur: number;    // Zielmarge/Mindestgewinn in EUR
   safetyBufferEur: number;    // zusätzlicher Sicherheitspuffer in EUR (0, wenn an dieser Stelle nicht verwendet)
   rounding: RoundingMode;     // Rundungsmodus für minSellPrice
+  profitToleranceEur?: number; // nur Modus 'nearest95-min': erlaubte Gewinn-Unterschreitung, Standard PROFIT_TOLERANCE_EUR
 }
 
 export interface PricingResult {
@@ -108,7 +124,8 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   const rawMinSellPrice = (totalCost + input.targetMarginEur + input.safetyBufferEur + fixedFeeGross) / (1 - totalFeeRateGross);
-  const minSellPrice = applyRounding(rawMinSellPrice, input.rounding);
+  const priceShortfall = (input.profitToleranceEur ?? PROFIT_TOLERANCE_EUR) / (1 - totalFeeRateGross);
+  const minSellPrice = applyRounding(rawMinSellPrice, input.rounding, priceShortfall);
   return { totalCost, customs, baseFeeRateGross, totalFeeRateGross, fixedFeeGross, rawMinSellPrice, minSellPrice };
 }
 

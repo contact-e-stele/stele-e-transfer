@@ -27,7 +27,7 @@ const lines: string[] = [];
 lines.push('# Paket 2 — Trockenlauf Rundung + Menge (Produktions-DB, nur lesend)', '');
 lines.push(`Obergrenze neu: ${maxQty} (Einstellung max_variant_quantity bzw. Standard). Bisher: 3.`, '');
 
-let nVariants = 0, nOldBelow = 0, nNewBelow = 0, nChanged = 0, nQtyChanged = 0;
+let nVariants = 0, nOldBelow = 0, nNewBelow = 0, nChanged = 0, nQtyChanged = 0, nDown = 0, nUp = 0, maxGap = 0;
 for (const p of products) {
   let vp: Array<{ skuId: string; attrs?: Record<string, string>; price: number; stock?: number }> = [];
   try { const parsed = p.variantPrices ? JSON.parse(p.variantPrices) : []; vp = Array.isArray(parsed) ? parsed : []; } catch { continue; }
@@ -45,13 +45,16 @@ for (const p of products) {
   lines.push('|---|---|---|---|---|---|---|---|---|');
   for (const v of vp) {
     const oldP = computeMinSellPrice({ ...base, buyPrice: v.price, rounding: 'nearest95' }).minSellPrice;
-    const newP = computeMinSellPrice({ ...base, buyPrice: v.price, rounding: 'nearest95-min' }).minSellPrice;
+    const newRes = computeMinSellPrice({ ...base, buyPrice: v.price, rounding: 'nearest95-min' });
+    const newP = newRes.minSellPrice;
     const profit = (sell: number) => profitAtSellPrice({ ...base, buyPrice: v.price, sellPrice: sell });
     const gOld = profit(oldP), gNew = profit(newP);
     const qOld = resolveVariantQuantity(v.stock, 0, 3), qNew = resolveVariantQuantity(v.stock, 0, maxQty);
     nVariants++;
     if (gOld < margin - 1e-9) nOldBelow++;
     if (gNew < margin - 1e-9) nNewBelow++;
+    if (newP < newRes.rawMinSellPrice - 1e-9) nDown++; else nUp++;
+    maxGap = Math.max(maxGap, margin - gNew);
     if (oldP !== newP) nChanged++;
     if (qOld !== qNew) nQtyChanged++;
     const name = Object.values(v.attrs ?? {}).join(' / ') || v.skuId;
@@ -64,6 +67,8 @@ lines.push(`- Varianten gesamt: ${nVariants}`);
 lines.push(`- Gewinn alt unter Zielgewinn: ${nOldBelow}`);
 lines.push(`- Gewinn neu unter Zielgewinn: ${nNewBelow}`);
 lines.push(`- Preis ändert sich: ${nChanged}`);
+lines.push(`- Neuer Preis rundet abwärts (unter Rohwert, Gewinn ≤ Toleranz unter Ziel): ${nDown}; aufwärts/auf der Marke: ${nUp}`);
+lines.push(`- Größter verbleibender Abstand zum Zielgewinn (neu): ${f2(Math.max(maxGap, 0))} €`);
 lines.push(`- Menge ändert sich: ${nQtyChanged}`);
 
 writeFileSync(outPath, lines.join('\n'), 'utf-8');
