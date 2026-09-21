@@ -50,6 +50,30 @@ export function parseVariantGroupsJson(json: string | null | undefined): Variant
   } catch { return []; }
 }
 
+// A1 (2026-09-21): die Preisprüfung baute variantPrices komplett neu und verlor dabei ebayPrice,
+// imageUrl und displayValues. Stattdessen: bestehende Einträge behalten, je skuId nur price und
+// stock aus dem frischen Scrape übernehmen (gleiche Schreibweise wie /products/:id/refresh-stock),
+// neue SKUs anhängen, im Scrape fehlende SKUs unverändert lassen (sonst bricht die Zuordnung zu
+// den bereits vergebenen eBay-SKUs).
+export function mergeFreshVariantPrices(
+  existingJson: string | null,
+  fresh: Array<{ skuId: string; attrs: Record<string, string>; price: number; stock?: number }>,
+): { json: string | null; added: string[]; missing: string[] } {
+  if (fresh.length === 0) return { json: existingJson, added: [], missing: [] };
+  let existing: Array<Record<string, unknown>> = [];
+  try { const p = existingJson ? JSON.parse(existingJson) : []; existing = Array.isArray(p) ? p : []; } catch { /* leer */ }
+  const freshBySku = new Map(fresh.map(f => [String(f.skuId), f]));
+  const existingSkus = new Set(existing.map(e => String(e.skuId)));
+  const merged = existing.map(e => {
+    const f = freshBySku.get(String(e.skuId));
+    return f ? { ...e, price: f.price, stock: typeof f.stock === 'number' ? f.stock : e.stock } : e;
+  });
+  const added = fresh.filter(f => !existingSkus.has(String(f.skuId)));
+  for (const f of added) merged.push({ skuId: f.skuId, attrs: f.attrs, price: f.price, stock: f.stock });
+  const missing = existing.map(e => String(e.skuId)).filter(id => !freshBySku.has(id));
+  return { json: JSON.stringify(merged), added: added.map(f => f.skuId), missing };
+}
+
 // Liest die gespeicherten (oder frisch übergebenen) Varianten-Einkaufspreise eines Produkts
 // und berechnet für JEDE Variante einzeln den nach aktueller Formel korrekten Verkaufspreis —
 // unabhängig davon, ob sich der Einkaufspreis geändert hat (erkennt so auch reine
@@ -558,9 +582,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // frische Varianten-Einkaufspreise werden gespeichert und ein Alert-Flag gesetzt,
         // die eigentliche Preisänderung läuft ausschließlich über die vom Menschen bestätigte
         // Vorschau im Listings-Tab ("Preise neu berechnen").
-        const freshVariantPricesJson = data.variantPrices.length > 0
-          ? JSON.stringify(data.variantPrices.map(v => ({ skuId: v.skuId, attrs: v.attrs, price: v.price, stock: v.stock })))
-          : product.variantPrices;
+        const merge = mergeFreshVariantPrices(product.variantPrices, data.variantPrices);
+        const freshVariantPricesJson = merge.json;
+        if (merge.added.length > 0) console.log(`[PriceMonitor] ${product.id}: neue Varianten-SKUs angehängt: ${merge.added.join(', ')}`);
+        if (merge.missing.length > 0) console.warn(`[PriceMonitor] ${product.id}: SKUs im Scrape nicht mehr vorhanden (unverändert behalten): ${merge.missing.join(', ')}`);
 
         // P-93: Verfügbarkeits-Sync — die eBay-Inventory-Item-Menge für GENAU die passende
         // Variante nach dem echten AliExpress-Bestand setzen. Reine Tatsachen-Synchronisation
