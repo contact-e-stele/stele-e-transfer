@@ -28,12 +28,27 @@
 // getestet werden kann (gpsr-parser.test.ts) und von Bericht (nur lesend) und späterem
 // Schreib-Skript (hinter Schalter) gemeinsam genutzt wird, statt zweimal gebaut zu werden.
 
+export interface GpsrBlockFields {
+  name: string | null;
+  address: string | null;
+  city: string | null;
+  email: string | null;
+  phone: string | null;
+  country: string | null;
+}
+
 export interface ParsedGpsr {
   name: string | null;
   address: string | null;
   city: string | null;
   email: string | null;
   phone: string | null;
+  /** Paket 3: ISO-Ländercode der EU-Adresse, nur wenn ein bekanntes Länderwort in der Adresse steht. */
+  country: string | null;
+  /** Paket 3: Herstellerblock, getrennt von der EU-Person gehalten (nie ersatzweise in die Hauptfelder). */
+  manufacturer: GpsrBlockFields | null;
+  /** Paket 3: true nur, wenn ein Block als "verantwortliche Person in der EU" identifiziert wurde. */
+  euBlockFound: boolean;
   /** 'vollstaendig' nur wenn alle 5 Felder sicher erkannt sind. */
   confidence: 'vollstaendig' | 'teilweise' | 'nicht_erkannt';
   /** Menschlich lesbare Gründe für fehlende/unsichere Felder — nie geraten, immer benannt. */
@@ -129,61 +144,65 @@ function findTopLevelNameLineIndices(lines: string[]): number[] {
   return idx;
 }
 
-/**
- * Parst gpsr_raw und liefert die fünf Zielfelder für den EU-Verantwortlichen (zweiter Block —
- * NICHT der Hersteller/erste Block). Rät nie: nicht sicher erkennbare Felder bleiben `null`,
- * mit Begründung in `notes`.
- */
-export function parseGpsrRaw(raw: string | null | undefined): ParsedGpsr {
-  const empty: ParsedGpsr = { name: null, address: null, city: null, email: null, phone: null, confidence: 'nicht_erkannt', notes: [] };
+// Paket 3: Länderwort am Adressende → ISO-Code. Nur bekannte Wörter, sonst null (nie geraten).
+const COUNTRY_ISO: Record<string, string> = {
+  germany: 'DE', deutschland: 'DE', de: 'DE', spain: 'ES', spanien: 'ES', 'españa': 'ES', espana: 'ES', es: 'ES',
+  france: 'FR', frankreich: 'FR', fr: 'FR', poland: 'PL', polska: 'PL', polen: 'PL', pl: 'PL', china: 'CN', cn: 'CN', estonia: 'EE', eesti: 'EE', ee: 'EE',
+  italy: 'IT', italien: 'IT', italia: 'IT', it: 'IT', netherlands: 'NL', niederlande: 'NL', nederland: 'NL', nl: 'NL',
+  czechia: 'CZ', 'czech republic': 'CZ', tschechien: 'CZ', cz: 'CZ', portugal: 'PT', pt: 'PT', hungary: 'HU', ungarn: 'HU', hu: 'HU',
+  lithuania: 'LT', litauen: 'LT', lt: 'LT', latvia: 'LV', lettland: 'LV', lv: 'LV', austria: 'AT', österreich: 'AT', at: 'AT',
+  belgium: 'BE', belgien: 'BE', be: 'BE', denmark: 'DK', dänemark: 'DK', dk: 'DK', sweden: 'SE', schweden: 'SE', se: 'SE',
+  finland: 'FI', finnland: 'FI', fi: 'FI', ireland: 'IE', irland: 'IE', ie: 'IE', slovakia: 'SK', slowakei: 'SK', sk: 'SK',
+  slovenia: 'SI', slowenien: 'SI', si: 'SI', croatia: 'HR', kroatien: 'HR', hr: 'HR', romania: 'RO', rumänien: 'RO', ro: 'RO',
+  bulgaria: 'BG', bulgarien: 'BG', bg: 'BG', greece: 'GR', griechenland: 'GR', gr: 'GR', luxembourg: 'LU', luxemburg: 'LU', lu: 'LU',
+};
+// Länderwort erkennen: (1) letztes Wort der Adresse ("…,75017,PARIS FR", "…28947 Spanien"), (2) letztes
+// Komma-Segment ("…, DE(Germany)"), (3) führendes Länderkürzel ("ES-CALLE…", "FR-79 rue…"). Nur bekannte Wörter.
+function detectCountry(rawAddress: string): string | null {
+  const addr = normalizeAddress(rawAddress);
+  const lookup = (w: string) => COUNTRY_ISO[w.replace(/\(.*\)/, '').replace(/[.,;]/g, '').trim().toLowerCase()] ?? null;
+  const lastToken = addr.split(/[\s,]+/).filter(Boolean).pop() ?? '';
+  const lastSegment = addr.split(',').pop() ?? '';
+  const prefix = addr.match(/^\s*([A-Za-z]{2})-/)?.[1] ?? '';
+  return lookup(lastToken) ?? lookup(lastSegment) ?? (prefix ? lookup(prefix) : null);
+}
 
-  if (!raw || !raw.trim()) {
-    return { ...empty, notes: ['gpsr_raw ist leer — nichts zu parsen (manueller Nachtrag nötig)'] };
-  }
+const KEY_LINE_RE = /^\s*:?\s*(Name|Adresse|E-?Mail(?:-Adresse)?|Telefon)\s*:/i;
+const EU_TITLE_RE = /verantwortlich|EU[-\s]?Vertreter/i;
+const MANUF_TITLE_RE = /hersteller/i;
 
-  const lines = raw.split(/\r?\n/);
-  const nameLineIdx = findTopLevelNameLineIndices(lines);
-
-  if (nameLineIdx.length !== 2) {
-    return {
-      ...empty,
-      notes: [`Erwartet genau 2 "Name:"-Blöcke (Hersteller + EU-Verantwortlicher), gefunden: ${nameLineIdx.length} — Format weicht vom bekannten Muster ab, nicht automatisch zuordenbar`],
-    };
-  }
-
-  // Zweiter Block = EU-Verantwortlicher (siehe Format-Befund oben — über Position, nicht Titel).
-  const block2 = lines.slice(nameLineIdx[1]).join('\n');
-  const notes: string[] = [];
-
-  const nameMatch = block2.match(NAME_LINE_RE);
+function parseBlockFields(blockText: string, notes: string[], label: string): GpsrBlockFields {
+  const nameMatch = blockText.match(NAME_LINE_RE);
   const name = nameMatch ? cleanValue(nameMatch[1]) : null;
-  if (!name) notes.push('Name im EU-Block nicht gefunden');
+  if (!name) notes.push(`Name im ${label}-Block nicht gefunden`);
 
-  const emailMatch = block2.match(EMAIL_LINE_RE);
+  const emailMatch = blockText.match(EMAIL_LINE_RE);
   let email = emailMatch ? cleanValue(emailMatch[1]) : null;
   if (!email) {
-    notes.push('E-Mail im EU-Block nicht gefunden');
+    notes.push(`E-Mail im ${label}-Block nicht gefunden`);
   } else if (!EMAIL_SHAPE_RE.test(email)) {
     notes.push(`E-Mail-Wert sieht nicht wie eine gültige Adresse aus: "${email}" — nicht übernommen`);
     email = null;
   }
 
-  const phoneMatch = block2.match(PHONE_LINE_RE);
+  const phoneMatch = blockText.match(PHONE_LINE_RE);
   const phone = phoneMatch ? cleanValue(phoneMatch[1]) : null;
-  if (!phone) notes.push('Telefon im EU-Block nicht angegeben (Feld ist in der Quelle optional)');
+  if (!phone) notes.push(`Telefon im ${label}-Block nicht angegeben (Feld ist in der Quelle optional)`);
 
-  const addressMatch = block2.match(ADDRESS_LINE_RE);
+  const addressMatch = blockText.match(ADDRESS_LINE_RE);
   const addressRaw = addressMatch ? cleanValue(addressMatch[1]) : null;
 
   let address: string | null = null;
   let city: string | null = null;
+  let country: string | null = null;
 
   if (!addressRaw) {
-    notes.push('Adresse im EU-Block nicht gefunden');
+    notes.push(`Adresse im ${label}-Block nicht gefunden`);
   } else if (MACHINE_DUMP_RE.test(addressRaw)) {
     address = addressRaw;
     notes.push('Adresse liegt als Formularfeld-Dump der Importquelle vor (z. B. "Address_District_1:…") — nicht zuverlässig in Straße/PLZ/Stadt aufteilbar, Rohwert in gpsr_address übernommen, gpsr_city nicht erkannt');
   } else {
+    country = detectCountry(addressRaw);
     const split = splitStreetAndCity(addressRaw);
     if (split.matched) {
       address = cleanValue(split.street);
@@ -193,10 +212,148 @@ export function parseGpsrRaw(raw: string | null | undefined): ParsedGpsr {
       notes.push('Kein sicheres PLZ+Stadt-Muster in der Adresse erkannt — voller Adresstext in gpsr_address übernommen, gpsr_city nicht erkannt (nicht geraten)');
     }
   }
+  return { name, address, city, email, phone, country };
+}
 
-  const allFive = !!(name && address && city && email && phone);
-  const nameOrEmailFound = !!(name || email);
+/**
+ * Parst gpsr_raw und liefert die fünf Zielfelder für die VERANTWORTLICHE PERSON IN DER EU
+ * (NICHT den Hersteller) plus den Herstellerblock getrennt. Rät nie: nicht sicher erkennbare
+ * Felder bleiben `null`, mit Begründung in `notes`.
+ *
+ * Blockzuordnung (Paket 3): steht über einem Block ein Titel, entscheidet der Titel ("…verantwortlich…"
+ * = EU, "…Hersteller…" = Hersteller) — dadurch wird auch eine vertauschte Reihenfolge richtig
+ * zugeordnet. Ohne eindeutige Titel gilt wie bisher die Position (bei zwei Blöcken: der zweite = EU).
+ * Ein einzelner Block ohne Titel ist nicht zuordenbar → EU-Felder leer, Meldung.
+ */
+export function parseGpsrRaw(raw: string | null | undefined): ParsedGpsr {
+  const empty: ParsedGpsr = { name: null, address: null, city: null, email: null, phone: null, country: null, manufacturer: null, euBlockFound: false, confidence: 'nicht_erkannt', notes: [] };
+
+  if (!raw || !raw.trim()) {
+    return { ...empty, notes: ['gpsr_raw ist leer — nichts zu parsen (manueller Nachtrag nötig)'] };
+  }
+
+  const lines = raw.split(/\r?\n/);
+  const nameLineIdx = findTopLevelNameLineIndices(lines);
+
+  if (nameLineIdx.length < 1 || nameLineIdx.length > 2) {
+    return {
+      ...empty,
+      notes: [`Erwartet 2 "Name:"-Blöcke (Hersteller + EU-Verantwortlicher), gefunden: ${nameLineIdx.length} — Format weicht vom bekannten Muster ab, nicht automatisch zuordenbar`],
+    };
+  }
+
+  // Titelzeilen direkt über einem Block: alles zwischen der letzten Schlüsselzeile des Vorgängerblocks und dem Namen.
+  const headerOf = (blockNo: number): string => {
+    let start = 0;
+    if (blockNo > 0) {
+      let last = nameLineIdx[blockNo - 1];
+      for (let i = nameLineIdx[blockNo - 1]; i < nameLineIdx[blockNo]; i++) if (KEY_LINE_RE.test(lines[i])) last = i;
+      start = last + 1;
+    }
+    return lines.slice(start, nameLineIdx[blockNo]).join(' ');
+  };
+  const blockText = (blockNo: number): string =>
+    lines.slice(nameLineIdx[blockNo], blockNo + 1 < nameLineIdx.length ? nameLineIdx[blockNo + 1] : undefined).join('\n');
+  const isEu = (h: string) => EU_TITLE_RE.test(h) && !MANUF_TITLE_RE.test(h);
+  const isManuf = (h: string) => MANUF_TITLE_RE.test(h) && !EU_TITLE_RE.test(h);
+
+  let euNo: number | null = null;
+  let manufNo: number | null = null;
+  const notes: string[] = [];
+
+  if (nameLineIdx.length === 2) {
+    const h0 = headerOf(0), h1 = headerOf(1);
+    if (isEu(h0) && !isEu(h1)) { euNo = 0; manufNo = 1; }        // vertauschte Reihenfolge, per Titel erkannt
+    else { euNo = 1; manufNo = 0; }                              // Standard: Position (Titel fehlen oder passen)
+  } else {
+    const h0 = headerOf(0);
+    if (isEu(h0)) euNo = 0;
+    else if (isManuf(h0)) manufNo = 0;
+    else notes.push('Einzelner Block ohne erkennbaren Titel — nicht als EU-Verantwortlicher oder Hersteller zuordenbar');
+  }
+
+  const manufacturer = manufNo !== null ? parseBlockFields(blockText(manufNo), [], 'Hersteller') : null;
+  if (euNo === null) {
+    notes.push('EU-Block (verantwortliche Person in der EU) fehlt — EU-Felder bleiben leer, es wird NICHT ersatzweise der Hersteller eingetragen');
+    return { ...empty, manufacturer, notes };
+  }
+
+  const eu = parseBlockFields(blockText(euNo), notes, 'EU');
+  const allFive = !!(eu.name && eu.address && eu.city && eu.email && eu.phone);
+  const nameOrEmailFound = !!(eu.name || eu.email);
   const confidence: ParsedGpsr['confidence'] = allFive ? 'vollstaendig' : (nameOrEmailFound ? 'teilweise' : 'nicht_erkannt');
 
-  return { name, address, city, email, phone, confidence, notes };
+  return { name: eu.name, address: eu.address, city: eu.city, email: eu.email, phone: eu.phone, country: eu.country, manufacturer, euBlockFound: true, confidence, notes };
+}
+
+// ─── Paket 3: Pflichtangaben fürs Listing (eBay `regulatory`) ─────────────────────────────
+
+export interface GpsrProductFields {
+  gpsrRaw: string | null;
+  gpsrName: string | null;
+  gpsrAddress: string | null;
+  gpsrCity: string | null;
+  gpsrEmail: string | null;
+  gpsrPhone: string | null;
+}
+export interface GpsrParty {
+  name: string;
+  address: string;
+  postalCode: string;
+  city: string;
+  country: string;
+  email: string;
+  phone: string | null;
+}
+export interface GpsrManufacturer {
+  name: string;
+  address: string | null;
+  postalCode: string | null;
+  city: string | null;
+  country: string | null;
+  email: string | null;
+  phone: string | null;
+}
+export interface ResolvedGpsr {
+  eu: GpsrParty | null;
+  manufacturer: GpsrManufacturer | null;
+  /** Klartext je fehlender Pflichtangabe der EU-Person; leer = Listing darf weiter. */
+  missing: string[];
+}
+
+const PLZ_CITY_RE = /^(\d{2}-\d{3}|\d{4,5})\s+(.+)$/;
+
+/**
+ * EU-Person fürs Listing: gespeicherte Einzelfelder haben Vorrang, leere werden aus gpsr_raw
+ * ergänzt (nur im Speicher, kein DB-Schreiben). Kein Ersatz durch Hersteller oder Stele-Adresse:
+ * fehlt eine Pflichtangabe (Name, Adresse, PLZ+Stadt, Land, E-Mail), ist `eu` null und `missing`
+ * nennt sie im Klartext. Telefon ist optional. Der Hersteller ist optional (wird mitgesendet, wenn erkannt).
+ */
+export function resolveGpsrForListing(p: GpsrProductFields): ResolvedGpsr {
+  const parsed = parseGpsrRaw(p.gpsrRaw);
+  const pick = (stored: string | null, fromRaw: string | null) => (stored && stored.trim() ? stored.trim() : fromRaw);
+  const name = pick(p.gpsrName, parsed.name);
+  const address = pick(p.gpsrAddress, parsed.address);
+  const cityRaw = pick(p.gpsrCity, parsed.city);
+  const email = pick(p.gpsrEmail, parsed.email);
+  const phone = pick(p.gpsrPhone, parsed.phone);
+  const country = parsed.country;
+
+  const missing: string[] = [];
+  if (!name) missing.push('Name der verantwortlichen Person in der EU');
+  if (!address) missing.push('Adresse (Straße) der verantwortlichen Person in der EU');
+  const cityMatch = cityRaw ? cityRaw.match(PLZ_CITY_RE) : null;
+  if (!cityMatch) missing.push('PLZ und Stadt der verantwortlichen Person in der EU');
+  if (!email) missing.push('E-Mail der verantwortlichen Person in der EU');
+  if (!country) missing.push('Land der verantwortlichen Person in der EU (nicht aus der Adresse erkennbar)');
+
+  const m = parsed.manufacturer;
+  const manufacturer: GpsrManufacturer | null = m && m.name ? {
+    name: m.name, address: m.address,
+    postalCode: m.city?.match(PLZ_CITY_RE)?.[1] ?? null, city: m.city?.match(PLZ_CITY_RE)?.[2] ?? null,
+    country: m.country, email: m.email, phone: m.phone,
+  } : null;
+
+  if (missing.length > 0 || !name || !address || !cityMatch || !email || !country) return { eu: null, manufacturer, missing };
+  return { eu: { name, address, postalCode: cityMatch[1], city: cityMatch[2], country, email, phone: phone ?? null }, manufacturer, missing: [] };
 }

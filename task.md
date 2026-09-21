@@ -222,3 +222,8 @@ sind, aber das ist keine Bestätigung.
 - Befund: `nearest95-min` aus #118 war rechnerisch reines Aufrunden (Rohwert enthält Zielgewinn). Entscheidung Nutzer: Abwärtsrunden erlaubt, solange Gewinn ≤ 0,10 € unter Ziel.
 - Fix: `PROFIT_TOLERANCE_EUR` + optional `profitToleranceEur`; erlaubte Preis-Unterschreitung = Toleranz/(1−totalFeeRateGross) in `computeMinSellPrice`. Nur Modus `nearest95-min`.
 - Produkt 182 (Versand 1,99, China, adRate 5, Ziel 2,00): 7 Varianten nach oben, 3 bleiben abwärts (EK 6,19 / 7,69 / 3,09).
+
+## Paket 3 — GPSR (21.09.2026, Draft-PR)
+- Befund: 56/56 Produkte mit Fremd-E-Mail in htmlDescription; einzige Quelle = GPSR-Tab (Rohtext). Altcode sandte `productSafety` (falscher Ort) + Hersteller "Markenlos" mit EU-Adresse.
+- Fix: Parser-Erweiterung (Blöcke per Titel, Hersteller getrennt, Land), `regulatory` am Offer (Feldnamen `companyName` … gegen ebay-api-Spec geprüft), neutraler GPSR-Tab, Blockade bei fehlenden Pflichtangaben (Scan: 23 von 56), Einzel-Route `POST /ebay/products/:id/refresh-description` (Probelauf, `confirm:true` schreibt).
+- OFFEN: `regulatory`-Format live prüfen (`types`-Wert, Hersteller-`country`); `gpsrCountry`-Spalte (Migration, Freigabe); PLZ-Formate NL/PT.

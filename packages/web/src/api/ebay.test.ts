@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -736,5 +736,23 @@ describe('resolveVariantQuantity / parseMaxVariantQuantity — Obergrenze aus Ei
   test('gültige Einstellung wird übernommen', () => { expect(parseMaxVariantQuantity('25')).toBe(25); expect(parseMaxVariantQuantity('1')).toBe(1); });
   test('ungültige Einstellung (0, negativ, Text, Dezimal) → 10', () => {
     for (const bad of ['0', '-3', 'abc', '2.5', '']) expect(parseMaxVariantQuantity(bad)).toBe(10);
+  });
+});
+
+// Paket 3 (A3/F3): strukturierte GPSR-Felder (regulatory) statt Text, ohne Stele-/Hersteller-Ersatz.
+describe('buildRegulatoryBlock — eBay regulatory-Objekt', () => {
+  const eu = { name: 'Niulav UG', address: 'Michelangelostr. 1/1401', postalCode: '01217', city: 'Dresden', country: 'DE', email: 'Kuland2@web.de', phone: '15252064185' };
+  test('EU-Person als responsiblePerson (EU_RESPONSIBLE_PERSON), Hersteller als eigenes Feld', () => {
+    const r = buildRegulatoryBlock({ eu, manufacturer: { name: 'Shenzhen X Co', address: 'Building 5', postalCode: null, city: null, country: 'CN', email: 'h@x.cn', phone: null }, missing: [] });
+    expect(r.responsiblePersons[0]).toEqual({ companyName: 'Niulav UG', addressLine1: 'Michelangelostr. 1/1401', postalCode: '01217', city: 'Dresden', country: 'DE', email: 'Kuland2@web.de', phone: '15252064185', types: ['EU_RESPONSIBLE_PERSON'] });
+    expect(r.manufacturer).toEqual({ companyName: 'Shenzhen X Co', addressLine1: 'Building 5', country: 'CN', email: 'h@x.cn' });
+  });
+  test('ohne erkannten Hersteller wird KEIN Ersatz-Hersteller (kein "Markenlos", keine EU-Adresse) gesendet', () => {
+    const r = buildRegulatoryBlock({ eu, manufacturer: null, missing: [] });
+    expect('manufacturer' in r).toBe(false);
+  });
+  test('fehlende Pflichtangaben → Fehler mit Klartext statt Ersatz (Blockade)', () => {
+    expect(() => buildRegulatoryBlock({ eu: null, manufacturer: null, missing: ['E-Mail der verantwortlichen Person in der EU'] })).toThrow('E-Mail der verantwortlichen Person');
+    expect(() => buildRegulatoryBlock(undefined)).toThrow('GPSR-Pflichtangaben fehlen');
   });
 });

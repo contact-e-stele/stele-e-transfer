@@ -3,6 +3,7 @@
 
 import { eq } from 'drizzle-orm';
 import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import type { ResolvedGpsr } from '../shared/gpsr-parser';
 import {
   NON_VARIATION_ASPECTS, slugify, resolveVariantEntries,
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
@@ -356,13 +357,7 @@ export interface EbayListingInput {
   shipsFrom?: string;     // Versandland — für Zoll-Berechnung im selben Fallback
   targetMarginEur?: number; // Teil 2C: product.targetMarginEur — für denselben Fallback (fehlt, wenn nicht gesetzt: globaler Default)
   handlingTimeDays?: number; // Bearbeitungszeit in Tagen (Standard: 10)
-  gpsr?: {         // EU Produktsicherheit — aus DB; wenn undefined → Stele-Fallback
-    name: string;
-    address: string;
-    city: string;
-    email: string;
-    phone: string;
-  };
+  gpsr?: ResolvedGpsr;  // Paket 3: EU-Person + Hersteller aus resolveGpsrForListing() — Pflicht beim Listing, kein Stele-Fallback mehr
   manualAspects?: Record<string, string>; // P-88: vom Nutzer manuell nachgetragene Pflichtfelder (überschreiben Auto-Heal)
   // P-88 1b Korrektur (20.09.2026): title UND generatedTitle unabhängig nach Farbe durchsuchen
   // (title ist meist der AliExpress-Originaltitel, generatedTitle die überarbeitete eBay-Version —
@@ -1219,7 +1214,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
-  const gpsrBlock = buildGpsrBlock(input.gpsr);
+  const regulatory = buildRegulatoryBlock(input.gpsr);
 
   const body = {
     sku: input.sku,
@@ -1254,8 +1249,8 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
     itemSpecifics: {
       aspects: Object.fromEntries(Object.entries(aspects).map(([k, v]) => [k, v])),
     },
-    // GPSR Responsible Person + Hersteller (Pflicht DE)
-    productSafety: gpsrBlock,
+    // GPSR Responsible Person + Hersteller (Pflicht DE) — strukturiert, nicht im Beschreibungstext
+    regulatory,
   };
 
   const res = await fetch(`${BASE_URL}/sell/inventory/v1/offer`, {
@@ -1346,8 +1341,7 @@ export async function publishOfferByInventoryItemGroup(inventoryItemGroupKey: st
 // ─── Inventory Item Group (Variation Listing) erstellen ──────────────────────
 
 // ─── GPSR Helper ─────────────────────────────────────────────────────────────
-// Baut das productSafety-Objekt für eBay aus strukturierten GPSR-Feldern.
-// Wenn gpsr=undefined → Stele-E-Transfer als Fallback (EU Verantwortlicher).
+// Paket 3 (A3/F3): siehe buildRegulatoryBlock() weiter unten.
 
 // P-82: storeCategoryNames NUR ins Offer-Objekt aufnehmen, wenn eine Shop-Kategorie vorliegt —
 // Aufgabe 5 verlangt ausdrücklich, dass ohne hinterlegte Kategorie GAR NICHTS mitgesendet wird
@@ -1358,35 +1352,31 @@ export function buildStoreCategoryBlock(storeCategoryName?: string): { storeCate
   return storeCategoryName?.trim() ? { storeCategoryNames: [storeCategoryName.trim()] } : {};
 }
 
-interface GpsrData { name: string; address: string; city: string; email: string; phone: string; }
-
-function buildGpsrBlock(gpsr?: GpsrData) {
-  const g: GpsrData = gpsr ?? {
-    name:    'Stele-E-Transfer',
-    address: 'Am Hochfeld 47',
-    city:    '65205 Wiesbaden',
-    email:   'contact@stele-e-transfer.com',
-    phone:   '+4915904826737',
-  };
-  // city kann "65205 Wiesbaden" oder nur "Wiesbaden" sein
-  const cityParts = g.city.match(/^(\d{5})\s+(.+)$/);
-  const postalCode  = cityParts ? cityParts[1] : '65205';
-  const cityName    = cityParts ? cityParts[2] : g.city;
-  const addr = { addressLine1: g.address, city: cityName, postalCode, country: 'DE' };
+// Paket 3 (A3/F3): GPSR-Angaben als eBays STRUKTURIERTE Offer-Felder (`regulatory.responsiblePersons`
+// mit types EU_RESPONSIBLE_PERSON, `regulatory.manufacturer`) statt im Beschreibungstext. Vorher
+// wurde ein Objekt `productSafety` mit Stele-Fallback gesendet und der Hersteller mit "Markenlos"
+// und der EU-Adresse gefüllt — beides entfällt. Fehlen die Pflichtangaben, wird nicht gelistet.
+// Feldnamen (companyName, addressLine1, city, postalCode, country, email, phone; `regulatory` am Offer)
+// gegen die generierte Sell-Inventory-Spezifikation der Bibliothek ebay-api geprüft (Interfaces
+// Regulatory/ResponsiblePerson/Manufacturer). NICHT belegt: die erlaubten Werte von `types`
+// ("EU_RESPONSIBLE_PERSON" ist aus dem Altcode übernommen) und ob eBay `country` beim Hersteller
+// verlangt. developer.ebay.com liefert 403, api.ebay.com ist geblockt → vor Merge am EINEN Angebot
+// per GET offer prüfen.
+export function buildRegulatoryBlock(gpsr?: ResolvedGpsr) {
+  if (!gpsr || !gpsr.eu) {
+    throw new Error(`GPSR-Pflichtangaben fehlen: ${(gpsr?.missing ?? ['keine Angaben']).join('; ')}`);
+  }
+  const { eu, manufacturer } = gpsr;
+  const drop = <T extends Record<string, unknown>>(o: T) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== ''));
   return {
-    responsiblePersons: [{
-      companyName: g.name,
-      address: addr,
-      email: g.email,
-      phone: g.phone,
-      types: ['EU_RESPONSIBLE_PERSON'],
-    }],
-    manufacturer: {
-      companyName: 'Markenlos',
-      address: addr,
-      email: g.email,
-      phone: g.phone,
-    },
+    responsiblePersons: [drop({
+      companyName: eu.name, addressLine1: eu.address, postalCode: eu.postalCode, city: eu.city,
+      country: eu.country, email: eu.email, phone: eu.phone, types: ['EU_RESPONSIBLE_PERSON'],
+    })],
+    ...(manufacturer ? { manufacturer: drop({
+      companyName: manufacturer.name, addressLine1: manufacturer.address, postalCode: manufacturer.postalCode,
+      city: manufacturer.city, country: manufacturer.country, email: manufacturer.email, phone: manufacturer.phone,
+    }) } : {}),
   };
 }
 
@@ -1726,7 +1716,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
     : policies.fulfillmentPolicyId;
 
-  const gpsr = buildGpsrBlock(input.gpsr);
+  const regulatory = buildRegulatoryBlock(input.gpsr);
 
   const offerIds: string[] = [];
   for (const { sku: varSku, aspects: varAspects, resolvedEntry: varPriceEntry, resolvedError } of variantSkuCombos) {
@@ -1781,7 +1771,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       itemSpecifics: {
         aspects: varAspects,
       },
-      productSafety: gpsr,
+      regulatory,
     };
 
     const offerRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer`, {
