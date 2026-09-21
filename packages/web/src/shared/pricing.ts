@@ -21,7 +21,7 @@
 
 import { MIN_GEWINN_EUR, CHINA_ZOLL_EUR } from './constants';
 
-export type RoundingMode = 'up95' | 'nearest95' | 'cent' | 'none';
+export type RoundingMode = 'up95' | 'nearest95' | 'nearest95-min' | 'cent' | 'none';
 
 // Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Teil 2C (2026-09-10): keine produktive
 // Aufrufstelle mehr — genau dieses "immer aufwärts" trug zur Zielgewinn-Abweichung bei (s.u.
@@ -32,16 +32,31 @@ export function roundUpToX95(price: number): number {
 
 // Rundet zur NÄCHSTEN ,95-Endung (auf oder ab) — P-74, bewusst anders als roundUpToX95: im
 // manuellen Varianten-Import-Modal (lieferanten.tsx) darf der Preis auch knapp unter den
-// berechneten Mindestpreis fallen.
+// berechneten Mindestpreis fallen. (Für die Übernehmen-Knöpfe gilt stattdessen roundToNearest95NotBelow.)
 export function roundToNearest95(price: number): number {
   const nearestInt = Math.round(price - 0.95);
   return Math.round((nearestInt + 0.95) * 100) / 100;
+}
+
+// Paket 2 / A2+A4 (2026-09-21): EINE Rundungsregel für beide Übernehmen-Knöpfe im Import-Modal
+// (Artikel-Knopf "≥X € Gewinn →" und "Alle Preisvorschläge übernehmen"). Rundet auf die
+// nächstgelegene ,95-Marke, auch abwärts — ABER niemals unter den Mindestpreis, der den
+// Zielgewinn erst erreicht (rawMin = rawMinSellPrice aus computeMinSellPrice, Zielgewinn schon
+// eingerechnet). Liegt die Abwärts-Marke darunter, wird die nächste ,95-Marke nach OBEN genommen.
+// Das präzisiert die Preisregel vom 13.09.2026 (Rohwert 2,10 → 1,95) genau dort, wo sie den
+// Mindestgewinn verletzt: roundToNearest95() allein unterschritt ihn live um bis zu ~0,34 €
+// (Produkt 182: 10 von 23 Varianten zwischen +1,66 und +1,95 € bei ≥2,00 € Versprechen).
+// Toleranz 1e-9 nur gegen Gleitkomma-Rauschen (14,950000000000001 ist "auf der Marke").
+export function roundToNearest95NotBelow(rawMin: number): number {
+  const nearest = roundToNearest95(rawMin);
+  return nearest + 1e-9 >= rawMin ? nearest : roundUpToX95(rawMin);
 }
 
 function applyRounding(price: number, mode: RoundingMode): number {
   switch (mode) {
     case 'up95': return roundUpToX95(price);
     case 'nearest95': return roundToNearest95(price);
+    case 'nearest95-min': return roundToNearest95NotBelow(price);
     case 'cent': return Math.ceil(price * 100) / 100;
     case 'none': return price;
   }

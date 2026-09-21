@@ -5,7 +5,7 @@ import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
-import { getAccessToken, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
+import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { CHINA_ZOLL_EUR } from '../shared/constants';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
@@ -599,7 +599,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // unverändert 1:1 übernahm (statt auf max. 3 zu deckeln, siehe ebay.ts), blieben bereits
         // gelistete Varianten mit z.B. 137 Stück dauerhaft auf diesem Wert stehen — der laufende
         // Sync korrigierte das nie zurück. Jetzt: JEDE Variante mit bekanntem Bestand wird bei
-        // jedem Lauf auf resolveVariantQuantity(stock, ...) (= MIN(Bestand, 3), 0 bleibt 0)
+        // jedem Lauf auf resolveVariantQuantity(stock, ...) (= MIN(Bestand, Obergrenze aus Einstellung), 0 bleibt 0)
         // gesetzt — heilt bereits betroffene Live-Listings automatisch innerhalb eines
         // Cron-Durchlaufs, ohne dass die eigentliche Korrektur einen DB-Wert braucht.
         if (product.ebayListingId && product.ebayStatus === 'listed') {
@@ -609,11 +609,12 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
               const token = await getAccessToken();
               const groupSku = `stele-${product.id}-GROUP`;
               const realSkus = await getInventoryItemGroupSkus(groupSku, token);
+              const maxVariantQuantity = await getMaxVariantQuantity();
               for (const v of knownStock) {
                 const suffix = Object.values(v.attrs ?? {}).map(slugify).filter(Boolean).join('-');
                 const candidateSku = `stele-${product.id}-${suffix}`;
                 if (!realSkus.includes(candidateSku)) continue; // kein eindeutiger Match — nichts unternehmen
-                const targetQuantity = resolveVariantQuantity(v.stock, 0);
+                const targetQuantity = resolveVariantQuantity(v.stock, 0, maxVariantQuantity);
                 const ok = await setInventoryItemQuantity(candidateSku, targetQuantity, token);
                 if (ok) {
                   stockUpdated++;
