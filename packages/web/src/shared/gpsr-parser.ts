@@ -82,13 +82,18 @@ const COUNTRY_WORDS = new Set([
   'poland', 'polska', 'polen', 'de', 'fr', 'es', 'pl', 'cn', 'china', 'de(germany)', 'fr(france)',
 ]);
 function isCountryWord(w: string): boolean {
-  return COUNTRY_WORDS.has(w.toLowerCase().replace(/[()]/g, ''));
+  // Paket 3b: auch alle Länderwörter aus COUNTRY_ISO (NL, PT, IT …) — sonst bliebe "Netherlands" am Stadtnamen hängen.
+  return COUNTRY_WORDS.has(w.toLowerCase().replace(/[()]/g, '')) || Object.prototype.hasOwnProperty.call(COUNTRY_ISO, w.toLowerCase().replace(/\(.*\)/, ''));
 }
 
 const PL_CHARS = "A-Za-zÀ-ÿŁŚŻŹĆŃÓĄĘłśżźćńóąę.'\\-";
 // PLZ: 4-5 Ziffern (DE/FR/ES u. a.) ODER polnisches Format XX-XXX. Nicht direkt nach einer
 // Ziffer/einem "/" (verhindert Fehltreffer in Hausnummern wie "1/1401").
-const FORWARD_RE = new RegExp(`(?<![\\d/-])(\\d{2}-\\d{3}|\\d{4,5})[\\s,]+([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})`, 'g');
+// Paket 3b: PLZ-Formate — PT "1000-001", PL "00-950", NL "1012 AB" (4 Ziffern + 2 GROSSBUCHSTABEN), sonst 4–5 Ziffern.
+// Reihenfolge zählt: NL/PT vor dem allgemeinen 4–5-Ziffern-Fall, sonst würde "1012 AB Amsterdam" still als
+// PLZ "1012" + Stadt "AB Amsterdam" zerlegt (belegter Fehlweg).
+const PLZ_ALT = '\\d{4}-\\d{3}|\\d{2}-\\d{3}|\\d{4}\\s?[A-Z]{2}(?![A-Za-z])|\\d{4,5}';
+const FORWARD_RE = new RegExp(`(?<![\\d/-])(${PLZ_ALT})[\\s,]+([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})`, 'g');
 const REVERSED_RE = new RegExp(`([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,1})\\s*,\\s*(\\d{4,5})(?!\\d)`, 'g');
 
 function trimTrailingCountryWords(words: string[]): string[] {
@@ -295,6 +300,8 @@ export interface GpsrProductFields {
   gpsrCity: string | null;
   gpsrEmail: string | null;
   gpsrPhone: string | null;
+  /** Paket 3b: gespeichertes Land (ISO-2) der EU-Person, hat Vorrang vor dem aus dem Rohtext erkannten. */
+  gpsrCountry?: string | null;
 }
 export interface GpsrParty {
   name: string;
@@ -321,7 +328,33 @@ export interface ResolvedGpsr {
   missing: string[];
 }
 
-const PLZ_CITY_RE = /^(\d{2}-\d{3}|\d{4,5})\s+(.+)$/;
+const PLZ_CITY_RE = new RegExp(`^(${PLZ_ALT})\\s+(.+)$`);
+
+// Paket 3b: EU + EWR (Island, Liechtenstein, Norwegen). eBay-Angebote mit EU-Verantwortlichem
+// brauchen eine Adresse in diesem Raum; alles andere (z. B. CN aus einem Hersteller-Länderwort) blockiert.
+export const EU_EEA_COUNTRIES: Array<{ code: string; name: string }> = [
+  ['AT', 'Österreich'], ['BE', 'Belgien'], ['BG', 'Bulgarien'], ['HR', 'Kroatien'], ['CY', 'Zypern'], ['CZ', 'Tschechien'],
+  ['DK', 'Dänemark'], ['EE', 'Estland'], ['FI', 'Finnland'], ['FR', 'Frankreich'], ['DE', 'Deutschland'], ['GR', 'Griechenland'],
+  ['HU', 'Ungarn'], ['IE', 'Irland'], ['IT', 'Italien'], ['LV', 'Lettland'], ['LT', 'Litauen'], ['LU', 'Luxemburg'], ['MT', 'Malta'],
+  ['NL', 'Niederlande'], ['PL', 'Polen'], ['PT', 'Portugal'], ['RO', 'Rumänien'], ['SK', 'Slowakei'], ['SI', 'Slowenien'],
+  ['ES', 'Spanien'], ['SE', 'Schweden'], ['IS', 'Island'], ['LI', 'Liechtenstein'], ['NO', 'Norwegen'],
+].map(([code, name]) => ({ code, name }));
+const EU_EEA_CODES = new Set(EU_EEA_COUNTRIES.map(c => c.code));
+
+export function isEuEeaCountry(code: string | null | undefined): boolean {
+  return !!code && EU_EEA_CODES.has(code);
+}
+
+/** trim + Großbuchstaben, genau 2 Buchstaben — sonst null. */
+export function normalizeCountryCode(v: string | null | undefined): string | null {
+  const c = (v ?? '').trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(c) ? c : null;
+}
+
+/** Erfüllt der Wert das Format "PLZ Stadt" (Formularprüfung im Produkt-Tab nutzt dieselbe Regel wie das Listing). */
+export function isPostalCityFormat(v: string | null | undefined): boolean {
+  return PLZ_CITY_RE.test((v ?? '').trim());
+}
 
 /**
  * EU-Person fürs Listing: gespeicherte Einzelfelder haben Vorrang, leere werden aus gpsr_raw
@@ -337,16 +370,18 @@ export function resolveGpsrForListing(p: GpsrProductFields): ResolvedGpsr {
   const cityRaw = pick(p.gpsrCity, parsed.city);
   const email = pick(p.gpsrEmail, parsed.email);
   const phone = pick(p.gpsrPhone, parsed.phone);
-  const country = parsed.country;
+  // Paket 3b: gespeichertes Land (Produkt-Tab) hat Vorrang, sonst aus dem Rohtext — wie bei den anderen Feldern.
+  const storedCountry = normalizeCountryCode(p.gpsrCountry);
+  const country = storedCountry ?? parsed.country;
 
   const missing: string[] = [];
   if (!name) missing.push('Name der verantwortlichen Person in der EU');
   if (!address) missing.push('Adresse (Straße) der verantwortlichen Person in der EU');
   const cityMatch = cityRaw ? cityRaw.match(PLZ_CITY_RE) : null;
-  if (!cityMatch) missing.push('PLZ und Stadt der verantwortlichen Person in der EU');
+  if (!cityMatch) missing.push('PLZ und Stadt der verantwortlichen Person in der EU (Format "PLZ Stadt", z. B. 75017 Paris)');
   if (!email) missing.push('E-Mail der verantwortlichen Person in der EU');
-  if (!country) missing.push('Land der verantwortlichen Person in der EU (nicht aus der Adresse erkennbar)');
-
+  if (!country) missing.push('Land der verantwortlichen Person in der EU (nicht aus der Adresse erkennbar — im Produkt-Tab unter GPSR auswählen)');
+  else if (!EU_EEA_CODES.has(country)) missing.push(`Land der verantwortlichen Person liegt außerhalb der EU/des EWR (${country}) — eBay verlangt eine Adresse in der EU, bitte im Produkt-Tab korrigieren`);
   const m = parsed.manufacturer;
   const manufacturer: GpsrManufacturer | null = m && m.name ? {
     name: m.name, address: m.address,
@@ -354,6 +389,31 @@ export function resolveGpsrForListing(p: GpsrProductFields): ResolvedGpsr {
     country: m.country, email: m.email, phone: m.phone,
   } : null;
 
+  // NL-Format "1012 AB" nur bei Land NL: sonst wäre z. B. "1010 AT Wien" (Ländercode nach der PLZ) still eine falsche PLZ.
+  if (cityMatch && /^\d{4}\s?[A-Z]{2}$/.test(cityMatch[1]) && country && country !== 'NL') missing.push(`PLZ "${cityMatch[1]}" hat das niederländische Format, das Land ist aber ${country} — bitte PLZ und Stadt prüfen (Format "PLZ Stadt")`);
+
   if (missing.length > 0 || !name || !address || !cityMatch || !email || !country) return { eu: null, manufacturer, missing };
   return { eu: { name, address, postalCode: cityMatch[1], city: cityMatch[2], country, email, phone: phone ?? null }, manufacturer, missing: [] };
+}
+
+// ─── Paket 3 (A3) / 3b: Einzelfelder beim Import aus gpsrRaw ableiten ─────────────────────────
+// Nur die VERANTWORTLICHE PERSON IN DER EU (der Hersteller bleibt draußen), nur erkannte Felder, nie geraten.
+// `onlyIfComplete` (Re-Import/Update-Zweig): nur wenn alle fünf Felder erkannt sind — dann werden sie
+// GEMEINSAM überschrieben, inklusive Land (erkannt+EU/EWR, sonst null), damit kein veraltetes gespeichertes Land
+// (Vorrang vor dem Rohtext!) zu einer neuen Firma stehen bleibt.
+export interface GpsrImportFields {
+  gpsrName?: string; gpsrAddress?: string; gpsrCity?: string; gpsrEmail?: string; gpsrPhone?: string; gpsrCountry?: string | null;
+}
+export function gpsrFieldsFromRaw(raw: string | null | undefined, onlyIfComplete = false): GpsrImportFields {
+  const g = parseGpsrRaw(raw);
+  if (!g.euBlockFound) return {};
+  if (onlyIfComplete && g.confidence !== 'vollstaendig') return {};
+  const country = isEuEeaCountry(g.country) ? g.country : null;
+  return {
+    ...(g.name ? { gpsrName: g.name } : {}), ...(g.address ? { gpsrAddress: g.address } : {}),
+    ...(g.city ? { gpsrCity: g.city } : {}), ...(g.email ? { gpsrEmail: g.email } : {}),
+    ...(g.phone ? { gpsrPhone: g.phone } : {}),
+    // Erstimport: nur füllen, wenn erkannt (ein Nicht-EU-Wort bleibt leer und blockiert beim Listen mit Klartext).
+    ...(onlyIfComplete ? { gpsrCountry: country } : country ? { gpsrCountry: country } : {}),
+  };
 }

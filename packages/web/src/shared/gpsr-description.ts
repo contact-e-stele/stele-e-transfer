@@ -5,8 +5,10 @@
 
 export const OWN_CONTACT_EMAIL = 'contact@stele-e-transfer.com';
 
+// Paket 3b: productSafety wird nicht mehr gesendet → es gibt keinen Abschnitt "Produktsicherheit" mehr;
+// der Hinweis verweist nur auf die beiden Abschnitte, die eBay aus `regulatory` erzeugt.
 export const GPSR_DESCRIPTION_NOTICE =
-  'Die Angaben zum Hersteller und zur verantwortlichen Person in der EU finden Sie in den Abschnitten „Produktsicherheit“ und „Verantwortliche Person in der EU“ dieses Angebots.';
+  'Die Angaben zum Hersteller und zur verantwortlichen Person in der EU finden Sie in den Abschnitten „Herstellerinformationen“ und „Verantwortliche Person in der EU“ dieses Angebots.';
 
 // Ersetzt den Inhalt des <pre>-Blocks im GPSR-Tab ("TAB 5: Produktsicherheit (GPSR)") durch den
 // neutralen Hinweis. Wirkt auf bereits gespeicherte Vorlagen (htmlDescription in der DB).

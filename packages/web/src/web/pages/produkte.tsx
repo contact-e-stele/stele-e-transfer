@@ -13,6 +13,7 @@ import {
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { EU_EEA_COUNTRIES, isPostalCityFormat } from "../../shared/gpsr-parser";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 
@@ -65,6 +66,7 @@ interface Product {
   gpsrCity: string | null;
   gpsrEmail: string | null;
   gpsrPhone: string | null;
+  gpsrCountry: string | null;
   manualPdfUrl: string | null;
   certificationNote: string | null;
   complianceOverride: boolean;
@@ -532,6 +534,7 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
   const [city, setCity] = useState(product.gpsrCity ?? "");
   const [email, setEmail] = useState(product.gpsrEmail ?? "");
   const [phone, setPhone] = useState(product.gpsrPhone ?? "");
+  const [country, setCountry] = useState(product.gpsrCountry ?? "");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [pdfUrl, setPdfUrl] = useState(product.manualPdfUrl ?? "");
@@ -539,6 +542,9 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
   const [uploading, setUploading] = useState(false);
 
   const hasFallback = !product.gpsrName;
+  // Beide Pflichtfelder rot, solange sie nicht gültig sind (dieselbe Regel wie beim Listing, shared/gpsr-parser.ts).
+  const cityInvalid = !isPostalCityFormat(city);
+  const countryInvalid = !EU_EEA_COUNTRIES.some(c => c.code === country.trim().toUpperCase());
 
   const handlePdfUpload = async (file: File) => {
     setUploading(true);
@@ -580,6 +586,7 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
           gpsrCity: city.trim() || null,
           gpsrEmail: email.trim() || null,
           gpsrPhone: phone.trim() || null,
+          gpsrCountry: country.trim() || null,
           manualPdfUrl: pdfUrl.trim() || null,
           certificationNote: certNote.trim() || null,
         }),
@@ -631,8 +638,8 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
         {/* Info Banner */}
         {hasFallback ? (
           <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#C2410C" }}>
-            <strong>Kein GPSR gesetzt</strong> — eBay verwendet automatisch den Stele-E-Transfer Fallback.
-            Hier kannst du produktspezifische Daten hinterlegen.
+            <strong>Keine GPSR-Angaben gespeichert</strong> — beim eBay-Listen werden fehlende Felder aus dem AliExpress-Rohtext ergänzt, soweit erkennbar.
+            Fehlt eine Pflichtangabe (Name, Straße, PLZ Stadt, Land, E-Mail), wird das Listing mit Klartext blockiert — es gibt keinen Ersatzwert mehr.
           </div>
         ) : (
           <div style={{ background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#0369A1" }}>
@@ -663,14 +670,30 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
             />
           </div>
           <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>PLZ + Stadt</label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>PLZ + Stadt *</label>
             <input
               type="text"
               value={city}
               onChange={e => setCity(e.target.value)}
-              placeholder="z.B. 65205 Wiesbaden"
-              style={fieldStyle}
+              placeholder="z.B. 75017 Paris"
+              style={cityInvalid ? { ...fieldStyle, border: "2px solid #DC2626", background: "#FEF2F2" } : fieldStyle}
             />
+            <div style={{ fontSize: 11, marginTop: 3, color: cityInvalid ? "#DC2626" : "#64748B" }}>
+              Format: „PLZ Stadt“, z. B. 75017 Paris — nur so kann eBay PLZ und Stadt getrennt übernehmen.
+            </div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Land (verantwortliche Person in der EU) *</label>
+            <select
+              value={country}
+              onChange={e => setCountry(e.target.value)}
+              style={countryInvalid ? { ...fieldStyle, border: "2px solid #DC2626", background: "#FEF2F2" } : fieldStyle}
+            >
+              <option value="">— bitte wählen —</option>
+              {country && !EU_EEA_COUNTRIES.some(c => c.code === country) && <option value={country}>{country} (außerhalb EU/EWR — nicht zulässig)</option>}
+              {EU_EEA_COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.name} ({c.code})</option>)}
+            </select>
+            {countryInvalid && <div style={{ fontSize: 11, marginTop: 3, color: "#DC2626" }}>Pflichtfeld: eine Adresse in der EU/im EWR ist nötig.</div>}
           </div>
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>E-Mail</label>
@@ -752,9 +775,9 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
             await fetch(`/api/products/${product.id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrPhone: null }),
+              body: JSON.stringify({ gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrPhone: null, gpsrCountry: null }),
             });
-            setSaveMsg("GPSR gelöscht — Fallback aktiv");
+            setSaveMsg("GPSR gelöscht — beim Listen werden Angaben aus dem Rohtext ergänzt, sonst wird blockiert");
             onSaved();
             setTimeout(onClose, 800);
           }} style={{

@@ -18,7 +18,17 @@ const outDir = resolve(import.meta.dir, 'output');
 mkdirSync(outDir, { recursive: true });
 const outPath = resolve(outDir, 'gpsr-scan.md');
 
-const products = await db.select().from(schema.products);
+// Explizite Spalten OHNE gpsr_country: die Produktions-DB hat die Spalte erst nach dem Deploy (Migration beim
+// Serverstart). Bis dahin ist das gespeicherte Land für alle Produkte faktisch leer (gpsrCountry: null).
+const rows = await db.select({
+  id: schema.products.id, ebayListingId: schema.products.ebayListingId, ebayStatus: schema.products.ebayStatus,
+  htmlDescription: schema.products.htmlDescription, gpsrRaw: schema.products.gpsrRaw, gpsrName: schema.products.gpsrName,
+  gpsrAddress: schema.products.gpsrAddress, gpsrCity: schema.products.gpsrCity, gpsrEmail: schema.products.gpsrEmail,
+  gpsrPhone: schema.products.gpsrPhone,
+}).from(schema.products);
+const products = rows.map(r => ({ ...r, gpsrCountry: null as string | null }));
+const freigabe: Record<string, number[]> = {};
+let nEnglish = 0;
 const lines: string[] = [];
 lines.push('# Paket 3 — GPSR-Scan (Produktions-DB, nur lesend)', '');
 lines.push('| Produkt | gelistet | Fremd-Mails vorher | nach Tab-Bereinigung | Einzelfelder gespeichert | Parser: EU-Block | Pflichtangaben | Hersteller erkannt | fehlt |');
@@ -34,13 +44,14 @@ for (const p of products) {
   const parsed = parseGpsrRaw(p.gpsrRaw);
   const resolved = resolveGpsrForListing(p);
   const listed = !!p.ebayListingId && p.ebayStatus === 'listed';
+  if (/^\s*Address\s*:/im.test(p.gpsrRaw ?? '')) nEnglish++;
   nListed += listed ? 1 : 0;
   if (before.length > 0) { nWithForeign++; if (listed) nListedWithForeign++; }
   if (after.length > 0) nStillForeign++;
   if (parsed.euBlockFound) nEuBlock++;
   if (parsed.manufacturer?.name) nManuf++;
   if (stored === 4) nStored++;
-  if (resolved.eu) nComplete++; else { nMissing++; for (const m of resolved.missing) reasons[m] = (reasons[m] ?? 0) + 1; }
+  if (resolved.eu) nComplete++; else { nMissing++; for (const m of resolved.missing) reasons[m] = (reasons[m] ?? 0) + 1; const key = resolved.missing.map(m => m.split(' (')[0].replace(' der verantwortlichen Person in der EU', '').replace(' der verantwortlichen Person liegt außerhalb der EU/des EWR', ' außerhalb EU/EWR')).join(' + '); (freigabe[key] ??= []).push(p.id); }
   lines.push(`| ${p.id} | ${listed ? 'ja' : 'nein'} | ${before.length} (${before.join(', ') || '–'}) | ${after.length}${after.length ? ` (${after.join(', ')})` : ''} | ${stored} von 4 | ${parsed.euBlockFound ? 'ja' : 'nein'} | ${resolved.eu ? 'vollständig' : 'unvollständig'} | ${parsed.manufacturer?.name ? 'ja' : 'nein'} | ${resolved.missing.join('; ') || '–'} |`);
 }
 lines.push('', '## Summe', '');
@@ -53,6 +64,10 @@ lines.push(`- Pflichtangaben fürs Listing vollständig (gespeichert + geparst):
 
 lines.push('', '### Gründe (ein Produkt kann mehrere haben)', '');
 for (const [r, n] of Object.entries(reasons).sort((a, b) => b[1] - a[1])) lines.push(`- ${r}: ${n}`);
+
+lines.push('', '### Freigegeben nach Nachtragen von … (Produkt-IDs; gelistet: ' + nListed + ' Produkte insgesamt)', '');
+for (const [k, ids] of Object.entries(freigabe).sort((a, b) => b[1].length - a[1].length)) lines.push(`- **${k}** (${ids.length}): ${ids.join(', ')}`);
+lines.push('', `- Rohtext mit ENGLISCHEN Schlüsseln ("Address:"), vom Parser nicht gelesen: ${nEnglish}`);
 
 writeFileSync(outPath, lines.join('\n'), 'utf-8');
 console.log(lines.slice(-8).join('\n'));

@@ -1253,15 +1253,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
     regulatory,
   };
 
-  const res = await fetch(`${BASE_URL}/sell/inventory/v1/offer`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Content-Language': 'de-DE',
-    },
-    body: JSON.stringify(body),
-  });
+  const res = await postOfferWithTypeFallback(token, body, input.sku);
 
   if (!res.ok) {
     const errorData = await res.json() as { errors?: { errorId: number; parameters?: { name: string; value: string }[] }[] };
@@ -1359,7 +1351,7 @@ export function buildStoreCategoryBlock(storeCategoryName?: string): { storeCate
 // Feldnamen (companyName, addressLine1, city, postalCode, country, email, phone; `regulatory` am Offer)
 // gegen die generierte Sell-Inventory-Spezifikation der Bibliothek ebay-api geprüft (Interfaces
 // Regulatory/ResponsiblePerson/Manufacturer). NICHT belegt: die erlaubten Werte von `types`
-// ("EU_RESPONSIBLE_PERSON" ist aus dem Altcode übernommen) und ob eBay `country` beim Hersteller
+// ("EU_RESPONSIBLE_PERSON" ist aus dem Altcode übernommen; bei Beanstandung wiederholt postOfferWithTypeFallback einmal mit EUResponsiblePerson) und ob eBay `country` beim Hersteller
 // verlangt. developer.ebay.com liefert 403, api.ebay.com ist geblockt → vor Merge am EINEN Angebot
 // per GET offer prüfen.
 export function buildRegulatoryBlock(gpsr?: ResolvedGpsr) {
@@ -1378,6 +1370,45 @@ export function buildRegulatoryBlock(gpsr?: ResolvedGpsr) {
       city: manufacturer.city, country: manufacturer.country, email: manufacturer.email, phone: manufacturer.phone,
     }) } : {}),
   };
+}
+
+// Paket 3b: eBays Doku widerspricht sich beim Wert für responsiblePersons[].types
+// (slr:ResponsiblePersonTypeEnum: EU_RESPONSIBLE_PERSON — slr:ResponsiblePerson/ResponsiblePersonCodeTypes: EUResponsiblePerson).
+// Beim Anlegen des Offers zuerst EU_RESPONSIBLE_PERSON senden; beanstandet eBay genau diesen Wert, EINMAL mit
+// EUResponsiblePerson wiederholen und loggen, welcher Wert angenommen wurde. Kein weiterer Versuch.
+export const RESPONSIBLE_PERSON_TYPE_PRIMARY = 'EU_RESPONSIBLE_PERSON';
+export const RESPONSIBLE_PERSON_TYPE_ALT = 'EUResponsiblePerson';
+
+export function isResponsiblePersonTypeError(errorBody: unknown): boolean {
+  const text = JSON.stringify(errorBody ?? '');
+  return text.includes(RESPONSIBLE_PERSON_TYPE_PRIMARY) || /responsiblePersons?\[\d+\]\.types/i.test(text);
+}
+
+export async function postOfferWithTypeFallback(
+  token: string,
+  offerBody: { regulatory?: ReturnType<typeof buildRegulatoryBlock> } & Record<string, unknown>,
+  label: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  const post = (b: unknown) => fetchImpl(`${BASE_URL}/sell/inventory/v1/offer`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+    body: JSON.stringify(b),
+  });
+  const first = await post(offerBody);
+  if (first.ok || !offerBody.regulatory) {
+    if (first.ok && offerBody.regulatory) console.log(`[eBay] ${label}: responsiblePersons.types "${RESPONSIBLE_PERSON_TYPE_PRIMARY}" angenommen`);
+    return first;
+  }
+  const errorBody = await first.clone().json().catch(() => null);
+  if (!isResponsiblePersonTypeError(errorBody)) return first;
+  const altBody = {
+    ...offerBody,
+    regulatory: { ...offerBody.regulatory, responsiblePersons: offerBody.regulatory.responsiblePersons.map(p => ({ ...p, types: [RESPONSIBLE_PERSON_TYPE_ALT] })) },
+  };
+  const second = await post(altBody);
+  console.log(`[eBay] ${label}: types "${RESPONSIBLE_PERSON_TYPE_PRIMARY}" beanstandet — Wiederholung mit "${RESPONSIBLE_PERSON_TYPE_ALT}": ${second.ok ? 'angenommen' : 'ebenfalls abgelehnt'}`);
+  return second;
 }
 
 function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
@@ -1774,15 +1805,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       regulatory,
     };
 
-    const offerRes = await fetch(`${BASE_URL}/sell/inventory/v1/offer`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Content-Language': 'de-DE',
-      },
-      body: JSON.stringify(offerBody),
-    });
+    const offerRes = await postOfferWithTypeFallback(token, offerBody, varSku);
 
     let finalOfferId: string;
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -754,5 +754,46 @@ describe('buildRegulatoryBlock — eBay regulatory-Objekt', () => {
   test('fehlende Pflichtangaben → Fehler mit Klartext statt Ersatz (Blockade)', () => {
     expect(() => buildRegulatoryBlock({ eu: null, manufacturer: null, missing: ['E-Mail der verantwortlichen Person in der EU'] })).toThrow('E-Mail der verantwortlichen Person');
     expect(() => buildRegulatoryBlock(undefined)).toThrow('GPSR-Pflichtangaben fehlen');
+  });
+});
+
+// Paket 3b: types-Wert — zuerst EU_RESPONSIBLE_PERSON, bei Beanstandung GENAU EINMAL EUResponsiblePerson.
+// Die Fehlerantwort von eBay ist hier NACHGEBAUT (echtes Format unbekannt, api.ebay.com geblockt).
+describe('postOfferWithTypeFallback — types-Wiederholung einmal und nur einmal', () => {
+  const eu = { name: 'Niulav UG', address: 'Str. 1', postalCode: '01217', city: 'Dresden', country: 'DE', email: 'a@b.de', phone: null };
+  const body = () => ({ sku: 'x', regulatory: buildRegulatoryBlock({ eu, manufacturer: null, missing: [] }) });
+  const typesErr = () => new Response(JSON.stringify({ errors: [{ errorId: 25001, message: 'Invalid value EU_RESPONSIBLE_PERSON at regulatory.responsiblePersons[0].types' }] }), { status: 400 });
+  const otherErr = () => new Response(JSON.stringify({ errors: [{ errorId: 25002, message: 'Offer exists' }] }), { status: 400 });
+  const ok = () => new Response(JSON.stringify({ offerId: '1' }), { status: 201 });
+  const run = async (responses: Array<() => Response>) => {
+    const sent: string[] = [];
+    let i = 0;
+    const f = (async (_u: unknown, init?: RequestInit) => { sent.push(JSON.parse(String(init?.body)).regulatory.responsiblePersons[0].types[0]); return responses[i++](); }) as unknown as typeof fetch;
+    const res = await postOfferWithTypeFallback('t', body(), 'test', f);
+    return { sent, res };
+  };
+  test('angenommen beim ersten Versuch → ein Aufruf mit EU_RESPONSIBLE_PERSON', async () => {
+    const { sent } = await run([ok]);
+    expect(sent).toEqual(['EU_RESPONSIBLE_PERSON']);
+  });
+  test('types beanstandet → genau ein zweiter Aufruf mit EUResponsiblePerson, dessen Antwort wird geliefert', async () => {
+    const { sent, res } = await run([typesErr, ok]);
+    expect(sent).toEqual(['EU_RESPONSIBLE_PERSON', 'EUResponsiblePerson']);
+    expect(res.ok).toBe(true);
+  });
+  test('beide Werte abgelehnt → trotzdem nur zwei Aufrufe (kein dritter)', async () => {
+    const { sent, res } = await run([typesErr, typesErr]);
+    expect(sent).toHaveLength(2);
+    expect(res.ok).toBe(false);
+  });
+  test('anderer Fehler (nicht types) → keine Wiederholung', async () => {
+    const { sent } = await run([otherErr]);
+    expect(sent).toEqual(['EU_RESPONSIBLE_PERSON']);
+  });
+  test('isResponsiblePersonTypeError erkennt den Wert und den Feldpfad, sonst nicht', () => {
+    expect(isResponsiblePersonTypeError({ errors: [{ message: 'bad EU_RESPONSIBLE_PERSON' }] })).toBe(true);
+    expect(isResponsiblePersonTypeError({ errors: [{ message: 'regulatory.responsiblePersons[0].types invalid' }] })).toBe(true);
+    expect(isResponsiblePersonTypeError({ errors: [{ message: 'Offer exists' }] })).toBe(false);
+    expect(isResponsiblePersonTypeError(null)).toBe(false);
   });
 });
