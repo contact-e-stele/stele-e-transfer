@@ -15,7 +15,7 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, evaluatePriceAlarm, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, evaluatePriceAlarm, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, roundToNearest95NotBelow, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
@@ -711,5 +711,51 @@ describe('evaluatePriceAlarm — Fix "Preisalarm nur unter Mindestpreis" (2026-0
     });
     expect(result.isAlarm).toBe(true);
     expect(result.worstProfit).toBeCloseTo(-1.7031, 4);
+  });
+});
+
+// Paket 2 / A2+A4 (2026-09-21): EINE Rundungsregel "nearest95-min" für beide Übernehmen-Knöpfe.
+describe('roundToNearest95NotBelow — nächste ,95-Marke, aber nie unter dem Zielgewinn (A2/A4)', () => {
+  const C = DEFAULT_PRICING_CONFIG;
+  const calc = (buy: number, rounding: 'nearest95' | 'nearest95-min' | 'cent') => computeMinSellPrice({
+    buyPrice: buy, supplierShipping: 0, isChinaOrigin: true, customsFlat: C.chinaCustomsFlatEur,
+    ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor,
+    adRatePercent: C.defaultAdRatePercent, targetMarginEur: 2, safetyBufferEur: 0, rounding,
+  });
+  const profit = (buy: number, sell: number) => profitAtSellPrice({
+    buyPrice: buy, supplierShipping: 0, isChinaOrigin: true, customsFlat: C.chinaCustomsFlatEur,
+    ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor,
+    adRatePercent: C.defaultAdRatePercent, sellPrice: sell,
+  });
+
+  // Einkaufspreise, bei denen roundToNearest95() ABWÄRTS rundet (Fixture unterscheidet also alt/neu).
+  test.each([3, 4.5, 6, 7.5, 9, 10.5, 12])('EK %f: altes nearest95 unterschreibt 2,00 €, neue Regel nicht', (buy) => {
+    expect(profit(buy, calc(buy, 'nearest95').minSellPrice)).toBeLessThan(2);
+    expect(profit(buy, calc(buy, 'nearest95-min').minSellPrice)).toBeGreaterThanOrEqual(2 - 1e-9);
+  });
+
+  test('konkrete Werte: EK 6,00 → alt 15,95 (Gewinn <2), neu 16,95', () => {
+    expect(calc(6, 'nearest95').minSellPrice).toBe(15.95);
+    expect(calc(6, 'nearest95-min').minSellPrice).toBe(16.95);
+  });
+
+  test('A4: Artikel-Knopf-Rohwerte 14,62 → 14,95 und 21,71 → 21,95 (vorher ungerundet)', () => {
+    expect(roundToNearest95NotBelow(14.62)).toBe(14.95);
+    expect(roundToNearest95NotBelow(21.71)).toBe(21.95);
+    expect(roundToNearest95NotBelow(14.70)).toBe(14.95);
+    expect(roundToNearest95NotBelow(15.09)).toBe(15.95);
+    expect(roundToNearest95NotBelow(26.31)).toBe(26.95);
+  });
+
+  test('Rohwert exakt auf der Marke (Gleitkomma-Rauschen) bleibt auf der Marke', () => {
+    expect(roundToNearest95NotBelow(14.950000000000001)).toBe(14.95);
+    expect(roundToNearest95NotBelow(14.95)).toBe(14.95);
+  });
+
+  test('beide Knöpfe liefern bei gleichem Einkaufspreis denselben Preis (gleiche Funktion, gleicher Modus)', () => {
+    // Artikel-Knopf (lieferanten.tsx, Einzel-EK) und Varianten-Knopf nutzen denselben Modus — Wache per Quelltext:
+    const src = require('fs').readFileSync(require('path').resolve(import.meta.dir, '../web/pages/lieferanten.tsx'), 'utf-8') as string;
+    expect(src.match(/rounding: 'nearest95-min'/g)?.length).toBe(2);
+    expect(src).not.toMatch(/rounding: 'cent'/);
   });
 });

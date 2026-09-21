@@ -211,3 +211,9 @@ sind, aber das ist keine Bestätigung.
 - Root Cause: `price-monitor.ts` (Zweig hasVariants) baute variantPrices aus dem Scrape neu → ebayPrice/imageUrl/displayValues verloren, nur bei Produkten mit Änderung (pricesChangedEnough/buyPriceDiff>0.01/alarm).
 - Fix: `mergeFreshVariantPrices()` — Merge nach skuId, nur price+stock frisch, neue SKUs angehängt, fehlende behalten (nur geloggt).
 - OFFEN: Reparatur bereits verlorener Daten (nicht Teil von A1); price>0-Guard; weitere Überschreib-Stellen siehe PR.
+
+## Paket 2 — Rundung + Mengen-Obergrenze (A2/A4/F2, 21.09.2026, Draft-PR)
+- A2: 'Alle Preisvorschläge übernehmen' rundete mit roundToNearest95 abwärts → 148 von 276 Varianten unter Zielgewinn (Trockenlauf Produktions-DB). A4: Artikel-Knopf lief mit 'cent'.
+- Fix: EIN Modus 'nearest95-min' (`roundToNearest95NotBelow`, shared/pricing.ts) in beiden Knöpfen. Mathematisch = immer aufrunden auf ,95 (Rohwert enthält Zielgewinn) — Widerspruch der Vorgabe offengelegt (Regel 6).
+- F2: MAX_VARIANT_QUANTITY fest 3 → Einstellung `max_variant_quantity` (Standard 10, ganzzahlig ≥1), Endpoint /settings/max-variant-quantity, Karte im Einstellungen-Tab.
+- OFFEN: price-monitor/ebay.ts/index.ts nutzen weiter 'nearest95' (Monitor kann Preis wieder unter Zielgewinn ziehen); Nachzieh-Weg Preise+Mengen; Obergrenze nach oben unbegrenzt.

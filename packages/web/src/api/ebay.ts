@@ -1416,12 +1416,27 @@ function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
 // Variante komplett entfernt, statt beides zu kombinieren. eBay zeigte dadurch den echten
 // AliExpress-Bestand 1:1 an (z.B. 137 Stück), obwohl die Menge grundsätzlich auf max. 3 pro
 // Variante gedeckelt sein soll (Sicherheitspuffer gegen Überverkauf bei schnellen Bestands-
-// Änderungen oder gleichzeitigen Käufern). Jetzt: MIN(echter Bestand, 3) — zeigt nie mehr als
-// 3, aber weiterhin korrekt weniger, falls der echte Bestand kleiner ist (z.B. nur 1 vorhanden).
-const MAX_VARIANT_QUANTITY = 3;
-export function resolveVariantQuantity(stock: number | undefined, fallback: number): number {
+// Änderungen oder gleichzeitigen Käufern). Jetzt: MIN(echter Bestand, Obergrenze).
+//
+// Paket 2 / F2 (2026-09-21): die feste 3 kostete Umsatz (nach 3 Verkäufen Angebot aus, obwohl
+// Ware da). Obergrenze jetzt als Einstellung `max_variant_quantity` (Einstellungen-Tab,
+// ganzzahlig ≥1), Standard 10. Semantik unverändert: MIN(echter Bestand, Obergrenze), 0 bleibt 0.
+export const DEFAULT_MAX_VARIANT_QUANTITY = 10;
+export function parseMaxVariantQuantity(raw: string | null | undefined): number {
+  const n = Number(raw);
+  return raw != null && raw.trim() !== '' && Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_VARIANT_QUANTITY;
+}
+export async function getMaxVariantQuantity(): Promise<number> {
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'max_variant_quantity')).get();
+    return parseMaxVariantQuantity(row?.value);
+  } catch { return DEFAULT_MAX_VARIANT_QUANTITY; }
+}
+export function resolveVariantQuantity(stock: number | undefined, fallback: number, maxQuantity: number = DEFAULT_MAX_VARIANT_QUANTITY): number {
   return typeof stock === 'number' && !isNaN(stock)
-    ? Math.min(Math.max(Math.round(stock), 0), MAX_VARIANT_QUANTITY)
+    ? Math.min(Math.max(Math.round(stock), 0), maxQuantity)
     : fallback;
 }
 
@@ -1568,6 +1583,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delayMs = 2000): 
 
 export async function listOnEbayWithVariants(input: EbayListingInput): Promise<string> {
   const token = await getAccessToken();
+  const maxVariantQuantity = await getMaxVariantQuantity();
   const groups = input.variantGroups ?? [];
   const combos = buildCombinations(groups);
   const groupSku = `${input.sku}-GROUP`;
@@ -1629,7 +1645,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     const varImageUrls = matchedEntry?.imageUrl
       ? [matchedEntry.imageUrl, ...input.imageUrls.slice(0, 7)]
       : input.imageUrls;
-    const varQuantity = resolveVariantQuantity(matchedEntry?.stock, input.quantity);
+    const varQuantity = resolveVariantQuantity(matchedEntry?.stock, input.quantity, maxVariantQuantity);
 
     const varBody = {
       availability: { shipToLocationAvailability: { quantity: varQuantity } },
@@ -1739,7 +1755,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     if (varPrice == null) {
       throw new Error(`Kein Preis für Variante ${varSku} ermittelbar — weder ebayPrice noch Einkaufspreis (price) in variantPrices vorhanden. Bitte Varianten-Preise im Produkt pflegen, bevor gelistet wird.`);
     }
-    const offerQuantity = resolveVariantQuantity(varPriceEntry.stock, input.quantity);
+    const offerQuantity = resolveVariantQuantity(varPriceEntry.stock, input.quantity, maxVariantQuantity);
     console.log(`[eBay] ${varSku} → priceEntry=${JSON.stringify(varPriceEntry)} → price=${varPrice} qty=${offerQuantity}`);
 
     const offerBody = {

@@ -117,6 +117,30 @@ export default function Einstellungen() {
     }
   };
 
+  const [maxQty, setMaxQty] = useState("10");
+  const [maxQtyMsg, setMaxQtyMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/settings/max-variant-quantity", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setMaxQty(String((d as { value?: number }).value ?? 10)))
+      .catch(() => setMaxQtyMsg({ ok: false, text: "Laden fehlgeschlagen — Netzwerkfehler" }));
+  }, []);
+  const saveMaxQty = async () => {
+    const n = Number(maxQty);
+    if (!Number.isInteger(n) || n < 1) { setMaxQtyMsg({ ok: false, text: "Bitte eine ganze Zahl ab 1 eingeben" }); return; }
+    setMaxQtyMsg(null);
+    try {
+      const r = await fetch("/api/settings/max-variant-quantity", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ value: n }),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      setMaxQtyMsg(d.ok ? { ok: true, text: "Gespeichert ✓" } : { ok: false, text: d.error || "Speichern fehlgeschlagen" });
+    } catch {
+      setMaxQtyMsg({ ok: false, text: "Netzwerkfehler beim Speichern" });
+    }
+  };
+
   const loadStatus = useCallback(() => {
     setLoading(true);
     fetch("/api/aliexpress/status", { credentials: "include" })
@@ -599,6 +623,23 @@ export default function Einstellungen() {
             </div>
           </>
         )}
+      </div>
+
+      {/* Paket 2 / F2: Mengen-Obergrenze pro Variante */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>📦</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>eBay-Menge pro Variante — Obergrenze</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
+          Die Obergrenze schützt vor Überverkauf, wenn der AliExpress-Bestand schneller fällt als der Abgleich läuft. An eBay geht der kleinere Wert aus echtem Bestand und Obergrenze; ein Bestand von 0 bleibt 0.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input type="number" min={1} step={1} value={maxQty} onChange={e => setMaxQty(e.target.value)}
+            style={{ width: 90, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} />
+          <button onClick={saveMaxQty} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
+          {maxQtyMsg && <span style={{ fontSize: 12, fontWeight: 600, color: maxQtyMsg.ok ? "#16A34A" : "#DC2626" }}>{maxQtyMsg.text}</span>}
+        </div>
       </div>
 
       {/* App Info */}

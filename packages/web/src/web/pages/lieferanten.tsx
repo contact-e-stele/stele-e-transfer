@@ -1656,7 +1656,7 @@ export default function Lieferanten() {
                             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                             targetMarginEur: minGewinn, safetyBufferEur: 0,
-                            rounding: 'cent',
+                            rounding: 'nearest95-min',
                           }).minSellPrice;
                           setEbayPrice(recommended.toFixed(2));
                         }}
@@ -1867,7 +1867,7 @@ export default function Lieferanten() {
                   ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                   vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                   targetMarginEur: minGewinn, safetyBufferEur: 0,
-                  rounding: 'nearest95',
+                  rounding: 'nearest95-min',
                 }).minSellPrice;
               };
               return (

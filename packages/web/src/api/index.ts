@@ -1697,6 +1697,32 @@ const app = new Hono()
       return c.json({ ok: false, error: String(e) }, 500);
     }
   })
+  // Paket 2 / F2: Mengen-Obergrenze pro Variante (app_settings, Key "max_variant_quantity").
+  .get('/settings/max-variant-quantity', async (c) => {
+    try {
+      const { getMaxVariantQuantity } = await import('./ebay');
+      return c.json({ value: await getMaxVariantQuantity() }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/max-variant-quantity', async (c) => {
+    try {
+      const body = await c.req.json() as { value?: unknown };
+      if (typeof body.value !== 'number' || !Number.isInteger(body.value) || body.value < 1) {
+        return c.json({ ok: false, error: '"value" muss eine ganze Zahl ≥ 1 sein' }, 400);
+      }
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const now = new Date().toISOString();
+      const value = String(body.value);
+      await db.insert(appSettings).values({ key: 'max_variant_quantity', value, updatedAt: now })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   // ─── P-84: Sendungsnummer-Vorschläge aus AliExpress-Logistik-Mails ───────────
   // Liest live (kein Hintergrund-Job, keine gespeicherten Vorschläge) — nur Ergebnis bei
   // GENAU EINEM eindeutigen Adress-Treffer unter den offenen Bestellungen. Kein Auto-Save,
