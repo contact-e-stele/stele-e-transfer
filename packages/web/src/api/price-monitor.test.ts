@@ -12,7 +12,7 @@ import { describe, expect, mock, test } from 'bun:test';
 process.env.TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'file:/tmp/price-monitor-test.db';
 const {
   computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct,
-  computeRepairBatchRange, updateEbayVariantPricesIndividually, runAvailabilityCheck,
+  computeRepairBatchRange, updateEbayVariantPricesIndividually, runAvailabilityCheck, mergeFreshVariantPrices,
 } = await import('./price-monitor');
 
 describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
@@ -415,5 +415,53 @@ describe('runAvailabilityCheck (täglicher AliExpress-Verfügbarkeits-Cron)', ()
 
     expect(checkFn).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ checked: 1, markedUnavailable: 0, errors: 0 });
+  });
+});
+
+// A1: die Preisprüfung überschrieb variantPrices komplett und verlor ebayPrice/imageUrl/displayValues.
+describe('mergeFreshVariantPrices (A1: Merge statt Overwrite)', () => {
+  const old = [
+    { skuId: 'A', attrs: { Farbe: 'Rot' }, price: 2.89, stock: 10, ebayPrice: 7.95, imageUrl: 'http://img/a.jpg', displayValues: { Farbe: 'Rot' } },
+    { skuId: 'B', attrs: { Farbe: 'Blau' }, price: 3.1, stock: 5, ebayPrice: 8.45, imageUrl: 'http://img/b.jpg', displayValues: { Farbe: 'Blau' } },
+  ];
+
+  test('price und stock kommen frisch, ebayPrice/imageUrl/displayValues bleiben unverändert', () => {
+    const fresh = [{ skuId: 'A', attrs: { Farbe: 'Rot' }, price: 3.35, stock: 4 }, { skuId: 'B', attrs: { Farbe: 'Blau' }, price: 3.1, stock: 5 }];
+    const r = mergeFreshVariantPrices(JSON.stringify(old), fresh);
+    const out = JSON.parse(r.json!);
+    expect(out[0]).toEqual({ ...old[0], price: 3.35, stock: 4 });
+    expect(out[1]).toEqual(old[1]);
+    expect(r.added).toEqual([]);
+    expect(r.missing).toEqual([]);
+  });
+
+  test('neue SKU im Scrape wird angehängt', () => {
+    const fresh = [{ skuId: 'A', attrs: { Farbe: 'Rot' }, price: 2.89, stock: 10 }, { skuId: 'B', attrs: { Farbe: 'Blau' }, price: 3.1, stock: 5 }, { skuId: 'C', attrs: { Farbe: 'Grün' }, price: 4.2, stock: 7 }];
+    const r = mergeFreshVariantPrices(JSON.stringify(old), fresh);
+    const out = JSON.parse(r.json!);
+    expect(out).toHaveLength(3);
+    expect(out[2]).toEqual({ skuId: 'C', attrs: { Farbe: 'Grün' }, price: 4.2, stock: 7 });
+    expect(r.added).toEqual(['C']);
+  });
+
+  test('im Scrape fehlende SKU bleibt vollständig erhalten und wird gemeldet', () => {
+    const fresh = [{ skuId: 'A', attrs: { Farbe: 'Rot' }, price: 3.35, stock: 4 }];
+    const r = mergeFreshVariantPrices(JSON.stringify(old), fresh);
+    const out = JSON.parse(r.json!);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toEqual(old[1]);
+    expect(r.missing).toEqual(['B']);
+  });
+
+  test('fehlt der frische Bestand, bleibt der alte erhalten (wie /products/:id/refresh-stock)', () => {
+    const fresh = [{ skuId: 'A', attrs: { Farbe: 'Rot' }, price: 3.35 }];
+    const out = JSON.parse(mergeFreshVariantPrices(JSON.stringify(old), fresh).json!);
+    expect(out[0].stock).toBe(10);
+    expect(out[0].price).toBe(3.35);
+  });
+
+  test('leerer Scrape lässt den gespeicherten Stand unverändert', () => {
+    const r = mergeFreshVariantPrices(JSON.stringify(old), []);
+    expect(r.json).toBe(JSON.stringify(old));
   });
 });

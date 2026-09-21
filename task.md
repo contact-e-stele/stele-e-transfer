@@ -206,3 +206,8 @@ sind, aber das ist keine Bestätigung.
 - Fix: reine Funktion `evaluateVariantGate()` (`shared/variant-gate.ts`); nur Kombinationsfehler blockieren, Waisen → `console.warn` + `warnings: string[]` im Erfolgs-JSON, gelber Hinweis in `produkte.tsx`. Bei Blocker hängen Waisen als "Hinweis: "-Zeilen am Fehlertext.
 - Verifiziert gegen Produktions-DB (nur lesend): 97 listbar; 70/107/152/154/161/162 blockiert.
 - Offen: Waise nach dem Listing nur im Log + einmaliger UI-Meldung sichtbar (kein DB-Feld, bewusst).
+
+## A1 — Preisprüfung löscht Varianten-Daten (21.09.2026, Draft-PR)
+- Root Cause: `price-monitor.ts` (Zweig hasVariants) baute variantPrices aus dem Scrape neu → ebayPrice/imageUrl/displayValues verloren, nur bei Produkten mit Änderung (pricesChangedEnough/buyPriceDiff>0.01/alarm).
+- Fix: `mergeFreshVariantPrices()` — Merge nach skuId, nur price+stock frisch, neue SKUs angehängt, fehlende behalten (nur geloggt).
+- OFFEN: Reparatur bereits verlorener Daten (nicht Teil von A1); price>0-Guard; weitere Überschreib-Stellen siehe PR.
