@@ -34,6 +34,9 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN gpsr_city TEXT`,
   `ALTER TABLE products ADD COLUMN gpsr_email TEXT`,
   `ALTER TABLE products ADD COLUMN gpsr_phone TEXT`,
+  // Paket 3b (2026-09-21): Land der verantwortlichen Person in der EU (ISO-2), vorher nur aus dem Rohtext
+  // ableitbar → gepflegte Produkte (z. B. 195) blockierten auf "Land". Additiv, nullable.
+  `ALTER TABLE products ADD COLUMN gpsr_country TEXT`,
   // Handbuch/Zertifikat-Upload + Freitextnotiz — rein manuell, kein Automatismus (GPSR/Handbuch-Vereinfachung)
   `ALTER TABLE products ADD COLUMN manual_pdf_url TEXT`,
   `ALTER TABLE products ADD COLUMN certification_note TEXT`,

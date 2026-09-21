@@ -53,6 +53,7 @@ export const products = sqliteTable('products', {
   gpsrCity: text('gpsr_city'),               // PLZ + Stadt
   gpsrEmail: text('gpsr_email'),             // E-Mail
   gpsrPhone: text('gpsr_phone'),             // Telefon
+  gpsrCountry: text('gpsr_country'),         // Paket 3b: Land der EU-Person, ISO-2 (z. B. "DE") — Pflicht fürs Listing
   manualPdfUrl: text('manual_pdf_url'),       // Handbuch/Zertifikat-Upload — nie automatisch befüllt, nur manuell
   certificationNote: text('certification_note'), // Freitext-Notiz zu Zertifizierungen (z.B. OEKO-TEX/REACH) — nie automatisch befüllt
   handlingTimeDays: integer('handling_time_days').default(10), // Bearbeitungszeit in Tagen (eBay Fulfillment Policy)

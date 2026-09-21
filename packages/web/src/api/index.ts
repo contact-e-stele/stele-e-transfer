@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
-import { parseGpsrRaw, resolveGpsrForListing } from '../shared/gpsr-parser';
+import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { neutralizeGpsrTab, findForeignEmails } from '../shared/gpsr-description';
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
@@ -20,20 +20,6 @@ import { buildProductLookups, findProductForSku as findProductForSkuShared } fro
 import { Sentry } from '../instrument';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
-// Paket 3 (A3): beim Import die VERANTWORTLICHE PERSON IN DER EU aus gpsrRaw in die Einzelfelder parsen.
-// Nur erkannte Felder (nie geraten), nur wenn ein EU-Block gefunden wurde — der Hersteller bleibt draußen.
-function gpsrFieldsFromRaw(raw: string | null | undefined, onlyIfComplete = false) {
-  const g = parseGpsrRaw(raw);
-  if (!g.euBlockFound) return {};
-  // Re-Import (Update-Zweig): nur alle fünf Felder gemeinsam überschreiben, sonst blieben Reste einer anderen Firma stehen.
-  if (onlyIfComplete && g.confidence !== 'vollstaendig') return {};
-  return {
-    ...(g.name ? { gpsrName: g.name } : {}), ...(g.address ? { gpsrAddress: g.address } : {}),
-    ...(g.city ? { gpsrCity: g.city } : {}), ...(g.email ? { gpsrEmail: g.email } : {}),
-    ...(g.phone ? { gpsrPhone: g.phone } : {}),
-  };
-}
-
 function generateFallbackDescription(
   title: string,
   specs: Record<string, string>,
@@ -2069,7 +2055,7 @@ const app = new Hono()
         specs?: Record<string, string>;
         variantContents?: Record<string, string>;
         gpsrRaw?: string;
-        gpsrHtml?: string;
+        gpsrHtml?: string; // Paket 3b: wird nicht mehr gespeichert (Kontakte Dritter gehören nicht in gpsr_html)
         shipsFrom?: string;
         shippingCost?: number;
         storeCategoryId?: string;
@@ -2116,7 +2102,6 @@ const app = new Hono()
           adRate: body.adRate ?? undefined,
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
           gpsrRaw: body.gpsrRaw ?? undefined,
-          gpsrHtml: body.gpsrHtml ?? undefined,
           ...gpsrFieldsFromRaw(body.gpsrRaw, true),
           shipsFrom: body.shipsFrom ?? undefined,
           shippingCost: body.shippingCost ?? undefined,
@@ -2155,7 +2140,6 @@ const app = new Hono()
         specs: body.specs ? JSON.stringify(body.specs) : null,
         variantContents: body.variantContents ? JSON.stringify(body.variantContents) : null,
         gpsrRaw: body.gpsrRaw ?? null,
-        gpsrHtml: body.gpsrHtml ?? null,
         ...gpsrFieldsFromRaw(body.gpsrRaw),
         shipsFrom: body.shipsFrom ?? null,
         shippingCost: body.shippingCost ?? 0,
@@ -3029,6 +3013,13 @@ const app = new Hono()
       if ('gpsrCity'    in body) allowed.gpsrCity    = body.gpsrCity    as string | null;
       if ('gpsrEmail'   in body) allowed.gpsrEmail   = body.gpsrEmail   as string | null;
       if ('gpsrPhone'   in body) allowed.gpsrPhone   = body.gpsrPhone   as string | null;
+      if ('gpsrCountry' in body) {
+        const rawCountry = body.gpsrCountry as unknown;
+        if (rawCountry != null && typeof rawCountry !== 'string') return c.json({ error: '"gpsrCountry" muss ein Text oder null sein' }, 400);
+        const code = rawCountry == null || rawCountry === '' ? null : normalizeCountryCode(rawCountry);
+        if (rawCountry && !code) return c.json({ error: '"gpsrCountry" muss ein zweistelliger Ländercode sein (z. B. DE)' }, 400);
+        allowed.gpsrCountry = code;
+      }
       if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
       if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
