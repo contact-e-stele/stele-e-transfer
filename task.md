@@ -217,3 +217,8 @@ sind, aber das ist keine Bestätigung.
 - Fix: EIN Modus 'nearest95-min' (`roundToNearest95NotBelow`, shared/pricing.ts) in beiden Knöpfen. Mathematisch = immer aufrunden auf ,95 (Rohwert enthält Zielgewinn) — Widerspruch der Vorgabe offengelegt (Regel 6).
 - F2: MAX_VARIANT_QUANTITY fest 3 → Einstellung `max_variant_quantity` (Standard 10, ganzzahlig ≥1), Endpoint /settings/max-variant-quantity, Karte im Einstellungen-Tab.
 - OFFEN: price-monitor/ebay.ts/index.ts nutzen weiter 'nearest95' (Monitor kann Preis wieder unter Zielgewinn ziehen); Nachzieh-Weg Preise+Mengen; Obergrenze nach oben unbegrenzt.
+
+## Nachtrag Paket 2 — Rundungs-Toleranz 0,10 € auf den Gewinn (21.09.2026, Draft-PR)
+- Befund: `nearest95-min` aus #118 war rechnerisch reines Aufrunden (Rohwert enthält Zielgewinn). Entscheidung Nutzer: Abwärtsrunden erlaubt, solange Gewinn ≤ 0,10 € unter Ziel.
+- Fix: `PROFIT_TOLERANCE_EUR` + optional `profitToleranceEur`; erlaubte Preis-Unterschreitung = Toleranz/(1−totalFeeRateGross) in `computeMinSellPrice`. Nur Modus `nearest95-min`.
+- Produkt 182 (Versand 1,99, China, adRate 5, Ziel 2,00): 7 Varianten nach oben, 3 bleiben abwärts (EK 6,19 / 7,69 / 3,09).

@@ -728,10 +728,60 @@ describe('roundToNearest95NotBelow — nächste ,95-Marke, aber nie unter dem Zi
     adRatePercent: C.defaultAdRatePercent, sellPrice: sell,
   });
 
-  // Einkaufspreise, bei denen roundToNearest95() ABWÄRTS rundet (Fixture unterscheidet also alt/neu).
-  test.each([3, 4.5, 6, 7.5, 9, 10.5, 12])('EK %f: altes nearest95 unterschreibt 2,00 €, neue Regel nicht', (buy) => {
-    expect(profit(buy, calc(buy, 'nearest95').minSellPrice)).toBeLessThan(2);
-    expect(profit(buy, calc(buy, 'nearest95-min').minSellPrice)).toBeGreaterThanOrEqual(2 - 1e-9);
+  // Nachtrag (21.09.2026): Toleranz 0,10 € auf den GEWINN. Diese Tests prüfen den Gewinn, nicht nur den Preis.
+  test.each([3, 4.5, 6, 7.5, 9, 10.5, 12])('EK %f: Gewinn liegt höchstens 0,10 € unter dem Zielgewinn', (buy) => {
+    expect(profit(buy, calc(buy, 'nearest95-min').minSellPrice)).toBeGreaterThanOrEqual(2 - 0.10 - 1e-9);
+  });
+
+  test('EK 1,00 bis 40,00 in 1-Cent-Schritten: Gewinn nie mehr als 0,10 € unter Ziel, und es wird tatsächlich abwärts gerundet', () => {
+    let down = 0;
+    for (let cents = 100; cents <= 4000; cents++) {
+      const buy = cents / 100;
+      const r = calc(buy, 'nearest95-min');
+      expect(profit(buy, r.minSellPrice)).toBeGreaterThanOrEqual(2 - 0.10 - 1e-9);
+      if (r.minSellPrice < r.rawMinSellPrice - 1e-9) down++;
+    }
+    expect(down).toBeGreaterThan(0); // sonst wäre die Toleranz wirkungslos
+  });
+
+  // Produkt 182 (Live-Daten 21.09.2026): Versand 1,99, China, adRate 5, Ziel 2,00. Alt = nearest95.
+  const calc182 = (buy: number, rounding: 'nearest95' | 'nearest95-min') => computeMinSellPrice({
+    buyPrice: buy, supplierShipping: 1.99, isChinaOrigin: true, customsFlat: C.chinaCustomsFlatEur,
+    ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor,
+    adRatePercent: 5, targetMarginEur: 2, safetyBufferEur: 0, rounding,
+  });
+  const profit182 = (buy: number, sell: number) => profitAtSellPrice({
+    buyPrice: buy, supplierShipping: 1.99, isChinaOrigin: true, customsFlat: C.chinaCustomsFlatEur,
+    ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor,
+    adRatePercent: 5, sellPrice: sell,
+  });
+  // [EK, alter Preis, alter Gewinn, neuer Preis] — frisch mit bun berechnet. Gewinn alt 1,66–1,95.
+  // Sieben Varianten liegen MEHR als 0,10 € unter Ziel → nach oben gezogen. Drei bleiben abwärts
+  // (Gewinn 1,90 / 1,93 / 1,95): Khaki M 2PCS (6,19), Khaki L 2PCS (7,69), Khaki M 1PC (3,09;
+  // Gewinn 1,955 = 0,045 unter Ziel, der "1,95"-Fall).
+  test.each([
+    [7.19, 19.95, 1.66, 20.95], [6.39, 18.95, 1.70, 19.95], [7.09, 19.95, 1.76, 20.95], [16.19, 31.95, 1.81, 32.95],
+    [3.99, 15.95, 1.82, 16.95], [7.79, 20.95, 1.83, 21.95], [7.89, 20.95, 1.73, 21.95],
+    [6.19, 18.95, 1.90, 18.95], [7.69, 20.95, 1.93, 20.95], [3.09, 14.95, 1.95, 14.95],
+  ])('182: EK %f → alt %f (Gewinn %f) → neu %f', (buy, oldP, oldProfit, newP) => {
+    expect(calc182(buy, 'nearest95').minSellPrice).toBe(oldP);
+    expect(Math.round(profit182(buy, oldP) * 100) / 100).toBe(oldProfit);
+    expect(calc182(buy, 'nearest95-min').minSellPrice).toBe(newP);
+    expect(profit182(buy, newP)).toBeGreaterThanOrEqual(2 - 0.10 - 1e-9);
+  });
+
+  test('Toleranz liegt auf dem Gewinn, nicht auf dem Preis: 182 Khaki M 2PCS (EK 6,19) liegt 0,127 € im Preis, aber nur 0,097 € im Gewinn unter Ziel und bleibt abwärts', () => {
+    const r = calc182(6.19, 'nearest95-min');
+    expect(r.rawMinSellPrice - r.minSellPrice).toBeGreaterThan(0.10); // ein fester Preisbetrag 0,10 würde hier aufrunden
+    expect(2 - profit182(6.19, r.minSellPrice)).toBeLessThanOrEqual(0.10);
+    expect(r.minSellPrice).toBe(18.95);
+  });
+
+  test('profitToleranceEur: 0 → rundet nie abwärts (bisheriges Verhalten aus #118)', () => {
+    const r = computeMinSellPrice({ buyPrice: 6.19, supplierShipping: 1.99, isChinaOrigin: true, customsFlat: C.chinaCustomsFlatEur,
+      ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor,
+      adRatePercent: 5, targetMarginEur: 2, safetyBufferEur: 0, rounding: 'nearest95-min', profitToleranceEur: 0 });
+    expect(r.minSellPrice).toBe(19.95);
   });
 
   test('konkrete Werte: EK 6,00 → alt 15,95 (Gewinn <2), neu 16,95', () => {
