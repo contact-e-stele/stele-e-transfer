@@ -87,6 +87,8 @@ export async function refreshOneProductDescription(
  * wie die Einzel-Route. Bricht ein Produkt ab (Fehler/Exception), läuft der Rest weiter — der Fehler
  * steht im Wortlaut im jeweiligen Ergebnis-Eintrag. Zwischen zwei eBay-Aufrufen (nur bei confirm:true,
  * echter Trading-API-Call) eine Pause, damit die API nicht gedrosselt wird.
+ * Doppelte IDs im Aufruf werden vorher entfernt (Reihenfolge bleibt erhalten) — sonst würde ein
+ * doppeltes Produkt zweimal hochgeladen (unnötiger eBay-Traffic, Code-Review-Vorschlag).
  */
 export async function refreshDescriptionsBatch(
   productIds: number[],
@@ -94,15 +96,16 @@ export async function refreshDescriptionsBatch(
   deps: DescriptionRefreshDeps,
   sleepMs = 500,
 ): Promise<{ results: DescriptionRefreshOutcome[] }> {
+  const uniqueIds = [...new Set(productIds)];
   const results: DescriptionRefreshOutcome[] = [];
-  for (let i = 0; i < productIds.length; i++) {
-    const productId = productIds[i];
+  for (let i = 0; i < uniqueIds.length; i++) {
+    const productId = uniqueIds[i];
     try {
       results.push(await refreshOneProductDescription(productId, opts, deps));
     } catch (e) {
       results.push({ productId, ok: false, httpStatus: 500, error: String(e) });
     }
-    const isLast = i === productIds.length - 1;
+    const isLast = i === uniqueIds.length - 1;
     if (!isLast && opts.confirm === true) {
       await new Promise(r => setTimeout(r, sleepMs));
     }

@@ -172,4 +172,16 @@ describe('refreshDescriptionsBatch — läuft weiter nach Fehler, Ergebnis pro P
     expect(deps.revisedItemIds).toEqual([]);
     expect(deps.updated.size).toBe(0);
   });
+
+  test('doppelte productIds im Aufruf werden nur einmal verarbeitet (Code-Review-Vorschlag)', async () => {
+    const products: DescriptionRefreshProduct[] = [
+      { id: 1, ebayListingId: 'item-1', htmlDescription: GPSR_HTML('a@foxmail.com') },
+      { id: 2, ebayListingId: 'item-2', htmlDescription: GPSR_HTML('b@foxmail.com') },
+    ];
+    const deps = makeDeps(products);
+    const { results } = await refreshDescriptionsBatch([1, 2, 1], { confirm: true }, deps, 0);
+    expect(results).toHaveLength(2);
+    expect(results.map(r => r.productId)).toEqual([1, 2]);
+    expect(deps.revisedItemIds).toEqual(['item-1', 'item-2']);
+  });
 });
