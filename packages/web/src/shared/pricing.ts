@@ -546,6 +546,30 @@ export const DEFAULT_PRICING_CONFIG = {
   chinaCustomsFlatEur: CHINA_ZOLL_EUR,        // 4,00 €
 } as const;
 
+export interface OrderProfitResult {
+  profit: number;   // Gewinn NACH eBay-Gebühren (gerundet auf 2 Nachkommastellen)
+  feesDeducted: number; // abgezogene eBay-Gebühren (Prozentsatz-Anteil + Fixgebühr, brutto), gerundet
+}
+
+// PRIO-1-PAKET, Punkt "ERGEBNIS" (2026-09-24): der bisherige Bestellungen-Tab zog vom
+// eBay-Verkaufspreis nur den Einkauf ab, keine eBay-Gebühren — über 15 Bestellungen zeigte die App
+// dadurch 111,32 € statt real 52,54 €. Diese Funktion ist die EINE Rechenstelle für den
+// Bestellungs-Gewinn (index.ts, Zweige "manuell" und "automatisch"): Preis × (1 − Gebührensatz),
+// minus Fixgebühr, minus wahrer Einkauf — ausschließlich mit den vorhandenen Konstanten aus
+// DEFAULT_PRICING_CONFIG (kein neuer Zahlenwert). `wahrerEinkauf` ist bereits der volle Einkauf
+// inkl. Zoll (kommt vorgerechnet von der Aufrufstelle) — keine weitere Aufschlüsselung nötig, da
+// eine abgeschlossene Bestellung keinen hypothetischen Mindestpreis mehr braucht.
+export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number): OrderProfitResult {
+  const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + DEFAULT_PRICING_CONFIG.defaultAdRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
+  const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
+  const feesDeducted = verkaufspreis * totalFeeRateGross + fixedFeeGross;
+  const profit = verkaufspreis * (1 - totalFeeRateGross) - fixedFeeGross - wahrerEinkauf;
+  return {
+    profit: Math.round(profit * 100) / 100,
+    feesDeducted: Math.round(feesDeducted * 100) / 100,
+  };
+}
+
 export function isChinaShipping(shipsFrom?: string | null): boolean {
   if (!shipsFrom) return false;
   return shipsFrom.toLowerCase().includes('china');

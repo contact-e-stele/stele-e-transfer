@@ -141,6 +141,32 @@ export default function Einstellungen() {
     }
   };
 
+  // PRIO-1-PAKET (2026-09-24) / Punkt "ZOLL": Zollpauschale für den Bestellungs-Gewinn im
+  // Bestellungen-Tab — gleiches Muster wie die Mengen-Obergrenze oben.
+  const [orderZoll, setOrderZoll] = useState("3.58");
+  const [orderZollMsg, setOrderZollMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/settings/order-china-zoll", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setOrderZoll(String((d as { value?: number }).value ?? 3.58)))
+      .catch(() => setOrderZollMsg({ ok: false, text: "Laden fehlgeschlagen — Netzwerkfehler" }));
+  }, []);
+  const saveOrderZoll = async () => {
+    const n = Number(orderZoll);
+    if (!Number.isFinite(n) || n < 0) { setOrderZollMsg({ ok: false, text: "Bitte eine Zahl ≥ 0 eingeben" }); return; }
+    setOrderZollMsg(null);
+    try {
+      const r = await fetch("/api/settings/order-china-zoll", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ value: n }),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      setOrderZollMsg(d.ok ? { ok: true, text: "Gespeichert ✓" } : { ok: false, text: d.error || "Speichern fehlgeschlagen" });
+    } catch {
+      setOrderZollMsg({ ok: false, text: "Netzwerkfehler beim Speichern" });
+    }
+  };
+
   const loadStatus = useCallback(() => {
     setLoading(true);
     fetch("/api/aliexpress/status", { credentials: "include" })
@@ -639,6 +665,23 @@ export default function Einstellungen() {
             style={{ width: 90, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} />
           <button onClick={saveMaxQty} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
           {maxQtyMsg && <span style={{ fontSize: 12, fontWeight: 600, color: maxQtyMsg.ok ? "#16A34A" : "#DC2626" }}>{maxQtyMsg.text}</span>}
+        </div>
+      </div>
+
+      {/* PRIO-1-PAKET / Punkt "ZOLL": Zollpauschale für den Bestellungs-Gewinn */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>🛃</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Zollpauschale (Bestellungen-Tab)</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
+          Seit 01.07.2026 gilt eine Pauschale je Warenposition aus China; real gemessen 3,58 € inklusive der Einfuhrumsatzsteuer darauf. Betrifft nur den angezeigten Gewinn im Bestellungen-Tab, nicht die Verkaufspreis-Berechnung.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input type="number" min={0} step={0.01} value={orderZoll} onChange={e => setOrderZoll(e.target.value)}
+            style={{ width: 90, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} />
+          <button onClick={saveOrderZoll} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
+          {orderZollMsg && <span style={{ fontSize: 12, fontWeight: 600, color: orderZollMsg.ok ? "#16A34A" : "#DC2626" }}>{orderZollMsg.text}</span>}
         </div>
       </div>
 

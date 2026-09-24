@@ -227,3 +227,52 @@ sind, aber das ist keine Bestätigung.
 - Befund: 56/56 Produkte mit Fremd-E-Mail in htmlDescription; einzige Quelle = GPSR-Tab (Rohtext). Altcode sandte `productSafety` (falscher Ort) + Hersteller "Markenlos" mit EU-Adresse.
 - Fix: Parser-Erweiterung (Blöcke per Titel, Hersteller getrennt, Land), `regulatory` am Offer (Feldnamen `companyName` … gegen ebay-api-Spec geprüft), neutraler GPSR-Tab, Blockade bei fehlenden Pflichtangaben (Scan: 23 von 56), Einzel-Route `POST /ebay/products/:id/refresh-description` (Probelauf, `confirm:true` schreibt).
 - OFFEN: `regulatory`-Format live prüfen (`types`-Wert, Hersteller-`country`); `gpsrCountry`-Spalte (Migration, Freigabe); PLZ-Formate NL/PT.
+
+## PRIO-1-PAKET — Bestellungs-Gewinn falsch: A9/ERGEBNIS/ZOLL (24.09.2026, Draft-PR, Branch fix/prio1-gewinn-berechnung)
+Voraussetzung geprüft (Regel 9): PR #120 (GPSR strukturiert) UND #121 (Paket 3b, GPSR-Land) sind
+beide bereits in `origin/main` gemergt (`a2042d9`, `cbabf9b`) — Branch frisch davon abgezweigt.
+
+- **A9** (`price-monitor.ts`, Zweig `hasVariants`): `newBuyPrice = parsePrice(data.price)` ist bei
+  Varianten-Produkten der AB-PREIS (billigste Variante), wurde aber 1:1 nach `products.buyPrice`
+  geschrieben — buyPrice driftete bei jedem 8h-Cron-Lauf auf die jeweils billigste Variante.
+  Fix: `resolveVariantBuyPrice()` (neu, price-monitor.ts) — matcht die Variante, deren VORHER
+  gespeicherter Preis exakt dem aktuellen buyPrice entspricht ("Zielvariante"), übernimmt NUR
+  deren frischen Preis; bei keinem/mehrdeutigem Treffer bleibt buyPrice unverändert (geloggt).
+  `variantPrices` wird weiterhin bei jedem Lauf aktualisiert. Einzelartikel-Zweig unverändert.
+- **ERGEBNIS** (`index.ts`, `/ebay/orders`): `nettoErgebnis = order.total - Einkauf`, keine
+  eBay-Gebühren. Fix: `computeOrderProfit(verkaufspreis, wahrerEinkauf)` (neu, `shared/pricing.ts`)
+  — Preis×(1−(Gebührensatz+Anzeigentarif)/100×MwSt) − Fixgebühr×MwSt − Einkauf, NUR
+  `DEFAULT_PRICING_CONFIG`-Konstanten. `computeOrderNettoErgebnis()` (neu, `order-matching.ts`)
+  ersetzt die bisherigen zwei separaten Zweige (manuell/automatisch) in `index.ts` durch EINEN
+  Aufruf; neues Feld `nettoGebuehren` in der API-Antwort und im Bestellungen-Tab sichtbar
+  (Spaltenbeschriftung auf "Gewinn nach eBay-Geb." geändert, alter irreführender Hinweistext
+  "enthält noch keine eBay-Gebühren" entfernt).
+- **ZOLL**: `CHINA_ZOLL_EUR` (4,00€, `shared/constants.ts`) ist die Pauschale für die
+  Verkaufspreis-FORMEL (`computeMinSellPrice`/`DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur`) —
+  **bewusst unverändert gelassen** (nicht Teil dieses Auftrags, s. NICHT ANFASSEN). Für den
+  Bestellungs-Einkauf (bereits abgeschlossene Bestellung) neue, eigene Einstellung
+  `order_china_zoll_eur` (app_settings, GET/PUT `/settings/order-china-zoll`, Standard 3,58,
+  Minimum 0), nach dem Muster von `max_variant_quantity`. `getOrderChinaZollEur()`/
+  `parseOrderChinaZollEur()`/`DEFAULT_ORDER_CHINA_ZOLL_EUR` in `order-matching.ts`.
+- **Trockenlauf** `scripts/prio1-gewinn-dryrun.ts` (nur lesend, DB + eBay GetOrders) gegen die
+  echte Produktions-DB am 2026-09-24T17:06 ausgeführt: 17 Bestellungen, 15 mit bekanntem Einkauf,
+  **Summe alt 105,81 € → neu 51,23 €** (Formel bestätigt: 17,95€/11,56€-Einzelfall = 1,76€, exakt
+  wie im Auftrag gefordert). Abweichung von den im Auftrag genannten 111,32 €/52,54 € (Regel 6,
+  offengelegt): eigene Live-Messung zu einem SPÄTEREN Zeitpunkt als die im Auftrag zitierte, der
+  8h-Preis-Cron lief dazwischen mindestens einmal — die im Auftrag genannten Zahlen waren zum
+  Zeitpunkt DIESER Messung bereits veraltet. Die 51,23€/105,81€-Zahlen sind in
+  `order-matching.test.ts` als Regressionstest eingefroren (echte Order-/Produktdaten, keine
+  erfundenen Werte).
+  - Teil 2 des Trockenlaufs (Varianten-Produkte, 42 gesamt, 6 davon Zielvariante nicht eindeutig
+    bestimmbar): `buyPrice heute` entspricht bei praktisch ALLEN Produkten bereits der billigsten
+    Variante — das ist der LIVE-BEFUND von A9 selbst (buyPrice wurde bei jedem bisherigen
+    Cron-Lauf bereits auf den Ab-Preis überschrieben). Der Fix kann diesen historischen Schaden
+    NICHT rückwirkend heilen, nur die weitere Drift ab dem nächsten Cron-Lauf verhindern.
+- **OFFEN**: kein automatisches Nachziehen bereits verkaufter/berechneter Zahlen — betrifft nur
+  die ANZEIGE im Bestellungen-Tab, keine Preise/DB-Schreibvorgänge für laufende Angebote. Ein
+  Nachzieh-Weg für die historisch bereits verlorene Zielvariante-Info (buyPrice) existiert nicht
+  und ist auch nicht sinnvoll konstruierbar (Info ist weg); ginge nur über eine manuelle
+  Rekonstruktion je Produkt aus den AliExpress-Bestellhistorien. `CHINA_ZOLL_EUR`
+  (Verkaufspreis-Formel) bewusst nicht angefasst — falls auch dort 3,58€ statt 4,00€ gewünscht
+  ist, ist das ein separater Auftrag (würde `computeMinSellPrice()` und alle Aufrufstellen
+  betreffen, nicht nur den Bestellungen-Tab).

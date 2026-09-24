@@ -13,7 +13,72 @@ process.env.TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'file:/tmp/pr
 const {
   computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct,
   computeRepairBatchRange, updateEbayVariantPricesIndividually, runAvailabilityCheck, mergeFreshVariantPrices,
+  resolveVariantBuyPrice,
 } = await import('./price-monitor');
+
+// PRIO-1-PAKET, Fund A9 (2026-09-24, live gemessen: stele-195 3,75€→1,45€ zurückgesetzt; stele-123
+// buyPrice blieb bei 2,05€/10PCS stehen, obwohl 50PCS zu 5,99€ verkauft wurde). resolveVariantBuyPrice()
+// ist der Fix: products.buyPrice darf bei Varianten-Produkten nicht mehr aus dem Ab-Preis
+// überschrieben werden.
+describe('resolveVariantBuyPrice (Fund A9 — buyPrice nicht mehr aus dem Ab-Preis überschreiben)', () => {
+  test('Zielvariante eindeutig bestimmbar: buyPrice folgt der FRISCHEN Preis genau dieser SKU, nicht dem Ab-Preis', () => {
+    const existing = JSON.stringify([
+      { skuId: 'v1', price: 6.19 }, // teurere Variante — das war die Zielvariante (buyPrice entsprach ihr)
+      { skuId: 'v2', price: 2.39 }, // billigste Variante (Ab-Preis)
+    ]);
+    const fresh = JSON.stringify([
+      { skuId: 'v1', price: 6.99 }, // Zielvariante ist teurer geworden
+      { skuId: 'v2', price: 2.10 }, // Ab-Preis ist gesunken — DARF NICHT übernommen werden
+    ]);
+    const result = resolveVariantBuyPrice(existing, fresh, 6.19);
+    expect(result.matchedSkuId).toBe('v1');
+    expect(result.buyPrice).toBe(6.99); // NICHT 2.10 (Ab-Preis)
+  });
+
+  // Auftragspunkt 7 (Testfall): "ein Varianten-Produkt behält seinen buyPrice, wenn nur der
+  // Ab-Preis bekannt ist" — hier: currentBuyPrice entspricht keiner der vorher gespeicherten
+  // Varianten (nicht bestimmbar), buyPrice bleibt unverändert statt auf den Ab-Preis zu springen.
+  test('Zielvariante NICHT bestimmbar: buyPrice bleibt unverändert (kein Sprung auf den Ab-Preis)', () => {
+    const existing = JSON.stringify([
+      { skuId: 'v1', price: 6.19 },
+      { skuId: 'v2', price: 2.39 },
+    ]);
+    const fresh = JSON.stringify([
+      { skuId: 'v1', price: 6.99 },
+      { skuId: 'v2', price: 2.10 },
+    ]);
+    // currentBuyPrice (9,99€) entspricht KEINER der gespeicherten Varianten — z.B. weil bereits
+    // ein früherer Lauf einen fremden Wert hinterlassen hat.
+    const result = resolveVariantBuyPrice(existing, fresh, 9.99);
+    expect(result.matchedSkuId).toBeNull();
+    expect(result.buyPrice).toBe(9.99); // unverändert, NICHT der Ab-Preis 2.10
+  });
+
+  test('mehrdeutiger Treffer (zwei Varianten mit demselben Preis wie buyPrice) gilt als nicht bestimmbar', () => {
+    const existing = JSON.stringify([
+      { skuId: 'v1', price: 2.39 },
+      { skuId: 'v2', price: 2.39 },
+    ]);
+    const fresh = JSON.stringify([
+      { skuId: 'v1', price: 2.60 },
+      { skuId: 'v2', price: 2.10 },
+    ]);
+    const result = resolveVariantBuyPrice(existing, fresh, 2.39);
+    expect(result.matchedSkuId).toBeNull();
+    expect(result.buyPrice).toBe(2.39);
+  });
+
+  // Regressions-Beweis (Grundgesetz Regel 5): die alte Logik (`newBuyPrice = parsePrice(data.price)`,
+  // also schlicht der Ab-Preis) hätte im ersten Testfall 2.10 zurückgegeben, nicht 6.99 — diese
+  // Fixture unterscheidet altes und neues Verhalten eindeutig.
+  test('unterscheidet sich vom alten Verhalten (Ab-Preis wäre 2.10, nicht 6.99)', () => {
+    const existing = JSON.stringify([{ skuId: 'v1', price: 6.19 }, { skuId: 'v2', price: 2.39 }]);
+    const fresh = JSON.stringify([{ skuId: 'v1', price: 6.99 }, { skuId: 'v2', price: 2.10 }]);
+    const result = resolveVariantBuyPrice(existing, fresh, 6.19);
+    const altesVerhalten_abPreis = 2.10;
+    expect(result.buyPrice).not.toBe(altesVerhalten_abPreis);
+  });
+});
 
 describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
   test('3 Varianten mit unterschiedlichem Einkaufspreis ergeben 3 unterschiedliche correctSellPrice-Werte', () => {

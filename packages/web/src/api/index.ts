@@ -11,12 +11,12 @@ import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTr
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
+import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
 import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
 import { isStringRecord } from '../shared/validation';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
 import { evaluateVariantGate } from '../shared/variant-gate';
-import { buildProductLookups, findProductForSku as findProductForSkuShared } from './order-matching';
+import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
 import { Sentry } from '../instrument';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
@@ -768,6 +768,8 @@ const app = new Hono()
       // Extract, identische Logik), damit das Verkaufszahlen-Berichtsskript dieselbe Zuordnung nutzt.
       const productLookups = buildProductLookups(allProducts);
       const findProductForSku = (sku: string | null) => findProductForSkuShared(sku, productLookups);
+      // PRIO-1-PAKET (2026-09-24), Punkt "ZOLL": Einstellung statt Pauschale, s. order-matching.ts.
+      const orderChinaZollEur = await getOrderChinaZollEur();
 
       const merged = (orders as import('./ebay').EbayOrder[]).map(order => {
         const note = notesByOrderId.get(order.orderId) ?? null;
@@ -811,27 +813,26 @@ const app = new Hono()
             : product.sourceUrl;
         }
 
-        // Manuell eingetragener Einkaufspreis hat IMMER Vorrang (z.B. exakter Betrag laut AliExpress-Rechnung)
-        if (note?.manualBuyPrice !== null && note?.manualBuyPrice !== undefined) {
-          const netto = Math.round((order.total - note.manualBuyPrice) * 100) / 100;
-          return { ...order, localNote: note, nettoEinkauf: note.manualBuyPrice, nettoErgebnis: netto, nettoQuelle: 'manuell' as const, aliexpressUrl, ebayListingUrl };
-        }
-
-        // Fallback: automatischer Match über SKU/ASIN + Produkt-DB
-        let einkaufBekannt = true;
-        let einkaufGesamt = 0;
-        for (const li of order.lineItems) {
-          const product = findProductForSku(li.sku);
-          if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
-          const zoll = (product.shipsFrom ?? '').toLowerCase() === 'china' ? CHINA_ZOLL_EUR : 0;
-          einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
-        }
+        // PRIO-1-PAKET (2026-09-24): EINE Rechenstelle für beide Zweige (manuell/automatisch),
+        // inkl. eBay-Gebühren (Punkt "ERGEBNIS") und der pflegbaren Zollpauschale (Punkt "ZOLL") —
+        // s. computeOrderNettoErgebnis() in order-matching.ts.
+        const netto = computeOrderNettoErgebnis({
+          orderTotal: order.total,
+          lineItems: order.lineItems.map(li => ({ sku: li.sku, quantity: li.quantity })),
+          manualBuyPrice: note?.manualBuyPrice,
+          findProduct: (sku) => {
+            const product = findProductForSku(sku);
+            return product ? { buyPrice: product.buyPrice, shipsFrom: product.shipsFrom } : null;
+          },
+          zollEur: orderChinaZollEur,
+        });
         return {
           ...order,
           localNote: note,
-          nettoEinkauf: einkaufBekannt ? einkaufGesamt : null,
-          nettoErgebnis: einkaufBekannt ? Math.round((order.total - einkaufGesamt) * 100) / 100 : null,
-          nettoQuelle: einkaufBekannt ? ('automatisch' as const) : null,
+          nettoEinkauf: netto.nettoEinkauf,
+          nettoErgebnis: netto.nettoErgebnis,
+          nettoGebuehren: netto.nettoGebuehren,
+          nettoQuelle: netto.nettoQuelle,
           aliexpressUrl,
           ebayListingUrl,
         };
@@ -1756,6 +1757,35 @@ const app = new Hono()
       const now = new Date().toISOString();
       const value = String(body.value);
       await db.insert(appSettings).values({ key: 'max_variant_quantity', value, updatedAt: now })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
+  // PRIO-1-PAKET (2026-09-24) / Punkt "ZOLL": Zollpauschale für den Bestellungs-Einkauf
+  // (app_settings, Key "order_china_zoll_eur"), gleiches Muster wie max-variant-quantity oben.
+  // Seit 01.07.2026 gilt eine Pauschale je Warenposition, real gemessen 3,58€ inkl.
+  // Einfuhrumsatzsteuer darauf (Standard). Betrifft NUR den Bestellungs-Gewinn (Bestellungen-Tab),
+  // NICHT die Verkaufspreis-Formel (CHINA_ZOLL_EUR/DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur).
+  .get('/settings/order-china-zoll', async (c) => {
+    try {
+      return c.json({ value: await getOrderChinaZollEur(), default: DEFAULT_ORDER_CHINA_ZOLL_EUR }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/order-china-zoll', async (c) => {
+    try {
+      const body = await c.req.json() as { value?: unknown };
+      if (typeof body.value !== 'number' || !Number.isFinite(body.value) || body.value < 0) {
+        return c.json({ ok: false, error: '"value" muss eine Zahl ≥ 0 sein' }, 400);
+      }
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const now = new Date().toISOString();
+      const value = String(body.value);
+      await db.insert(appSettings).values({ key: 'order_china_zoll_eur', value, updatedAt: now })
         .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
       return c.json({ ok: true }, 200);
     } catch (e) {

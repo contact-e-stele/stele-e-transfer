@@ -15,7 +15,7 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, evaluatePriceAlarm, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, roundToNearest95NotBelow, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, profitAtSellPrice, evaluatePriceAlarm, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, roundToNearest95NotBelow, computeOrderProfit, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
@@ -807,5 +807,33 @@ describe('roundToNearest95NotBelow — nächste ,95-Marke, aber nie unter dem Zi
     const src = require('fs').readFileSync(require('path').resolve(import.meta.dir, '../web/pages/lieferanten.tsx'), 'utf-8') as string;
     expect(src.match(/rounding: 'nearest95-min'/g)?.length).toBe(2);
     expect(src).not.toMatch(/rounding: 'cent'/);
+  });
+});
+
+// PRIO-1-PAKET, Punkt "ERGEBNIS" (2026-09-24): computeOrderProfit() ist die EINE Rechenstelle für
+// den Bestellungs-Gewinn (index.ts, beide Zweige) — vorher fehlten dort die eBay-Gebühren komplett.
+describe('computeOrderProfit — Bestellungs-Gewinn NACH eBay-Gebühren (PRIO-1-PAKET, Punkt "ERGEBNIS")', () => {
+  test('Auftragsvorgabe: 17,95 € Verkauf, 11,56 € wahrer Einkauf ergibt 1,76 € (Toleranz 1 Cent)', () => {
+    const { profit } = computeOrderProfit(17.95, 11.56);
+    expect(Math.abs(profit - 1.76)).toBeLessThanOrEqual(0.01);
+  });
+
+  // Regressions-Beweis (Grundgesetz Regel 5): eine Rechnung OHNE Gebührenabzug (Rohdifferenz, der
+  // alte Bug) ergäbe 17.95 - 11.56 = 6.39 — deutlich mehr als 1,76€. Die Fixture unterscheidet die
+  // beiden Verhalten also eindeutig.
+  test('unterscheidet sich von der alten Rohdifferenz (ohne Gebührenabzug)', () => {
+    const rohdifferenz = 17.95 - 11.56;
+    const { profit } = computeOrderProfit(17.95, 11.56);
+    expect(profit).not.toBeCloseTo(rohdifferenz, 1);
+  });
+
+  test('nutzt ausschließlich DEFAULT_PRICING_CONFIG — Gebührensatz+Anzeigentarif, Fixgebühr, MwSt.', () => {
+    const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + DEFAULT_PRICING_CONFIG.defaultAdRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
+    const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
+    const erwarteterGewinn = Math.round((20 * (1 - totalFeeRateGross) - fixedFeeGross - 10) * 100) / 100;
+    const erwarteteGebuehren = Math.round((20 * totalFeeRateGross + fixedFeeGross) * 100) / 100;
+    const { profit, feesDeducted } = computeOrderProfit(20, 10);
+    expect(profit).toBe(erwarteterGewinn);
+    expect(feesDeducted).toBe(erwarteteGebuehren);
   });
 });

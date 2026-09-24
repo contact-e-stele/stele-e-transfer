@@ -6,6 +6,8 @@
 // bedeutet, dass Bericht und App unterschiedliche Bestellungen demselben Produkt zuordnen — bei
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
+import { computeOrderProfit } from '../shared/pricing';
+
 export interface ProductForSkuMatch {
   id: number;
   asin: string | null;
@@ -62,3 +64,72 @@ export const UNMATCHED_REASON_TEXT: Record<UnmatchedReason, string> = {
   produkt_ohne_varianten: 'Produkt hat nur eine Variante — nicht Teil dieses Berichts',
   variante_nicht_zuordenbar: 'Produkt gefunden, aber die SKU passt zu keiner variantPrices-Zeile',
 };
+
+// ─── PRIO-1-PAKET (2026-09-24): Bestellungs-Gewinn (index.ts /ebay/orders) ────────────────────
+//
+// Punkt "ZOLL": CHINA_ZOLL_EUR (shared/constants.ts, 4,00€) ist eine Pauschale für die
+// Verkaufspreis-FORMEL (computeMinSellPrice, bleibt unverändert) — für den bereits abgeschlossenen
+// Bestellungs-Einkauf gilt seit 01.07.2026 eine eigene, real gemessene Zollpauschale je
+// Warenposition (2 Kassenbelege: 3,57€ bei 2,40€ und 3,58€ bei 5,99€ Warenwert, inkl.
+// Einfuhrumsatzsteuer). Pflegbar wie max_variant_quantity (ebay.ts): app_settings, GET/PUT unter
+// /settings, Standard 3,58, Minimum 0.
+export const DEFAULT_ORDER_CHINA_ZOLL_EUR = 3.58;
+
+export function parseOrderChinaZollEur(raw: string | null | undefined): number {
+  const n = Number(raw);
+  return raw != null && raw.trim() !== '' && Number.isFinite(n) && n >= 0 ? n : DEFAULT_ORDER_CHINA_ZOLL_EUR;
+}
+
+export async function getOrderChinaZollEur(): Promise<number> {
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const { eq } = await import('drizzle-orm');
+    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'order_china_zoll_eur')).get();
+    return parseOrderChinaZollEur(row?.value);
+  } catch {
+    return DEFAULT_ORDER_CHINA_ZOLL_EUR;
+  }
+}
+
+// Punkte "A9"/"ERGEBNIS": EINE Rechenstelle für den Bestellungs-Gewinn, ersetzt die bisherigen
+// zwei separaten Zweige (manuell/automatisch) in index.ts — beide riefen vorher nur
+// `order.total - Einkauf` auf, ohne eBay-Gebühren (computeOrderProfit trägt die nach). Reine
+// Funktion (Grundgesetz Regel 2): `findProduct` wird von der Aufrufstelle injiziert, damit hier
+// kein DB-Zugriff nötig ist und das Preis-Trockenlauf-Skript exakt dieselbe Logik nutzen kann statt
+// sie nachzubauen (Grundgesetz Regel 8).
+export interface OrderNettoInput {
+  orderTotal: number;
+  lineItems: Array<{ sku: string | null; quantity: number }>;
+  manualBuyPrice: number | null | undefined;
+  findProduct: (sku: string | null) => { buyPrice: number | null; shipsFrom: string | null } | null;
+  zollEur: number;
+}
+
+export interface OrderNettoResult {
+  nettoEinkauf: number | null;
+  nettoErgebnis: number | null;
+  nettoGebuehren: number | null;
+  nettoQuelle: 'manuell' | 'automatisch' | null;
+}
+
+export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoResult {
+  if (input.manualBuyPrice != null) {
+    const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, input.manualBuyPrice);
+    return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell' };
+  }
+
+  let einkaufBekannt = true;
+  let einkaufGesamt = 0;
+  for (const li of input.lineItems) {
+    const product = input.findProduct(li.sku);
+    if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
+    const zoll = (product.shipsFrom ?? '').toLowerCase() === 'china' ? input.zollEur : 0;
+    einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
+  }
+  if (!einkaufBekannt) {
+    return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null };
+  }
+  const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, einkaufGesamt);
+  return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch' };
+}
