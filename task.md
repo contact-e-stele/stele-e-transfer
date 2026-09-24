@@ -276,3 +276,12 @@ beide bereits in `origin/main` gemergt (`a2042d9`, `cbabf9b`) — Branch frisch 
   (Verkaufspreis-Formel) bewusst nicht angefasst — falls auch dort 3,58€ statt 4,00€ gewünscht
   ist, ist das ein separater Auftrag (würde `computeMinSellPrice()` und alle Aufrufstellen
   betreffen, nicht nur den Bestellungen-Tab).
+- **Code-Review (Code Reviewer, vor der Meldung durchgeführt):** keine Blocker. Ein Vorschlag
+  umgesetzt: `order-matching.ts` prüfte China-Versand mit eigener strikter `=== 'china'`-Prüfung
+  statt der projektweiten `isChinaShipping()` (toleranter, z.B. "China Mainland") — jetzt darauf
+  umgestellt (eine China-Erkennung statt zwei, Grundgesetz Regel 8). War keine neue Regression
+  (1:1 aus dem alten index.ts übernommen). Drei weitere Vorschläge/Kleinigkeiten bewusst NICHT
+  umgesetzt (kein Blocker, außerhalb des Auftrags) — Details in der PR-Beschreibung: (1)
+  mehrdeutiger Zielvarianten-Treffer bleibt ohne UI-Signal stehen, (2) Rollout-Hinweis für bereits
+  vor diesem Fix gedriftete buyPrice-Werte (s.o.), (3) ein zirkulärer Test in pricing.test.ts.
+  Nach dem Fix erneut verifiziert: Typecheck Server grün, 397/397 Tests grün.

@@ -6,7 +6,7 @@
 // bedeutet, dass Bericht und App unterschiedliche Bestellungen demselben Produkt zuordnen — bei
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
-import { computeOrderProfit } from '../shared/pricing';
+import { computeOrderProfit, isChinaShipping } from '../shared/pricing';
 
 export interface ProductForSkuMatch {
   id: number;
@@ -124,7 +124,11 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
   for (const li of input.lineItems) {
     const product = input.findProduct(li.sku);
     if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
-    const zoll = (product.shipsFrom ?? '').toLowerCase() === 'china' ? input.zollEur : 0;
+    // Code-Review-Vorschlag (PRIO-1-PAKET): dieselbe China-Erkennung wie überall sonst im Projekt
+    // (isChinaShipping(), shared/pricing.ts) statt einer eigenen strikten `=== 'china'`-Prüfung —
+    // die vorherige Version dieses Zweigs (index.ts) prüfte strikt und hätte z.B. "China Mainland"
+    // verpasst (vgl. task.md, PR #82: ein uneindeutiger shipsFrom-Wert sprengte dort SKU-Matching).
+    const zoll = isChinaShipping(product.shipsFrom) ? input.zollEur : 0;
     einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
   }
   if (!einkaufBekannt) {
