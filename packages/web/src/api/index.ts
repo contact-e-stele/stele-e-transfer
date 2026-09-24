@@ -622,11 +622,17 @@ const app = new Hono()
         adRate: schema.products.adRate,
         lastPriceCheck: schema.products.lastPriceCheck,
         shipsFrom: schema.products.shipsFrom,
+        htmlDescription: schema.products.htmlDescription,
       }).from(schema.products).all();
 
-      // Index: ebayListingId → DB-Produkt
+      // Index: ebayListingId → DB-Produkt. Paket 4: hasForeignContact wird hier berechnet (dieselbe
+      // findForeignEmails() wie Einzel-/Stapel-Route, Regel 8) und ersetzt htmlDescription im Response
+      // (nur das Flag, nicht der Rohtext — Antwort bleibt schlank, s. Kommentar oben).
       const dbByListingId = new Map(
-        dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p])
+        dbProducts.filter(p => p.ebayListingId).map(p => {
+          const { htmlDescription, ...rest } = p;
+          return [p.ebayListingId!, { ...rest, hasForeignContact: findForeignEmails(htmlDescription ?? '').length > 0 }];
+        })
       );
 
       // Match zusammenführen — Response schlank halten (nur 1 Bild pro Listing)
@@ -1084,32 +1090,59 @@ const app = new Hono()
   // Standard ist ein reiner Probelauf (nichts wird geschrieben); nur `{ "confirm": true }` schreibt.
   // Bleibt nach der Bereinigung noch eine fremde E-Mail-Adresse im Text, wird NICHT hochgeladen (422).
   // Die strukturierten Felder (`regulatory`) setzt diese Route nicht — sie gelten beim Listing (ebay.ts).
+  // Paket 4: Logik nach description-refresh.ts ausgelagert — dieselbe Funktion, die auch die
+  // Stapel-Route (weiter unten) nutzt. Kein zweiter Weg, keine Kopie (GRUNDGESETZ Regel 8).
   .post('/ebay/products/:productId/refresh-description', async (c) => {
     try {
       const productId = Number(c.req.param('productId'));
       const body = await c.req.json().catch(() => ({})) as { confirm?: boolean };
+      const { refreshOneProductDescription } = await import('./description-refresh');
       const { db, schema } = await import('../db/index').then(async m => {
         const sc = await import('../db/schema');
         return { db: m.db, schema: sc };
       });
-      const product = await db.select().from(schema.products).where(eq(schema.products.id, productId)).get();
-      if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
-      if (!product.ebayListingId) return c.json({ error: 'Produkt hat kein laufendes eBay-Angebot' }, 400);
-      const before = product.htmlDescription ?? '';
-      if (!before) return c.json({ error: 'Keine gespeicherte Beschreibung vorhanden' }, 400);
-      const after = neutralizeGpsrTab(before);
-      const foreignBefore = findForeignEmails(before);
-      const foreignAfter = findForeignEmails(after);
-      if (foreignAfter.length > 0) {
-        return c.json({ error: 'Nach der Bereinigung steht noch mindestens eine fremde E-Mail-Adresse im Text — nicht hochgeladen', foreignEmails: foreignAfter }, 422);
+      const outcome = await refreshOneProductDescription(productId, { confirm: body.confirm }, {
+        getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
+        reviseListingContent,
+        updateProductDescription: async (id, htmlDescription) => {
+          await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
+        },
+      });
+      if (!outcome.ok) {
+        return c.json({ error: outcome.error, ...(outcome.foreignEmails ? { foreignEmails: outcome.foreignEmails } : {}) }, outcome.httpStatus);
       }
-      if (body.confirm !== true) {
-        return c.json({ ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, foreignEmailsBefore: foreignBefore, foreignEmailsAfter: foreignAfter }, 200);
+      return c.json(outcome, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  // ─── Paket 4: Stapel-Nachzieh-Weg für mehrere laufende Angebote ────────────────────────────
+  // Harte Obergrenze MAX_DESCRIPTION_REFRESH_BATCH Produkte je Aufruf (Ablehnung mit Klartext bei
+  // mehr). Ohne confirm ist es ein Trockenlauf — es wird NICHTS hochgeladen. Nutzt exakt dieselbe
+  // refreshOneProductDescription()-Logik wie die Einzel-Route oben, inkl. derselben 422-Sperre.
+  // Bricht ein Produkt ab, läuft der Rest weiter; der Fehler steht im Wortlaut im Ergebnis.
+  .post('/ebay/descriptions/refresh-batch', async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { productIds?: unknown; confirm?: boolean };
+      const productIds = body.productIds;
+      if (!Array.isArray(productIds) || productIds.length === 0 || !productIds.every(id => typeof id === 'number' && Number.isFinite(id))) {
+        return c.json({ error: 'productIds (nicht-leeres Array von Zahlen) erforderlich' }, 400);
       }
-      const result = await reviseListingContent(product.ebayListingId, { htmlDescription: after });
-      if (!result.ok) return c.json({ error: result.error }, 400);
-      await db.update(schema.products).set({ htmlDescription: after, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, productId));
-      return c.json({ ok: true, dryRun: false, itemId: product.ebayListingId, foreignEmailsBefore: foreignBefore }, 200);
+      const { checkBatchSize, refreshDescriptionsBatch } = await import('./description-refresh');
+      const sizeError = checkBatchSize(productIds);
+      if (sizeError) return c.json({ error: sizeError }, 400);
+      const { db, schema } = await import('../db/index').then(async m => {
+        const sc = await import('../db/schema');
+        return { db: m.db, schema: sc };
+      });
+      const { results } = await refreshDescriptionsBatch(productIds, { confirm: body.confirm }, {
+        getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
+        reviseListingContent,
+        updateProductDescription: async (id, htmlDescription) => {
+          await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
+        },
+      });
+      return c.json({ results }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
