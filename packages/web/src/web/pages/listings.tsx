@@ -6,6 +6,7 @@ import {
   ShoppingCart, RefreshCw, Loader, CheckCircle, XCircle,
   ExternalLink, Package, TrendingUp, StopCircle, Link2, Link2Off,
   Search, Filter, Edit2, Check, X, Calendar, Clock, Tag, FileEdit, CheckSquare, Square,
+  AlertTriangle,
 } from "lucide-react";
 import { buildEbayHTMLLight } from "../lib/ebay-description";
 
@@ -33,6 +34,9 @@ interface EbayListing {
     adRate: number | null;
     lastPriceCheck: string | null;
     shipsFrom: string | null;
+    // Paket 4: true, wenn die gespeicherte Beschreibung heute einen fremden Kontakt (E-Mail-Adresse
+    // eines Lieferanten/Herstellers) enthält — reine Anzeige, kein Knopf lädt hier etwas hoch.
+    hasForeignContact?: boolean;
   } | null;
 }
 
@@ -1179,8 +1183,23 @@ export default function Listings() {
 
                 {/* Info */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", lineHeight: 1.4, marginBottom: 4 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", lineHeight: 1.4, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
                     {listing.title.length > 80 ? listing.title.slice(0, 80) + "…" : listing.title}
+                    {listing.appProduct?.hasForeignContact && (
+                      // Paket 4: reine Anzeige — die gespeicherte Beschreibung enthält noch einen fremden
+                      // Kontakt (Lieferant/Hersteller). Kein Knopf hier, der etwas hochlädt; Bereinigung
+                      // läuft über die Einzel- oder Stapel-Route (Nachzieh-Weg).
+                      <span
+                        title="Beschreibung enthält noch einen fremden Kontakt (Lieferant/Hersteller) — Nachzug über die Beschreibung-Nachzieh-Route nötig"
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0,
+                          padding: "2px 6px", borderRadius: 5, background: "#FEF3C7", color: "#92400E",
+                          fontSize: 10, fontWeight: 700,
+                        }}
+                      >
+                        <AlertTriangle size={11} /> Fremdkontakt
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     {/* Preis */}
