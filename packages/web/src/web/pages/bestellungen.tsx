@@ -40,6 +40,7 @@ interface Order {
   carrier: string | null;
   nettoEinkauf: number | null;
   nettoErgebnis: number | null;
+  nettoGebuehren: number | null;
   nettoQuelle: "manuell" | "automatisch" | null;
   aliexpressUrl: string | null;
   ebayListingUrl: string | null;
@@ -497,16 +498,18 @@ export default function Bestellungen() {
           ))}
         </div>
 
-        {/* Netto-Ergebnis (Umsatz minus Einkauf/Zoll) — nur für Bestellungen mit bekanntem Einkaufspreis */}
+        {/* Gewinn nach eBay-Gebühren (Umsatz minus Einkauf/Zoll minus eBay-Gebühren) — PRIO-1-PAKET:
+            vorher stand hier "Netto-Ergebnis" ohne Gebührenabzug, das wirkte wie der tatsächliche
+            Gewinn, war aber die Rohdifferenz. Nur für Bestellungen mit bekanntem Einkaufspreis. */}
         <div style={{ background: "#F0FDF4", border: "1.5px solid #BBF7D0", borderRadius: 12, padding: "10px 14px", marginBottom: 20, fontSize: 12 }}>
           <span style={{ fontWeight: 700, color: "#166534" }}>
-            Netto-Ergebnis (nach Einkauf{"/"}Zoll): {nettoSumme.toFixed(2)} €
+            Gewinn nach eBay-Gebühren (Einkauf{"/"}Zoll{"/"}eBay-Geb. abgezogen): {nettoSumme.toFixed(2)} €
           </span>
           <span style={{ color: "#64748B", marginLeft: 8 }}>
             ({stats.nettoKnown.length}/{orders.length} Bestellungen berechenbar — Einkaufspreis muss im Produkt hinterlegt sein)
           </span>
           <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 4 }}>
-            Hinweis: Enthält noch keine eBay-Gebühren, Versandkosten oder Anzeigenkosten — reiner Wareneinsatz-Abzug.
+            Hinweis: Enthält Einkauf, Zollpauschale und eBay-Verkaufsgebühren (Provision + Anzeigentarif, jeweils inkl. MwSt.) — noch keine Versandkosten.
             {stats.nettoKnown.length < orders.length && (
               <> Nur Produkte, die über diese App importiert wurden, haben einen hinterlegten Einkaufspreis — ältere eBay-Listings (vor App-Nutzung) fehlt dieser Wert noch.</>
             )}
@@ -634,8 +637,9 @@ export default function Bestellungen() {
                 <span>Bestellt: {fmtDate(order.orderDate)}</span>
                 <span style={{ fontWeight: 700, color: "#0F172A" }}>{order.total.toFixed(2)} {order.currency}</span>
                 {order.nettoErgebnis !== null && (
-                  <span style={{ fontWeight: 700, color: order.nettoErgebnis >= 0 ? "#16A34A" : "#DC2626" }}>
-                    Netto: {order.nettoErgebnis.toFixed(2)} {order.currency}
+                  <span style={{ fontWeight: 700, color: order.nettoErgebnis >= 0 ? "#16A34A" : "#DC2626" }} title={order.nettoGebuehren != null ? `davon ${order.nettoGebuehren.toFixed(2)} ${order.currency} eBay-Gebühren abgezogen` : undefined}>
+                    Gewinn nach eBay-Geb.: {order.nettoErgebnis.toFixed(2)} {order.currency}
+                    {order.nettoGebuehren != null && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (−{order.nettoGebuehren.toFixed(2)} € Geb.)</span>}
                     {order.nettoQuelle === "manuell" && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (manuell)</span>}
                   </span>
                 )}

@@ -74,6 +74,43 @@ export function mergeFreshVariantPrices(
   return { json: JSON.stringify(merged), added: added.map(f => f.skuId), missing };
 }
 
+// PRIO-1-PAKET, Fund A9 (2026-09-24, live gemessen: stele-195 3,75€→1,45€ zurückgesetzt; stele-123
+// buyPrice blieb auf 2,05€/10PCS stehen, obwohl 50PCS zu 5,99€ verkauft wurde → Verkaufspreis
+// 17,95€ statt 18,95€, 1€ Verlust). Ursache: `newBuyPrice = parsePrice(data.price)` ist bei
+// Varianten-Produkten der AB-PREIS (billigste Variante), wurde aber ungeprüft 1:1 nach
+// products.buyPrice geschrieben — buyPrice driftete dadurch bei jedem Lauf auf die jeweils
+// billigste Variante statt die EINE Variante zu verfolgen, die es ursprünglich repräsentierte.
+//
+// Diese Funktion bestimmt die "Zielvariante": die Variante in den VORHER gespeicherten
+// variantPrices, deren Einkaufspreis exakt (±1 Cent) dem aktuellen products.buyPrice entspricht.
+// Gibt es GENAU einen solchen Treffer, wird buyPrice auf den FRISCHEN Preis genau dieser SKU
+// gesetzt (Kontinuität über die Zeit) — sonst (kein Treffer, mehrdeutig, oder SKU im frischen
+// Scrape nicht mehr vorhanden) bleibt der bestehende Wert unverändert.
+export interface VariantBuyPriceResolution {
+  buyPrice: number;
+  matchedSkuId: string | null;
+}
+
+export function resolveVariantBuyPrice(
+  existingVariantPricesJson: string | null,
+  freshVariantPricesJson: string | null,
+  currentBuyPrice: number
+): VariantBuyPriceResolution {
+  try {
+    const existing = existingVariantPricesJson ? JSON.parse(existingVariantPricesJson) as Array<{ skuId: string; price: number }> : [];
+    const fresh = freshVariantPricesJson ? JSON.parse(freshVariantPricesJson) as Array<{ skuId: string; price: number }> : [];
+    const matches = existing.filter(v => typeof v.price === 'number' && Math.abs(v.price - currentBuyPrice) < 0.01);
+    if (matches.length !== 1) return { buyPrice: currentBuyPrice, matchedSkuId: null };
+    const freshEntry = fresh.find(v => v.skuId === matches[0].skuId);
+    if (!freshEntry || typeof freshEntry.price !== 'number' || freshEntry.price <= 0) {
+      return { buyPrice: currentBuyPrice, matchedSkuId: null };
+    }
+    return { buyPrice: freshEntry.price, matchedSkuId: matches[0].skuId };
+  } catch {
+    return { buyPrice: currentBuyPrice, matchedSkuId: null };
+  }
+}
+
 // Liest die gespeicherten (oder frisch übergebenen) Varianten-Einkaufspreise eines Produkts
 // und berechnet für JEDE Variante einzeln den nach aktueller Formel korrekten Verkaufspreis —
 // unabhängig davon, ob sich der Einkaufspreis geändert hat (erkennt so auch reine
@@ -653,8 +690,16 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // zuletzt gespeicherten VK klein ist.
         if (pricesChangedEnough || buyPriceDiff > 0.01 || alarm) {
           console.log(`[PriceMonitor] ${product.id} "${product.title?.slice(0, 40)}" (Varianten): gespeicherter VK=${product.sellPrice ?? '–'} vs. sicherer Soll-VK=${safePrice ?? '–'}${alarm ? ' ⚠️ unter Zielmarge' : ''}`);
+          // Fund A9 (PRIO-1-PAKET, 2026-09-24): newBuyPrice ist der AB-PREIS (billigste Variante) —
+          // products.buyPrice darf NICHT mehr daraus überschrieben werden (s. resolveVariantBuyPrice()).
+          const buyPriceResolution = resolveVariantBuyPrice(product.variantPrices, freshVariantPricesJson, oldBuyPrice);
+          if (buyPriceResolution.matchedSkuId) {
+            console.log(`[PriceMonitor] ${product.id}: buyPrice über Zielvariante ${buyPriceResolution.matchedSkuId} aktualisiert: ${oldBuyPrice.toFixed(2)}€ → ${buyPriceResolution.buyPrice.toFixed(2)}€`);
+          } else {
+            console.log(`[PriceMonitor] ${product.id}: Zielvariante für buyPrice nicht eindeutig bestimmbar (Ab-Preis wäre ${newBuyPrice.toFixed(2)}€) — buyPrice bleibt ${oldBuyPrice.toFixed(2)}€`);
+          }
           await db.update(schema.products).set({
-            buyPrice: newBuyPrice,
+            buyPrice: buyPriceResolution.buyPrice,
             variantPrices: freshVariantPricesJson,
             lastPriceCheck: new Date().toISOString(),
             priceChanged: alarm,
