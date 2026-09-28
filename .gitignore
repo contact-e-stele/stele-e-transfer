@@ -6,3 +6,6 @@ packages/**/dist-electron
 # jedem Lauf, gehoeren nicht ins Diff eines Feature-PRs). Bereits eingecheckte Dateien in diesem
 # Ordner bleiben davon unberuehrt, nur neue/geaenderte werden nicht mehr automatisch erfasst.
 packages/web/scripts/output/
+# Paket 4, Punkt 7: task.md ist ein Session-Scratchpad (s. CLAUDE.md), gehört nicht in Commits —
+# nur lokal, aus dem Index entfernt (bleibt als Datei erhalten).
+task.md
