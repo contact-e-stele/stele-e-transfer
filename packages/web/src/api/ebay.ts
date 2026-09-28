@@ -348,7 +348,7 @@ export interface EbayListingInput {
   // beide wurden vorher schon per unsicherem Cast gelesen (imageUrl) bzw. fehlten ganz (skuId).
   variantPrices?: Array<{ sku?: string; skuId?: string; name?: string; ebayPrice?: number; price?: number; stock?: number; attrs?: Record<string, string>; imageUrl?: string; displayValues?: Record<string, string> }>; // pro-Variante Preise + Lagerbestand (P-93) + AliExpress-SKU-Attribute (P-88 1b)
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
-  mpn?: string; // AliExpress Produkt-ID als MPN
+  mpn?: string; // echte Herstellernummer, falls bekannt — NIE die AliExpress-Produkt-ID (Live-Fund 2026-09-28)
   ean?: string; // EAN/GTIN Barcode — falls vorhanden, sonst "Nicht zutreffend"
   adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
   shippingCost?: number; // Versandkosten € — P-27/P-28-Konsolidierung: nötig, damit fehlende
@@ -383,6 +383,10 @@ function normalizeAbteilung(val: string): string {
 const ASPECT_DEFAULTS: Record<string, string> = {
   'Marke': 'Markenlos',
   'Herstellernummer': 'Nicht zutreffend',
+  // MPN wird nicht mehr aus der AliExpress-Produkt-ID abgeleitet (Live-Fund 2026-09-28, öffentlich
+  // sichtbare Partner-ID) — für Kategorien, die den englischen Aspekt-Namen "MPN" verlangen, greift
+  // hier derselbe Fallback wie bei 'Herstellernummer'.
+  'MPN': 'Nicht zutreffend',
   'Abteilung': 'Unisex',
 };
 
