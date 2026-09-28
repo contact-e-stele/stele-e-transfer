@@ -376,6 +376,28 @@ describe('getAspectDefaultWithSource', () => {
     const result = await getAspectDefaultWithSource('CAT-UNBEKANNT', 'VoelligUnbekanntesFeld');
     expect(result).toBeNull();
   });
+
+  // eBay-Verstoßserie 2026-09-28: MPN wird nicht mehr aus der AliExpress-Produkt-ID der sourceUrl
+  // abgeleitet (index.ts) — dieselbe "Nicht zutreffend"-Konvention wie bei 'Herstellernummer'
+  // deckt Kategorien ab, die den englischen Aspekt-Namen "MPN" verlangen.
+  test('MPN → globaler Default "Nicht zutreffend", Quelle "global" (wie Herstellernummer)', async () => {
+    const result = await getAspectDefaultWithSource(undefined, 'MPN');
+    expect(result).toEqual({ value: 'Nicht zutreffend', source: 'global' });
+  });
+});
+
+describe('buildAspects — MPN ohne AliExpress-Produkt-ID (eBay-Verstoßserie 2026-09-28)', () => {
+  test('kein mpn-Argument mehr übergeben (index.ts leitet es nicht mehr aus sourceUrl ab) → MPN kommt trotzdem über den globalen Default, nicht über eine erfundene ID (wie "Herstellernummer" schon immer)', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Rot'] }])) as unknown as typeof fetch;
+    const result = await buildAspects({}, undefined, 'CAT-MPN-1', undefined, undefined, [], undefined, fetchFn, testTokenFn);
+    expect(result['MPN']).toEqual(['Nicht zutreffend']);
+  });
+
+  test('Kategorie verlangt den Aspekt "MPN" → automatisch mit "Nicht zutreffend" befüllt statt mit einer Partner-/AliExpress-ID', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'MPN', required: true, values: [], mode: 'FREE_TEXT' }])) as unknown as typeof fetch;
+    const result = await buildAspects({}, undefined, 'CAT-MPN-2', undefined, undefined, [], undefined, fetchFn, testTokenFn);
+    expect(result['MPN']).toEqual(['Nicht zutreffend']);
+  });
 });
 
 // P-88 1a — Live-Fund Kategorie 57920: SELECTION_ONLY-Merkmale müssen exakt in eBays Liste stehen,

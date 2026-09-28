@@ -3,7 +3,8 @@ import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { neutralizeGpsrTab, findForeignEmails } from '../shared/gpsr-description';
-import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
+import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
+import { buildProductDescriptionForEbay } from './ebay-description-builder';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
@@ -622,11 +623,19 @@ const app = new Hono()
         adRate: schema.products.adRate,
         lastPriceCheck: schema.products.lastPriceCheck,
         shipsFrom: schema.products.shipsFrom,
+        htmlDescription: schema.products.htmlDescription,
       }).from(schema.products).all();
 
-      // Index: ebayListingId → DB-Produkt
+      // Index: ebayListingId → DB-Produkt. Paket 4: hasForeignContact wird hier berechnet (reine
+      // Anzeige-Markierung für laufende Live-Angebote, mit findForeignEmails() — der Nachzieh-Weg
+      // selbst prüft seit der eBay-Verstoßserie 2026-09-28 mit dem strengeren
+      // description-compliance.ts-Validator, s. description-refresh.ts) und ersetzt htmlDescription
+      // im Response (nur das Flag, nicht der Rohtext — Antwort bleibt schlank, s. Kommentar oben).
       const dbByListingId = new Map(
-        dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p])
+        dbProducts.filter(p => p.ebayListingId).map(p => {
+          const { htmlDescription, ...rest } = p;
+          return [p.ebayListingId!, { ...rest, hasForeignContact: findForeignEmails(htmlDescription ?? '').length > 0 }];
+        })
       );
 
       // Match zusammenführen — Response schlank halten (nur 1 Bild pro Listing)
@@ -1085,32 +1094,59 @@ const app = new Hono()
   // Standard ist ein reiner Probelauf (nichts wird geschrieben); nur `{ "confirm": true }` schreibt.
   // Bleibt nach der Bereinigung noch eine fremde E-Mail-Adresse im Text, wird NICHT hochgeladen (422).
   // Die strukturierten Felder (`regulatory`) setzt diese Route nicht — sie gelten beim Listing (ebay.ts).
+  // Paket 4: Logik nach description-refresh.ts ausgelagert — dieselbe Funktion, die auch die
+  // Stapel-Route (weiter unten) nutzt. Kein zweiter Weg, keine Kopie (GRUNDGESETZ Regel 8).
   .post('/ebay/products/:productId/refresh-description', async (c) => {
     try {
       const productId = Number(c.req.param('productId'));
       const body = await c.req.json().catch(() => ({})) as { confirm?: boolean };
+      const { refreshOneProductDescription } = await import('./description-refresh');
       const { db, schema } = await import('../db/index').then(async m => {
         const sc = await import('../db/schema');
         return { db: m.db, schema: sc };
       });
-      const product = await db.select().from(schema.products).where(eq(schema.products.id, productId)).get();
-      if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
-      if (!product.ebayListingId) return c.json({ error: 'Produkt hat kein laufendes eBay-Angebot' }, 400);
-      const before = product.htmlDescription ?? '';
-      if (!before) return c.json({ error: 'Keine gespeicherte Beschreibung vorhanden' }, 400);
-      const after = neutralizeGpsrTab(before);
-      const foreignBefore = findForeignEmails(before);
-      const foreignAfter = findForeignEmails(after);
-      if (foreignAfter.length > 0) {
-        return c.json({ error: 'Nach der Bereinigung steht noch mindestens eine fremde E-Mail-Adresse im Text — nicht hochgeladen', foreignEmails: foreignAfter }, 422);
+      const outcome = await refreshOneProductDescription(productId, { confirm: body.confirm }, {
+        getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
+        reviseListingContent,
+        updateProductDescription: async (id, htmlDescription) => {
+          await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
+        },
+      });
+      if (!outcome.ok) {
+        return c.json({ error: outcome.error, ...(outcome.violations ? { violations: outcome.violations } : {}) }, outcome.httpStatus);
       }
-      if (body.confirm !== true) {
-        return c.json({ ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, foreignEmailsBefore: foreignBefore, foreignEmailsAfter: foreignAfter }, 200);
+      return c.json(outcome, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  // ─── Paket 4: Stapel-Nachzieh-Weg für mehrere laufende Angebote ────────────────────────────
+  // Harte Obergrenze MAX_DESCRIPTION_REFRESH_BATCH Produkte je Aufruf (Ablehnung mit Klartext bei
+  // mehr). Ohne confirm ist es ein Trockenlauf — es wird NICHTS hochgeladen. Nutzt exakt dieselbe
+  // refreshOneProductDescription()-Logik wie die Einzel-Route oben, inkl. derselben 422-Sperre.
+  // Bricht ein Produkt ab, läuft der Rest weiter; der Fehler steht im Wortlaut im Ergebnis.
+  .post('/ebay/descriptions/refresh-batch', async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { productIds?: unknown; confirm?: boolean };
+      const productIds = body.productIds;
+      if (!Array.isArray(productIds) || productIds.length === 0 || !productIds.every(id => typeof id === 'number' && Number.isFinite(id))) {
+        return c.json({ error: 'productIds (nicht-leeres Array von Zahlen) erforderlich' }, 400);
       }
-      const result = await reviseListingContent(product.ebayListingId, { htmlDescription: after });
-      if (!result.ok) return c.json({ error: result.error }, 400);
-      await db.update(schema.products).set({ htmlDescription: after, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, productId));
-      return c.json({ ok: true, dryRun: false, itemId: product.ebayListingId, foreignEmailsBefore: foreignBefore }, 200);
+      const { checkBatchSize, refreshDescriptionsBatch } = await import('./description-refresh');
+      const sizeError = checkBatchSize(productIds);
+      if (sizeError) return c.json({ error: sizeError }, 400);
+      const { db, schema } = await import('../db/index').then(async m => {
+        const sc = await import('../db/schema');
+        return { db: m.db, schema: sc };
+      });
+      const { results } = await refreshDescriptionsBatch(productIds, { confirm: body.confirm }, {
+        getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
+        reviseListingContent,
+        updateProductDescription: async (id, htmlDescription) => {
+          await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
+        },
+      });
+      return c.json({ results }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
@@ -1123,6 +1159,16 @@ const app = new Hono()
       const body = await c.req.json() as { title?: string; htmlDescription?: string };
       if (body.title === undefined && body.htmlDescription === undefined) {
         return c.json({ error: 'title oder htmlDescription erforderlich' }, 400);
+      }
+      // eBay-Verstoßserie 2026-09-28: diese Route wird u.a. vom manuellen Beschreibungs-Editor
+      // (Produkte-Tab) direkt mit clientseitig gebautem HTML aufgerufen — derselbe harte Filter
+      // wie /ebay/list und der Nachzieh-Weg (GRUNDGESETZ Regel 8), sonst könnte hier eine
+      // Kontaktdaten-/Link-Verletzung wieder eingeschleust werden.
+      if (body.htmlDescription !== undefined) {
+        const violations = findDescriptionComplianceViolations(body.htmlDescription);
+        if (violations.length > 0) {
+          return c.json({ error: `Beschreibung verstößt gegen eBays "Handel außerhalb von eBay"-Regel (E-Mail-Adresse(n), Link(s) oder Domain(s) im Text): ${violations.map(v => v.match).join(', ')}`, violations }, 400);
+        }
       }
       const result = await reviseListingContent(itemId, body);
       if (!result.ok) return c.json({ error: result.error }, 400);
@@ -2306,60 +2352,30 @@ const app = new Hono()
     const rawHtml = product.htmlDescription ?? '';
     const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
 
+    // eBay-Verstoßserie 2026-09-28: Kontaktdaten/Links/Domains jeder Art gehören nicht in den
+    // Beschreibungstext (auch nicht die eigenen — Impressum/AGB sind eBay-Verkäufereinstellungen).
+    // Nicht-Vorlage: über buildProductDescriptionForEbay() neu aufgebaut (dieselbe Rechenstelle wie
+    // der Beschreibungs-Nachzieh-Weg, GRUNDGESETZ Regel 8). Vorlage bereits in der DB: nur GPSR-Tab
+    // neutralisieren, dann dieselbe harte Prüfung.
     let fullDescription: string;
+    let complianceViolations: DescriptionComplianceViolation[];
     if (isFullTemplate) {
-      // Bereits fertige Vorlage aus DB — direkt verwenden
-      fullDescription = rawHtml;
+      fullDescription = neutralizeGpsrTab(rawHtml);
+      complianceViolations = findDescriptionComplianceViolations(fullDescription);
     } else {
-      // Varianten + SetContents für Template aufbereiten
-      const variantGroupsParsed: Array<{ name: string; values: string[] }> = (() => {
-        try {
-          const parsed = JSON.parse(product.variants ?? '[]');
-          if (Array.isArray(parsed) && parsed.length > 0 && 'name' in parsed[0]) return parsed;
-        } catch { /* ignore */ }
-        return [];
-      })();
-      const setContentsParsed: Record<string, string> = (() => {
-        try { return JSON.parse(product.variantContents ?? '{}') as Record<string, string>; } catch { return {}; }
-      })();
-      const skuVariantsParsed: Array<{ name: string; price: number; imageUrl?: string }> = (() => {
-        try {
-          const parsed = JSON.parse(product.variantPrices ?? '[]');
-          if (Array.isArray(parsed)) return parsed.map((v: { sku?: string; name?: string; ebayPrice?: number; price?: number; imageUrl?: string }) => ({
-            name: v.sku ?? v.name ?? '',
-            price: v.ebayPrice ?? v.price ?? 0,
-            imageUrl: v.imageUrl,
-          }));
-        } catch { /* ignore */ }
-        return [];
-      })();
-      const specsParsed: Record<string, string> = (() => {
-        try { return JSON.parse(product.specs ?? '{}') as Record<string, string>; } catch { return {}; }
-      })();
-      const bulletsParsed: string[] = (() => {
-        try { return JSON.parse(product.bullets ?? '[]') as string[]; } catch { return []; }
-      })();
-
-      // buildEbayHTMLLight aufrufen — helle Vorlage (lesbar auf eBay)
-      const templateProduct: EbayScrapedProduct = {
-        title: product.generatedTitle ?? product.title,
-        description: product.generatedDescription ?? product.description ?? '',
-        specs: specsParsed,
-        variants: variantGroupsParsed,
-        skuVariants: skuVariantsParsed.length > 0 ? skuVariantsParsed : undefined,
-        setContents: Object.keys(setContentsParsed).length > 0 ? setContentsParsed : undefined,
-        bullets: bulletsParsed.length > 0 ? bulletsParsed : undefined,
-        images: images.filter(u => u.startsWith('http')).slice(0, 3),
-      };
-      fullDescription = buildEbayHTMLLight(templateProduct);
+      const built = buildProductDescriptionForEbay(product);
+      fullDescription = built.html;
+      complianceViolations = built.violations;
     }
-
-    // Paket 3: Kontakte Dritter gehören nicht in den Beschreibungstext (eBay-Verstoßserie). Den GPSR-Tab
-    // neutralisieren; bleibt danach noch eine fremde E-Mail-Adresse stehen, wird mit Klartext blockiert.
-    fullDescription = neutralizeGpsrTab(fullDescription);
-    const foreignEmails = findForeignEmails(fullDescription);
-    if (foreignEmails.length > 0) {
-      const msg = `Beschreibung enthält fremde E-Mail-Adresse(n): ${foreignEmails.join(', ')} — eBay verbietet Kontaktdaten Dritter im Text. Bitte Beschreibung bereinigen.`;
+    // Code-Review-Fund (eBay-Verstoßserie 2026-09-28): der Titel geht genauso an eBay wie die
+    // Beschreibung (<Title>/Item-Titel) und lief bisher NICHT durch den Compliance-Validator —
+    // ein alter, verunreinigter AliExpress-Titel (Quelle desselben Verstoßmusters) hätte den
+    // ganzen Fix umgangen. Titel und Beschreibung werden deshalb gemeinsam geprüft.
+    const titleForListing = (product.generatedTitle ?? product.title).slice(0, 80);
+    complianceViolations = [...complianceViolations, ...findDescriptionComplianceViolations(titleForListing)];
+    if (complianceViolations.length > 0) {
+      const found = complianceViolations.map(v => v.match).join(', ');
+      const msg = `Titel oder Beschreibung verstößt gegen eBays "Handel außerhalb von eBay"-Regel (E-Mail-Adresse(n), Link(s) oder Domain(s) im Text): ${found} — bitte bereinigen.`;
       await db.update(schema.products).set({ ebayStatus: 'error', ebayError: msg, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
       return c.json({ error: msg }, 400);
     }
@@ -2382,11 +2398,6 @@ const app = new Hono()
       const specs: Record<string, string> = (() => {
         try { return JSON.parse(product.specs ?? '{}') as Record<string, string>; } catch { return {}; }
       })();
-
-      // MPN = AliExpress Produkt-ID aus sourceUrl
-      const mpn = product.sourceUrl
-        ? (product.sourceUrl.match(/\/item\/(\d+)\.html/)?.[1] ?? product.sourceUrl.match(/productId=(\d+)/)?.[1] ?? undefined)
-        : undefined;
 
       // variantPrices für pro-Variante Preise — ebayPrice wird hier (Punkt 3, P-27/P-28-
       // Konsolidierung) für jede Variante mit bekanntem Einkaufspreis frisch über die zentrale
@@ -2497,7 +2508,7 @@ const app = new Hono()
 
       const listingId = await listOnEbay({
         sku: `stele-${product.id}`,
-        title: (product.generatedTitle ?? product.title).slice(0, 80),
+        title: titleForListing,
         description: fullDescription,
         price: effectiveSellPrice,
         quantity: 3,
@@ -2507,7 +2518,10 @@ const app = new Hono()
         variantGroups: variantGroups.length > 0 ? variantGroups : undefined,
         variantPrices: variantPricesForListing.length > 0 ? variantPricesForListing : undefined,
         specs,
-        mpn,
+        // MPN wird NICHT mehr aus der AliExpress-Produkt-ID der sourceUrl abgeleitet — das war eine
+        // öffentlich sichtbare Partner-/Lieferanten-ID (Live-Fund 2026-09-28). Ohne echte
+        // Herstellernummer bleibt der eBay-Aspekt leer; ASPECT_DEFAULTS['MPN'] (ebay.ts) liefert bei
+        // Bedarf den Fallback "Nicht zutreffend" — analog zu 'Herstellernummer'.
         ean: product.ean ?? undefined,
         adRate: product.adRate ?? 5,
         shippingCost: product.shippingCost ?? undefined,

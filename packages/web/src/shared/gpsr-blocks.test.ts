@@ -109,12 +109,15 @@ describe('Beschreibung: keine Fremd-Kontakte mehr im GPSR-Tab', () => {
   });
 });
 
-describe('Beschreibungs-Generator: GPSR-Tab ohne Fremd-Kontakte, eigene Pflichtstellen erhalten', () => {
+describe('Beschreibungs-Generator: GPSR-Tab ohne Fremd-Kontakte, keine eigenen Impressum/AGB-Pflichtstellen mehr im Text', () => {
   const product = { title: 'Testprodukt', description: 'Ein Text.', gpsrRaw: `${MANUF}
 
 ${EU}` };
-  // Die sechs Pflichtstellen des Nutzers (Impressum, AGB-Anbieterzeile, Widerrufsadresse).
-  const PFLICHT = ['Impressum', 'Am Hochfeld 47', '65205 Wiesbaden', 'contact@stele-e-transfer.com', 'Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden', 'Widerruf an:'];
+  // eBay-Verstoßserie 2026-09-28: Impressum/AGB-Tabs (mit der eigenen Adresse/E-Mail) wurden
+  // entfernt — Impressum/AGB sind eBay-Verkäufereinstellungen, keine Beschreibungsinhalte. Die
+  // früheren "sechs Pflichtstellen" (Impressum, AGB-Anbieterzeile, Widerrufsadresse) dürfen jetzt
+  // an KEINER Stelle mehr im Text stehen (Regressionsschutz: nicht ENTFERNT, sondern umgedreht).
+  const ENTFERNTE_STELLEN = ['Impressum', 'Allgemeine Gesch&auml;ftsbedingungen', 'contact@stele-e-transfer.com', 'Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden', 'Widerruf an:'];
   for (const [name, build] of [['dunkel', buildEbayHTML], ['hell', buildEbayHTMLLight]] as const) {
     it(`${name}: keine Fremd-E-Mail und kein Hersteller-/EU-Kontakt mehr`, () => {
       const html = build(product);
@@ -123,9 +126,9 @@ ${EU}` };
       expect(html).not.toContain('15252064185');
       expect(html).toContain(GPSR_DESCRIPTION_NOTICE);
     });
-    it(`${name}: alle sechs Pflichtstellen vorhanden`, () => {
+    it(`${name}: keine der früheren Impressum/AGB-Pflichtstellen mehr im Text`, () => {
       const html = build(product);
-      for (const stelle of PFLICHT) expect(html).toContain(stelle);
+      for (const stelle of ENTFERNTE_STELLEN) expect(html).not.toContain(stelle);
     });
   }
 });
