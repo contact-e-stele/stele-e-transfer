@@ -1536,8 +1536,8 @@ export async function deleteInventoryItemGroup(groupKey: string): Promise<void> 
 // Werten generiert (z.B. "-01-3PCS") und ändern sich, wenn sich Varianten-Werte oder die
 // slugify()-Logik ändern — eine hartcodierte Liste (z.B. "-SET1".."-SET4") trifft die realen
 // SKUs oft gar nicht, wodurch alte Offers aus fehlgeschlagenen Vorversuchen liegen bleiben.
-export async function getInventoryItemGroupSkus(groupKey: string, token: string): Promise<string[]> {
-  const res = await fetch(
+export async function getInventoryItemGroupSkus(groupKey: string, token: string, fetchFn: typeof fetch = fetch): Promise<string[]> {
+  const res = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
     { headers: { 'Authorization': `Bearer ${token}` } }
   );
@@ -2040,6 +2040,175 @@ export async function reviseListingContent(itemId: string, input: { title?: stri
     return { ok: false, error: errMsg };
   }
   return { ok: true };
+}
+
+// ─── P71-B Teil 1: Beschreibungs-Nachzieh-Weg über die Inventory API ───────────
+// Live bestätigt (Produkt 147, 28.09.2026 21:05): reviseListingContent() (Trading API,
+// ReviseFixedPriceItem) wird von eBay abgelehnt, wenn das Angebot über die Inventory API angelegt
+// wurde ("Die warenbestandsbasierte Angebotsverwaltung wird derzeit von diesem Tool nicht
+// unterstützt") — GENAU der Fall bei allen über listOnEbay()/listOnEbayWithVariants() erzeugten
+// Angeboten (createOffer()/Varianten-Offer, oben in dieser Datei). Die Beschreibung liegt dort in
+// offer.listingDescription, nicht mehr über die Trading API erreichbar.
+//
+// PUT /sell/inventory/v1/offer/{offerId} ERSETZT das komplette Offer-Objekt (wie bei
+// setInventoryItemQuantity() für Inventory Items dokumentiert) — deshalb wird hier IMMER erst das
+// volle Offer geholt und nur listingDescription darin geändert, statt (wie updateOfferPriceBySku()
+// in price-monitor.ts) einen Teil-Payload zu senden. Ein Teil-Payload würde bei der Beschreibung
+// den Preis, die Menge, die Merkmale und die GPSR-`regulatory`-Felder (Paket 3) mit-löschen — das
+// widerspräche der Vorgabe "nur Beschreibung, kein Preis/Menge/Merkmale" (Auftrag 3).
+export async function updateOfferDescriptionBySku(
+  sku: string,
+  html: string,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetchFn(
+    `${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
+    { headers: { 'Authorization': `Bearer ${token}` } },
+  );
+  if (!res.ok) return { ok: false, error: `GET offer?sku=${sku} fehlgeschlagen: ${res.status}` };
+  const data = await res.json() as { offers?: Array<{ offerId: string }> };
+  const offers = data.offers ?? [];
+  if (offers.length === 0) return { ok: false, error: `Kein Offer für SKU ${sku} gefunden` };
+
+  let anyOk = false;
+  const errors: string[] = [];
+  for (const offer of offers) {
+    const fullRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${offer.offerId}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!fullRes.ok) { errors.push(`GET offer/${offer.offerId}: ${fullRes.status}`); continue; }
+    const offerData = await fullRes.json() as Record<string, unknown>;
+    offerData.listingDescription = html;
+    const putRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${offer.offerId}`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+      body: JSON.stringify(offerData),
+    });
+    if (putRes.ok || putRes.status === 204) anyOk = true;
+    else errors.push(`PUT offer/${offer.offerId}: ${putRes.status}`);
+  }
+  return anyOk ? { ok: true } : { ok: false, error: errors.join('; ') || `Kein Offer für SKU ${sku} aktualisiert` };
+}
+
+// Code-Review-Fund (P71-B Teil 1): der Titel liegt NICHT im Offer, sondern im Inventory Item
+// (product.title, s. createOrUpdateInventoryItem oben) bzw. — bei Varianten — im Titel der
+// Inventory Item Group (variantSKUs teilen sich EIN Gruppen-Titel, s. listOnEbayWithVariants oben:
+// `groupBody.title = input.title`). PUT ersetzt auch hier das komplette Objekt (wie bei
+// setInventoryItemQuantity) — deshalb GET-voll → nur title ändern → PUT-voll.
+export async function updateInventoryItemTitle(
+  sku: string,
+  title: string,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<{ ok: boolean; error?: string }> {
+  const getRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!getRes.ok) return { ok: false, error: `GET inventory_item/${sku} fehlgeschlagen: ${getRes.status}` };
+  const item = await getRes.json() as Record<string, unknown>;
+  item.product = { ...(item.product as Record<string, unknown> | undefined ?? {}), title };
+  const putRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+    body: JSON.stringify(item),
+  });
+  if (putRes.ok || putRes.status === 204) return { ok: true };
+  return { ok: false, error: `PUT inventory_item/${sku} fehlgeschlagen: ${putRes.status}` };
+}
+
+export async function updateInventoryItemGroupTitle(
+  groupSku: string,
+  title: string,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<{ ok: boolean; error?: string }> {
+  const getRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!getRes.ok) return { ok: false, error: `GET inventory_item_group/${groupSku} fehlgeschlagen: ${getRes.status}` };
+  const group = await getRes.json() as Record<string, unknown>;
+  group.title = title;
+  const putRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+    body: JSON.stringify(group),
+  });
+  if (putRes.ok || putRes.status === 204) return { ok: true };
+  return { ok: false, error: `PUT inventory_item_group/${groupSku} fehlgeschlagen: ${putRes.status}` };
+}
+
+// Einzelartikel-SKU zuerst versuchen (stele-{productId}, wie updateEbayPriceInventory), bei keinem
+// Treffer über die Varianten-Gruppe (stele-{productId}-GROUP) gehen — jede Varianten-SKU hat ihr
+// EIGENES Offer mit eigenem listingDescription (kein gemeinsames "Gruppen-Offer" mit der
+// Beschreibung; bestätigt am bestehenden Varianten-Offer-Aufbau oben in dieser Datei, wo jede
+// Varianten-SKU ihr eigenes `listingDescription: input.description` bekommt).
+//
+// Code-Review-Fund (P71-B Teil 1): anders als updateEbayPriceInventory() in price-monitor.ts
+// (dort reicht "irgendeine Variante hat den neuen Preis" — ein kurzzeitig falscher Preis auf 1
+// von 5 Varianten ist ein Geschäfts-, kein Grundsatzproblem) müssen hier ALLE Varianten-Offers
+// erfolgreich bereinigt werden: Ziel ist die Aufhebung eines Grundsatzverstoßes (Kontaktdaten/
+// Hotlinks) — ein Listing mit auch nur EINER weiterhin verstoßenden Variante ist nicht bereinigt,
+// darf aber nicht als Erfolg gemeldet werden (sonst schreibt refreshOneProductDescription() die
+// DB auf "bereinigt", obwohl live noch ein Verstoß steht).
+export async function updateOfferDescriptionInventory(
+  productId: number,
+  html: string,
+  title: string | undefined,
+  fetchFn: typeof fetch = fetch,
+  getTokenFn: () => Promise<string> = getAccessToken,
+): Promise<{ ok: boolean; error?: string }> {
+  const token = await getTokenFn();
+  const sku = `stele-${productId}`;
+  const baseResult = await updateOfferDescriptionBySku(sku, html, token, fetchFn);
+  if (baseResult.ok) {
+    if (!title) return baseResult;
+    const titleResult = await updateInventoryItemTitle(sku, title, token, fetchFn);
+    if (!titleResult.ok) return { ok: false, error: `Beschreibung aktualisiert, aber Titel fehlgeschlagen: ${titleResult.error}` };
+    return { ok: true };
+  }
+
+  const groupSku = `${sku}-GROUP`;
+  const variantSkus = await getInventoryItemGroupSkus(groupSku, token, fetchFn);
+  if (variantSkus.length === 0) return baseResult;
+
+  const failed: string[] = [];
+  for (const varSku of variantSkus) {
+    const r = await updateOfferDescriptionBySku(varSku, html, token, fetchFn);
+    if (!r.ok) failed.push(`${varSku}: ${r.error ?? 'unbekannter Fehler'}`);
+  }
+  if (failed.length > 0) {
+    return { ok: false, error: `${failed.length} von ${variantSkus.length} Varianten-Beschreibungen fehlgeschlagen: ${failed.join('; ')}` };
+  }
+
+  if (!title) return { ok: true };
+  const titleResult = await updateInventoryItemGroupTitle(groupSku, title, token, fetchFn);
+  if (!titleResult.ok) return { ok: false, error: `Alle Varianten-Beschreibungen aktualisiert, aber Gruppen-Titel fehlgeschlagen: ${titleResult.error}` };
+  return { ok: true };
+}
+
+// Einstiegspunkt für den Beschreibungs-Nachzieh-Weg (description-refresh.ts): erst Inventory-API
+// (neue, über die Inventory API angelegte Angebote), bei Fehlschlag Trading-API als zweiter Versuch
+// (ältere, klassisch angelegte Angebote, für die reviseListingContent() weiterhin funktioniert).
+// Beide Fehlertexte kommen zusammen zurück, wenn auch der zweite Versuch scheitert.
+export async function reviseListingDescription(
+  productId: number,
+  itemId: string,
+  input: { htmlDescription: string; title?: string },
+  fetchFn: typeof fetch = fetch,
+  getTokenFn: () => Promise<string> = getAccessToken,
+  tradingReviseFn: typeof reviseListingContent = reviseListingContent,
+): Promise<{ ok: boolean; error?: string }> {
+  const inventoryResult = await updateOfferDescriptionInventory(productId, input.htmlDescription, input.title, fetchFn, getTokenFn);
+  if (inventoryResult.ok) return { ok: true };
+
+  const tradingResult = await tradingReviseFn(itemId, input);
+  if (tradingResult.ok) return { ok: true };
+
+  return {
+    ok: false,
+    error: `Inventory-API: ${inventoryResult.error ?? 'unbekannter Fehler'} | Trading-API: ${tradingResult.error ?? 'unbekannter Fehler'}`,
+  };
 }
 
 // ─── Anzeige-Rate (Werbekosten) live setzen ────────────────────────────────────

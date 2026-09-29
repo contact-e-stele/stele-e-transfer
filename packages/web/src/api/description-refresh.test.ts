@@ -46,7 +46,7 @@ function makeDeps(products: DescriptionRefreshProduct[], opts?: { reviseOk?: boo
     revisedItemIds,
     revisedTitles,
     getProduct: async (id) => byId.get(id),
-    reviseListingContent: async (itemId, input) => {
+    reviseListingContent: async (_productId, itemId, input) => {
       revisedItemIds.push(itemId);
       if (input.title !== undefined) revisedTitles.push(input.title);
       if (opts?.failReviseForItemIds?.includes(itemId)) {

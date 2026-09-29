@@ -37,7 +37,10 @@ export interface DescriptionRefreshProduct extends ProductDescriptionFields {
 
 export interface DescriptionRefreshDeps {
   getProduct: (productId: number) => Promise<DescriptionRefreshProduct | undefined>;
-  reviseListingContent: (itemId: string, input: { htmlDescription: string; title?: string }) => Promise<{ ok: boolean; error?: string }>;
+  // P71-B Teil 1: productId zusätzlich zu itemId, weil der Inventory-API-Weg (erster Versuch,
+  // s. ebay.ts reviseListingDescription()) die SKU aus der Produkt-ID ableitet (`stele-{productId}`)
+  // — die eBay-ItemID allein reicht dafür nicht.
+  reviseListingContent: (productId: number, itemId: string, input: { htmlDescription: string; title?: string }) => Promise<{ ok: boolean; error?: string }>;
   updateProductDescription: (productId: number, htmlDescription: string) => Promise<void>;
 }
 
@@ -88,8 +91,8 @@ export async function refreshOneProductDescription(
   }
 
   try {
-    const result = await deps.reviseListingContent(product.ebayListingId, { htmlDescription: after, title: newTitle });
-    if (!result.ok) return { productId, ok: false, httpStatus: 400, error: result.error ?? 'Fehler bei ReviseFixedPriceItem' };
+    const result = await deps.reviseListingContent(productId, product.ebayListingId, { htmlDescription: after, title: newTitle });
+    if (!result.ok) return { productId, ok: false, httpStatus: 400, error: result.error ?? 'Fehler beim Aktualisieren der Beschreibung' };
     await deps.updateProductDescription(productId, after);
     return { productId, ok: true, dryRun: false, itemId: product.ebayListingId, violationsBefore };
   } catch (e) {
