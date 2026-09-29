@@ -2,7 +2,7 @@
 // Beschreibung in inventory_item_group.description. Der Gruppen-PUT ist der maßgebliche Schritt;
 // Erfolg wird erst gemeldet, wenn er gelungen ist.
 import { describe, expect, test } from 'bun:test';
-import { updateOfferDescriptionInventory, updateInventoryItemGroupContent } from './ebay';
+import { updateOfferDescriptionInventory, updateInventoryItemGroupContent, reviseListingDescription, type reviseListingContent } from './ebay';
 
 const OLD_GROUP = {
   inventoryItemGroupKey: 'stele-1-GROUP',
@@ -14,7 +14,8 @@ const OLD_GROUP = {
   variesBy: { aspectsImageVariesBy: ['Farbe'], specifications: [{ name: 'Farbe', values: ['Rot', 'Blau'] }] },
 };
 
-function makeFetch(opts: { groupGetOk?: boolean; groupPutStatus?: number; offerPutOk?: boolean } = {}) {
+function makeFetch(opts: { groupGetOk?: boolean; groupPutStatus?: number; offerPutOk?: boolean; offerPutFailSkus?: string[]; putIgnored?: boolean } = {}) {
+  let current: Record<string, unknown> = { ...OLD_GROUP };
   const groupPuts: Array<Record<string, unknown>> = [];
   const offerPuts: string[] = [];
   const order: string[] = [];
@@ -23,10 +24,12 @@ function makeFetch(opts: { groupGetOk?: boolean; groupPutStatus?: number; offerP
     const method = init?.method ?? 'GET';
     if (u.includes('/inventory_item_group/')) {
       if (method === 'GET') {
-        return opts.groupGetOk === false ? new Response('', { status: 500 }) : new Response(JSON.stringify(OLD_GROUP), { status: 200 });
+        return opts.groupGetOk === false ? new Response('', { status: 500 }) : new Response(JSON.stringify(current), { status: 200 });
       }
       order.push('group-put');
-      groupPuts.push(JSON.parse(String(init?.body)));
+      const body = JSON.parse(String(init?.body));
+      groupPuts.push(body);
+      if (!opts.putIgnored && (opts.groupPutStatus ?? 204) < 400) current = body; // eBay übernimmt den PUT (außer putIgnored)
       const status = opts.groupPutStatus ?? 204;
       return new Response(status >= 400 ? '{"errors":[{"message":"boom"}]}' : null, { status });
     }
@@ -39,7 +42,8 @@ function makeFetch(opts: { groupGetOk?: boolean; groupPutStatus?: number; offerP
     if (method === 'PUT') {
       order.push('offer-put');
       offerPuts.push(u);
-      return new Response('', { status: opts.offerPutOk === false ? 500 : 200 });
+      const failSku = (opts.offerPutFailSkus ?? []).some(sku => u.endsWith(sku === 'stele-1-A' ? 'OFF-A' : 'OFF-B'));
+      return new Response('', { status: opts.offerPutOk === false || failSku ? 500 : 200 });
     }
     return new Response('', { status: 404 });
   }) as unknown as typeof fetch;
@@ -106,5 +110,42 @@ describe('updateInventoryItemGroupContent', () => {
     const r = await updateInventoryItemGroupContent('stele-1-GROUP', { description: NEW_HTML }, 'tok', fetchFn);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('boom');
+  });
+});
+
+describe('Rücklese-Prüfung, Teilerfolg, kein falscher Erfolg über den Trading-Fallback', () => {
+  test('PUT 204, aber die Gruppe trägt beim Zurücklesen noch die alte Beschreibung → ok:false', async () => {
+    const { fetchFn, offerPuts } = makeFetch({ putIgnored: true });
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('Zurücklesen');
+    expect(offerPuts.length).toBe(0);
+  });
+
+  test('nur 1 von 2 Varianten-Offers scheitert → ok:false, partial:true', async () => {
+    const { fetchFn } = makeFetch({ offerPutFailSkus: ['stele-1-B'] });
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    expect(r.ok).toBe(false);
+    expect(r.partial).toBe(true);
+    expect(r.error).toContain('1 von 2');
+  });
+
+  test('Teilerfolg (Gruppe neu, Offer scheitert): reviseListingDescription fällt NICHT auf die Trading-API zurück und meldet ok:false', async () => {
+    const { fetchFn } = makeFetch({ offerPutFailSkus: ['stele-1-B'] });
+    let tradingCalled = false;
+    const tradingFn = (async () => { tradingCalled = true; return { ok: true }; }) as unknown as typeof reviseListingContent;
+    const r = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: NEW_HTML }, fetchFn, async () => 'tok', tradingFn);
+    expect(r.ok).toBe(false);
+    expect(tradingCalled).toBe(false);
+  });
+
+  test('Gruppen-PUT scheitert komplett: Trading-Fallback bleibt wie bisher erlaubt (kein Teilerfolg)', async () => {
+    const { fetchFn } = makeFetch({ groupPutStatus: 500 });
+    let tradingCalled = false;
+    const tradingFn = (async () => { tradingCalled = true; return { ok: false, error: 'trading down' }; }) as unknown as typeof reviseListingContent;
+    const r = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: NEW_HTML }, fetchFn, async () => 'tok', tradingFn);
+    expect(r.ok).toBe(false);
+    expect(tradingCalled).toBe(true);
+    expect(r.error).toContain('Trading-API: trading down');
   });
 });

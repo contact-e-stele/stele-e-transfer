@@ -2176,22 +2176,33 @@ export async function updateInventoryItemGroupContent(
   const getRes = await fetchFn(url, { headers: { 'Authorization': `Bearer ${token}` } });
   if (!getRes.ok) return { ok: false, error: `GET inventory_item_group/${groupSku} fehlgeschlagen: ${getRes.status}` };
   const group = await getRes.json() as Record<string, unknown>;
+  const oldDescription = group.description;
   group.description = content.description;
-  if (content.title) group.title = content.title;
+  if (content.title) group.title = content.title; // leerer Titel = "Titel nicht ändern"
   const putRes = await fetchFn(url, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
     body: JSON.stringify(group),
   });
-  if (putRes.ok || putRes.status === 204) return { ok: true };
-  const detail = await putRes.text().catch(() => '');
-  return { ok: false, error: `PUT inventory_item_group/${groupSku} fehlgeschlagen: ${putRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}` };
+  if (!(putRes.ok || putRes.status === 204)) {
+    const detail = await putRes.text().catch(() => '');
+    return { ok: false, error: `PUT ${putRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}` };
+  }
+  // Rücklese-Prüfung (Code-Review): ein 2xx allein hat beim Live-Fund 29.09. schon einmal Erfolg vorgetäuscht.
+  // Fehlschlag nur, wenn die Gruppe danach NOCH die alte Beschreibung trägt (eBay darf HTML normalisieren).
+  const checkRes = await fetchFn(url, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!checkRes.ok) return { ok: false, error: `PUT ok, Kontroll-GET inventory_item_group/${groupSku} fehlgeschlagen: ${checkRes.status}` };
+  const after = await checkRes.json() as Record<string, unknown>;
+  if (typeof oldDescription === 'string' && after.description === oldDescription && oldDescription !== content.description) {
+    return { ok: false, error: 'PUT ok, aber die Gruppe trägt beim Zurücklesen noch die alte Beschreibung' };
+  }
+  return { ok: true };
 }
 
 // Einzelartikel-SKU zuerst versuchen (stele-{productId}, wie updateEbayPriceInventory), bei keinem
 // Treffer über die Varianten-Gruppe (stele-{productId}-GROUP) gehen — jede Varianten-SKU hat ihr
-// EIGENES Offer mit eigenem listingDescription (kein gemeinsames "Gruppen-Offer" mit der
-// Beschreibung; bestätigt am bestehenden Varianten-Offer-Aufbau oben in dieser Datei, wo jede
+// EIGENES Offer mit eigenem listingDescription; die ANGEZEIGTE Beschreibung steht aber in der
+// Inventory Item Group (s. updateInventoryItemGroupContent, P71-B Nachtrag). Bestätigt am bestehenden Varianten-Offer-Aufbau oben in dieser Datei, wo jede
 // Varianten-SKU ihr eigenes `listingDescription: input.description` bekommt).
 //
 // Code-Review-Fund (P71-B Teil 1): anders als updateEbayPriceInventory() in price-monitor.ts
@@ -2207,7 +2218,7 @@ export async function updateOfferDescriptionInventory(
   title: string | undefined,
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAccessToken,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; partial?: boolean }> {
   const blocked = outgoingTextBlockError(title, html);
   if (blocked) return { ok: false, error: blocked };
   const token = await getTokenFn();
@@ -2226,7 +2237,7 @@ export async function updateOfferDescriptionInventory(
 
   // Maßgeblicher Schritt zuerst: Gruppe (Beschreibung + Titel). Scheitert er, ist nichts "bereinigt".
   const groupResult = await updateInventoryItemGroupContent(groupSku, { description: html, title }, token, fetchFn);
-  if (!groupResult.ok) return { ok: false, error: `Gruppen-Beschreibung fehlgeschlagen: ${groupResult.error}` };
+  if (!groupResult.ok) return { ok: false, error: `Gruppen-Beschreibung fehlgeschlagen (inventory_item_group/${groupSku}): ${groupResult.error}` };
 
   // Zusätzlich die Offers je Varianten-SKU (wie bisher, alle müssen gelingen).
   const failed: string[] = [];
@@ -2235,7 +2246,7 @@ export async function updateOfferDescriptionInventory(
     if (!r.ok) failed.push(`${varSku}: ${r.error ?? 'unbekannter Fehler'}`);
   }
   if (failed.length > 0) {
-    return { ok: false, error: `Gruppe aktualisiert, aber ${failed.length} von ${variantSkus.length} Varianten-Offers fehlgeschlagen: ${failed.join('; ')}` };
+    return { ok: false, partial: true, error: `Gruppe aktualisiert, aber ${failed.length} von ${variantSkus.length} Varianten-Offers fehlgeschlagen: ${failed.join('; ')}` };
   }
   return { ok: true };
 }
@@ -2257,6 +2268,8 @@ export async function reviseListingDescription(
   if (blocked) return { ok: false, error: blocked };
   const inventoryResult = await updateOfferDescriptionInventory(productId, input.htmlDescription, input.title, fetchFn, getTokenFn);
   if (inventoryResult.ok) return { ok: true };
+  // Teilerfolg (Gruppe neu, Offers je SKU nicht): KEIN Trading-Fallback, sonst könnte dessen 2xx den Fehler verschlucken.
+  if (inventoryResult.partial) return { ok: false, error: `Inventory-API: ${inventoryResult.error}` };
 
   const tradingResult = await tradingReviseFn(itemId, input);
   if (tradingResult.ok) return { ok: true };
