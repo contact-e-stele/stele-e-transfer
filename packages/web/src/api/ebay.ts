@@ -2159,6 +2159,35 @@ export async function updateInventoryItemGroupTitle(
   return { ok: false, error: `PUT inventory_item_group/${groupSku} fehlgeschlagen: ${putRes.status}` };
 }
 
+// P71-B Nachtrag (Live-Fund 29.09., Produkt 147): bei Varianten-Angeboten liegt die ANGEZEIGTE
+// Beschreibung in inventory_item_group.description (dort beim Listing gesetzt, groupBody in
+// listOnEbayWithVariants) — die Offers je SKU allein ändern das Live-Angebot nicht. Volles GET,
+// description (und title, falls angegeben) ersetzen, volles PUT (createOrReplace ersetzt die ganze Gruppe).
+// Laut eBay-Doku (Inventory API, inventory item groups) werden title/description der Gruppe zu
+// Titel/Beschreibung des Live-Angebots und Änderungen an einer Gruppe eines Live-Angebots
+// aktualisieren dieses automatisch — ein erneutes publishOfferByInventoryItemGroup ist nicht nötig.
+export async function updateInventoryItemGroupContent(
+  groupSku: string,
+  content: { description: string; title?: string },
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<{ ok: boolean; error?: string }> {
+  const url = `${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`;
+  const getRes = await fetchFn(url, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!getRes.ok) return { ok: false, error: `GET inventory_item_group/${groupSku} fehlgeschlagen: ${getRes.status}` };
+  const group = await getRes.json() as Record<string, unknown>;
+  group.description = content.description;
+  if (content.title) group.title = content.title;
+  const putRes = await fetchFn(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+    body: JSON.stringify(group),
+  });
+  if (putRes.ok || putRes.status === 204) return { ok: true };
+  const detail = await putRes.text().catch(() => '');
+  return { ok: false, error: `PUT inventory_item_group/${groupSku} fehlgeschlagen: ${putRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}` };
+}
+
 // Einzelartikel-SKU zuerst versuchen (stele-{productId}, wie updateEbayPriceInventory), bei keinem
 // Treffer über die Varianten-Gruppe (stele-{productId}-GROUP) gehen — jede Varianten-SKU hat ihr
 // EIGENES Offer mit eigenem listingDescription (kein gemeinsames "Gruppen-Offer" mit der
@@ -2195,18 +2224,19 @@ export async function updateOfferDescriptionInventory(
   const variantSkus = await getInventoryItemGroupSkus(groupSku, token, fetchFn);
   if (variantSkus.length === 0) return baseResult;
 
+  // Maßgeblicher Schritt zuerst: Gruppe (Beschreibung + Titel). Scheitert er, ist nichts "bereinigt".
+  const groupResult = await updateInventoryItemGroupContent(groupSku, { description: html, title }, token, fetchFn);
+  if (!groupResult.ok) return { ok: false, error: `Gruppen-Beschreibung fehlgeschlagen: ${groupResult.error}` };
+
+  // Zusätzlich die Offers je Varianten-SKU (wie bisher, alle müssen gelingen).
   const failed: string[] = [];
   for (const varSku of variantSkus) {
     const r = await updateOfferDescriptionBySku(varSku, html, token, fetchFn);
     if (!r.ok) failed.push(`${varSku}: ${r.error ?? 'unbekannter Fehler'}`);
   }
   if (failed.length > 0) {
-    return { ok: false, error: `${failed.length} von ${variantSkus.length} Varianten-Beschreibungen fehlgeschlagen: ${failed.join('; ')}` };
+    return { ok: false, error: `Gruppe aktualisiert, aber ${failed.length} von ${variantSkus.length} Varianten-Offers fehlgeschlagen: ${failed.join('; ')}` };
   }
-
-  if (!title) return { ok: true };
-  const titleResult = await updateInventoryItemGroupTitle(groupSku, title, token, fetchFn);
-  if (!titleResult.ok) return { ok: false, error: `Alle Varianten-Beschreibungen aktualisiert, aber Gruppen-Titel fehlgeschlagen: ${titleResult.error}` };
   return { ok: true };
 }
 
