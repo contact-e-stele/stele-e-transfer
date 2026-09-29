@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -817,5 +817,308 @@ describe('postOfferWithTypeFallback — types-Wiederholung einmal und nur einmal
     expect(isResponsiblePersonTypeError({ errors: [{ message: 'regulatory.responsiblePersons[0].types invalid' }] })).toBe(true);
     expect(isResponsiblePersonTypeError({ errors: [{ message: 'Offer exists' }] })).toBe(false);
     expect(isResponsiblePersonTypeError(null)).toBe(false);
+  });
+});
+
+// P71-B Teil 1: Beschreibungs-Nachzieh-Weg über die Inventory API. Ein injizierter fetchFn
+// dispatcht per URL/Methode auf feste Fixtures — kein echter Netzwerkzugriff.
+describe('updateOfferDescriptionBySku — GET-volles-Offer + PUT-volles-Offer (kein Teil-Payload)', () => {
+  function makeFetch(opts: {
+    listOffers?: Array<{ offerId: string }> | 'error';
+    fullOfferByOfferId?: Record<string, Record<string, unknown> | 'error'>;
+    putResult?: Record<string, boolean>; // offerId -> ok
+  }) {
+    const putBodies: Record<string, Record<string, unknown>> = {};
+    const calledUrls: string[] = [];
+    const fetchFn = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      calledUrls.push(`${init?.method ?? 'GET'} ${u}`);
+      if (u.includes('/offer?sku=')) {
+        if (opts.listOffers === 'error') return new Response('', { status: 500 });
+        return new Response(JSON.stringify({ offers: opts.listOffers ?? [] }), { status: 200 });
+      }
+      const offerIdMatch = u.match(/\/offer\/([^/?]+)$/);
+      const offerId = offerIdMatch?.[1] ?? '';
+      if (!init?.method || init.method === 'GET') {
+        const full = opts.fullOfferByOfferId?.[offerId];
+        if (full === 'error' || full === undefined) return new Response('', { status: 404 });
+        return new Response(JSON.stringify(full), { status: 200 });
+      }
+      if (init.method === 'PUT') {
+        putBodies[offerId] = JSON.parse(String(init.body));
+        const ok = opts.putResult?.[offerId] ?? true;
+        return new Response('', { status: ok ? 200 : 500 });
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+    return { fetchFn, putBodies, calledUrls };
+  }
+
+  test('ein Offer: PUT bekommt das VOLLE Offer-Objekt mit ersetztem listingDescription — Preis/Menge bleiben unverändert (Regressionsschutz gegen Teil-Payload)', async () => {
+    const { fetchFn, putBodies } = makeFetch({
+      listOffers: [{ offerId: 'OFF-1' }],
+      fullOfferByOfferId: {
+        'OFF-1': { sku: 'stele-42', listingDescription: '<p>ALT</p>', pricingSummary: { price: { value: '19.95', currency: 'EUR' } }, availableQuantity: 3 },
+      },
+    });
+    const result = await updateOfferDescriptionBySku('stele-42', '<p>NEU</p>', 'tok', fetchFn);
+    expect(result.ok).toBe(true);
+    expect(putBodies['OFF-1'].listingDescription).toBe('<p>NEU</p>');
+    // Regressionsbeweis: wäre hier statt des vollen Offers nur { sku, listingDescription } gesendet
+    // worden, gäbe es dieses Feld im PUT-Body nicht mehr — dieser Test würde dann fehlschlagen.
+    expect(putBodies['OFF-1'].pricingSummary).toEqual({ price: { value: '19.95', currency: 'EUR' } });
+    expect(putBodies['OFF-1'].availableQuantity).toBe(3);
+  });
+
+  test('kein Offer für die SKU gefunden → ok:false mit Klartext, kein PUT', async () => {
+    const { fetchFn, calledUrls } = makeFetch({ listOffers: [] });
+    const result = await updateOfferDescriptionBySku('stele-999', '<p>NEU</p>', 'tok', fetchFn);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Kein Offer für SKU stele-999 gefunden');
+    expect(calledUrls.some(u => u.startsWith('PUT'))).toBe(false);
+  });
+
+  test('GET offer?sku fehlgeschlagen → ok:false mit Statuscode im Fehlertext', async () => {
+    const { fetchFn } = makeFetch({ listOffers: 'error' });
+    const result = await updateOfferDescriptionBySku('stele-1', '<p>NEU</p>', 'tok', fetchFn);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('500');
+  });
+
+  test('zwei Offers, einer scheitert beim PUT → trotzdem ok:true (mind. einer erfolgreich)', async () => {
+    const { fetchFn, putBodies } = makeFetch({
+      listOffers: [{ offerId: 'OFF-A' }, { offerId: 'OFF-B' }],
+      fullOfferByOfferId: { 'OFF-A': { sku: 'x' }, 'OFF-B': { sku: 'y' } },
+      putResult: { 'OFF-A': true, 'OFF-B': false },
+    });
+    const result = await updateOfferDescriptionBySku('stele-1', '<p>NEU</p>', 'tok', fetchFn);
+    expect(result.ok).toBe(true);
+    expect(putBodies['OFF-A'].listingDescription).toBe('<p>NEU</p>');
+  });
+});
+
+describe('updateOfferDescriptionInventory — Einzelartikel-SKU zuerst, dann Varianten-Gruppe', () => {
+  function makeFetch(opts: {
+    baseOffers: Array<{ offerId: string }>;
+    groupVariantSkus?: string[];
+    variantOffersBySku?: Record<string, Array<{ offerId: string }>>;
+    fullOfferByOfferId: Record<string, Record<string, unknown>>;
+    putOkByOfferId?: Record<string, boolean>;
+  }) {
+    const calledUrls: string[] = [];
+    const fetchFn = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      calledUrls.push(`${init?.method ?? 'GET'} ${u}`);
+      if (u.includes('/inventory_item_group/')) {
+        return new Response(JSON.stringify({ variantSKUs: opts.groupVariantSkus ?? [] }), { status: 200 });
+      }
+      if (u.includes('/offer?sku=')) {
+        const sku = decodeURIComponent(u.match(/sku=([^&]+)/)?.[1] ?? '');
+        const offers = sku.endsWith('-GROUP') ? [] : (opts.variantOffersBySku?.[sku] ?? (sku === 'stele-1' ? opts.baseOffers : []));
+        return new Response(JSON.stringify({ offers }), { status: 200 });
+      }
+      const offerIdMatch = u.match(/\/offer\/([^/?]+)$/);
+      const offerId = offerIdMatch?.[1] ?? '';
+      if (!init?.method || init.method === 'GET') {
+        const full = opts.fullOfferByOfferId[offerId];
+        return full ? new Response(JSON.stringify(full), { status: 200 }) : new Response('', { status: 404 });
+      }
+      if (init.method === 'PUT') {
+        const ok = opts.putOkByOfferId?.[offerId] ?? true;
+        return new Response('', { status: ok ? 200 : 500 });
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+    return { fetchFn, calledUrls };
+  }
+
+  test('Einzelartikel-SKU hat ein Offer → aktualisiert, Varianten-Gruppe wird NICHT abgefragt', async () => {
+    const { fetchFn, calledUrls } = makeFetch({
+      baseOffers: [{ offerId: 'OFF-BASE' }],
+      fullOfferByOfferId: { 'OFF-BASE': { sku: 'stele-1' } },
+    });
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    expect(result.ok).toBe(true);
+    expect(calledUrls.some(u => u.includes('/inventory_item_group/'))).toBe(false);
+  });
+
+  test('keine Einzelartikel-SKU, Varianten-Gruppe mit 2 SKUs → beide Varianten-Offers aktualisiert', async () => {
+    const { fetchFn } = makeFetch({
+      baseOffers: [],
+      groupVariantSkus: ['stele-1-A', 'stele-1-B'],
+      variantOffersBySku: { 'stele-1-A': [{ offerId: 'OFF-A' }], 'stele-1-B': [{ offerId: 'OFF-B' }] },
+      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A' }, 'OFF-B': { sku: 'stele-1-B' } },
+    });
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    expect(result.ok).toBe(true);
+  });
+
+  // Code-Review-Fund 2: anders als updateEbayPriceInventory() (price-monitor.ts) reicht bei der
+  // Compliance-Bereinigung NICHT "irgendeine Variante erfolgreich" — ein Listing mit auch nur einer
+  // weiterhin verstoßenden Variante darf nicht als bereinigt gemeldet werden.
+  test('2 Varianten-SKUs, nur EINE erfolgreich → ok:false (nicht "irgendeine reicht" wie beim Preis-Pfad)', async () => {
+    const { fetchFn } = makeFetch({
+      baseOffers: [],
+      groupVariantSkus: ['stele-1-A', 'stele-1-B'],
+      variantOffersBySku: { 'stele-1-A': [{ offerId: 'OFF-A' }], 'stele-1-B': [{ offerId: 'OFF-B' }] },
+      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A' }, 'OFF-B': { sku: 'stele-1-B' } },
+      putOkByOfferId: { 'OFF-A': true, 'OFF-B': false },
+    });
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('1 von 2');
+    expect(result.error).toContain('stele-1-B');
+  });
+
+  test('weder Einzelartikel- noch Varianten-Offer gefunden → ok:false mit dem Fehler der Basis-SKU', async () => {
+    const { fetchFn } = makeFetch({ baseOffers: [], groupVariantSkus: [], fullOfferByOfferId: {} });
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('stele-1');
+  });
+
+  test('Varianten-Gruppe gefunden, aber alle Varianten-PUTs scheitern → ok:false, Fehler nennt Basis- UND Varianten-Fehler', async () => {
+    const { fetchFn } = makeFetch({
+      baseOffers: [],
+      groupVariantSkus: ['stele-1-A'],
+      variantOffersBySku: { 'stele-1-A': [{ offerId: 'OFF-A' }] },
+      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A' } },
+      putOkByOfferId: { 'OFF-A': false },
+    });
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('stele-1');
+    expect(result.error).toContain('Varianten');
+  });
+});
+
+// Code-Review-Fund 1: der Titel liegt beim Inventory-API-Weg NICHT im Offer, sondern im Inventory
+// Item (Einzelartikel) bzw. in der Inventory Item Group (Varianten) — ohne diese beiden Aufrufe
+// ging der Titel auf diesem Pfad still verloren, obwohl refreshOneProductDescription() ihn extra
+// bereinigt und mitgibt.
+describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fund 1)', () => {
+  test('Einzelartikel: Titel wird zusätzlich über inventory_item aktualisiert', async () => {
+    const putBodies: Record<string, Record<string, unknown>> = {};
+    const fetchFn = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'OFF-1' }] }), { status: 200 });
+      if (u.includes('/offer/OFF-1')) {
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+        putBodies.offer = JSON.parse(String(init.body));
+        return new Response('', { status: 200 });
+      }
+      if (u.includes('/inventory_item/stele-1')) {
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ product: { title: 'ALT', description: 'Plain-Text bleibt' } }), { status: 200 });
+        putBodies.item = JSON.parse(String(init.body));
+        return new Response('', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok');
+    expect(result.ok).toBe(true);
+    expect(putBodies.item.product).toEqual({ title: 'Neuer Titel', description: 'Plain-Text bleibt' });
+  });
+
+  test('Einzelartikel: Beschreibung ok, aber Titel-PUT scheitert → Gesamtergebnis ok:false (kein stiller Titel-Verlust)', async () => {
+    const fetchFn = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'OFF-1' }] }), { status: 200 });
+      if (u.includes('/offer/OFF-1')) {
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+        return new Response('', { status: 200 });
+      }
+      if (u.includes('/inventory_item/stele-1')) {
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ product: { title: 'ALT' } }), { status: 200 });
+        return new Response('', { status: 500 }); // Titel-PUT schlägt fehl
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Titel');
+  });
+
+  test('Varianten: Titel wird über die Inventory Item Group aktualisiert (nicht pro Variante)', async () => {
+    const putBodies: Record<string, Record<string, unknown>> = {};
+    const fetchFn = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/inventory_item_group/')) {
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ title: 'ALT', variantSKUs: ['stele-1-A'] }), { status: 200 });
+        putBodies.group = JSON.parse(String(init.body));
+        return new Response('', { status: 200 });
+      }
+      if (u.includes('/offer?sku=')) {
+        const sku = decodeURIComponent(u.match(/sku=([^&]+)/)?.[1] ?? '');
+        const offers = sku === 'stele-1-A' ? [{ offerId: 'OFF-A' }] : [];
+        return new Response(JSON.stringify({ offers }), { status: 200 });
+      }
+      if (u.includes('/offer/OFF-A')) {
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1-A' }), { status: 200 });
+        return new Response('', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok');
+    expect(result.ok).toBe(true);
+    expect(putBodies.group.title).toBe('Neuer Titel');
+    expect(putBodies.group.variantSKUs).toEqual(['stele-1-A']); // Rest der Gruppe bleibt erhalten
+  });
+
+  test('kein title übergeben (title undefined) → weder inventory_item noch inventory_item_group werden angefasst', async () => {
+    const calledUrls: string[] = [];
+    const fetchFn = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      calledUrls.push(u);
+      if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'OFF-1' }] }), { status: 200 });
+      if (u.includes('/offer/OFF-1')) {
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+        return new Response('', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    expect(result.ok).toBe(true);
+    expect(calledUrls.some(u => u.includes('/inventory_item/'))).toBe(false);
+  });
+});
+
+describe('reviseListingDescription — Inventory-API zuerst, Trading-API als zweiter Versuch', () => {
+  test('Inventory-API erfolgreich → Trading-API-Fallback wird NICHT aufgerufen', async () => {
+    const fetchFn = (async (url: unknown) => {
+      if (String(url).includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'O1' }] }), { status: 200 });
+      return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    let tradingCalled = false;
+    const tradingReviseFn = (async () => { tradingCalled = true; return { ok: true }; }) as typeof reviseListingContent;
+    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn);
+    expect(result.ok).toBe(true);
+    expect(tradingCalled).toBe(false);
+  });
+
+  test('Inventory-API scheitert (kein Offer) → Trading-API-Fallback greift und liefert Erfolg', async () => {
+    const fetchFn = (async (url: unknown) => {
+      if (String(url).includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [] }), { status: 200 });
+      return new Response(JSON.stringify({ variantSKUs: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const tradingReviseFn = (async () => ({ ok: true })) as typeof reviseListingContent;
+    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn);
+    expect(result.ok).toBe(true);
+  });
+
+  test('beide Wege scheitern → ok:false, Fehlertext enthält BEIDE Fehlermeldungen', async () => {
+    const fetchFn = (async (url: unknown) => {
+      if (String(url).includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [] }), { status: 200 });
+      return new Response(JSON.stringify({ variantSKUs: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const tradingReviseFn = (async () => ({ ok: false, error: 'Die warenbestandsbasierte Angebotsverwaltung wird derzeit von diesem Tool nicht unterstützt' })) as typeof reviseListingContent;
+    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Inventory-API:');
+    expect(result.error).toContain('Trading-API:');
+    expect(result.error).toContain('warenbestandsbasierte Angebotsverwaltung');
   });
 });

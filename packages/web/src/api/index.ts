@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { neutralizeGpsrTab, findForeignEmails } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
@@ -1107,7 +1107,7 @@ const app = new Hono()
       });
       const outcome = await refreshOneProductDescription(productId, { confirm: body.confirm }, {
         getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
-        reviseListingContent,
+        reviseListingContent: reviseListingDescription,
         updateProductDescription: async (id, htmlDescription) => {
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
@@ -1141,7 +1141,7 @@ const app = new Hono()
       });
       const { results } = await refreshDescriptionsBatch(productIds, { confirm: body.confirm }, {
         getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
-        reviseListingContent,
+        reviseListingContent: reviseListingDescription,
         updateProductDescription: async (id, htmlDescription) => {
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
