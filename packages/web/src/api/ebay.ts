@@ -4,6 +4,8 @@
 import { eq } from 'drizzle-orm';
 import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import type { ResolvedGpsr } from '../shared/gpsr-parser';
+import { checkOutgoingListingText, formatComplianceViolations } from '../shared/description-compliance';
+import { safeMpn, isForbiddenMpn } from '../shared/mpn-guard';
 import {
   NON_VARIATION_ASPECTS, slugify, resolveVariantEntries,
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
@@ -349,6 +351,7 @@ export interface EbayListingInput {
   variantPrices?: Array<{ sku?: string; skuId?: string; name?: string; ebayPrice?: number; price?: number; stock?: number; attrs?: Record<string, string>; imageUrl?: string; displayValues?: Record<string, string> }>; // pro-Variante Preise + Lagerbestand (P-93) + AliExpress-SKU-Attribute (P-88 1b)
   specs?: Record<string, string>; // AliExpress-Specs für dynamische Aspekte
   mpn?: string; // echte Herstellernummer, falls bekannt — NIE die AliExpress-Produkt-ID (Live-Fund 2026-09-28)
+  sourceUrl?: string; // nur für den MPN-Guard (P71-B Teil 2, Regel 5): Zahlen daraus dürfen nie als MPN gesendet werden
   ean?: string; // EAN/GTIN Barcode — falls vorhanden, sonst "Nicht zutreffend"
   adRate?: number; // Anzeigentarif % (Promoted Listings), default 5
   shippingCost?: number; // Versandkosten € — P-27/P-28-Konsolidierung: nötig, damit fehlende
@@ -847,7 +850,11 @@ export async function buildAspects(
   getTokenFn: () => Promise<string> = getAppToken,
 ): Promise<Record<string, string[]>> {
   const aspects: Record<string, string[]> = {};
-  const manualMap = manualAspects ?? {};
+  // P71-B Teil 2, Regel 5: auch ein manuell eingetragener MPN darf keine AliExpress-ID sein (gilt für
+  // resolveRequiredAspect UND die Überschreib-Schleife unten).
+  const manualMap = Object.fromEntries(
+    Object.entries(manualAspects ?? {}).filter(([name, val]) => !(/^(mpn|herstellernummer)$/i.test(name) && isForbiddenMpn(val ?? ''))),
+  );
 
   // P-88 1b: AliExpress-Specs zuerst, dann über alle Varianten hinweg konstante Attribute
   // ergänzen, was specs nicht liefert (specs hat Vorrang, falls beide denselben Ziel-Namen mappen).
@@ -909,7 +916,9 @@ export async function buildAspects(
   }
 
   // MPN
-  if (mpn) aspects['MPN'] = [mpn];
+  // P71-B Teil 2, Regel 5: nie AliExpress-ID/Zahl aus sourceUrl (zweite Absicherung, s. mpn-guard.ts).
+  const safe = safeMpn(mpn);
+  if (safe) aspects['MPN'] = [safe];
 
   // EAN — explizit setzen wenn vorhanden, auch wenn die Kategorie sie nicht als "required"
   // Aspekt listet (eBays Produkt-Identifier-Prüfung greift teils unabhängig davon)
@@ -1104,7 +1113,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       title: input.title,
       description: plainDesc,
       imageUrls: input.imageUrls,
-      aspects: await buildAspects(input.specs, input.mpn, input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]),
+      aspects: await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]),
       ...(input.ean?.trim() ? { gtin: input.ean.trim() } : {}),
     },
   };
@@ -1215,7 +1224,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   const fulfillmentPolicyId = input.handlingTimeDays != null
     ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
     : policies.fulfillmentPolicyId;
-  const aspects = await buildAspects(input.specs, input.mpn, input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
+  const aspects = await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
   const regulatory = buildRegulatoryBlock(input.gpsr);
@@ -1637,7 +1646,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Pflichtaspekte einmal abrufen (gilt für alle Varianten)
   // Hinweis: input.ean ist genau EIN Wert pro Produkt (kein Feld pro Variante im Datenmodell) —
   // wird hier für alle Varianten übernommen; besser als der ungültige "Nicht angegeben"-Fallback.
-  const baseAspects = await buildAspects(input.specs, input.mpn, input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
+  const baseAspects = await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
 
   // Varianten-Aspekt-Namen (gemappt) — diese dürfen NICHT in baseAspects stecken
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler
@@ -1906,6 +1915,8 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 // ─── Alles in einem ───────────────────────────────────────────────────────────
 
 export async function listOnEbay(input: EbayListingInput): Promise<string> {
+  const blocked = outgoingTextBlockError(input.title, input.description);
+  if (blocked) throw new Error(blocked);
   // Merchant Location sicherstellen (wird nur einmal pro Server-Start ausgeführt)
   await ensureMerchantLocation();
 
@@ -2001,7 +2012,17 @@ export interface EbaySellerListing {
 
 // ─── Listing Titel/Beschreibung live auf eBay ändern (ReviseItem Trading API) ──
 // Wird sowohl vom Listings-Tab als auch vom Produkte-Tab genutzt (gemeinsame Sync-Funktion)
+// P71-B Teil 2: EINE blockierende Sperre vor jedem Senden von Titel/Beschreibung an eBay
+// (Neulisten, Trading-Revise, Inventory-Nachzieh-Weg) — Regeln s. shared/description-compliance.ts.
+function outgoingTextBlockError(title: string | undefined, description: string | undefined): string | null {
+  const violations = checkOutgoingListingText({ title, description });
+  if (violations.length === 0) return null;
+  return `Nicht an eBay gesendet — Titel/Beschreibung verstößt gegen die Dauerregeln: ${formatComplianceViolations(violations)}`;
+}
+
 export async function reviseListingContent(itemId: string, input: { title?: string; htmlDescription?: string }): Promise<{ ok: boolean; error?: string }> {
+  const blocked = outgoingTextBlockError(input.title, input.htmlDescription);
+  if (blocked) return { ok: false, error: blocked };
   const token = await getAccessToken();
   const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -2158,6 +2179,8 @@ export async function updateOfferDescriptionInventory(
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAccessToken,
 ): Promise<{ ok: boolean; error?: string }> {
+  const blocked = outgoingTextBlockError(title, html);
+  if (blocked) return { ok: false, error: blocked };
   const token = await getTokenFn();
   const sku = `stele-${productId}`;
   const baseResult = await updateOfferDescriptionBySku(sku, html, token, fetchFn);
@@ -2199,6 +2222,9 @@ export async function reviseListingDescription(
   getTokenFn: () => Promise<string> = getAccessToken,
   tradingReviseFn: typeof reviseListingContent = reviseListingContent,
 ): Promise<{ ok: boolean; error?: string }> {
+  // Vorab-Sperre, damit bei einem Verstoß nicht zwei (identische) Sperr-Fehler aus beiden Wegen zusammengeklebt werden.
+  const blocked = outgoingTextBlockError(input.title, input.htmlDescription);
+  if (blocked) return { ok: false, error: blocked };
   const inventoryResult = await updateOfferDescriptionInventory(productId, input.htmlDescription, input.title, fetchFn, getTokenFn);
   if (inventoryResult.ok) return { ok: true };
 

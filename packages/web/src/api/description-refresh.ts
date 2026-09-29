@@ -17,7 +17,7 @@
 // Reine, injizierbare Logik (GRUNDGESETZ Regel 2) — ohne echte DB/eBay-Zugriffe testbar.
 
 import { buildProductDescriptionForEbay, type ProductDescriptionFields } from './ebay-description-builder';
-import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
+import { findDescriptionComplianceViolations, summarizeDescriptionViolations, type DescriptionComplianceViolation, type DescriptionViolationSummary } from '../shared/description-compliance';
 
 export const MAX_DESCRIPTION_REFRESH_BATCH = 10;
 
@@ -45,9 +45,9 @@ export interface DescriptionRefreshDeps {
 }
 
 export type DescriptionRefreshOutcome =
-  | { productId: number; ok: true; dryRun: true; itemId: string; changed: boolean; violationsBefore: DescriptionComplianceViolation[]; violationsAfter: DescriptionComplianceViolation[] }
+  | { productId: number; ok: true; dryRun: true; itemId: string; changed: boolean; violationsBefore: DescriptionComplianceViolation[]; violationsAfter: DescriptionComplianceViolation[]; summaryBefore: DescriptionViolationSummary; summaryAfter: DescriptionViolationSummary }
   | { productId: number; ok: true; dryRun: false; itemId: string; violationsBefore: DescriptionComplianceViolation[] }
-  | { productId: number; ok: false; httpStatus: 404 | 400 | 422 | 500; error: string; violations?: DescriptionComplianceViolation[] };
+  | { productId: number; ok: false; httpStatus: 404 | 400 | 422 | 500; error: string; violations?: DescriptionComplianceViolation[]; summaryBefore?: DescriptionViolationSummary; summaryAfter?: DescriptionViolationSummary };
 
 /**
  * Baut (bei confirm:true: lädt hoch) AUSSCHLIESSLICH die Beschreibung EINES Produkts aus dessen
@@ -78,16 +78,21 @@ export async function refreshOneProductDescription(
   const newTitle = (product.generatedTitle ?? product.title).slice(0, 80);
   const violationsAfter = [...descriptionViolations, ...findDescriptionComplianceViolations(newTitle)];
 
+  // P71-B Teil 2: echte Anzahl je Muster (nicht dedupliziert) für die Vorschau im Listings-Tab.
+  const summaryBefore = summarizeDescriptionViolations(before);
+  const summaryAfter = summarizeDescriptionViolations(`${after}
+${newTitle}`);
+
   if (violationsAfter.length > 0) {
     return {
       productId, ok: false, httpStatus: 422,
-      error: 'Nach dem Neuaufbau steht noch mindestens eine E-Mail-Adresse, ein Link oder eine Domain im Text (Beschreibung oder Titel) — nicht hochgeladen',
-      violations: violationsAfter,
+      error: 'Nach dem Neuaufbau verstößt der Text noch gegen mindestens eine Dauerregel (E-Mail, Link/Domain, GPSR-Rohtext, Versandangabe) (Beschreibung oder Titel) — nicht hochgeladen',
+      violations: violationsAfter, summaryBefore, summaryAfter,
     };
   }
 
   if (opts.confirm !== true) {
-    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter };
+    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter, summaryBefore, summaryAfter };
   }
 
   try {
