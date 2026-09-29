@@ -3,7 +3,7 @@ import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { neutralizeGpsrTab, findForeignEmails } from '../shared/gpsr-description';
-import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
+import { findDescriptionComplianceViolations, checkOutgoingListingText, formatComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { buildProductDescriptionForEbay } from './ebay-description-builder';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
@@ -1161,25 +1161,28 @@ const app = new Hono()
         return c.json({ error: 'title oder htmlDescription erforderlich' }, 400);
       }
       // eBay-Verstoßserie 2026-09-28: diese Route wird u.a. vom manuellen Beschreibungs-Editor
-      // (Produkte-Tab) direkt mit clientseitig gebautem HTML aufgerufen — derselbe harte Filter
-      // wie /ebay/list und der Nachzieh-Weg (GRUNDGESETZ Regel 8), sonst könnte hier eine
-      // Kontaktdaten-/Link-Verletzung wieder eingeschleust werden.
-      if (body.htmlDescription !== undefined) {
-        const violations = findDescriptionComplianceViolations(body.htmlDescription);
-        if (violations.length > 0) {
-          return c.json({ error: `Beschreibung verstößt gegen eBays "Handel außerhalb von eBay"-Regel (E-Mail-Adresse(n), Link(s) oder Domain(s) im Text): ${violations.map(v => v.match).join(', ')}`, violations }, 400);
-        }
+      // (Produkte-Tab) direkt mit clientseitig gebautem HTML aufgerufen — dieselbe zentrale
+      // Sperre (checkOutgoingListingText, P71-B Teil 2: Titel UND Beschreibung, alle Dauerregeln)
+      // wie /ebay/list und der Nachzieh-Weg (GRUNDGESETZ Regel 8).
+      const violations = checkOutgoingListingText({ title: body.title, description: body.htmlDescription });
+      if (violations.length > 0) {
+        return c.json({ error: `Titel/Beschreibung verstößt gegen die Dauerregeln (E-Mail, Link/Domain, GPSR-Rohtext, Versandangaben): ${formatComplianceViolations(violations)}`, violations }, 400);
       }
-      const result = await reviseListingContent(itemId, body);
-      if (!result.ok) return c.json({ error: result.error }, 400);
-
-      // DB auch aktualisieren wenn Produkt verknüpft
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
       const dbProduct = await db.select().from(schema.products)
         .where(eq(schema.products.ebayListingId, itemId)).get();
+      // P71-B Teil 2: Beschreibung bei verknüpftem Produkt über reviseListingDescription() (Inventory-API
+      // zuerst, Trading-API als Rückfall) — die reine Trading-API scheitert bei Inventory-Angeboten.
+      // Reiner Titel-Edit oder unverknüpftes Angebot: unverändert Trading-API (kein productId → keine SKU).
+      const result = body.htmlDescription !== undefined && dbProduct
+        ? await reviseListingDescription(dbProduct.id, itemId, { htmlDescription: body.htmlDescription, title: body.title })
+        : await reviseListingContent(itemId, body);
+      if (!result.ok) return c.json({ error: result.error }, 400);
+
+      // DB auch aktualisieren wenn Produkt verknüpft
       if (dbProduct) {
         const update: Partial<typeof schema.products.$inferInsert> = { updatedAt: new Date().toISOString() };
         if (body.title !== undefined) update.generatedTitle = body.title;
@@ -2523,6 +2526,7 @@ const app = new Hono()
         // Herstellernummer bleibt der eBay-Aspekt leer; ASPECT_DEFAULTS['MPN'] (ebay.ts) liefert bei
         // Bedarf den Fallback "Nicht zutreffend" — analog zu 'Herstellernummer'.
         ean: product.ean ?? undefined,
+        sourceUrl: product.sourceUrl ?? undefined, // nur für den MPN-Guard (ebay.ts safeMpn)
         adRate: product.adRate ?? 5,
         shippingCost: product.shippingCost ?? undefined,
         shipsFrom: product.shipsFrom ?? undefined,

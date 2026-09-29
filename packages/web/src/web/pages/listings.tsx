@@ -9,6 +9,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { buildEbayHTMLLight } from "../lib/ebay-description";
+import { DescriptionRefreshPanel } from "../components/description-refresh-panel";
 
 interface EbayListing {
   itemId: string;
@@ -1186,9 +1187,9 @@ export default function Listings() {
                   <div style={{ fontWeight: 700, fontSize: 13, color: "#0F172A", lineHeight: 1.4, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
                     {listing.title.length > 80 ? listing.title.slice(0, 80) + "…" : listing.title}
                     {listing.appProduct?.hasForeignContact && (
-                      // Paket 4: reine Anzeige — die gespeicherte Beschreibung enthält noch einen fremden
-                      // Kontakt (Lieferant/Hersteller). Kein Knopf hier, der etwas hochlädt; Bereinigung
-                      // läuft über die Einzel- oder Stapel-Route (Nachzieh-Weg).
+                      // Paket 4: Anzeige — die gespeicherte Beschreibung enthält noch einen fremden Kontakt
+                      // (Lieferant/Hersteller). Bereinigung: Knopf "Beschreibung nachziehen" unter dem Titel
+                      // (P71-B Teil 2, immer nur ein Angebot).
                       <span
                         title="Beschreibung enthält noch einen fremden Kontakt (Lieferant/Hersteller) — Nachzug über die Beschreibung-Nachzieh-Route nötig"
                         style={{
@@ -1201,6 +1202,14 @@ export default function Listings() {
                       </span>
                     )}
                   </div>
+                  {/* P71-B Teil 2: einzelner Nachzieh-Knopf (Trockenlauf → Vorschau → "Jetzt an eBay senden"), kein Sammel-Knopf */}
+                  {listing.appProduct?.hasForeignContact && (
+                    <DescriptionRefreshPanel
+                      productId={listing.appProduct.id}
+                      onSent={() => setListings(prev => prev.map(l =>
+                        l.itemId === listing.itemId && l.appProduct ? { ...l, appProduct: { ...l.appProduct, hasForeignContact: false } } : l))}
+                    />
+                  )}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     {/* Preis */}
                     {isEditing ? (
