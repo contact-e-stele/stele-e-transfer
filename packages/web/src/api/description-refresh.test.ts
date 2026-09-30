@@ -32,6 +32,8 @@ function makeProduct(overrides: Partial<DescriptionRefreshProduct> & { id: numbe
     bullets: JSON.stringify([]),
     images: JSON.stringify(['https://ae01.alicdn.com/kf/example.jpg']),
     htmlDescription: null,
+    // P71-C Teil 2: vollständige GPSR-Pflichtangaben (EU-Person), sonst sperrt der Nachzug mit 422
+    gpsrName: 'Muster EU SARL', gpsrAddress: '12 Rue de Test', gpsrCity: '75017 Paris', gpsrEmail: 'eu@example.fr', gpsrPhone: null, gpsrCountry: 'FR',
     ...overrides,
   };
 }
@@ -242,5 +244,45 @@ describe('refreshDescriptionsBatch — läuft weiter nach Fehler, Ergebnis pro P
     expect(results).toHaveLength(2);
     expect(results.map(r => r.productId)).toEqual([1, 2]);
     expect(deps.revisedItemIds).toEqual(['item-1', 'item-2']);
+  });
+});
+
+describe('refreshOneProductDescription — P71-C Teil 2: GPSR-Pflichtangaben (regulatory)', () => {
+  test('ohne EU-Person (kein eu) → 422 mit "GPSR-Pflichtangaben fehlen", KEIN Sende-Aufruf, KEINE DB-Schrift', async () => {
+    const product = makeProduct({ id: 8, ebayListingId: '198600000008', gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrCountry: null, gpsrRaw: null });
+    const deps = makeDeps([product]);
+    const outcome = await refreshOneProductDescription(8, { confirm: true }, deps);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.httpStatus).toBe(422);
+      expect(outcome.error).toStartWith('GPSR-Pflichtangaben fehlen: ');
+      expect(outcome.error).toContain('Name der verantwortlichen Person in der EU');
+      expect(outcome.gpsr?.complete).toBe(false);
+    }
+    expect(deps.revisedItemIds).toEqual([]);
+    expect(deps.updated.size).toBe(0);
+  });
+
+  test('Trockenlauf meldet gpsr.complete:true und sendet nichts', async () => {
+    const product = makeProduct({ id: 9, ebayListingId: '198600000009' });
+    const deps = makeDeps([product]);
+    const outcome = await refreshOneProductDescription(9, {}, deps);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok && outcome.dryRun) expect(outcome.gpsr).toEqual({ complete: true, missing: [] });
+    expect(deps.revisedItemIds).toEqual([]);
+  });
+
+  test('confirm:true übergibt den regulatory-Block (EU-Person) an reviseListingContent', async () => {
+    const product = makeProduct({ id: 10, ebayListingId: '198600000010' });
+    const seen: unknown[] = [];
+    const deps = makeDeps([product]);
+    const inner = deps.reviseListingContent;
+    deps.reviseListingContent = async (pid, itemId, input) => { seen.push(input.regulatory); return inner(pid, itemId, input); };
+    const outcome = await refreshOneProductDescription(10, { confirm: true }, deps);
+    expect(outcome.ok).toBe(true);
+    expect(seen).toEqual([{ responsiblePersons: [{
+      companyName: 'Muster EU SARL', addressLine1: '12 Rue de Test', postalCode: '75017', city: 'Paris',
+      country: 'FR', email: 'eu@example.fr', types: ['EU_RESPONSIBLE_PERSON'],
+    }] }]);
   });
 });

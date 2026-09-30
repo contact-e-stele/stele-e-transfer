@@ -2,9 +2,9 @@ import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
-import { neutralizeGpsrTab, findForeignEmails } from '../shared/gpsr-description';
+import { findForeignEmails } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, checkOutgoingListingText, formatComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
-import { buildProductDescriptionForEbay } from './ebay-description-builder';
+import { resolveListingDescription } from './ebay-description-builder';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
@@ -1090,10 +1090,10 @@ const app = new Hono()
 
   // ─── Paket 3: Einzel-Nachzieh-Weg für EIN laufendes Angebot (KEIN Bulk) ─────────────────────
   // Bereinigt die gespeicherte Beschreibung (GPSR-Tab: Rohtext mit Kontakten Dritter → neutraler
-  // Hinweis) und lädt sie für dieses eine Angebot hoch (Trading-API wie PATCH .../content).
+  // Hinweis) und lädt sie für dieses eine Angebot hoch (Inventory-API, P71-C Teil 2: im selben PUT auch `regulatory`, kein Trading-Fallback).
   // Standard ist ein reiner Probelauf (nichts wird geschrieben); nur `{ "confirm": true }` schreibt.
   // Bleibt nach der Bereinigung noch eine fremde E-Mail-Adresse im Text, wird NICHT hochgeladen (422).
-  // Die strukturierten Felder (`regulatory`) setzt diese Route nicht — sie gelten beim Listing (ebay.ts).
+  // Fehlen GPSR-Pflichtangaben, wird nichts gesendet (422).
   // Paket 4: Logik nach description-refresh.ts ausgelagert — dieselbe Funktion, die auch die
   // Stapel-Route (weiter unten) nutzt. Kein zweiter Weg, keine Kopie (GRUNDGESETZ Regel 8).
   .post('/ebay/products/:productId/refresh-description', async (c) => {
@@ -2351,25 +2351,14 @@ const app = new Hono()
       return c.json({ error: 'Keine Bilder gespeichert — bitte Produkt neu importieren' }, 400);
     }
 
-    // Beschreibung: htmlDescription aus DB bevorzugen (bereits vollständige Vorlage)
-    const rawHtml = product.htmlDescription ?? '';
-    const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
-
-    // eBay-Verstoßserie 2026-09-28: Kontaktdaten/Links/Domains jeder Art gehören nicht in den
-    // Beschreibungstext (auch nicht die eigenen — Impressum/AGB sind eBay-Verkäufereinstellungen).
-    // Nicht-Vorlage: über buildProductDescriptionForEbay() neu aufgebaut (dieselbe Rechenstelle wie
-    // der Beschreibungs-Nachzieh-Weg, GRUNDGESETZ Regel 8). Vorlage bereits in der DB: nur GPSR-Tab
-    // neutralisieren, dann dieselbe harte Prüfung.
-    let fullDescription: string;
-    let complianceViolations: DescriptionComplianceViolation[];
-    if (isFullTemplate) {
-      fullDescription = neutralizeGpsrTab(rawHtml);
-      complianceViolations = findDescriptionComplianceViolations(fullDescription);
-    } else {
-      const built = buildProductDescriptionForEbay(product);
-      fullDescription = built.html;
-      complianceViolations = built.violations;
-    }
+    // Beschreibung: gespeicherte Vorlage aus der DB bevorzugen, aber nur wenn sie die Dauerregeln
+    // einhält (eBay-Verstoßserie 2026-09-28: keine Kontaktdaten/Links/Domains im Text). Hat sie
+    // Verstöße (z. B. alte Vorlage mit E-Mail), wird sie über buildProductDescriptionForEbay()
+    // neu gebaut (P71-C Teil 2) — Fehler nur, wenn auch der Neubau verstößt. Dieselbe Rechenstelle
+    // wie der Beschreibungs-Nachzieh-Weg (GRUNDGESETZ Regel 8).
+    const listingDescription = resolveListingDescription(product, product.htmlDescription);
+    const fullDescription = listingDescription.html;
+    let complianceViolations: DescriptionComplianceViolation[] = listingDescription.violations;
     // Code-Review-Fund (eBay-Verstoßserie 2026-09-28): der Titel geht genauso an eBay wie die
     // Beschreibung (<Title>/Item-Titel) und lief bisher NICHT durch den Compliance-Validator —
     // ein alter, verunreinigter AliExpress-Titel (Quelle desselben Verstoßmusters) hätte den

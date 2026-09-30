@@ -2082,6 +2082,7 @@ export async function updateOfferDescriptionBySku(
   html: string,
   token: string,
   fetchFn: typeof fetch = fetch,
+  regulatory?: ReturnType<typeof buildRegulatoryBlock>,
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
@@ -2101,14 +2102,30 @@ export async function updateOfferDescriptionBySku(
     if (!fullRes.ok) { errors.push(`GET offer/${offer.offerId}: ${fullRes.status}`); continue; }
     const offerData = await fullRes.json() as Record<string, unknown>;
     offerData.listingDescription = html;
-    const putRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${offer.offerId}`, {
+    if (regulatory) offerData.regulatory = regulatory; // P71-C Teil 2: im selben PUT, vorhandenes regulatory wird ersetzt
+    const put = (body: unknown) => fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${offer.offerId}`, {
       method: 'PUT',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
-      body: JSON.stringify(offerData),
+      body: JSON.stringify(body),
     });
+    let putRes = await put(offerData);
+    if (!(putRes.ok || putRes.status === 204) && regulatory) {
+      // Wie postOfferWithTypeFallback: beanstandet eBay responsiblePersons.types, EINMAL mit dem Alternativwert wiederholen.
+      const errorBody = await putRes.clone().json().catch(() => null);
+      if (isResponsiblePersonTypeError(errorBody)) {
+        const altRegulatory = { ...regulatory, responsiblePersons: regulatory.responsiblePersons.map(p => ({ ...p, types: [RESPONSIBLE_PERSON_TYPE_ALT] })) };
+        putRes = await put({ ...offerData, regulatory: altRegulatory });
+        console.log(`[eBay] PUT offer/${offer.offerId}: types "${RESPONSIBLE_PERSON_TYPE_PRIMARY}" beanstandet — Wiederholung mit "${RESPONSIBLE_PERSON_TYPE_ALT}": ${putRes.ok || putRes.status === 204 ? 'angenommen' : 'ebenfalls abgelehnt'}`);
+      }
+    }
     if (putRes.ok || putRes.status === 204) anyOk = true;
-    else errors.push(`PUT offer/${offer.offerId}: ${putRes.status}`);
+    else {
+      const detail = await putRes.text().catch(() => '');
+      errors.push(`PUT offer/${offer.offerId}: ${putRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}`);
+    }
   }
+  // P71-C Teil 2 (Code-Review): mit regulatory müssen ALLE Offers der SKU gelingen, sonst bliebe eines ohne GPSR bei gemeldetem Erfolg.
+  if (regulatory && errors.length > 0) return { ok: false, error: errors.join('; ') };
   return anyOk ? { ok: true } : { ok: false, error: errors.join('; ') || `Kein Offer für SKU ${sku} aktualisiert` };
 }
 
@@ -2218,12 +2235,13 @@ export async function updateOfferDescriptionInventory(
   title: string | undefined,
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAccessToken,
+  regulatory?: ReturnType<typeof buildRegulatoryBlock>,
 ): Promise<{ ok: boolean; error?: string; partial?: boolean }> {
   const blocked = outgoingTextBlockError(title, html);
   if (blocked) return { ok: false, error: blocked };
   const token = await getTokenFn();
   const sku = `stele-${productId}`;
-  const baseResult = await updateOfferDescriptionBySku(sku, html, token, fetchFn);
+  const baseResult = await updateOfferDescriptionBySku(sku, html, token, fetchFn, regulatory);
   if (baseResult.ok) {
     if (!title) return baseResult;
     const titleResult = await updateInventoryItemTitle(sku, title, token, fetchFn);
@@ -2242,7 +2260,7 @@ export async function updateOfferDescriptionInventory(
   // Zusätzlich die Offers je Varianten-SKU (wie bisher, alle müssen gelingen).
   const failed: string[] = [];
   for (const varSku of variantSkus) {
-    const r = await updateOfferDescriptionBySku(varSku, html, token, fetchFn);
+    const r = await updateOfferDescriptionBySku(varSku, html, token, fetchFn, regulatory); // die Gruppe selbst hat kein regulatory
     if (!r.ok) failed.push(`${varSku}: ${r.error ?? 'unbekannter Fehler'}`);
   }
   if (failed.length > 0) {
@@ -2258,7 +2276,7 @@ export async function updateOfferDescriptionInventory(
 export async function reviseListingDescription(
   productId: number,
   itemId: string,
-  input: { htmlDescription: string; title?: string },
+  input: { htmlDescription: string; title?: string; regulatory?: ReturnType<typeof buildRegulatoryBlock> },
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAccessToken,
   tradingReviseFn: typeof reviseListingContent = reviseListingContent,
@@ -2266,8 +2284,10 @@ export async function reviseListingDescription(
   // Vorab-Sperre, damit bei einem Verstoß nicht zwei (identische) Sperr-Fehler aus beiden Wegen zusammengeklebt werden.
   const blocked = outgoingTextBlockError(input.title, input.htmlDescription);
   if (blocked) return { ok: false, error: blocked };
-  const inventoryResult = await updateOfferDescriptionInventory(productId, input.htmlDescription, input.title, fetchFn, getTokenFn);
+  const inventoryResult = await updateOfferDescriptionInventory(productId, input.htmlDescription, input.title, fetchFn, getTokenFn, input.regulatory);
   if (inventoryResult.ok) return { ok: true };
+  // P71-C Teil 2: die Trading-API kann kein regulatory — bei gesetztem regulatory KEIN Fallback, sonst wäre ein 2xx ein Scheinerfolg.
+  if (input.regulatory) return { ok: false, error: `Inventory-API: ${inventoryResult.error ?? 'unbekannter Fehler'}` };
   // Teilerfolg (Gruppe neu, Offers je SKU nicht): KEIN Trading-Fallback, sonst könnte dessen 2xx den Fehler verschlucken.
   if (inventoryResult.partial) return { ok: false, error: `Inventory-API: ${inventoryResult.error}` };
 
