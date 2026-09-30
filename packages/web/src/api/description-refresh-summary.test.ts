@@ -35,26 +35,25 @@ function deps(p: DescriptionRefreshProduct): DescriptionRefreshDeps & { sent: nu
 }
 
 describe('refreshOneProductDescription — Trockenlauf mit Trefferzahlen', () => {
-  test('summaryBefore zählt echt (2 gleiche Mails = 2, 2 alicdn-Bilder, 1 Versandangabe), summaryAfter ist 0; nichts gesendet', async () => {
+  test('summaryBefore zählt echt (2 gleiche Mails = 2, 2 alicdn-Bilder), summaryAfter ist 0; nichts gesendet', async () => {
     const d = deps(product);
     const r = await refreshOneProductDescription(7, {}, d);
     if (!r.ok || !r.dryRun) throw new Error('Trockenlauf erwartet');
     expect(r.summaryBefore.email).toBe(2);
     expect(r.summaryBefore.alicdn).toBe(2);
-    expect(r.summaryBefore.shipping).toBe(1);
     expect(r.summaryBefore.hosts).toEqual([{ host: 'ae01.alicdn.com', count: 2 }]);
     expect(r.summaryAfter.total).toBe(0);
     expect(r.changed).toBe(true);
     expect(d.sent).toBe(0);
   });
 
-  test('Verstoß im Titel (Versandangabe) → 422, summaryAfter zählt ihn, nichts gesendet', async () => {
-    const d = deps({ ...product, generatedTitle: 'Dose Kostenloser Versand' });
+  test('Verstoß im Titel (E-Mail) → 422, summaryAfter zählt ihn, nichts gesendet', async () => {
+    const d = deps({ ...product, generatedTitle: 'Dose info@shop.com' });
     const r = await refreshOneProductDescription(7, { confirm: true }, d);
     if (r.ok) throw new Error('422 erwartet');
     expect(r.httpStatus).toBe(422);
-    // 2 = Titel selbst + die Beschreibungs-Überschrift, die der Generator aus generatedTitle baut
-    expect(r.summaryAfter?.shipping).toBe(2);
+    // 1 = nur der Titel — der Generator entfernt E-Mail-Adressen aus der Beschreibungs-Überschrift (cleanText)
+    expect(r.summaryAfter?.email).toBe(1);
     expect(d.sent).toBe(0);
   });
 });

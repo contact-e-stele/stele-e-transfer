@@ -109,15 +109,13 @@ describe('Beschreibung: keine Fremd-Kontakte mehr im GPSR-Tab', () => {
   });
 });
 
-describe('Beschreibungs-Generator: GPSR-Tab ohne Fremd-Kontakte, keine eigenen Impressum/AGB-Pflichtstellen mehr im Text', () => {
+describe('Beschreibungs-Generator: GPSR-Tab ohne Fremd-Kontakte, Impressum/AGB wieder da (P71-C), ohne E-Mail', () => {
   const product = { title: 'Testprodukt', description: 'Ein Text.', gpsrRaw: `${MANUF}
 
 ${EU}` };
-  // eBay-Verstoßserie 2026-09-28: Impressum/AGB-Tabs (mit der eigenen Adresse/E-Mail) wurden
-  // entfernt — Impressum/AGB sind eBay-Verkäufereinstellungen, keine Beschreibungsinhalte. Die
-  // früheren "sechs Pflichtstellen" (Impressum, AGB-Anbieterzeile, Widerrufsadresse) dürfen jetzt
-  // an KEINER Stelle mehr im Text stehen (Regressionsschutz: nicht ENTFERNT, sondern umgedreht).
-  const ENTFERNTE_STELLEN = ['Impressum', 'Allgemeine Gesch&auml;ftsbedingungen', 'contact@stele-e-transfer.com', 'Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden', 'Widerruf an:'];
+  // P71-C (30.09.2026, Vorgabe Inhaber): Impressum, AGB und Widerruf stehen wieder in der Vorlage,
+  // aber ohne E-Mail-Adresse — Kontakt über eBay-Nachrichten / "Rechtliche Informationen des Verkäufers".
+  const PFLICHTSTELLEN = ['Impressum', 'Allgemeine Gesch&auml;ftsbedingungen', 'Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden', 'Widerruf an:', 'Kontakt &uuml;ber eBay-Nachrichten'];
   for (const [name, build] of [['dunkel', buildEbayHTML], ['hell', buildEbayHTMLLight]] as const) {
     it(`${name}: keine Fremd-E-Mail und kein Hersteller-/EU-Kontakt mehr`, () => {
       const html = build(product);
@@ -126,9 +124,10 @@ ${EU}` };
       expect(html).not.toContain('15252064185');
       expect(html).toContain(GPSR_DESCRIPTION_NOTICE);
     });
-    it(`${name}: keine der früheren Impressum/AGB-Pflichtstellen mehr im Text`, () => {
+    it(`${name}: Impressum/AGB/Widerruf-Pflichtstellen vorhanden, eigene E-Mail NICHT`, () => {
       const html = build(product);
-      for (const stelle of ENTFERNTE_STELLEN) expect(html).not.toContain(stelle);
+      for (const stelle of PFLICHTSTELLEN) expect(html).toContain(stelle);
+      expect(html).not.toContain('contact@stele-e-transfer.com');
     });
   }
 });

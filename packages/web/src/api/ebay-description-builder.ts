@@ -4,9 +4,9 @@
 // von /ebay/list (Erst-Listing, index.ts) UND refreshOneProductDescription() (Nachzieh-Weg für
 // laufende Angebote, description-refresh.ts), damit beide exakt dieselbe Ausgabe für dieselben
 // Produktfelder erzeugen (GRUNDGESETZ Regel 8). 1:1 aus dem bisherigen /ebay/list-Inline-Code
-// extrahiert — inklusive dessen bisherigem Verhalten, kein gpsrRaw an buildEbayHTMLLight
-// weiterzugeben (das GPSR-Tab kommt hier nie vor; die GPSR-Pflichtangaben gehen bereits separat
-// als strukturierte Offer-Daten an eBay, s. ebay.ts buildRegulatoryBlock).
+// extrahiert. P71-C (30.09.2026): gpsrRaw wird an buildEbayHTMLLight weitergegeben, damit der
+// Tab "Produktsicherheit" erzeugt wird (Vorgabe Inhaber: 5 Tabs immer). Der Rohtext selbst landet
+// nie im HTML — die Vorlage druckt nur GPSR_DESCRIPTION_NOTICE, neutralizeGpsrTab sichert zusätzlich.
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { neutralizeGpsrTab } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
@@ -22,6 +22,7 @@ export interface ProductDescriptionFields {
   variantPrices?: string | null;   // JSON array
   bullets?: string | null;         // JSON array
   images?: string | null;          // JSON array
+  gpsrRaw?: string | null;         // nur als Schalter für den Tab Produktsicherheit (Inhalt: GPSR_DESCRIPTION_NOTICE)
 }
 
 export interface BuiltProductDescription {
@@ -70,6 +71,7 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
     setContents: Object.keys(setContentsParsed).length > 0 ? setContentsParsed : undefined,
     bullets: bulletsParsed.length > 0 ? bulletsParsed : undefined,
     images: images.filter(u => u.startsWith('http')).slice(0, 3),
+    gpsrRaw: product.gpsrRaw ?? undefined,
   };
 
   const html = neutralizeGpsrTab(buildEbayHTMLLight(templateProduct));

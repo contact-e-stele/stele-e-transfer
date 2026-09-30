@@ -22,9 +22,9 @@ describe('reviseListingContent (Trading-API) — Sperre vor dem Senden', () => {
     expect(result.error).toContain('service@zreeshop.com');
   });
   test('Verstoß nur im Titel → ebenfalls gesperrt', async () => {
-    const result = await reviseListingContent('ITEM-1', { title: 'Dose Kostenloser Versand', htmlDescription: CLEAN });
+    const result = await reviseListingContent('ITEM-1', { title: 'Dose info@shop.com', htmlDescription: CLEAN });
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('shipping');
+    expect(result.error).toContain('email');
   });
 });
 
@@ -43,7 +43,7 @@ describe('reviseListingDescription / updateOfferDescriptionInventory (Inventory-
 
   test('updateOfferDescriptionInventory (direkter Aufruf): Verstoß im Titel → gesperrt, kein Token, kein Fetch', async () => {
     const { calls, fetchFn, tokenFn } = neverFetch();
-    const result = await updateOfferDescriptionInventory(1, CLEAN, 'Dose mit DHL', fetchFn, tokenFn);
+    const result = await updateOfferDescriptionInventory(1, CLEAN, 'Dose info@shop.com', fetchFn, tokenFn);
     expect(result.ok).toBe(false);
     expect(calls).toEqual([]);
   });

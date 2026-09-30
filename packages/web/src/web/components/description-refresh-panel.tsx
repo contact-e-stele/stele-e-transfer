@@ -41,7 +41,7 @@ function SummaryLine({ label, s }: { label: string; s: DescriptionViolationSumma
   return (
     <div style={{ marginBottom: 4 }}>
       <strong>{label}:</strong> E-Mails {s.email} · externe Hosts: {hosts} · alicdn-Bilder {s.alicdn}
-      {" "}· Versandangaben {s.shipping} · GPSR-Rohtext {s.gpsr} · Links {s.url} · Domains {s.domain}
+      {" "}· GPSR-Rohtext {s.gpsr} · Links {s.url} · Domains {s.domain}
     </div>
   );
 }

@@ -42,45 +42,11 @@ describe('Regel 3 — GPSR-Rohtext nur in regulatory, in der Beschreibung nur de
   });
 });
 
-describe('Regel 4 — Versandangaben nur in den eBay-Versanddaten (je Muster ein Fall)', () => {
-  const positives: Array<[string, string]> = [
-    ['Lieferzeit', 'Lieferzeit: 7 Tage'],
-    ['Bearbeitungszeit', 'Bearbeitungszeit 2 Tage'],
-    ['Versandkosten', 'zzgl. Versandkosten'],
-    ['Versandart', 'Versandart Standard'],
-    ['Versandzeit', 'Versandzeit variiert'],
-    ['Versand per', 'Versand per Paket'],
-    ['Lieferung aus', 'Lieferung aus China'],
-    ['kostenloser Versand', 'Kostenloser Versand ab 1 Stück'],
-    ['Gratisversand', 'Gratisversand!'],
-    ['versandkostenfrei', 'versandkostenfrei'],
-    ['DHL', 'wir senden mit DHL'],
-    ['DPD', 'DPD Paket'],
-    ['GLS', 'GLS Standard'],
-    ['UPS', 'UPS Express'],
-    ['Deutsche Post', 'Deutsche Post Warensendung'],
-    ['Lieferdauer', 'Lieferdauer ca. 2 Wochen'],
-    ['Versand mit Doppelpunkt', 'Versand: 5 Tage'],
-    ['Lieferung in + Zahl', 'Lieferung in 3-5 Tagen'],
-    ['Werktage im Lieferkontext', 'Die Lieferung dauert 5-8 Werktage'],
-    ['Werktage im Lieferkontext (umgekehrt)', '5-8 Werktage bis zur Lieferung'],
-  ];
-  for (const [name, text] of positives) {
-    it(`erkennt "${name}"`, () => {
-      expect(kinds(`<p>${text}</p>`, 'shipping').length).toBeGreaterThan(0);
-    });
-  }
-
-  const negatives: Array<[string, string]> = [
-    ['Rückerstattungsfrist der Vorlage (Werktage ohne Liefer-/Versandkontext)', 'R&uuml;ckerstattung innerhalb von 3–5 Werktagen nach Wareneingang'],
-    ['Lieferung in Originalverpackung (kein Zeitbezug)', 'Lieferung in Originalverpackung'],
-    ['Lieferumfang', 'Lieferumfang: 1x Frischhaltedose'],
-    ['Wörter mit ups/gls im Wort', 'Backups, Groups, Anzeigen'],
-    ['Maßangaben', 'Durchmesser 12.5 cm, Höhe 8 cm'],
-  ];
-  for (const [name, text] of negatives) {
-    it(`kein Treffer bei: ${name}`, () => {
-      expect(kinds(`<p>${text}</p>`, 'shipping')).toEqual([]);
+describe('Regel 4 (shipping) entfernt — P71-C: Versandangaben sind Bestandteil der Vorlage', () => {
+  const texte = ['Lieferzeit 3–10 Werktage', 'Versand per DHL oder Deutsche Post', 'Kostenloser Versand', 'Versandkosten: 0 EUR'];
+  for (const text of texte) {
+    it(`kein Verstoß bei: ${text}`, () => {
+      expect(findDescriptionComplianceViolations(`<p>${text}</p>`)).toEqual([]);
     });
   }
 });
@@ -90,8 +56,8 @@ describe('checkOutgoingListingText — Titel UND Beschreibung, eine Stelle', () 
     expect(checkOutgoingListingText({ title: 'Frischhaltedose Edelstahl', description: '<p>Spülmaschinenfest</p>' })).toEqual([]);
   });
   it('Verstoß nur im Titel wird erkannt', () => {
-    const v = checkOutgoingListingText({ title: 'Dose Kostenloser Versand', description: '<p>ok</p>' });
-    expect(v.some(x => x.kind === 'shipping')).toBe(true);
+    const v = checkOutgoingListingText({ title: 'Dose info@shop.com', description: '<p>ok</p>' });
+    expect(v.some(x => x.kind === 'email')).toBe(true);
   });
   it('Verstoß nur in der Beschreibung wird erkannt', () => {
     const v = checkOutgoingListingText({ title: 'Dose', description: '<p>a@b.com</p>' });
@@ -117,7 +83,7 @@ describe('summarizeDescriptionViolations — echte Anzahl je Muster (nicht dedup
   });
   it('sauberer Text → alles 0', () => {
     const s = summarizeDescriptionViolations('<p>Hochwertige Qualität.</p>');
-    expect(s).toEqual({ email: 0, url: 0, domain: 0, alicdn: 0, shipping: 0, gpsr: 0, total: 0, hosts: [] });
+    expect(s).toEqual({ email: 0, url: 0, domain: 0, alicdn: 0, gpsr: 0, total: 0, hosts: [] });
   });
 });
 
@@ -136,20 +102,19 @@ E-Mail: hersteller@apex-ce.com
 Telefon: 8613800000000</pre>
 </div>`;
 
-  it('E-Mail (4 eigene + 1 Hersteller), URL, alicdn, GPSR-Rohtext, Versandtext: jede Art hat Treffer, mit echten Anzahlen', () => {
+  it('E-Mail (4 eigene + 1 Hersteller), URL, alicdn, GPSR-Rohtext: jede Art hat Treffer, mit echten Anzahlen', () => {
     const s = summarizeDescriptionViolations(OLD_TEMPLATE);
     expect(s.email).toBe(5);
     expect(s.url).toBe(2);
     expect(s.alicdn).toBe(2);
     expect(s.gpsr).toBe(3);
-    expect(s.shipping).toBe(4);
     expect(s.domain).toBeGreaterThan(0);
     expect(s.hosts).toEqual([{ host: 'ae01.alicdn.com', count: 2 }]);
   });
 
-  it('checkOutgoingListingText blockiert die alte Vorlage mit allen sechs Arten', () => {
+  it('checkOutgoingListingText blockiert die alte Vorlage mit allen fünf Arten', () => {
     const arten = new Set(checkOutgoingListingText({ title: 'Dose', description: OLD_TEMPLATE }).map(v => v.kind));
-    expect([...arten].sort()).toEqual(['alicdn', 'domain', 'email', 'gpsr', 'shipping', 'url']);
+    expect([...arten].sort()).toEqual(['alicdn', 'domain', 'email', 'gpsr', 'url']);
   });
 });
 
@@ -170,5 +135,29 @@ describe('Ende-zu-Ende Regel 1–4: Ausgabe des heutigen Generators (buildProduc
     expect(violations).toEqual([]);
     expect(summarizeDescriptionViolations(html).total).toBe(0);
     expect(checkOutgoingListingText({ title: 'Frischhaltedose Edelstahl 3er Set', description: html })).toEqual([]);
+  });
+});
+
+describe('P71-C: Generator mit gpsrRaw — 5 Tabs, 0 Verstöße, kein @/http/alicdn', () => {
+  it('buildProductDescriptionForEbay erzeugt den Tab Produktsicherheit (nur Hinweis) und bleibt sauber', () => {
+    const { html, violations } = buildProductDescriptionForEbay({
+      title: 'Frischhaltedose Edelstahl 3er Set',
+      generatedTitle: 'Frischhaltedose Edelstahl 3er Set',
+      generatedDescription: '###INTRO### Praktisches Set.###BULLETS### - Auslaufsicher###OUTRO### Ideal.',
+      specs: JSON.stringify({ Material: 'Edelstahl' }),
+      variants: JSON.stringify([{ name: 'Größe', values: ['S', 'M'] }]),
+      variantPrices: JSON.stringify([{ sku: 'S', price: 9.95, imageUrl: 'https://ae01.alicdn.com/kf/s.jpg' }]),
+      images: JSON.stringify(['https://ae01.alicdn.com/kf/example.jpg']),
+      gpsrRaw: 'Informationen zum Hersteller\nName: Foo Ltd\nE-Mail: hersteller@apex-ce.com\nTelefon: 8613800000000',
+    });
+    expect(violations).toEqual([]);
+    expect(summarizeDescriptionViolations(html).total).toBe(0);
+    for (const label of ['Beschreibung', 'Versand &amp; Retouren', 'Impressum', 'AGB', 'Produktsicherheit']) {
+      expect(html).toContain(`>${label}</label>`);
+    }
+    expect(html).toContain(GPSR_DESCRIPTION_NOTICE);
+    expect(html).not.toContain('@');
+    expect(html).not.toContain('http');
+    expect(html).not.toContain('alicdn');
   });
 });
