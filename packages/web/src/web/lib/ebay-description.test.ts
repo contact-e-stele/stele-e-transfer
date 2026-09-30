@@ -29,11 +29,11 @@ const THIRD_PARTY_SNIPPETS = [
   "whatsapp",
 ];
 
-// eBay-Verstoßserie 2026-09-28: Impressum/AGB-Tabs (mit der eigenen Kontaktadresse) sind
-// eBay-Verkäufereinstellungen, keine Beschreibungsinhalte mehr — die Vorlage darf die eigene
-// Adresse jetzt an KEINER Stelle mehr enthalten (s. description-compliance.ts für die harte Prüfung).
+// P71-C (30.09.2026, Vorgabe Inhaber): Vorlage wieder mit 5 Tabs (Beschreibung, Versand & Retouren,
+// Impressum, AGB, Produktsicherheit) — aber ohne E-Mail, Telefonnummer und Link im Text.
 describe("buildEbayHTML (dark) — Verstoß-Reparatur Phase 2 + Grundsatzkonform (2026-09-28)", () => {
-  const html = buildEbayHTML(productWithThirdPartyContact);
+  const BUILD = buildEbayHTML;
+  const html = BUILD(productWithThirdPartyContact);
 
   it("enthält keinen KUNDENSERVICE-Block mehr", () => {
     expect(html).not.toContain("KUNDENSERVICE");
@@ -46,31 +46,35 @@ describe("buildEbayHTML (dark) — Verstoß-Reparatur Phase 2 + Grundsatzkonform
     }
   });
 
-  it("enthält keine Impressum/AGB-Tabs und keine eigene Kontaktadresse mehr", () => {
-    expect(html).not.toContain("Impressum");
-    expect(html).not.toContain("Allgemeine Gesch&auml;ftsbedingungen");
-    expect(html).not.toContain("contact@stele-e-transfer.com");
-    expect(html).not.toContain("Widerruf an:");
+  it("P71-C: alle 5 Tabs vorhanden (Beschreibung, Versand & Retouren, Impressum, AGB, Produktsicherheit)", () => {
+    const withGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: "Hersteller: Foo Ltd" });
+    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+      expect(withGpsr).toContain(`>${label}</label>`);
+    }
   });
 
-  it("Versandinformationen (Versandart/-kosten/-zeit als Freitext) sind aus dem Retouren-Tab entfernt, Retouren-Inhalt bleibt", () => {
-    expect(html).not.toContain("Versandinformationen");
-    expect(html).not.toContain("Kostenloser Versand");
+  it("P71-C: Impressum/AGB/Widerruf ohne E-Mail, Telefon oder Link — Kontakt über eBay-Nachrichten", () => {
+    expect(html).toContain("Allgemeine Gesch&auml;ftsbedingungen");
+    expect(html).toContain("Widerruf an:");
+    expect(html).toContain("Kontakt &uuml;ber eBay-Nachrichten");
+    expect(html).not.toContain("@");
+    expect(html).not.toContain("http");
+    expect(html).not.toContain("alicdn");
+    expect(html).not.toContain("ec.europa.eu");
+    expect(html).toContain("Wir nehmen nicht an Streitbeilegungsverfahren teil.");
+  });
+
+  it("P71-C: Versandinformationen und Kachel KOSTENLOSER VERSAND wieder da, ohne Amazon Logistik", () => {
+    expect(html).toContain("Versandinformationen");
+    expect(html).toContain("KOSTENLOSER VERSAND");
     expect(html).toContain("Retouren &amp; R&uuml;ckgabe");
-    expect(html).toContain("30 Tage R&uuml;ckgaberecht");
-  });
-
-  it("einspaltige Info-Zeile (KOSTENLOSER VERSAND-Box entfernt, nur noch 30 TAGE RÜCKGABE)", () => {
-    expect(html).not.toContain("KOSTENLOSER VERSAND");
-    expect(html).not.toContain("width:50%");
-    expect(html).not.toContain("width:33%");
-    expect(html).toContain("width:100%;vertical-align:top;");
-    expect((html.match(/30 TAGE R&Uuml;CKGABE/g) ?? []).length).toBe(1);
+    expect(html).not.toContain("Amazon Logistik");
   });
 });
 
 describe("buildEbayHTMLLight — Verstoß-Reparatur Phase 2 + Grundsatzkonform (2026-09-28)", () => {
-  const html = buildEbayHTMLLight(productWithThirdPartyContact);
+  const BUILD = buildEbayHTMLLight;
+  const html = BUILD(productWithThirdPartyContact);
 
   it("enthält keinen KUNDENSERVICE-Block mehr", () => {
     expect(html).not.toContain("KUNDENSERVICE");
@@ -83,26 +87,29 @@ describe("buildEbayHTMLLight — Verstoß-Reparatur Phase 2 + Grundsatzkonform (
     }
   });
 
-  it("enthält keine Impressum/AGB-Tabs und keine eigene Kontaktadresse mehr", () => {
-    expect(html).not.toContain("Impressum");
-    expect(html).not.toContain("Allgemeine Gesch&auml;ftsbedingungen");
-    expect(html).not.toContain("contact@stele-e-transfer.com");
-    expect(html).not.toContain("Widerruf an:");
+  it("P71-C: alle 5 Tabs vorhanden (Beschreibung, Versand & Retouren, Impressum, AGB, Produktsicherheit)", () => {
+    const withGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: "Hersteller: Foo Ltd" });
+    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+      expect(withGpsr).toContain(`>${label}</label>`);
+    }
   });
 
-  it("Versandinformationen (Versandart/-kosten/-zeit als Freitext) sind aus dem Retouren-Tab entfernt, Retouren-Inhalt bleibt", () => {
-    expect(html).not.toContain("Versandinformationen");
-    expect(html).not.toContain("Kostenloser Versand");
+  it("P71-C: Impressum/AGB/Widerruf ohne E-Mail, Telefon oder Link — Kontakt über eBay-Nachrichten", () => {
+    expect(html).toContain("Allgemeine Gesch&auml;ftsbedingungen");
+    expect(html).toContain("Widerruf an:");
+    expect(html).toContain("Kontakt &uuml;ber eBay-Nachrichten");
+    expect(html).not.toContain("@");
+    expect(html).not.toContain("http");
+    expect(html).not.toContain("alicdn");
+    expect(html).not.toContain("ec.europa.eu");
+    expect(html).toContain("Wir nehmen nicht an Streitbeilegungsverfahren teil.");
+  });
+
+  it("P71-C: Versandinformationen und Kachel KOSTENLOSER VERSAND wieder da, ohne Amazon Logistik", () => {
+    expect(html).toContain("Versandinformationen");
+    expect(html).toContain("KOSTENLOSER VERSAND");
     expect(html).toContain("Retouren &amp; R&uuml;ckgabe");
-    expect(html).toContain("30 Tage R&uuml;ckgaberecht");
-  });
-
-  it("einspaltige Info-Zeile (KOSTENLOSER VERSAND-Box entfernt, nur noch 30 TAGE RÜCKGABE)", () => {
-    expect(html).not.toContain("KOSTENLOSER VERSAND");
-    expect(html).not.toContain("width:50%");
-    expect(html).not.toContain("width:33%");
-    expect(html).toContain("width:100%;vertical-align:top;");
-    expect((html.match(/30 TAGE R&Uuml;CKGABE/g) ?? []).length).toBe(1);
+    expect(html).not.toContain("Amazon Logistik");
   });
 });
 
@@ -142,7 +149,7 @@ describe("Regressionsschutz — unauffälliges Produkt bleibt unverändert nutzb
     images: ["https://ae01.alicdn.com/kf/example2.jpg"],
   };
 
-  it("erzeugt weiterhin eine vollständige Vorlage mit den verbleibenden Pflicht-Tabs (Beschreibung, Retouren)", () => {
+  it("erzeugt weiterhin eine vollständige Vorlage (Beschreibung, Versand & Retouren)", () => {
     const html = buildEbayHTMLLight(cleanProduct);
     expect(html).toContain("Beschreibung");
     expect(html).toContain("Retouren");

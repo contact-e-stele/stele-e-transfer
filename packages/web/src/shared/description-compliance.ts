@@ -15,12 +15,13 @@
 //      (Bilder nur über imageUrls der Inventory API)
 //   3. gpsr     — GPSR-Daten nur in den eBay-`regulatory`-Feldern; im GPSR-Tab der Beschreibung
 //      steht ausschließlich GPSR_DESCRIPTION_NOTICE, keine Rohtext-Überschriften/Telefonnummern
-//   4. shipping — Versandart/-kosten/Lieferzeit nur in den eBay-Versanddaten (Muster: SHIPPING_PATTERNS)
+//   (Regel 4 "shipping" am 30.09.2026 entfernt — P71-C: Versand & Retouren ist laut Inhaber
+//   fester Bestandteil der Vorlage.)
 //   (Regel 5, MPN ≠ AliExpress-ID, liegt in mpn-guard.ts)
 
 import { GPSR_DESCRIPTION_NOTICE } from './gpsr-description';
 
-export type DescriptionViolationKind = 'email' | 'url' | 'domain' | 'alicdn' | 'shipping' | 'gpsr';
+export type DescriptionViolationKind = 'email' | 'url' | 'domain' | 'alicdn' | 'gpsr';
 
 export interface DescriptionComplianceViolation {
   kind: DescriptionViolationKind;
@@ -50,28 +51,6 @@ const DOMAIN_RE = new RegExp(
 
 const ALICDN_RE = /[a-z0-9.-]*alicdn\.com/gi;
 
-// Regel 4 — Versandangaben gehören ausschließlich in die eBay-Versanddaten (Fulfillment-Policy).
-// Bewusst enge Muster: "Werktage" allein trifft auch die Rückerstattungsfrist der Vorlage
-// ("Rückerstattung innerhalb von 3–5 Werktagen nach Wareneingang") und ist deshalb nur im
-// Liefer-/Versandkontext verboten. Carrier-Namen case-sensitive (kein Treffer auf "ups"/"gls").
-const SHIPPING_PATTERNS: RegExp[] = [
-  /\bLieferzeit(?:en)?\b/gi,
-  /\bBearbeitungszeit\b/gi,
-  /\bVersandkosten\b/gi,
-  /\bVersandart\b/gi,
-  /\bVersandzeit\b/gi,
-  /\bVersand\s+(?:per|mit|durch|via|aus|nach|innerhalb|ab)\b/gi,
-  /\bLieferung\s+(?:aus|innerhalb|per|nach|(?:in|ab)\s+\d)\b/gi,
-  /\b(?:Lieferdauer|Lieferfrist)\b/gi,
-  /\b(?:Versand|Lieferung)\s*:\s*\d/gi,
-  /\bkostenlos(?:e|er|em|en)?\s+(?:Versand|Lieferung)\b/gi,
-  /\bGratis-?versand\b/gi,
-  /\bversandkostenfrei\b/gi,
-  /\b(?:DHL|DPD|GLS|UPS|FedEx)\b/g,
-  /\bDeutsche Post\b/g,
-  /(?:liefer|versand|zustell|versendet|geliefert)[^<.]{0,80}?werktag|werktag[^<.]{0,80}?(?:liefer|versand|zustell)/gi,
-];
-
 // Regel 3 — GPSR-Rohtext. Überschriften des AliExpress-GPSR-Rohtexts und Telefonzeilen; dazu der
 // GPSR-Tab selbst: sein <pre> darf nur GPSR_DESCRIPTION_NOTICE enthalten.
 const GPSR_RAW_PATTERNS: RegExp[] = [
@@ -91,7 +70,6 @@ function scanAll(html: string): DescriptionComplianceViolation[] {
   push('url', html.match(WWW_RE) ?? []);
   push('domain', html.match(DOMAIN_RE) ?? []);
   push('alicdn', html.match(ALICDN_RE) ?? []);
-  for (const re of SHIPPING_PATTERNS) push('shipping', html.match(re) ?? []);
   for (const re of GPSR_RAW_PATTERNS) push('gpsr', html.match(re) ?? []);
   for (const m of html.matchAll(GPSR_TAB_RE)) {
     if (m[1].trim() !== GPSR_DESCRIPTION_NOTICE) push('gpsr', ['GPSR-Tab enthält Rohtext statt GPSR_DESCRIPTION_NOTICE']);
@@ -114,7 +92,6 @@ export interface DescriptionViolationSummary {
   url: number;
   domain: number;
   alicdn: number;
-  shipping: number;
   gpsr: number;
   total: number;
   /** Externe Hosts aus http(s)://-Adressen mit Anzahl (absteigend). */
@@ -123,7 +100,7 @@ export interface DescriptionViolationSummary {
 
 /** Echte Anzahl je Muster (nicht dedupliziert) — für die Vorschau im Listings-Tab. */
 export function summarizeDescriptionViolations(html: string): DescriptionViolationSummary {
-  const summary: DescriptionViolationSummary = { email: 0, url: 0, domain: 0, alicdn: 0, shipping: 0, gpsr: 0, total: 0, hosts: [] };
+  const summary: DescriptionViolationSummary = { email: 0, url: 0, domain: 0, alicdn: 0, gpsr: 0, total: 0, hosts: [] };
   for (const v of scanAll(html)) { summary[v.kind]++; summary.total++; }
   const hostCounts = new Map<string, number>();
   for (const m of html.matchAll(/https?:\/\/([^/\s"'<>?#]+)/gi)) {

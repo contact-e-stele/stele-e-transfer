@@ -50,9 +50,9 @@ function cleanText(text: string): string {
 // alles, was eBays "Handel außerhalb von eBay"-Prüfung auslöst: E-Mail-Adressen,
 // Telefonnummern, Links zu Nicht-eBay-Domains und Kontaktaufnahme-Floskeln.
 // Greift hier bei der Erzeugung (cleanText) — NICHT rückwirkend in der DB.
-// (eBay-Verstoßserie 2026-09-28: Impressum/AGB-Tabs mit fest hinterlegter eigener
-// Kontaktadresse wurden entfernt — diese gehören als Verkäufereinstellung zu eBay,
-// nicht in den Beschreibungstext; s. description-compliance.ts für die harte Prüfung.)
+// P71-C (30.09.2026): Die fest verdrahteten Tabs Versand & Retouren, Impressum, AGB und
+// Produktsicherheit bleiben (Vorgabe Inhaber), enthalten aber keine E-Mail, keine Telefonnummer
+// und keinen Link — Kontakt nur über eBay-Nachrichten / "Rechtliche Informationen des Verkäufers".
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PHONE_RUN_RE = /\+?\d[\d \-/().]{7,}\d/g;
 const NON_EBAY_URL_RE = /\b(?:https?:\/\/|www\.)(?!(?:[a-z0-9-]+\.)?ebay\.[a-z.]+)[^\s"'<>]+/gi;
@@ -289,7 +289,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     </table>`;
   }
 
-  // ── Varianten-Sektion (kein Bild-Fallback mehr — eBay verbietet Hotlinks) ───
+  // ── Varianten-Sektion (Fallback: Hauptbild, wenn keine echten Varianten) ────
   const variantsHtml = buildVariantsHtml(product, "dark");
 
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
@@ -317,7 +317,13 @@ export function buildEbayHTML(product: ScrapedProduct): string {
 
 <!-- INFO BOXEN -->
 <div style="display:table;width:100%;border-collapse:collapse;background:#111108;">
-  <div style="display:table-cell;width:100%;vertical-align:top;">
+  <div style="display:table-cell;width:50%;border-right:1px solid #C9A84C;vertical-align:top;">
+    <div style="padding:18px 15px;text-align:center;">
+      <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
+      <div style="font-size:11px;color:#8a7040;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
+    </div>
+  </div>
+  <div style="display:table-cell;width:50%;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">30 TAGE R&Uuml;CKGABE</div>
       <div style="font-size:11px;color:#8a7040;line-height:1.7;">Einfache R&uuml;ckgabe<br/>K&auml;uferschutz &uuml;ber eBay</div>
@@ -342,21 +348,28 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   .stet-content strong{color:#C9A84C;}
   .stet-content p{color:#a89050;}
   #stet-t1:checked~.stet-tab-labels label[for="stet-t1"],
-  #stet-t2:checked~.stet-tab-labels label[for="stet-t2"]{background:#C9A84C;color:#000;border-color:#C9A84C;}
+  #stet-t2:checked~.stet-tab-labels label[for="stet-t2"],
+  #stet-t3:checked~.stet-tab-labels label[for="stet-t3"],
+  #stet-t4:checked~.stet-tab-labels label[for="stet-t4"]{background:#C9A84C;color:#000;border-color:#C9A84C;}
   #stet-t1:checked~.stet-contents #stet-c1,
-  #stet-t2:checked~.stet-contents #stet-c2{display:block;}
-  #stet-t3:checked~.stet-tab-labels label[for="stet-t3"]{background:#C9A84C;color:#000;border-color:#C9A84C;}
-  #stet-t3:checked~.stet-contents #stet-c3{display:block;}
+  #stet-t2:checked~.stet-contents #stet-c2,
+  #stet-t3:checked~.stet-contents #stet-c3,
+  #stet-t4:checked~.stet-contents #stet-c4{display:block;}
+  #stet-t5:checked~.stet-contents #stet-c5{display:block;}
 </style>
 
 <div class="stet-tabs">
   <input checked="checked" id="stet-t1" name="stet-tab" type="radio"/>
   <input id="stet-t2" name="stet-tab" type="radio"/>
-  ${product.gpsrRaw ? `<input id="stet-t3" name="stet-tab" type="radio"/>` : ""}
+  <input id="stet-t3" name="stet-tab" type="radio"/>
+  <input id="stet-t4" name="stet-tab" type="radio"/>
+  ${product.gpsrRaw ? `<input id="stet-t5" name="stet-tab" type="radio"/>` : ""}
   <div class="stet-tab-labels">
     <label for="stet-t1">Beschreibung</label>
-    <label for="stet-t2">Retouren</label>
-    ${product.gpsrRaw ? `<label for="stet-t3">Produktsicherheit</label>` : ""}
+    <label for="stet-t2">Versand &amp; Retouren</label>
+    <label for="stet-t3">Impressum</label>
+    <label for="stet-t4">AGB</label>
+    ${product.gpsrRaw ? `<label for="stet-t5">Produktsicherheit</label>` : ""}
   </div>
   <div class="stet-contents">
 
@@ -365,8 +378,15 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       ${tab1}
     </div>
 
-    <!-- TAB 2: Retouren -->
+    <!-- TAB 2: Versand & Retouren -->
     <div class="stet-content" id="stet-c2">
+      <h3>Versandinformationen</h3>
+      <ul style="line-height:1.9;">
+        <li><strong>Kostenloser Versand</strong> auf alle Bestellungen</li>
+        <li>Lieferzeit: <strong>3–10 Werktage</strong></li>
+        <li>Versand per <strong>DHL oder Deutsche Post</strong></li>
+        <li>Sendungsverfolgung wird per eBay-Nachricht mitgeteilt</li>
+      </ul>
       <h3>Retouren &amp; R&uuml;ckgabe</h3>
       <ul style="line-height:1.9;">
         <li><strong>30 Tage R&uuml;ckgaberecht</strong> ab Erhalt der Ware</li>
@@ -377,8 +397,61 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       <p style="font-size:11px;color:#5a4a20;margin-top:20px;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
     </div>
 
-    ${product.gpsrRaw ? `<!-- TAB 3: Produktsicherheit (GPSR) -->
+    <!-- TAB 3: Impressum -->
     <div class="stet-content" id="stet-c3">
+      <h3>Impressum</h3>
+      <p><strong>STELE-E-TRANSFER</strong><br/>
+      Inhaber: Evgenij Stele<br/>
+      Am Hochfeld 47<br/>
+      65205 Wiesbaden<br/>
+      Deutschland</p>
+      <p>Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
+      <p><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong><br/>
+      Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
+      <p>Verantwortlich f&uuml;r den Inhalt dieser Seite:<br/>
+      STELE-E-TRANSFER, Am Hochfeld 47, 65205 Wiesbaden</p>
+    </div>
+
+    <!-- TAB 4: AGB -->
+    <div class="stet-content" id="stet-c4">
+      <h3>Allgemeine Gesch&auml;ftsbedingungen (AGB)</h3>
+      <p style="color:#5a4a20;font-size:13px;">stele-e-transfer | eBay-Shop</p>
+      <p><strong>&sect; 1 Geltungsbereich</strong><br/>
+      Diese AGB gelten f&uuml;r alle K&auml;ufe &uuml;ber den eBay-Shop von stele-e-transfer.<br/>
+      Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
+      <p><strong>&sect; 2 Vertragsschluss</strong><br/>
+      Mit dem Klick auf &quot;Sofort-Kaufen&quot; gibt der K&auml;ufer ein verbindliches Angebot ab. Der Vertrag kommt zustande, wenn der Verk&auml;ufer durch Auftragsbestätigung oder Versand der Ware annimmt.</p>
+      <p><strong>&sect; 3 Preise</strong><br/>
+      Alle Preise sind Endpreise in Euro (EUR).<br/>
+      Als Kleinunternehmer gem. &sect;19 UStG wird keine Umsatzsteuer berechnet.</p>
+      <p><strong>&sect; 4 Zahlung</strong><br/>
+      Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
+      <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
+      Lieferung innerhalb Deutschlands. Lieferzeit: 3–10 Werktage nach Zahlungseingang.<br/>
+      Keine Haftung f&uuml;r Verz&ouml;gerungen durch den Versanddienstleister.</p>
+      <p><strong>&sect; 6 Eigentumsvorbehalt</strong><br/>
+      Die Ware bleibt bis zur vollst&auml;ndigen Bezahlung Eigentum von stele-e-transfer.</p>
+      <p><strong>&sect; 7 Widerrufsrecht</strong><br/>
+      Sie haben das Recht, binnen 30 Tagen ohne Angabe von Gr&uuml;nden zu widerrufen.<br/>
+      Widerruf an: stele-e-transfer, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.<br/>
+      K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kaufübersicht zur Verf&uuml;gung. Als Widerrufsgrund bitte &quot;Widerruf des Vertrags&quot; ausw&auml;hlen.<br/>
+      R&uuml;ckerstattung innerhalb 14 Tagen. R&uuml;cksendekosten tr&auml;gt der K&auml;ufer.<br/>
+      Kein Widerrufsrecht bei Hygieneartikeln nach &Ouml;ffnung.</p>
+      <p><strong>&sect; 8 Gew&auml;hrleistung</strong><br/>
+      Gesetzliche Gew&auml;hrleistung: 2 Jahre ab Lieferung.</p>
+      <p><strong>&sect; 9 Haftungsbeschr&auml;nkung</strong><br/>
+      Keine Haftung f&uuml;r leichte Fahrl&auml;ssigkeit, sofern keine wesentlichen Vertragspflichten verletzt werden.</p>
+      <p><strong>&sect; 10 Datenschutz</strong><br/>
+      Daten werden ausschlie&szlig;lich zur Vertragserf&uuml;llung genutzt. Es gelten eBay-Datenschutzbestimmungen und DSGVO.</p>
+      <p><strong>&sect; 11 Streitbeilegung</strong><br/>
+      Wir nehmen nicht an Streitbeilegungsverfahren teil.</p>
+      <p><strong>&sect; 12 Schlussbestimmungen</strong><br/>
+      Es gilt deutsches Recht. Gerichtsstand: Wiesbaden.<br/>
+      <em>Stand: Juni 2026</em></p>
+    </div>
+
+    ${product.gpsrRaw ? `<!-- TAB 5: Produktsicherheit (GPSR) -->
+    <div class="stet-content" id="stet-c5">
       <h3>Produktsicherheit (GPSR)</h3>
       <p style="font-size:12px;color:#8a7040;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
       <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#c8b878;line-height:1.8;background:#111108;padding:14px;border-radius:4px;border:1px solid #3a2a0a;">${GPSR_DESCRIPTION_NOTICE}</pre>
@@ -501,7 +574,7 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     </table>`;
   }
 
-  // ── Varianten-Sektion (kein Bild-Fallback mehr — eBay verbietet Hotlinks) ───
+  // ── Varianten-Sektion (Fallback: Hauptbild, wenn keine echten Varianten) ────
   const variantsHtml = buildVariantsHtml(product, "light");
 
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
@@ -528,7 +601,13 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
 
 <!-- INFO BOXEN -->
 <div style="display:table;width:100%;border-collapse:collapse;background:#fdf9f0;">
-  <div style="display:table-cell;width:100%;vertical-align:top;">
+  <div style="display:table-cell;width:50%;border-right:1px solid #e8d8a0;vertical-align:top;">
+    <div style="padding:18px 15px;text-align:center;">
+      <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
+      <div style="font-size:12px;color:#555555;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
+    </div>
+  </div>
+  <div style="display:table-cell;width:50%;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">30 TAGE R&Uuml;CKGABE</div>
       <div style="font-size:12px;color:#555555;line-height:1.7;">Einfache R&uuml;ckgabe<br/>K&auml;uferschutz &uuml;ber eBay</div>
@@ -551,21 +630,29 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
   .stet-l-content strong{color:#B8860B;}
   .stet-l-content p{color:#444444;}
   #stet-l1:checked~.stet-l-tab-labels label[for="stet-l1"],
-  #stet-l2:checked~.stet-l-tab-labels label[for="stet-l2"]{background:#B8860B;color:#ffffff;border-color:#B8860B;}
+  #stet-l2:checked~.stet-l-tab-labels label[for="stet-l2"],
+  #stet-l3:checked~.stet-l-tab-labels label[for="stet-l3"],
+  #stet-l4:checked~.stet-l-tab-labels label[for="stet-l4"]{background:#B8860B;color:#ffffff;border-color:#B8860B;}
   #stet-l1:checked~.stet-l-contents #stet-lc1,
-  #stet-l2:checked~.stet-l-contents #stet-lc2{display:block;}
-  #stet-l3:checked~.stet-l-tab-labels label[for="stet-l3"]{background:#B8860B;color:#ffffff;border-color:#B8860B;}
-  #stet-l3:checked~.stet-l-contents #stet-lc3{display:block;}
+  #stet-l2:checked~.stet-l-contents #stet-lc2,
+  #stet-l3:checked~.stet-l-contents #stet-lc3,
+  #stet-l4:checked~.stet-l-contents #stet-lc4{display:block;}
+  #stet-l5:checked~.stet-l-tab-labels label[for="stet-l5"]{background:#B8860B;color:#ffffff;border-color:#B8860B;}
+  #stet-l5:checked~.stet-l-contents #stet-lc5{display:block;}
 </style>
 
 <div class="stet-l-tabs">
   <input checked="checked" id="stet-l1" name="stet-l-tab" type="radio"/>
   <input id="stet-l2" name="stet-l-tab" type="radio"/>
-  ${product.gpsrRaw ? `<input id="stet-l3" name="stet-l-tab" type="radio"/>` : ""}
+  <input id="stet-l3" name="stet-l-tab" type="radio"/>
+  <input id="stet-l4" name="stet-l-tab" type="radio"/>
+  ${product.gpsrRaw ? `<input id="stet-l5" name="stet-l-tab" type="radio"/>` : ""}
   <div class="stet-l-tab-labels">
     <label for="stet-l1">Beschreibung</label>
-    <label for="stet-l2">Retouren</label>
-    ${product.gpsrRaw ? `<label for="stet-l3">Produktsicherheit</label>` : ""}
+    <label for="stet-l2">Versand &amp; Retouren</label>
+    <label for="stet-l3">Impressum</label>
+    <label for="stet-l4">AGB</label>
+    ${product.gpsrRaw ? `<label for="stet-l5">Produktsicherheit</label>` : ""}
   </div>
   <div class="stet-l-contents">
 
@@ -574,8 +661,15 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
       ${tab1}
     </div>
 
-    <!-- TAB 2: Retouren -->
+    <!-- TAB 2: Versand -->
     <div class="stet-l-content" id="stet-lc2">
+      <h3>Versandinformationen</h3>
+      <ul style="line-height:1.9;">
+        <li><strong>Kostenloser Versand</strong> auf alle Bestellungen</li>
+        <li>Lieferzeit: <strong>3–10 Werktage</strong></li>
+        <li>Versand per <strong>DHL oder Deutsche Post</strong></li>
+        <li>Sendungsverfolgung wird per eBay-Nachricht mitgeteilt</li>
+      </ul>
       <h3>Retouren &amp; R&uuml;ckgabe</h3>
       <ul style="line-height:1.9;">
         <li><strong>30 Tage R&uuml;ckgaberecht</strong> ab Erhalt der Ware</li>
@@ -586,8 +680,47 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
       <p style="font-size:11px;color:#888888;margin-top:20px;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
     </div>
 
-    ${product.gpsrRaw ? `<!-- TAB 3: Produktsicherheit (GPSR) -->
+    <!-- TAB 3: Impressum -->
     <div class="stet-l-content" id="stet-lc3">
+      <h3>Impressum</h3>
+      <p><strong>STELE-E-TRANSFER</strong><br/>
+      Inhaber: Evgenij Stele<br/>
+      Am Hochfeld 47<br/>
+      65205 Wiesbaden<br/>
+      Deutschland</p>
+      <p>Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
+      <p><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong><br/>
+      Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
+    </div>
+
+    <!-- TAB 4: AGB -->
+    <div class="stet-l-content" id="stet-lc4">
+      <h3>Allgemeine Gesch&auml;ftsbedingungen (AGB)</h3>
+      <p><strong>&sect; 1 Geltungsbereich</strong><br/>
+      Diese AGB gelten f&uuml;r alle K&auml;ufe &uuml;ber den eBay-Shop von stele-e-transfer.<br/>
+      Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
+      <p><strong>&sect; 2 Vertragsschluss</strong><br/>
+      Mit dem Klick auf &quot;Sofort-Kaufen&quot; gibt der K&auml;ufer ein verbindliches Angebot ab.</p>
+      <p><strong>&sect; 3 Preise</strong><br/>
+      Alle Preise sind Endpreise in Euro (EUR). Als Kleinunternehmer gem. &sect;19 UStG wird keine Umsatzsteuer berechnet.</p>
+      <p><strong>&sect; 4 Zahlung</strong><br/>
+      Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
+      <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
+      Lieferzeit: 3–10 Werktage nach Zahlungseingang.</p>
+      <p><strong>&sect; 6 Widerrufsrecht</strong><br/>
+      30 Tage Widerrufsrecht. Widerruf an: stele-e-transfer, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.<br/>
+      K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kauf&uuml;bersicht zur Verf&uuml;gung.</p>
+      <p><strong>&sect; 7 Gew&auml;hrleistung</strong><br/>
+      Gesetzliche Gew&auml;hrleistung: 2 Jahre ab Lieferung.</p>
+      <p><strong>&sect; 8 Datenschutz</strong><br/>
+      Daten werden ausschlie&szlig;lich zur Vertragserf&uuml;llung genutzt. Es gelten eBay-Datenschutzbestimmungen und DSGVO.</p>
+      <p><strong>&sect; 9 Streitbeilegung</strong><br/>
+      Wir nehmen nicht an Streitbeilegungsverfahren teil.</p>
+      <p><em>Stand: Juni 2026</em></p>
+    </div>
+
+    ${product.gpsrRaw ? `<!-- TAB 5: Produktsicherheit (GPSR) -->
+    <div class="stet-l-content" id="stet-lc5">
       <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:8px;">Produktsicherheit (GPSR)</h3>
       <p style="font-size:12px;color:#666;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
       <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.8;background:#f9f6f0;padding:14px;border-radius:4px;border:1px solid #e5d9c0;">${GPSR_DESCRIPTION_NOTICE}</pre>
