@@ -268,7 +268,7 @@ describe('refreshOneProductDescription — P71-C Teil 2: GPSR-Pflichtangaben (re
     const deps = makeDeps([product]);
     const outcome = await refreshOneProductDescription(9, {}, deps);
     expect(outcome.ok).toBe(true);
-    if (outcome.ok && outcome.dryRun) expect(outcome.gpsr).toEqual({ complete: true, missing: [] });
+    if (outcome.ok && outcome.dryRun) expect(outcome.gpsr).toEqual({ complete: true, missing: [], manufacturerMissing: [] });
     expect(deps.revisedItemIds).toEqual([]);
   });
 
@@ -284,5 +284,20 @@ describe('refreshOneProductDescription — P71-C Teil 2: GPSR-Pflichtangaben (re
       companyName: 'Muster EU SARL', addressLine1: '12 Rue de Test', postalCode: '75017', city: 'Paris',
       country: 'FR', email: 'eu@example.fr', types: ['EU_RESPONSIBLE_PERSON'],
     }] }]);
+  });
+
+  test('P71-C Teil 3: Hersteller ohne PLZ/Ort → Trockenlauf meldet manufacturerMissing, und der Sende-Block enthält keinen manufacturer', async () => {
+    const raw = ['Informationen zum Hersteller', 'Name: Foo Ltd', 'Adresse: Building 5, Shenzhen, 518000, China', 'E-Mail: h@foo.cn'].join('\n');
+    const product = makeProduct({ id: 11, ebayListingId: '198600000011', gpsrRaw: raw });
+    const dry = await refreshOneProductDescription(11, {}, makeDeps([product]));
+    expect(dry.ok).toBe(true);
+    if (dry.ok && dry.dryRun) expect(dry.gpsr).toEqual({ complete: true, missing: [], manufacturerMissing: ['PLZ und Ort'] });
+    const seen: any[] = [];
+    const deps = makeDeps([product]);
+    const inner = deps.reviseListingContent;
+    deps.reviseListingContent = async (pid, itemId, input) => { seen.push(input.regulatory); return inner(pid, itemId, input); };
+    await refreshOneProductDescription(11, { confirm: true }, deps);
+    expect(seen.length).toBe(1);
+    expect('manufacturer' in seen[0]).toBe(false);
   });
 });
