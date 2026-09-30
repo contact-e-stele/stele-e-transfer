@@ -289,7 +289,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
     </table>`;
   }
 
-  // ── Varianten-Sektion (Fallback: Hauptbild, wenn keine echten Varianten) ────
+  // ── Varianten-Sektion ────
   const variantsHtml = buildVariantsHtml(product, "dark");
 
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
@@ -355,6 +355,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   #stet-t2:checked~.stet-contents #stet-c2,
   #stet-t3:checked~.stet-contents #stet-c3,
   #stet-t4:checked~.stet-contents #stet-c4{display:block;}
+  #stet-t5:checked~.stet-tab-labels label[for="stet-t5"]{background:#C9A84C;color:#000;border-color:#C9A84C;}
   #stet-t5:checked~.stet-contents #stet-c5{display:block;}
 </style>
 
@@ -363,13 +364,13 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   <input id="stet-t2" name="stet-tab" type="radio"/>
   <input id="stet-t3" name="stet-tab" type="radio"/>
   <input id="stet-t4" name="stet-tab" type="radio"/>
-  ${product.gpsrRaw ? `<input id="stet-t5" name="stet-tab" type="radio"/>` : ""}
+  <input id="stet-t5" name="stet-tab" type="radio"/>
   <div class="stet-tab-labels">
     <label for="stet-t1">Beschreibung</label>
     <label for="stet-t2">Versand &amp; Retouren</label>
     <label for="stet-t3">Impressum</label>
     <label for="stet-t4">AGB</label>
-    ${product.gpsrRaw ? `<label for="stet-t5">Produktsicherheit</label>` : ""}
+    <label for="stet-t5">Produktsicherheit</label>
   </div>
   <div class="stet-contents">
 
@@ -450,12 +451,12 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       <em>Stand: Juni 2026</em></p>
     </div>
 
-    ${product.gpsrRaw ? `<!-- TAB 5: Produktsicherheit (GPSR) -->
+    <!-- TAB 5: Produktsicherheit (GPSR) -->
     <div class="stet-content" id="stet-c5">
       <h3>Produktsicherheit (GPSR)</h3>
       <p style="font-size:12px;color:#8a7040;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
       <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#c8b878;line-height:1.8;background:#111108;padding:14px;border-radius:4px;border:1px solid #3a2a0a;">${GPSR_DESCRIPTION_NOTICE}</pre>
-    </div>` : ""}
+    </div>
 
   </div>
 </div>
@@ -574,7 +575,7 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     </table>`;
   }
 
-  // ── Varianten-Sektion (Fallback: Hauptbild, wenn keine echten Varianten) ────
+  // ── Varianten-Sektion ────
   const variantsHtml = buildVariantsHtml(product, "light");
 
   // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
@@ -646,13 +647,13 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
   <input id="stet-l2" name="stet-l-tab" type="radio"/>
   <input id="stet-l3" name="stet-l-tab" type="radio"/>
   <input id="stet-l4" name="stet-l-tab" type="radio"/>
-  ${product.gpsrRaw ? `<input id="stet-l5" name="stet-l-tab" type="radio"/>` : ""}
+  <input id="stet-l5" name="stet-l-tab" type="radio"/>
   <div class="stet-l-tab-labels">
     <label for="stet-l1">Beschreibung</label>
     <label for="stet-l2">Versand &amp; Retouren</label>
     <label for="stet-l3">Impressum</label>
     <label for="stet-l4">AGB</label>
-    ${product.gpsrRaw ? `<label for="stet-l5">Produktsicherheit</label>` : ""}
+    <label for="stet-l5">Produktsicherheit</label>
   </div>
   <div class="stet-l-contents">
 
@@ -719,12 +720,12 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
       <p><em>Stand: Juni 2026</em></p>
     </div>
 
-    ${product.gpsrRaw ? `<!-- TAB 5: Produktsicherheit (GPSR) -->
+    <!-- TAB 5: Produktsicherheit (GPSR) -->
     <div class="stet-l-content" id="stet-lc5">
       <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:8px;">Produktsicherheit (GPSR)</h3>
       <p style="font-size:12px;color:#666;margin-bottom:14px;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
       <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.8;background:#f9f6f0;padding:14px;border-radius:4px;border:1px solid #e5d9c0;">${GPSR_DESCRIPTION_NOTICE}</pre>
-    </div>` : ""}
+    </div>
 
   </div>
 </div>

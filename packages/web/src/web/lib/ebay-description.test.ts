@@ -53,6 +53,15 @@ describe("buildEbayHTML (dark) — Verstoß-Reparatur Phase 2 + Grundsatzkonform
     }
   });
 
+  it("P71-C Teil 2: Vorlage OHNE gpsrRaw hat trotzdem alle 5 Tabs (Produktsicherheit immer) inkl. CSS für Tab 5", () => {
+    const noGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: null });
+    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+      expect(noGpsr).toContain(`>${label}</label>`);
+    }
+    expect(noGpsr).toContain('id="stet-t5"');
+    expect(noGpsr).toContain('label[for="stet-t5"]');
+  });
+
   it("P71-C: Impressum/AGB/Widerruf ohne E-Mail, Telefon oder Link — Kontakt über eBay-Nachrichten", () => {
     expect(html).toContain("Allgemeine Gesch&auml;ftsbedingungen");
     expect(html).toContain("Widerruf an:");
@@ -92,6 +101,15 @@ describe("buildEbayHTMLLight — Verstoß-Reparatur Phase 2 + Grundsatzkonform (
     for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
       expect(withGpsr).toContain(`>${label}</label>`);
     }
+  });
+
+  it("P71-C Teil 2: Vorlage OHNE gpsrRaw hat trotzdem alle 5 Tabs (Produktsicherheit immer) inkl. CSS für Tab 5", () => {
+    const noGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: null });
+    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+      expect(noGpsr).toContain(`>${label}</label>`);
+    }
+    expect(noGpsr).toContain('id="stet-l5"');
+    expect(noGpsr).toContain('label[for="stet-l5"]');
   });
 
   it("P71-C: Impressum/AGB/Widerruf ohne E-Mail, Telefon oder Link — Kontakt über eBay-Nachrichten", () => {

@@ -78,3 +78,20 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
   const violations = findDescriptionComplianceViolations(html);
   return { html, violations };
 }
+
+// P71-C Teil 2: Beschreibung fürs Erst-Listing (/ebay/list). Eine gespeicherte Vorlage wird nur
+// übernommen, wenn sie nach neutralizeGpsrTab keine Dauerregel-Verstöße hat — sonst (z. B. alte
+// Vorlage mit E-Mail im Impressum) wird sie aus den aktuellen Produktfeldern neu gebaut. Ein
+// Verstoß bleibt nur, wenn auch der Neubau verstößt. Reine Funktion, damit ohne DB testbar.
+export function resolveListingDescription(product: ProductDescriptionFields, storedHtml: string | null | undefined): BuiltProductDescription {
+  const rawHtml = storedHtml ?? '';
+  const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
+  // Tab 5 (Produktsicherheit) gehört immer dazu: eine ältere gespeicherte Vorlage ohne ihn wird neu gebaut.
+  const hasTab5 = rawHtml.includes('id="stet-t5"') || rawHtml.includes('id="stet-l5"');
+  if (isFullTemplate && hasTab5) {
+    const html = neutralizeGpsrTab(rawHtml);
+    const violations = findDescriptionComplianceViolations(html);
+    if (violations.length === 0) return { html, violations };
+  }
+  return buildProductDescriptionForEbay(product);
+}

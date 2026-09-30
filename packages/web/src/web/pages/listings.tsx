@@ -1202,8 +1202,9 @@ export default function Listings() {
                       </span>
                     )}
                   </div>
-                  {/* P71-B Teil 2: einzelner Nachzieh-Knopf (Trockenlauf → Vorschau → "Jetzt an eBay senden"), kein Sammel-Knopf */}
-                  {listing.appProduct?.hasForeignContact && (
+                  {/* P71-B Teil 2: einzelner Nachzieh-Knopf (Trockenlauf → Vorschau → "Jetzt an eBay senden"), kein Sammel-Knopf.
+                      P71-C Teil 2: für jedes Angebot mit App-Produkt — der Nachzug schreibt auch die GPSR-Pflichtfelder. */}
+                  {listing.appProduct && (
                     <DescriptionRefreshPanel
                       productId={listing.appProduct.id}
                       onSent={() => setListings(prev => prev.map(l =>

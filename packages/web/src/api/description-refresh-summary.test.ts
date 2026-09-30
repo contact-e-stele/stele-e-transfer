@@ -22,6 +22,7 @@ const product: DescriptionRefreshProduct = {
   bullets: JSON.stringify([]),
   images: JSON.stringify(['https://ae01.alicdn.com/kf/example.jpg']),
   htmlDescription: STALE,
+  gpsrName: 'Muster EU SARL', gpsrAddress: '12 Rue de Test', gpsrCity: '75017 Paris', gpsrEmail: 'eu@example.fr', gpsrCountry: 'FR',
 } as DescriptionRefreshProduct;
 
 function deps(p: DescriptionRefreshProduct): DescriptionRefreshDeps & { sent: number } {

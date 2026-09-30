@@ -17,6 +17,8 @@
 // Reine, injizierbare Logik (GRUNDGESETZ Regel 2) — ohne echte DB/eBay-Zugriffe testbar.
 
 import { buildProductDescriptionForEbay, type ProductDescriptionFields } from './ebay-description-builder';
+import { resolveGpsrForListing } from '../shared/gpsr-parser';
+import { buildRegulatoryBlock } from './ebay';
 import { findDescriptionComplianceViolations, summarizeDescriptionViolations, type DescriptionComplianceViolation, type DescriptionViolationSummary } from '../shared/description-compliance';
 
 export const MAX_DESCRIPTION_REFRESH_BATCH = 10;
@@ -33,6 +35,13 @@ export interface DescriptionRefreshProduct extends ProductDescriptionFields {
   id: number;
   ebayListingId: string | null;
   htmlDescription: string | null; // nur noch für den changed-Vergleich (alt vs. neu aufgebaut) genutzt
+  // P71-C Teil 2: gespeicherte GPSR-Einzelfelder (gpsrRaw kommt aus ProductDescriptionFields) für resolveGpsrForListing()
+  gpsrName?: string | null;
+  gpsrAddress?: string | null;
+  gpsrCity?: string | null;
+  gpsrEmail?: string | null;
+  gpsrPhone?: string | null;
+  gpsrCountry?: string | null;
 }
 
 export interface DescriptionRefreshDeps {
@@ -40,19 +49,20 @@ export interface DescriptionRefreshDeps {
   // P71-B Teil 1: productId zusätzlich zu itemId, weil der Inventory-API-Weg (erster Versuch,
   // s. ebay.ts reviseListingDescription()) die SKU aus der Produkt-ID ableitet (`stele-{productId}`)
   // — die eBay-ItemID allein reicht dafür nicht.
-  reviseListingContent: (productId: number, itemId: string, input: { htmlDescription: string; title?: string }) => Promise<{ ok: boolean; error?: string }>;
+  reviseListingContent: (productId: number, itemId: string, input: { htmlDescription: string; title?: string; regulatory?: ReturnType<typeof buildRegulatoryBlock> }) => Promise<{ ok: boolean; error?: string }>;
   updateProductDescription: (productId: number, htmlDescription: string) => Promise<void>;
 }
 
 export type DescriptionRefreshOutcome =
-  | { productId: number; ok: true; dryRun: true; itemId: string; changed: boolean; violationsBefore: DescriptionComplianceViolation[]; violationsAfter: DescriptionComplianceViolation[]; summaryBefore: DescriptionViolationSummary; summaryAfter: DescriptionViolationSummary }
+  | { productId: number; ok: true; dryRun: true; itemId: string; changed: boolean; violationsBefore: DescriptionComplianceViolation[]; violationsAfter: DescriptionComplianceViolation[]; summaryBefore: DescriptionViolationSummary; summaryAfter: DescriptionViolationSummary; gpsr: { complete: boolean; missing: string[] } }
   | { productId: number; ok: true; dryRun: false; itemId: string; violationsBefore: DescriptionComplianceViolation[] }
-  | { productId: number; ok: false; httpStatus: 404 | 400 | 422 | 500; error: string; violations?: DescriptionComplianceViolation[]; summaryBefore?: DescriptionViolationSummary; summaryAfter?: DescriptionViolationSummary };
+  | { productId: number; ok: false; httpStatus: 404 | 400 | 422 | 500; error: string; violations?: DescriptionComplianceViolation[]; summaryBefore?: DescriptionViolationSummary; summaryAfter?: DescriptionViolationSummary; gpsr?: { complete: boolean; missing: string[] } };
 
 /**
  * Baut (bei confirm:true: lädt hoch) AUSSCHLIESSLICH die Beschreibung EINES Produkts aus dessen
- * aktuellen Feldern neu auf. Preis, Menge, Merkmale, Kategorie und regulatory bleiben unangetastet
- * — reviseListingContent() bekommt hier nie mehr als htmlDescription und den aktuellen Titel.
+ * aktuellen Feldern neu auf. Preis, Menge, Merkmale und Kategorie bleiben unangetastet
+ * — reviseListingContent() bekommt hier nie mehr als htmlDescription, den aktuellen Titel und (P71-C Teil 2)
+ * den regulatory-Block aus den GPSR-Pflichtangaben des Produkts.
  */
 export async function refreshOneProductDescription(
   productId: number,
@@ -91,12 +101,22 @@ ${newTitle}`);
     };
   }
 
+  // P71-C Teil 2: GPSR-Pflichtangaben gehören im selben PUT mit ans Offer. Fehlt etwas: nichts senden, nichts schreiben.
+  const gpsr = resolveGpsrForListing({
+    gpsrRaw: product.gpsrRaw ?? null, gpsrName: product.gpsrName ?? null, gpsrAddress: product.gpsrAddress ?? null,
+    gpsrCity: product.gpsrCity ?? null, gpsrEmail: product.gpsrEmail ?? null, gpsrPhone: product.gpsrPhone ?? null,
+    gpsrCountry: product.gpsrCountry ?? null,
+  });
+  if (!gpsr.eu) {
+    return { productId, ok: false, httpStatus: 422, error: `GPSR-Pflichtangaben fehlen: ${gpsr.missing.join('; ')}`, summaryBefore, summaryAfter, gpsr: { complete: false, missing: gpsr.missing } };
+  }
+
   if (opts.confirm !== true) {
-    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter, summaryBefore, summaryAfter };
+    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter, summaryBefore, summaryAfter, gpsr: { complete: true, missing: [] } };
   }
 
   try {
-    const result = await deps.reviseListingContent(productId, product.ebayListingId, { htmlDescription: after, title: newTitle });
+    const result = await deps.reviseListingContent(productId, product.ebayListingId, { htmlDescription: after, title: newTitle, regulatory: buildRegulatoryBlock(gpsr) });
     if (!result.ok) return { productId, ok: false, httpStatus: 400, error: result.error ?? 'Fehler beim Aktualisieren der Beschreibung' };
     await deps.updateProductDescription(productId, after);
     return { productId, ok: true, dryRun: false, itemId: product.ebayListingId, violationsBefore };
