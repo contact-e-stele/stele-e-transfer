@@ -314,16 +314,19 @@ export interface GpsrParty {
 }
 export interface GpsrManufacturer {
   name: string;
-  address: string | null;
-  postalCode: string | null;
-  city: string | null;
-  country: string | null;
+  address: string;
+  postalCode: string;
+  city: string;
+  country: string;
   email: string | null;
   phone: string | null;
 }
 export interface ResolvedGpsr {
   eu: GpsrParty | null;
+  /** Nur gesetzt, wenn Name, Straße, PLZ, Ort und Land vorhanden sind (P71-C Teil 3). */
   manufacturer: GpsrManufacturer | null;
+  /** Fehlende Herstellerfelder; leer, wenn vollständig oder kein Hersteller erkannt. */
+  manufacturerMissing: string[];
   /** Klartext je fehlender Pflichtangabe der EU-Person; leer = Listing darf weiter. */
   missing: string[];
 }
@@ -382,18 +385,27 @@ export function resolveGpsrForListing(p: GpsrProductFields): ResolvedGpsr {
   if (!email) missing.push('E-Mail der verantwortlichen Person in der EU');
   if (!country) missing.push('Land der verantwortlichen Person in der EU (nicht aus der Adresse erkennbar — im Produkt-Tab unter GPSR auswählen)');
   else if (!EU_EEA_CODES.has(country)) missing.push(`Land der verantwortlichen Person liegt außerhalb der EU/des EWR (${country}) — eBay verlangt eine Adresse in der EU, bitte im Produkt-Tab korrigieren`);
+  // P71-C Teil 3 (Live-Fehler 148, eBay errorId 25110): ein Hersteller wird nur mitgesendet, wenn Name, Straße,
+  // PLZ, Ort UND Land erkannt sind — sonst lehnt eBay das ganze Offer ab. Kein Ersatzwert.
   const m = parsed.manufacturer;
-  const manufacturer: GpsrManufacturer | null = m && m.name ? {
-    name: m.name, address: m.address,
-    postalCode: m.city?.match(PLZ_CITY_RE)?.[1] ?? null, city: m.city?.match(PLZ_CITY_RE)?.[2] ?? null,
-    country: m.country, email: m.email, phone: m.phone,
-  } : null;
+  let manufacturer: GpsrManufacturer | null = null;
+  const manufacturerMissing: string[] = [];
+  if (m && m.name) {
+    const mCity = m.city?.match(PLZ_CITY_RE);
+    const mCountry = normalizeCountryCode(m.country);
+    if (!m.address) manufacturerMissing.push('Straße');
+    if (!mCity) manufacturerMissing.push('PLZ und Ort');
+    if (!mCountry) manufacturerMissing.push('Land');
+    if (manufacturerMissing.length === 0 && m.address && mCity && mCountry) {
+      manufacturer = { name: m.name, address: m.address, postalCode: mCity[1], city: mCity[2], country: mCountry, email: m.email, phone: m.phone };
+    }
+  }
 
   // NL-Format "1012 AB" nur bei Land NL: sonst wäre z. B. "1010 AT Wien" (Ländercode nach der PLZ) still eine falsche PLZ.
   if (cityMatch && /^\d{4}\s?[A-Z]{2}$/.test(cityMatch[1]) && country && country !== 'NL') missing.push(`PLZ "${cityMatch[1]}" hat das niederländische Format, das Land ist aber ${country} — bitte PLZ und Stadt prüfen (Format "PLZ Stadt")`);
 
-  if (missing.length > 0 || !name || !address || !cityMatch || !email || !country) return { eu: null, manufacturer, missing };
-  return { eu: { name, address, postalCode: cityMatch[1], city: cityMatch[2], country, email, phone: phone ?? null }, manufacturer, missing: [] };
+  if (missing.length > 0 || !name || !address || !cityMatch || !email || !country) return { eu: null, manufacturer, manufacturerMissing, missing };
+  return { eu: { name, address, postalCode: cityMatch[1], city: cityMatch[2], country, email, phone: phone ?? null }, manufacturer, manufacturerMissing, missing: [] };
 }
 
 // ─── Paket 3 (A3) / 3b: Einzelfelder beim Import aus gpsrRaw ableiten ─────────────────────────

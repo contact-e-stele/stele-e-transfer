@@ -5,7 +5,7 @@ import { buildRegulatoryBlock, updateOfferDescriptionBySku, updateOfferDescripti
 
 const REG = buildRegulatoryBlock({
   eu: { name: 'Muster EU SARL', address: '12 Rue de Test', postalCode: '75017', city: 'Paris', country: 'FR', email: 'eu@example.fr', phone: null },
-  manufacturer: null, missing: [],
+  manufacturer: null, manufacturerMissing: [], missing: [],
 });
 const OLD_REG = { responsiblePersons: [{ companyName: 'ALT', types: ['EU_RESPONSIBLE_PERSON'] }] };
 const HTML = '<p>Neue Beschreibung</p>';

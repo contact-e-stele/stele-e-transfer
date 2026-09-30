@@ -1378,7 +1378,8 @@ export function buildRegulatoryBlock(gpsr?: ResolvedGpsr) {
       companyName: eu.name, addressLine1: eu.address, postalCode: eu.postalCode, city: eu.city,
       country: eu.country, email: eu.email, phone: eu.phone, types: ['EU_RESPONSIBLE_PERSON'],
     })],
-    ...(manufacturer ? { manufacturer: drop({
+    // P71-C Teil 3: Hersteller nur mit Name, Straße, PLZ, Ort UND Land (sonst lehnt eBay das Offer ab, errorId 25110) — kein Ersatzwert.
+    ...(manufacturer && manufacturer.name && manufacturer.address && manufacturer.postalCode && manufacturer.city && manufacturer.country ? { manufacturer: drop({
       companyName: manufacturer.name, addressLine1: manufacturer.address, postalCode: manufacturer.postalCode,
       city: manufacturer.city, country: manufacturer.country, email: manufacturer.email, phone: manufacturer.phone,
     }) } : {}),
@@ -2253,19 +2254,20 @@ export async function updateOfferDescriptionInventory(
   const variantSkus = await getInventoryItemGroupSkus(groupSku, token, fetchFn);
   if (variantSkus.length === 0) return baseResult;
 
-  // Maßgeblicher Schritt zuerst: Gruppe (Beschreibung + Titel). Scheitert er, ist nichts "bereinigt".
-  const groupResult = await updateInventoryItemGroupContent(groupSku, { description: html, title }, token, fetchFn);
-  if (!groupResult.ok) return { ok: false, error: `Gruppen-Beschreibung fehlgeschlagen (inventory_item_group/${groupSku}): ${groupResult.error}` };
-
-  // Zusätzlich die Offers je Varianten-SKU (wie bisher, alle müssen gelingen).
+  // P71-C Teil 3 (Live-Fehler 148): ERST alle Varianten-Offers (Beschreibung + regulatory — hier validiert eBay die
+  // GPSR-Angaben), NUR wenn alle gelingen DANACH die Gruppe (Beschreibung + Titel). Scheitert ein Offer, bleibt die
+  // Gruppe unangetastet — kein halber Zustand "Gruppe neu, Offers alt".
   const failed: string[] = [];
   for (const varSku of variantSkus) {
     const r = await updateOfferDescriptionBySku(varSku, html, token, fetchFn, regulatory); // die Gruppe selbst hat kein regulatory
     if (!r.ok) failed.push(`${varSku}: ${r.error ?? 'unbekannter Fehler'}`);
   }
   if (failed.length > 0) {
-    return { ok: false, partial: true, error: `Gruppe aktualisiert, aber ${failed.length} von ${variantSkus.length} Varianten-Offers fehlgeschlagen: ${failed.join('; ')}` };
+    return { ok: false, partial: true, error: `${failed.length} von ${variantSkus.length} Varianten-Offers fehlgeschlagen, Gruppe nicht geändert: ${failed.join('; ')}` };
   }
+
+  const groupResult = await updateInventoryItemGroupContent(groupSku, { description: html, title }, token, fetchFn);
+  if (!groupResult.ok) return { ok: false, partial: true, error: `Varianten-Offers aktualisiert, aber Gruppen-Beschreibung fehlgeschlagen (inventory_item_group/${groupSku}): ${groupResult.error}` };
   return { ok: true };
 }
 

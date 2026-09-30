@@ -765,16 +765,20 @@ describe('resolveVariantQuantity / parseMaxVariantQuantity — Obergrenze aus Ei
 describe('buildRegulatoryBlock — eBay regulatory-Objekt', () => {
   const eu = { name: 'Niulav UG', address: 'Michelangelostr. 1/1401', postalCode: '01217', city: 'Dresden', country: 'DE', email: 'Kuland2@web.de', phone: '15252064185' };
   test('EU-Person als responsiblePerson (EU_RESPONSIBLE_PERSON), Hersteller als eigenes Feld', () => {
-    const r = buildRegulatoryBlock({ eu, manufacturer: { name: 'Shenzhen X Co', address: 'Building 5', postalCode: null, city: null, country: 'CN', email: 'h@x.cn', phone: null }, missing: [] });
+    const r = buildRegulatoryBlock({ eu, manufacturer: { name: 'Shenzhen X Co', address: 'Building 5', postalCode: '518000', city: 'Shenzhen', country: 'CN', email: 'h@x.cn', phone: null }, manufacturerMissing: [], missing: [] });
     expect(r.responsiblePersons[0]).toEqual({ companyName: 'Niulav UG', addressLine1: 'Michelangelostr. 1/1401', postalCode: '01217', city: 'Dresden', country: 'DE', email: 'Kuland2@web.de', phone: '15252064185', types: ['EU_RESPONSIBLE_PERSON'] });
-    expect(r.manufacturer).toEqual({ companyName: 'Shenzhen X Co', addressLine1: 'Building 5', country: 'CN', email: 'h@x.cn' });
+    expect(r.manufacturer).toEqual({ companyName: 'Shenzhen X Co', addressLine1: 'Building 5', postalCode: '518000', city: 'Shenzhen', country: 'CN', email: 'h@x.cn' });
+  });
+  test('P71-C Teil 3: unvollständiger Hersteller (ohne PLZ/Ort) wird NICHT gesendet', () => {
+    const r = buildRegulatoryBlock({ eu, manufacturer: { name: 'Shenzhen X Co', address: 'Building 5', postalCode: '', city: '', country: 'CN', email: 'h@x.cn', phone: null }, manufacturerMissing: [], missing: [] });
+    expect('manufacturer' in r).toBe(false);
   });
   test('ohne erkannten Hersteller wird KEIN Ersatz-Hersteller (kein "Markenlos", keine EU-Adresse) gesendet', () => {
-    const r = buildRegulatoryBlock({ eu, manufacturer: null, missing: [] });
+    const r = buildRegulatoryBlock({ eu, manufacturer: null, manufacturerMissing: [], missing: [] });
     expect('manufacturer' in r).toBe(false);
   });
   test('fehlende Pflichtangaben → Fehler mit Klartext statt Ersatz (Blockade)', () => {
-    expect(() => buildRegulatoryBlock({ eu: null, manufacturer: null, missing: ['E-Mail der verantwortlichen Person in der EU'] })).toThrow('E-Mail der verantwortlichen Person');
+    expect(() => buildRegulatoryBlock({ eu: null, manufacturer: null, manufacturerMissing: [], missing: ['E-Mail der verantwortlichen Person in der EU'] })).toThrow('E-Mail der verantwortlichen Person');
     expect(() => buildRegulatoryBlock(undefined)).toThrow('GPSR-Pflichtangaben fehlen');
   });
 });
@@ -783,7 +787,7 @@ describe('buildRegulatoryBlock — eBay regulatory-Objekt', () => {
 // Die Fehlerantwort von eBay ist hier NACHGEBAUT (echtes Format unbekannt, api.ebay.com geblockt).
 describe('postOfferWithTypeFallback — types-Wiederholung einmal und nur einmal', () => {
   const eu = { name: 'Niulav UG', address: 'Str. 1', postalCode: '01217', city: 'Dresden', country: 'DE', email: 'a@b.de', phone: null };
-  const body = () => ({ sku: 'x', regulatory: buildRegulatoryBlock({ eu, manufacturer: null, missing: [] }) });
+  const body = () => ({ sku: 'x', regulatory: buildRegulatoryBlock({ eu, manufacturer: null, manufacturerMissing: [], missing: [] }) });
   const typesErr = () => new Response(JSON.stringify({ errors: [{ errorId: 25001, message: 'Invalid value EU_RESPONSIBLE_PERSON at regulatory.responsiblePersons[0].types' }] }), { status: 400 });
   const otherErr = () => new Response(JSON.stringify({ errors: [{ errorId: 25002, message: 'Offer exists' }] }), { status: 400 });
   const ok = () => new Response(JSON.stringify({ offerId: '1' }), { status: 201 });

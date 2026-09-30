@@ -19,6 +19,7 @@ interface RefreshOutcome {
   error?: string;
   summaryBefore?: DescriptionViolationSummary;
   summaryAfter?: DescriptionViolationSummary;
+  gpsr?: { complete: boolean; missing: string[]; manufacturerMissing: string[] };
 }
 
 async function callRefresh(productId: number, confirm: boolean): Promise<RefreshOutcome> {
@@ -105,6 +106,11 @@ export function DescriptionRefreshPanel({ productId, onSent }: { productId: numb
               <SummaryLine label="Nachher" s={preview.summaryAfter} />
               {preview.ok && <div style={{ marginBottom: 6 }}><strong>Text ändert sich:</strong> {preview.changed ? "ja" : "nein"}</div>}
             </>
+          )}
+          {preview?.ok && preview.gpsr && preview.gpsr.manufacturerMissing.length > 0 && (
+            <div style={{ marginBottom: 6, padding: "6px 8px", borderRadius: 6, background: "#FEF08A", color: "#713F12", fontWeight: 600 }}>
+              Hersteller unvollständig: {preview.gpsr.manufacturerMissing.join(", ")} — wird ohne Herstellerblock gesendet
+            </div>
           )}
           {error && (
             <div style={{ color: "#B91C1C", fontWeight: 600, whiteSpace: "pre-wrap", wordBreak: "break-word", marginBottom: 6 }}>{error}</div>

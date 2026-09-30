@@ -53,10 +53,13 @@ export interface DescriptionRefreshDeps {
   updateProductDescription: (productId: number, htmlDescription: string) => Promise<void>;
 }
 
+// manufacturerMissing (P71-C Teil 3): fehlende Herstellerfelder — der Herstellerblock wird dann weggelassen.
+export interface GpsrPreview { complete: boolean; missing: string[]; manufacturerMissing: string[] }
+
 export type DescriptionRefreshOutcome =
-  | { productId: number; ok: true; dryRun: true; itemId: string; changed: boolean; violationsBefore: DescriptionComplianceViolation[]; violationsAfter: DescriptionComplianceViolation[]; summaryBefore: DescriptionViolationSummary; summaryAfter: DescriptionViolationSummary; gpsr: { complete: boolean; missing: string[] } }
+  | { productId: number; ok: true; dryRun: true; itemId: string; changed: boolean; violationsBefore: DescriptionComplianceViolation[]; violationsAfter: DescriptionComplianceViolation[]; summaryBefore: DescriptionViolationSummary; summaryAfter: DescriptionViolationSummary; gpsr: GpsrPreview }
   | { productId: number; ok: true; dryRun: false; itemId: string; violationsBefore: DescriptionComplianceViolation[] }
-  | { productId: number; ok: false; httpStatus: 404 | 400 | 422 | 500; error: string; violations?: DescriptionComplianceViolation[]; summaryBefore?: DescriptionViolationSummary; summaryAfter?: DescriptionViolationSummary; gpsr?: { complete: boolean; missing: string[] } };
+  | { productId: number; ok: false; httpStatus: 404 | 400 | 422 | 500; error: string; violations?: DescriptionComplianceViolation[]; summaryBefore?: DescriptionViolationSummary; summaryAfter?: DescriptionViolationSummary; gpsr?: GpsrPreview };
 
 /**
  * Baut (bei confirm:true: lädt hoch) AUSSCHLIESSLICH die Beschreibung EINES Produkts aus dessen
@@ -108,11 +111,11 @@ ${newTitle}`);
     gpsrCountry: product.gpsrCountry ?? null,
   });
   if (!gpsr.eu) {
-    return { productId, ok: false, httpStatus: 422, error: `GPSR-Pflichtangaben fehlen: ${gpsr.missing.join('; ')}`, summaryBefore, summaryAfter, gpsr: { complete: false, missing: gpsr.missing } };
+    return { productId, ok: false, httpStatus: 422, error: `GPSR-Pflichtangaben fehlen: ${gpsr.missing.join('; ')}`, summaryBefore, summaryAfter, gpsr: { complete: false, missing: gpsr.missing, manufacturerMissing: gpsr.manufacturerMissing } };
   }
 
   if (opts.confirm !== true) {
-    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter, summaryBefore, summaryAfter, gpsr: { complete: true, missing: [] } };
+    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter, summaryBefore, summaryAfter, gpsr: { complete: true, missing: [], manufacturerMissing: gpsr.manufacturerMissing } };
   }
 
   try {

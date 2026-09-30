@@ -73,20 +73,22 @@ describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', (
     expect(groupPuts[0].description).toBe(NEW_HTML);
   });
 
-  test('Offers je Varianten-SKU werden zusätzlich aktualisiert (2 PUTs), NACH dem Gruppen-PUT', async () => {
-    const { fetchFn, offerPuts, order } = makeFetch();
-    await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+  test('P71-C Teil 3: alle Offers gelingen → Gruppen-PUT genau einmal, und zwar NACH beiden Offer-PUTs', async () => {
+    const { fetchFn, offerPuts, groupPuts, order } = makeFetch();
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    expect(r.ok).toBe(true);
     expect(offerPuts.length).toBe(2);
-    expect(order[0]).toBe('group-put');
+    expect(groupPuts.length).toBe(1);
+    expect(order).toEqual(['offer-put', 'offer-put', 'group-put']);
   });
 
-  test('Gruppen-PUT scheitert (500) → ok:false, Fehlertext nennt die Gruppe, KEIN Offer wird geschrieben', async () => {
+  test('Gruppen-PUT scheitert (500) → ok:false, Fehlertext nennt die Gruppe (die Offers sind dann schon geschrieben)', async () => {
     const { fetchFn, offerPuts } = makeFetch({ groupPutStatus: 500 });
     const r = await updateOfferDescriptionInventory(1, NEW_HTML, 'Neuer Titel', fetchFn, async () => 'tok');
     expect(r.ok).toBe(false);
     expect(r.error).toContain('Gruppen-Beschreibung fehlgeschlagen');
     expect(r.error).toContain('500');
-    expect(offerPuts.length).toBe(0);
+    expect(offerPuts.length).toBe(2);
   });
 
   test('Gruppen-GET scheitert → ok:false', async () => {
@@ -96,11 +98,19 @@ describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', (
     expect(groupPuts.length).toBe(0);
   });
 
-  test('Gruppe gelungen, aber Varianten-Offers scheitern → weiterhin ok:false', async () => {
-    const { fetchFn } = makeFetch({ offerPutOk: false });
+  test('P71-C Teil 3: Varianten-Offers scheitern → ok:false und der Gruppen-PUT wird NICHT aufgerufen (kein halber Zustand)', async () => {
+    const { fetchFn, groupPuts } = makeFetch({ offerPutOk: false });
     const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
     expect(r.ok).toBe(false);
-    expect(r.error).toContain('Gruppe aktualisiert, aber 2 von 2');
+    expect(r.error).toContain('2 von 2 Varianten-Offers fehlgeschlagen, Gruppe nicht geändert');
+    expect(groupPuts.length).toBe(0);
+  });
+
+  test('P71-C Teil 3: nur 1 von 2 Offers scheitert → Gruppen-PUT ebenfalls NICHT aufgerufen', async () => {
+    const { fetchFn, groupPuts } = makeFetch({ offerPutFailSkus: ['stele-1-B'] });
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    expect(r.ok).toBe(false);
+    expect(groupPuts.length).toBe(0);
   });
 });
 
@@ -119,7 +129,7 @@ describe('Rücklese-Prüfung, Teilerfolg, kein falscher Erfolg über den Trading
     const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
     expect(r.ok).toBe(false);
     expect(r.error).toContain('Zurücklesen');
-    expect(offerPuts.length).toBe(0);
+    expect(offerPuts.length).toBe(2);
   });
 
   test('nur 1 von 2 Varianten-Offers scheitert → ok:false, partial:true', async () => {
@@ -139,13 +149,12 @@ describe('Rücklese-Prüfung, Teilerfolg, kein falscher Erfolg über den Trading
     expect(tradingCalled).toBe(false);
   });
 
-  test('Gruppen-PUT scheitert komplett: Trading-Fallback bleibt wie bisher erlaubt (kein Teilerfolg)', async () => {
+  test('Gruppen-PUT scheitert nach geschriebenen Offers: Teilerfolg, KEIN Trading-Fallback mehr (P71-C Teil 3)', async () => {
     const { fetchFn } = makeFetch({ groupPutStatus: 500 });
     let tradingCalled = false;
     const tradingFn = (async () => { tradingCalled = true; return { ok: false, error: 'trading down' }; }) as unknown as typeof reviseListingContent;
     const r = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: NEW_HTML }, fetchFn, async () => 'tok', tradingFn);
     expect(r.ok).toBe(false);
-    expect(tradingCalled).toBe(true);
-    expect(r.error).toContain('Trading-API: trading down');
+    expect(tradingCalled).toBe(false);
   });
 });

@@ -67,7 +67,34 @@ describe('resolveGpsrForListing — Pflichtangaben', () => {
     const r = resolveGpsrForListing(full);
     expect(r.missing).toEqual([]);
     expect(r.eu).toEqual({ name: 'Niulav UG', address: 'Michelangelostr. 1/1401', postalCode: '01217', city: 'Dresden', country: 'DE', email: 'Kuland2@web.de', phone: '15252064185' });
-    expect(r.manufacturer?.name).toBe('Shenzhen Beispiel Technology Co., Ltd');
+    // P71-C Teil 3: MANUF hat keine "PLZ Ort"-Angabe → unvollständig → nicht senden, Lücke benennen
+    expect(r.manufacturer).toBeNull();
+    expect(r.manufacturerMissing).toEqual(['PLZ und Ort']);
+  });
+  it('P71-C Teil 3: Hersteller nur mit Name/E-Mail (ohne Straße, PLZ/Ort, Land) → manufacturer null, alle drei Felder in manufacturerMissing', () => {
+    const raw = `Informationen zum Hersteller
+Name: Foo Ltd
+E-Mail: h@foo.cn
+
+${EU}`;
+    const r = resolveGpsrForListing({ ...full, gpsrRaw: raw });
+    expect(r.eu).not.toBeNull();
+    expect(r.manufacturer).toBeNull();
+    expect(r.manufacturerMissing).toEqual(['Straße', 'PLZ und Ort', 'Land']);
+  });
+  it('P71-C Teil 3: vollständiger Hersteller (Name, Straße, PLZ, Ort, Land) → manufacturer gesetzt, manufacturerMissing leer', () => {
+    const raw = `Informationen zum Hersteller
+Name: Foo GmbH
+Adresse: Hauptstr. 5, 10115 Berlin, DE(Germany)
+E-Mail: h@foo.de
+
+${EU}`;
+    const r = resolveGpsrForListing({ ...full, gpsrRaw: raw });
+    expect(r.manufacturer).toEqual({ name: 'Foo GmbH', address: 'Hauptstr. 5', postalCode: '10115', city: 'Berlin', country: 'DE', email: 'h@foo.de', phone: null });
+    expect(r.manufacturerMissing).toEqual([]);
+  });
+  it('P71-C Teil 3: kein Hersteller erkannt → manufacturerMissing leer', () => {
+    expect(resolveGpsrForListing({ ...full, gpsrRaw: EU }).manufacturerMissing).toEqual([]);
   });
   it('gespeicherte Einzelfelder haben Vorrang vor dem Parser', () => {
     const r = resolveGpsrForListing({ ...full, gpsrName: 'Stele Test GmbH', gpsrAddress: 'Am Hochfeld 47', gpsrCity: '65205 Wiesbaden', gpsrEmail: 'x@y.de', gpsrPhone: '123' });
