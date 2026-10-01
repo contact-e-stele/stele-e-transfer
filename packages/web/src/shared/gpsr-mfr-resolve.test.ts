@@ -46,6 +46,30 @@ describe('resolveGpsrForListing — A-008 Herstellerfelder', () => {
       gpsrMfrName: 'Gleich GmbH', gpsrMfrAddress: 'Weg 1', gpsrMfrCity: '10115 Berlin', gpsrMfrCountry: 'DE', gpsrMfrEmail: null, gpsrMfrPhone: null, gpsrMfrUrl: null });
     expect(r.manufacturer).not.toBeNull();
   });
+  it('anderer gespeicherter Hersteller-Name: Rohtext-Felder (Straße, PLZ, Land, E-Mail) werden NICHT dazugemischt', () => {
+    const r = resolveGpsrForListing({ gpsrRaw: RAW_MIT_HERSTELLER, ...noStored, gpsrMfrName: 'Ganz anderer Hersteller GmbH' });
+    expect(r.manufacturer).toBeNull();
+    expect(r.manufacturerMissing).toEqual(['Straße', 'PLZ und Ort', 'Land']);
+  });
+  it('gespeicherter Name passt zum Rohtext-Hersteller (Rechtsform/Satzzeichen egal): Rest darf aus dem Rohtext ergänzt werden', () => {
+    const r = resolveGpsrForListing({ gpsrRaw: RAW_MIT_HERSTELLER, ...noStored, gpsrMfrName: 'raw maker limited' });
+    expect(r.manufacturer).toMatchObject({ name: 'raw maker limited', postalCode: '518000', city: 'Shenzhen', country: 'CN' });
+  });
+  it('ungültige Hersteller-E-Mail wird nicht gesendet (kippt sonst das Offer); Hersteller bleibt sonst vollständig', () => {
+    const r = resolveGpsrForListing({ gpsrRaw: EU_BLOCK, ...noStored, ...fullMfr, gpsrMfrEmail: 'keine-mail', gpsrMfrUrl: null });
+    expect(r.manufacturer).not.toBeNull();
+    expect(r.manufacturer!.email).toBeNull();
+  });
+  it('zu langer Hersteller-Name (>100) → Hersteller wird nicht gesendet, Klartext', () => {
+    const r = resolveGpsrForListing({ gpsrRaw: EU_BLOCK, ...noStored, ...fullMfr, gpsrMfrName: 'x'.repeat(101) });
+    expect(r.manufacturer).toBeNull();
+    expect(r.manufacturerMissing[0]).toContain('Hersteller zu lang: Name (max. 100 Zeichen)');
+  });
+  it('Namensgleichheit mit Satzzeichen/Rechtsform-Abweichung (EU "Gleich GmbH." vs Hersteller "gleich ltd", Sitz CN) wird erkannt', () => {
+    const r = resolveGpsrForListing({ gpsrRaw: EU_BLOCK, gpsrName: 'Gleich GmbH.', gpsrAddress: 'Weg 1', gpsrCity: '10115 Berlin', gpsrEmail: 'e@e.de', gpsrPhone: null, gpsrCountry: 'DE', ...fullMfr, gpsrMfrName: 'gleich ltd' });
+    expect(r.manufacturer).toBeNull();
+    expect(r.manufacturerMissing.join(' ')).toContain('identisch mit der EU-Person');
+  });
   it('halbe Herstelleradresse (nur Straße) → manufacturer null, genau die fehlenden Felder benannt (25110-Schutz)', () => {
     const r = resolveGpsrForListing({ gpsrRaw: EU_BLOCK, ...noStored, gpsrMfrName: 'Halb Co', gpsrMfrAddress: 'Road 9' });
     expect(r.manufacturer).toBeNull();

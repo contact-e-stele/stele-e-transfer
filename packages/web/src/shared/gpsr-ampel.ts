@@ -17,6 +17,8 @@ export interface GpsrAmpelResult {
   manufacturer: GpsrAmpelPart & { halbeAdresse: boolean };
 }
 
+// Die Ampel zeigt; gesperrt wird nur bei roter EU-Person. Ein roter Hersteller wird beim Senden weggelassen.
+const HINWEIS_OHNE_HERSTELLER = 'Folge: Der Hersteller wird nicht mitgesendet — Listen/Nachziehen bleibt möglich (nur eine rote EU-Person sperrt).';
 const LIMITS = { name: 100, address: 180, city: 64, email: 180, url: 250 };
 const rank = (c: GpsrAmpelColor) => (c === 'ROT' ? 2 : c === 'GELB' ? 1 : 0);
 const worst = (...c: GpsrAmpelColor[]): GpsrAmpelColor => c.reduce((a, b) => (rank(b) > rank(a) ? b : a), 'GRUEN' as GpsrAmpelColor);
@@ -58,10 +60,11 @@ export function gpsrAmpel(p: GpsrProductFields): GpsrAmpelResult {
   } else {
     const fehlt = r.manufacturerMissing;
     const identisch = fehlt.some(x => x.includes('identisch mit der EU-Person'));
+    const zuLang = fehlt.filter(x => x.startsWith('Hersteller zu lang'));
     const adresseTeile = fehlt.filter(x => x === 'Straße' || x === 'PLZ und Ort' || x === 'Land');
-    if (identisch) { mAmpel = 'ROT'; mMissing.push(...fehlt.filter(x => x.includes('identisch'))); }
+    if (identisch || zuLang.length) { mAmpel = 'ROT'; mMissing.push(...fehlt.filter(x => x.includes('identisch') || x.startsWith('Hersteller zu lang')), HINWEIS_OHNE_HERSTELLER); }
     else if (adresseTeile.length === 3) { mAmpel = 'GELB'; mMissing.push('Hersteller nur mit Name, ohne Anschrift (Straße, PLZ und Ort, Land fehlen)'); }
-    else { mAmpel = 'ROT'; halbeAdresse = true; mMissing.push(...adresseTeile.map(x => `Hersteller: ${x} fehlt`), 'Halbe Hersteller-Adresse (25110-Risiko: alles oder nichts)'); }
+    else { mAmpel = 'ROT'; halbeAdresse = true; mMissing.push(...adresseTeile.map(x => `Hersteller: ${x} fehlt`), 'Halbe Hersteller-Adresse (25110-Risiko: alles oder nichts)', HINWEIS_OHNE_HERSTELLER); }
   }
   return { overall: worst(eu.ampel, mAmpel), eu, manufacturer: { ampel: mAmpel, missing: mMissing, halbeAdresse } };
 }

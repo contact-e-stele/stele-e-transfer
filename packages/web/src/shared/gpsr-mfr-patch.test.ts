@@ -17,6 +17,11 @@ describe('parseMfrPatch (A-008)', () => {
     expect(parseMfrPatch({ gpsrMfrUrl: 'https://maker.example/kontakt' }).ok).toBe(true);
     expect(parseMfrPatch({ gpsrMfrUrl: 'javascript:alert(1)' })).toEqual({ ok: false, error: '"gpsrMfrUrl" muss mit http:// oder https:// beginnen' });
   });
+  it('E-Mail ohne gültiges Format und zu lange Werte werden abgelehnt', () => {
+    expect(parseMfrPatch({ gpsrMfrEmail: 'keine-mail' })).toEqual({ ok: false, error: '"gpsrMfrEmail" ist keine gültige E-Mail-Adresse' });
+    expect(parseMfrPatch({ gpsrMfrEmail: 'a@b.cn' }).ok).toBe(true);
+    expect(parseMfrPatch({ gpsrMfrName: 'x'.repeat(101) })).toEqual({ ok: false, error: '"gpsrMfrName" ist zu lang (max. 100 Zeichen)' });
+  });
   it('falscher Typ → Fehler mit Feldname', () => {
     expect(parseMfrPatch({ gpsrMfrName: 5 })).toEqual({ ok: false, error: '"gpsrMfrName" muss ein Text oder null sein' });
   });
