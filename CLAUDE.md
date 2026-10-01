@@ -127,7 +127,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
-nachträglich rekonstruiert (PR-Body gegen "eigenständiger Feature-/Bugfix-PR ohne/mit
+(Fortschreibung bis #137: siehe Nachtrag A-009 unter der Tabelle) nachträglich rekonstruiert (PR-Body gegen "eigenständiger Feature-/Bugfix-PR ohne/mit
 funktionaler Änderung" geprüft). #75 selbst (der letzte Versions-Nachtrag) zählt NICHT mit —
 reine Zähler-/Versions-Housekeeping, kein Feature-/Bugfix-PR. #76/#80 zählen NICHT — beide laut
 eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Preis-Bezug.
