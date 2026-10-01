@@ -54,6 +54,15 @@ export const products = sqliteTable('products', {
   gpsrEmail: text('gpsr_email'),             // E-Mail
   gpsrPhone: text('gpsr_phone'),             // Telefon
   gpsrCountry: text('gpsr_country'),         // Paket 3b: Land der EU-Person, ISO-2 (z. B. "DE") — Pflicht fürs Listing
+  // A-008 (01.10.2026): Hersteller als eigener Block (vorher nur über den Parser aus gpsr_raw ableitbar).
+  // Hersteller ≠ EU-Person: die EU-Person steht nie hier. Alle nullable; city im Format "PLZ Stadt", country ISO-2.
+  gpsrMfrName: text('gpsr_mfr_name'),
+  gpsrMfrAddress: text('gpsr_mfr_address'),
+  gpsrMfrCity: text('gpsr_mfr_city'),
+  gpsrMfrCountry: text('gpsr_mfr_country'),
+  gpsrMfrEmail: text('gpsr_mfr_email'),
+  gpsrMfrPhone: text('gpsr_mfr_phone'),
+  gpsrMfrUrl: text('gpsr_mfr_url'),
   manualPdfUrl: text('manual_pdf_url'),       // Handbuch/Zertifikat-Upload — nie automatisch befüllt, nur manuell
   certificationNote: text('certification_note'), // Freitext-Notiz zu Zertifizierungen (z.B. OEKO-TEX/REACH) — nie automatisch befüllt
   handlingTimeDays: integer('handling_time_days').default(10), // Bearbeitungszeit in Tagen (eBay Fulfillment Policy)

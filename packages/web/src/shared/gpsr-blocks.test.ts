@@ -8,7 +8,7 @@ import { GPSR_DESCRIPTION_NOTICE, neutralizeGpsrTab, findForeignEmails } from '.
 
 const MANUF = `Informationen zum Hersteller
 Name: Shenzhen Beispiel Technology Co., Ltd
-Adresse: Building 5, Longgang District, Shenzhen, 518000, China
+Adresse: Building 5, Longgang District, Shenzhen, China
 E-Mail: hersteller@beispiel-cn.com
 Telefon: 8613800000000`;
 const EU = `Angaben zur verantwortlichen Person in der EU
@@ -259,13 +259,13 @@ describe('Paket 3b — Fixtures Produktion 195 und 191 (echte Feldwerte, 21.09.2
   const p195 = {
     gpsrName: 'Ma Wei Aasheng International Investment Consultin', gpsrAddress: 'Rodenberger Allee 23', gpsrCity: '31542 Bad Nenndorf',
     gpsrEmail: 'sibingqian1013@163.com', gpsrPhone: '+49 171 3213134', gpsrCountry: null,
-    // Rohtext hat ENGLISCHE Schlüssel ("Address:", "Email:") — der Parser liest daraus kein Land (OFFEN).
+    // Rohtext hat ENGLISCHE Schlüssel ("Address:", "Email:") — seit A-008 liest der Parser daraus auch das Land ("…, Germany" → DE).
     gpsrRaw: 'Manufacturer information\nName: Shenzhen Jiuzhou Junao Technology Co., Ltd.\nAddress: Room 603, No. 2, Area 1, Langkou Village, Langkou Community, Dalang Street, Longhua District, Shenzhen City\nEmail: leafy998@163.com\nPhone: 13049993661\nEU responsible person\nName: Ma Wei Aasheng International Investment Consultin\nAddress: Rodenberger Allee 23, 31542 Bad Nenndorf, Germany\nEmail: sibingqian1013@163.com\nPhone: 01713213134',
   };
-  it('195: alle vier Felder von Hand korrekt, aber ohne gespeichertes Land blockiert (bisheriges Verhalten)', () => {
+  it('195: alle vier Felder von Hand korrekt, ohne gespeichertes Land — seit A-008 kommt DE aus dem englischen Rohtext ("Address: …, Germany")', () => {
     const r = resolveGpsrForListing(p195);
-    expect(r.eu).toBeNull();
-    expect(r.missing.join(' ')).toContain('Land');
+    expect(r.missing).toEqual([]);
+    expect(r.eu).toMatchObject({ country: 'DE', postalCode: '31542', city: 'Bad Nenndorf' });
   });
   it('195: mit gespeichertem Land DE ist die Blockade auflösbar', () => {
     const r = resolveGpsrForListing({ ...p195, gpsrCountry: 'DE' });
