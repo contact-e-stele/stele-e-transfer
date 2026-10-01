@@ -287,7 +287,7 @@ describe('refreshOneProductDescription — P71-C Teil 2: GPSR-Pflichtangaben (re
   });
 
   test('P71-C Teil 3: Hersteller ohne PLZ/Ort → Trockenlauf meldet manufacturerMissing, und der Sende-Block enthält keinen manufacturer', async () => {
-    const raw = ['Informationen zum Hersteller', 'Name: Foo Ltd', 'Adresse: Building 5, Shenzhen, 518000, China', 'E-Mail: h@foo.cn'].join('\n');
+    const raw = ['Informationen zum Hersteller', 'Name: Foo Ltd', 'Adresse: Building 5, Shenzhen, China', 'E-Mail: h@foo.cn'].join('\n');
     const product = makeProduct({ id: 11, ebayListingId: '198600000011', gpsrRaw: raw });
     const dry = await refreshOneProductDescription(11, {}, makeDeps([product]));
     expect(dry.ok).toBe(true);

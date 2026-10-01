@@ -37,6 +37,14 @@ const migrations = [
   // Paket 3b (2026-09-21): Land der verantwortlichen Person in der EU (ISO-2), vorher nur aus dem Rohtext
   // ableitbar → gepflegte Produkte (z. B. 195) blockierten auf "Land". Additiv, nullable.
   `ALTER TABLE products ADD COLUMN gpsr_country TEXT`,
+  // A-008 (01.10.2026): Hersteller-Felder (additiv, alle nullable) — Hersteller ist ein eigener Block, nie die EU-Person.
+  `ALTER TABLE products ADD COLUMN gpsr_mfr_name TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_mfr_address TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_mfr_city TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_mfr_country TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_mfr_email TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_mfr_phone TEXT`,
+  `ALTER TABLE products ADD COLUMN gpsr_mfr_url TEXT`,
   // Handbuch/Zertifikat-Upload + Freitextnotiz — rein manuell, kein Automatismus (GPSR/Handbuch-Vereinfachung)
   `ALTER TABLE products ADD COLUMN manual_pdf_url TEXT`,
   `ALTER TABLE products ADD COLUMN certification_note TEXT`,
