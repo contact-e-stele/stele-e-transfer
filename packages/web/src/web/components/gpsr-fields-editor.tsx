@@ -2,7 +2,7 @@
 // Warnhinweis. Reine Darstellung: alle Regeln kommen aus shared/gpsr-import-fields.ts (Import-Tab) bzw.
 // shared/gpsr-ampel.ts (dieselbe Ampel wie der Produkte-Tab) — hier wird nichts nachgebaut.
 import { useEffect, useState } from "react";
-import { EU_EEA_COUNTRIES } from "../../shared/gpsr-parser";
+import { EU_EEA_COUNTRIES, sameCompanyName } from "../../shared/gpsr-parser";
 import { gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import {
   EU_KEYS, MFR_KEYS, effectiveForm, fieldProblems, ampelForForm, rawPartyNames, nameMismatchWarning, canAdoptAsManufacturer, sortMfrOptions,
@@ -24,11 +24,16 @@ const palette = (t: Theme) => t === "dark"
 
 // Die Liste wird einmal je Seitenaufruf geladen (nur lesen).
 let partiesCache: Promise<PartyOptions | null> | null = null;
+/** Nach dem Speichern aufrufen, damit neu importierte Personen beim nächsten Öffnen in der Liste stehen. */
+export function invalidatePartyOptions() { partiesCache = null; }
 export function usePartyOptions(): PartyOptions | null {
   const [options, setOptions] = useState<PartyOptions | null>(null);
   useEffect(() => {
     let alive = true;
-    partiesCache ??= fetch("/api/gpsr/parties").then(r => (r.ok ? r.json() as Promise<PartyOptions> : null)).catch(() => null);
+    // Fehler werden NICHT gecacht (sonst blieben die Listen bis zum Neuladen leer)
+    partiesCache ??= fetch("/api/gpsr/parties")
+      .then(r => { if (!r.ok) { partiesCache = null; return null; } return r.json() as Promise<PartyOptions>; })
+      .catch(() => { partiesCache = null; return null; });
     partiesCache.then(o => { if (alive) setOptions(o); });
     return () => { alive = false; };
   }, []);
@@ -89,6 +94,14 @@ export function GpsrFieldsEditor(props: {
   const options = usePartyOptions();
   const names = rawPartyNames(props.raw);
   const missing = [...ampel.eu.missing, ...ampel.manufacturer.missing];
+  // Anderer Name als im Rohtext → der Rohtext füllt für diesen Block keine Lücken (nie zwei Personen mischen)
+  const euOther = !!props.overrides.eu.name?.trim() && !!names.eu && !sameCompanyName(props.overrides.eu.name, names.eu);
+  const mfrOther = !!props.overrides.mfr.name?.trim() && !!names.mfr && !sameCompanyName(props.overrides.mfr.name, names.mfr);
+  const otherNote = (
+    <div style={{ fontSize: 10, color: c.warn, marginBottom: 6 }}>
+      Anderer Name als im Text oben: Die übrigen Felder werden nicht aus dem Text ergänzt — bitte alle Angaben dieser Person prüfen.
+    </div>
+  );
 
   const setEu = (k: EuKey, v: string) => props.onChange({ ...props.overrides, eu: { ...props.overrides.eu, [k]: v } });
   const setMfr = (k: MfrKey, v: string) => props.onChange({ ...props.overrides, mfr: { ...props.overrides.mfr, [k]: v } });
@@ -139,11 +152,13 @@ export function GpsrFieldsEditor(props: {
       <div style={{ fontWeight: 800, color: c.head, marginBottom: 4 }}>Hersteller</div>
       <PartyPicker kind="mfr" options={options} rawName={names.mfr} euName={form.eu.name} theme={props.theme}
         onPick={o => props.onChange({ ...props.overrides, mfr: { name: o.name, address: o.address, city: o.city, country: o.country, email: o.email, phone: o.phone, url: (o as MfrOption).url ?? "" } })} />
+      {mfrOther && otherNote}
       {MFR_KEYS.map(k => <div key={k}>{field(LABELS_MFR[k], input(form.mfr[k], v => setMfr(k, v), problems.mfr[k], k === "country" ? { select: MFR_COUNTRIES } : undefined))}</div>)}
 
       <div style={{ fontWeight: 800, color: c.head, margin: "10px 0 4px" }}>EU-Verantwortliche Person</div>
       <PartyPicker kind="eu" options={options} rawName={names.eu} theme={props.theme}
         onPick={o => props.onChange({ ...props.overrides, eu: { name: o.name, address: o.address, city: o.city, country: o.country, email: o.email, phone: o.phone } })} />
+      {euOther && otherNote}
       {EU_KEYS.map(k => <div key={k}>{field(LABELS_EU[k], input(form.eu[k], v => setEu(k, v), problems.eu[k], k === "country" ? { select: EU_EEA_COUNTRIES } : undefined))}</div>)}
     </div>
   );

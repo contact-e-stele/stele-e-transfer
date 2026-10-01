@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import {
-  resolveMfrUpdateFields, parserPrefill, effectiveForm, toFlatFields, ampelForForm, emptyOverrides, resolveMfrImportFields, resolveEuImportFields,
+  resolveMfrUpdateFields, overridesToFlat, crossCheckParties, parserPrefill, effectiveForm, toFlatFields, ampelForForm, emptyOverrides, resolveMfrImportFields, resolveEuImportFields,
   validateGpsrFlat, fieldProblems, buildPartyOptions, sortMfrOptions, nameMismatchWarning, canAdoptAsManufacturer, rawPartyNames,
   type GpsrFormOverrides,
 } from './gpsr-import-fields';
@@ -60,6 +62,25 @@ describe('Import-Vorrang (Server)', () => {
     expect(other).toEqual({ gpsrMfrCountry: 'CN' });
     const renamed = resolveMfrUpdateFields({ gpsrMfrName: 'Shenzhen Youtuobang Technology Co., Ltd' }, RAW_92, { gpsrMfrName: 'Neuer Hersteller AG' });
     expect(renamed).toEqual({ gpsrMfrName: 'Neuer Hersteller AG' });
+  });
+  it('overridesToFlat: nur echte Eingaben, nie die Parser-Vorbefüllung; Land wird groß gespeichert', () => {
+    expect(overridesToFlat({ eu: { name: ' E GmbH ', country: 'es', phone: '' }, mfr: { country: 'cn' } })).toEqual({ gpsrName: 'E GmbH', gpsrCountry: 'ES', gpsrMfrCountry: 'CN' });
+    expect(overridesToFlat(emptyOverrides())).toEqual({});
+  });
+  it('Re-Import ohne Eingaben: Hand-Pflege in der DB bleibt unberührt (Straße, Telefon, Land von Hand korrigiert)', () => {
+    const existing = { gpsrMfrName: 'Shenzhen Youtuobang Technology Co., Ltd', gpsrMfrAddress: 'Von Hand korrigierte Straße 5', gpsrMfrPhone: '+86 111', gpsrMfrCountry: 'CN', gpsrMfrCity: '518000 Shenzhen' };
+    const r = resolveMfrUpdateFields(existing, RAW_92, overridesToFlat(emptyOverrides()));
+    expect(r.gpsrMfrAddress).toBeUndefined();
+    expect(r.gpsrMfrPhone).toBeUndefined();
+    expect(r.gpsrMfrCountry).toBeUndefined();
+    expect(r).toEqual({ gpsrMfrEmail: 'youtbus@163.com' });
+  });
+  it('crossCheckParties auf Endwerten: gleicher Name, Hersteller-Land leer/außerhalb EU → Fehler; EU-Land oder anderer Name → ok', () => {
+    expect(crossCheckParties({ name: 'Gleich GmbH' }, { name: 'gleich ltd', country: 'CN' })).toContain('identisch mit der EU-Person');
+    expect(crossCheckParties({ name: 'Gleich GmbH' }, { name: 'gleich ltd', country: null })).toContain('identisch mit der EU-Person');
+    expect(crossCheckParties({ name: 'Gleich GmbH' }, { name: 'gleich ltd', country: 'DE' })).toBeNull();
+    expect(crossCheckParties({ name: 'A GmbH' }, { name: 'B Ltd', country: 'CN' })).toBeNull();
+    expect(crossCheckParties({}, { name: 'B Ltd' })).toBeNull();
   });
   it('EU-Person: anderer Name im Formular → keine Parser-Felder dazugemischt (Server)', () => {
     const r = resolveEuImportFields(gpsrFieldsFromRaw(RAW_92) as never, { gpsrName: 'Fremde EU SARL', gpsrCountry: 'FR' });
@@ -179,11 +200,29 @@ describe('Auswahllisten gespeicherter Personen (Nachtrag)', () => {
   it('Warnhinweis bei abweichendem Namen, keiner bei gleichem oder fehlendem Rohtext-Namen', () => {
     expect(nameMismatchWarning('Alpha Co', 'Beta Co')).toBe('Gewählt: Alpha Co, Lieferant nennt: Beta Co – bitte prüfen');
     expect(nameMismatchWarning('Beta Co.', 'beta co')).toBeNull();
-    expect(nameMismatchWarning('Alpha Co', '')).toBeNull();
+    expect(nameMismatchWarning('Alpha Co', '')).toBe('Der Lieferant nennt hier keine Person – bitte prüfen, ob diese zum Produkt gehört');
+    expect(nameMismatchWarning('', 'Beta Co')).toBeNull();
   });
   it('EU-Person nie in den Hersteller-Block übernehmbar (gleicher Name, Land nicht EU)', () => {
     expect(canAdoptAsManufacturer({ name: 'EU GmbH', country: 'CN' }, 'eu gmbh').ok).toBe(false);
     expect(canAdoptAsManufacturer({ name: 'Maker Co', country: 'CN' }, 'EU GmbH').ok).toBe(true);
     expect(canAdoptAsManufacturer({ name: 'EU GmbH', country: 'DE' }, 'EU GmbH').ok).toBe(true);
+  });
+});
+
+describe('Import-Tab sendet nur echte Eingaben (Wächter, A-010 Review-Blocker 1)', () => {
+  it('lieferanten.tsx nutzt overridesToFlat(gpsrOverrides) und NICHT die Parser-Vorbefüllung (toFlatFields(effectiveForm(…)))', () => {
+    const src = readFileSync(resolve(import.meta.dir, '..', 'web', 'pages', 'lieferanten.tsx'), 'utf-8');
+    expect(src).toContain('...overridesToFlat(gpsrOverrides)');
+    expect(src).not.toContain('toFlatFields(effectiveForm(');
+  });
+  it('POST /products validiert VOR den Gemini-Aufrufen und prüft die Endwerte (EU-Person nie als Hersteller)', () => {
+    const src = readFileSync(resolve(import.meta.dir, '..', 'api', 'index.ts'), 'utf-8');
+    const iValidate = src.indexOf('validateGpsrFlat(gpsrBody)');
+    const iCross = src.indexOf('crossCheckParties(');
+    const iGemini = src.indexOf('generateGermanTitle(rawTitle, specs)');
+    expect(iValidate).toBeGreaterThan(0);
+    expect(iCross).toBeGreaterThan(iValidate);
+    expect(iGemini).toBeGreaterThan(iCross);
   });
 });

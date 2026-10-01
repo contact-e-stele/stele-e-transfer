@@ -90,9 +90,30 @@ const FLAT_EU_KEYS = Object.values(EU_FLAT) as Array<keyof GpsrFlatFields>;
 const FLAT_MFR_KEYS = Object.values(MFR_FLAT) as Array<keyof GpsrFlatFields>;
 const nonEmpty = (flat: GpsrFlatFields, keys: Array<keyof GpsrFlatFields>): GpsrFlatFields => {
   const out: GpsrFlatFields = {};
-  for (const k of keys) { const v = flat[k]?.trim(); if (v) out[k] = v; }
+  for (const k of keys) {
+    const v = flat[k]?.trim();
+    // Ländercodes immer groß speichern ("es" -> "ES"), damit auch andere Leser der DB sie erkennen
+    if (v) out[k] = k === 'gpsrCountry' || k === 'gpsrMfrCountry' ? v.toUpperCase() : v;
+  }
   return out;
 };
+
+/** Nur das, was der Nutzer im Import-Tab WIRKLICH eingegeben/gewählt hat (nicht die Parser-Vorbefüllung). Der Server füllt den Rest selbst aus dem Rohtext —
+ *  so überschreibt ein Re-Import nie Hand-Pflege in der DB mit Parser-Werten. */
+export function overridesToFlat(overrides: GpsrFormOverrides): GpsrFlatFields {
+  const flat: GpsrFlatFields = {};
+  for (const k of EU_KEYS) { const v = overrides.eu[k]?.trim(); if (v) flat[EU_FLAT[k]] = v; }
+  for (const k of MFR_KEYS) { const v = overrides.mfr[k]?.trim(); if (v) flat[MFR_FLAT[k]] = v; }
+  return nonEmpty(flat, [...FLAT_EU_KEYS, ...FLAT_MFR_KEYS]);
+}
+
+/** Querprüfung auf den ENDWERTEN (nach Body, Parser und bestehenden DB-Werten): die EU-Person darf nie der Hersteller sein. */
+export function crossCheckParties(eu: { name?: string | null }, mfr: { name?: string | null; country?: string | null }): string | null {
+  if (!eu.name || !mfr.name || !sameCompanyName(eu.name, mfr.name)) return null;
+  const mc = normalizeCountryCode(mfr.country);
+  if (mc && isEuEeaCountry(mc)) return null;
+  return 'Hersteller ist identisch mit der EU-Person (Hersteller außerhalb der EU) — die EU-Person darf nicht als Hersteller eingetragen werden';
+}
 
 export function resolveMfrImportFields(raw: string | null | undefined, body: GpsrFlatFields): GpsrFlatFields {
   const parsed = mfrFieldsFromRaw(raw) as GpsrFlatFields;
@@ -225,7 +246,8 @@ export function sortMfrOptions(options: MfrOption[], rawName: string | null | un
 
 /** Warnhinweis, wenn der gewählte Name nicht zum Namen im Rohtext passt (der Lieferant nennt die Person je Produkt). */
 export function nameMismatchWarning(selectedName: string, rawName: string | null | undefined): string | null {
-  if (!rawName?.trim() || !selectedName.trim()) return null;
+  if (!selectedName.trim()) return null;
+  if (!rawName?.trim()) return 'Der Lieferant nennt hier keine Person – bitte prüfen, ob diese zum Produkt gehört';
   if (sameCompanyName(selectedName, rawName)) return null;
   return `Gewählt: ${selectedName}, Lieferant nennt: ${rawName} – bitte prüfen`;
 }

@@ -5,8 +5,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
-import { emptyOverrides, effectiveForm, toFlatFields, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
-import { GpsrFieldsEditor } from "../components/gpsr-fields-editor";
+import { emptyOverrides, overridesToFlat, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
+import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fields-editor";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
@@ -680,8 +680,8 @@ export default function Lieferanten() {
           })),
           variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
           gpsrRaw: gpsrHersteller.trim() || undefined,
-          // A-010: Einzelfelder (Parser-Vorbefüllung + Handeingaben); leere Felder fehlen → serverseitig Parser-Fallback
-          ...toFlatFields(effectiveForm(gpsrHersteller, gpsrOverrides)),
+          // A-010: NUR was hier wirklich eingegeben/gewählt wurde; den Rest füllt der Server aus dem Rohtext (überschreibt so nie Hand-Pflege in der DB)
+          ...overridesToFlat(gpsrOverrides),
           // Paket 3: kein gpsrHtml mehr — der Rohtext mit Kontakten Dritter gehört nicht in HTML (Verstoßserie);
           // die EU-Person wird serverseitig aus gpsrRaw in die strukturierten Felder geparst.
           description: product.description,
@@ -710,6 +710,7 @@ export default function Lieferanten() {
         }),
       });
       setSaveResult(data);
+      if (!(data as { error?: string }).error) invalidatePartyOptions(); // neu importierte Person soll beim nächsten Mal in der Auswahlliste stehen
     } catch (e) {
       setSaveResult({ error: e instanceof Error ? e.message : "Fehler" });
     } finally {
