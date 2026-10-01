@@ -15,6 +15,8 @@ import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from ".
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
+import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
+import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions } from "../components/gpsr-fields-editor";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 
@@ -530,15 +532,9 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
   );
 }
 
-// A-008: Ampel-Farben und Herstellerländer (ISO-2) fürs GPSR-Fenster und die Produktkarte.
-const ampelDot: Record<GpsrAmpelColor, string> = { GRUEN: "🟢", GELB: "🟡", ROT: "🔴" };
+// A-008: Ampel-Hintergrund/-Rand (Punkte und Länderliste kommen aus der gemeinsamen Komponente, A-010)
 const ampelBg: Record<GpsrAmpelColor, string> = { GRUEN: "#F0FDF4", GELB: "#FFFBEB", ROT: "#FEF2F2" };
 const ampelBorder: Record<GpsrAmpelColor, string> = { GRUEN: "#BBF7D0", GELB: "#FDE68A", ROT: "#FECACA" };
-const MFR_COUNTRIES: Array<{ code: string; name: string }> = [
-  { code: "CN", name: "China" }, { code: "HK", name: "Hongkong" }, { code: "TW", name: "Taiwan" }, { code: "KR", name: "Südkorea" },
-  { code: "JP", name: "Japan" }, { code: "VN", name: "Vietnam" }, { code: "IN", name: "Indien" }, { code: "TR", name: "Türkei" },
-  { code: "US", name: "USA" }, { code: "GB", name: "Vereinigtes Königreich" }, ...EU_EEA_COUNTRIES,
-];
 function gpsrAmpelOf(p: Product) {
   return gpsrAmpel({
     gpsrRaw: p.gpsrRaw, gpsrName: p.gpsrName, gpsrAddress: p.gpsrAddress, gpsrCity: p.gpsrCity, gpsrEmail: p.gpsrEmail, gpsrPhone: p.gpsrPhone, gpsrCountry: p.gpsrCountry,
@@ -568,6 +564,9 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
   const [mfrPhone, setMfrPhone] = useState(product.gpsrMfrPhone ?? "");
   const [mfrUrl, setMfrUrl] = useState(product.gpsrMfrUrl ?? "");
   const mfrCityValid = isMfrPostalCityFormat(mfrCity);
+  // A-010 Nachtrag: Auswahllisten gespeicherter Personen (nur Vorschlag; Felder bleiben editierbar)
+  const partyOptions = usePartyOptions();
+  const rawNames = rawPartyNames(product.gpsrRaw);
   // Ampel live aus den Formularwerten (Rohtext nur als Fallback für leere Felder — wie beim Senden)
   const ampel = gpsrAmpel({
     gpsrRaw: product.gpsrRaw, gpsrName: name, gpsrAddress: address, gpsrCity: city, gpsrEmail: email, gpsrPhone: phone, gpsrCountry: country,
@@ -710,6 +709,8 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
 
         {/* Hersteller (eigener Block — nie die EU-Person eintragen) */}
         <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: "#0F172A" }}>Hersteller</h3>
+        <PartyPicker kind="mfr" options={partyOptions} rawName={rawNames.mfr} euName={name} theme="light"
+          onPick={o => { setMfrName(o.name); setMfrAddress(o.address); setMfrCity(o.city); setMfrCountry(o.country); setMfrEmail(o.email); setMfrPhone(o.phone); setMfrUrl((o as MfrOption).url ?? ""); }} />
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Name des Herstellers</label>
@@ -751,6 +752,8 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
 
         {/* EU-Verantwortliche Person */}
         <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: "#0F172A" }}>EU-Verantwortliche Person</h3>
+        <PartyPicker kind="eu" options={partyOptions} rawName={rawNames.eu} theme="light"
+          onPick={o => { setName(o.name); setAddress(o.address); setCity(o.city); setCountry(o.country); setEmail(o.email); setPhone(o.phone); }} />
         {/* Felder */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div>

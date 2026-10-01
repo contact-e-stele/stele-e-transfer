@@ -485,10 +485,13 @@ export function gpsrFieldsFromRaw(raw: string | null | undefined, onlyIfComplete
 // Stadt nur im Format "PLZ Stadt" (PLZ_CITY_RE_MFR, 6-stellig erlaubt), Land nur als ISO-2 aus einem
 // Länderwort im Text — nie aus Stadtnamen. Die EU-Person landet hier NIE.
 /** A-008: Namensvergleich robust gegen Satzzeichen und Rechtsform-Suffixe ("X GmbH." == "x gmbh" == "X Ltd"). */
-export function sameCompanyName(a: string | null | undefined, b: string | null | undefined): boolean {
-  const norm = (v: string | null | undefined) => (v ?? '').toLowerCase().replace(/[.,;()]/g, ' ')
+/** Schlüssel für Dubletten-/Namensvergleich: klein, ohne Satzzeichen und Rechtsform-Suffixe. */
+export function normalizeCompanyName(v: string | null | undefined): string {
+  return (v ?? '').toLowerCase().replace(/[.,;()]/g, ' ')
     .replace(/\b(limited|ltd|gmbh|co|inc|llc|sl|sa|ug|ag|kg|ohg|bv|srl|sarl)\b/g, ' ').replace(/\s+/g, ' ').trim();
-  const x = norm(a), y = norm(b);
+}
+export function sameCompanyName(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = normalizeCompanyName(a), y = normalizeCompanyName(b);
   return !!x && x === y;
 }
 

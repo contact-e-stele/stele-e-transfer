@@ -5,7 +5,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
-import { gpsrAmpel, gpsrAmpelLabel } from "../../shared/gpsr-ampel";
+import { emptyOverrides, effectiveForm, toFlatFields, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
+import { GpsrFieldsEditor } from "../components/gpsr-fields-editor";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
@@ -273,6 +274,8 @@ export default function Lieferanten() {
   const [, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
+  // A-010: von Hand/aus der Auswahlliste gesetzte Einzelfelder (Vorrang vor dem Parser-Ergebnis des Rohtexts)
+  const [gpsrOverrides, setGpsrOverrides] = useState<GpsrFormOverrides>(emptyOverrides());
   const [saveResult, setSaveResult] = useState<{ id?: number; error?: string } | null>(null);
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
@@ -546,6 +549,7 @@ export default function Lieferanten() {
       setResult({ title: t, html: h });
       setEditableTitle(t);
       setEditableHtml(""); // Leer lassen — User generiert Beschreibung manuell per KI
+      setGpsrOverrides(emptyOverrides()); // neues Produkt → keine Handeingaben vom vorigen mitnehmen
       // GPSR auto-fill: wenn AliExpress GPSR-Daten liefert, direkt ins Textfeld setzen
       if (data.gpsr && (data.gpsr.name || data.gpsr.email)) {
         const lines: string[] = [];
@@ -676,6 +680,8 @@ export default function Lieferanten() {
           })),
           variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
           gpsrRaw: gpsrHersteller.trim() || undefined,
+          // A-010: Einzelfelder (Parser-Vorbefüllung + Handeingaben); leere Felder fehlen → serverseitig Parser-Fallback
+          ...toFlatFields(effectiveForm(gpsrHersteller, gpsrOverrides)),
           // Paket 3: kein gpsrHtml mehr — der Rohtext mit Kontakten Dritter gehört nicht in HTML (Verstoßserie);
           // die EU-Person wird serverseitig aus gpsrRaw in die strukturierten Felder geparst.
           description: product.description,
@@ -1389,7 +1395,7 @@ export default function Lieferanten() {
                       </button>
                       {gpsrHersteller.trim() && (
                         <button
-                          onClick={() => setGpsrHersteller("")}
+                          onClick={() => { setGpsrHersteller(""); setGpsrOverrides(emptyOverrides()); }}
                           style={{
                             background: "transparent", color: "#666", border: "1px solid #333",
                             padding: "3px 8px", borderRadius: 4, fontSize: 10, cursor: "pointer"
@@ -1414,23 +1420,8 @@ export default function Lieferanten() {
                       }}
                     />
                   </div>
-                  {/* A-008: GPSR-Ampel aus dem eingefügten Text (EU-Person + Hersteller, Klartext je fehlendem Feld) */}
-                  {gpsrHersteller.trim() && (() => {
-                    const a = gpsrAmpel({ gpsrRaw: gpsrHersteller, gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrPhone: null, gpsrCountry: null });
-                    const dot = { GRUEN: "🟢", GELB: "🟡", ROT: "🔴" } as const;
-                    const items = [...a.eu.missing, ...a.manufacturer.missing];
-                    return (
-                      <div style={{ background: "#161616", padding: "6px 10px", borderTop: "1px solid #2a2a2a", fontSize: 11, color: "#ddd", lineHeight: 1.5 }}>
-                        <b>GPSR-Ampel: {dot[a.overall]} {gpsrAmpelLabel(a.overall)}</b>
-                        <span style={{ color: "#999" }}> — EU-Person {dot[a.eu.ampel]} · Hersteller {dot[a.manufacturer.ampel]}</span>
-                        {items.length > 0 ? (
-                          <ul style={{ margin: "4px 0 0", paddingLeft: 16, color: "#bbb" }}>{items.map((m, i) => <li key={i}>{m}</li>)}</ul>
-                        ) : (
-                          <div style={{ color: "#4caf50" }}>Alle Pflichtangaben vorhanden.</div>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {/* A-010: Ampel + Einzelfelder Hersteller / EU-Person (vorbefüllt aus dem Text, editierbar, Auswahllisten) */}
+                  <GpsrFieldsEditor raw={gpsrHersteller} overrides={gpsrOverrides} onChange={setGpsrOverrides} theme="dark" />
                   {/* Vorschau */}
                   {gpsrHersteller.trim() && (
                     <div style={{
