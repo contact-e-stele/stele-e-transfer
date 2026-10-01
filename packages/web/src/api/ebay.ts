@@ -1381,7 +1381,7 @@ export function buildRegulatoryBlock(gpsr?: ResolvedGpsr) {
     // P71-C Teil 3: Hersteller nur mit Name, Straße, PLZ, Ort UND Land (sonst lehnt eBay das Offer ab, errorId 25110) — kein Ersatzwert.
     ...(manufacturer && manufacturer.name && manufacturer.address && manufacturer.postalCode && manufacturer.city && manufacturer.country ? { manufacturer: drop({
       companyName: manufacturer.name, addressLine1: manufacturer.address, postalCode: manufacturer.postalCode,
-      city: manufacturer.city, country: manufacturer.country, email: manufacturer.email, phone: manufacturer.phone,
+      city: manufacturer.city, country: manufacturer.country, email: manufacturer.email, phone: manufacturer.phone, contactUrl: manufacturer.url,
     }) } : {}),
   };
 }

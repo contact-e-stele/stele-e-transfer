@@ -13,7 +13,8 @@ import {
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
-import { EU_EEA_COUNTRIES, isPostalCityFormat } from "../../shared/gpsr-parser";
+import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
+import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 
@@ -67,6 +68,13 @@ interface Product {
   gpsrEmail: string | null;
   gpsrPhone: string | null;
   gpsrCountry: string | null;
+  gpsrMfrName: string | null;
+  gpsrMfrAddress: string | null;
+  gpsrMfrCity: string | null;
+  gpsrMfrCountry: string | null;
+  gpsrMfrEmail: string | null;
+  gpsrMfrPhone: string | null;
+  gpsrMfrUrl: string | null;
   manualPdfUrl: string | null;
   certificationNote: string | null;
   complianceOverride: boolean;
@@ -522,6 +530,23 @@ function VariantenModal({ product, onClose, onSaved }: VariantenModalProps) {
   );
 }
 
+// A-008: Ampel-Farben und Herstellerländer (ISO-2) fürs GPSR-Fenster und die Produktkarte.
+const ampelDot: Record<GpsrAmpelColor, string> = { GRUEN: "🟢", GELB: "🟡", ROT: "🔴" };
+const ampelBg: Record<GpsrAmpelColor, string> = { GRUEN: "#F0FDF4", GELB: "#FFFBEB", ROT: "#FEF2F2" };
+const ampelBorder: Record<GpsrAmpelColor, string> = { GRUEN: "#BBF7D0", GELB: "#FDE68A", ROT: "#FECACA" };
+const MFR_COUNTRIES: Array<{ code: string; name: string }> = [
+  { code: "CN", name: "China" }, { code: "HK", name: "Hongkong" }, { code: "TW", name: "Taiwan" }, { code: "KR", name: "Südkorea" },
+  { code: "JP", name: "Japan" }, { code: "VN", name: "Vietnam" }, { code: "IN", name: "Indien" }, { code: "TR", name: "Türkei" },
+  { code: "US", name: "USA" }, { code: "GB", name: "Vereinigtes Königreich" }, ...EU_EEA_COUNTRIES,
+];
+function gpsrAmpelOf(p: Product) {
+  return gpsrAmpel({
+    gpsrRaw: p.gpsrRaw, gpsrName: p.gpsrName, gpsrAddress: p.gpsrAddress, gpsrCity: p.gpsrCity, gpsrEmail: p.gpsrEmail, gpsrPhone: p.gpsrPhone, gpsrCountry: p.gpsrCountry,
+    gpsrMfrName: p.gpsrMfrName, gpsrMfrAddress: p.gpsrMfrAddress, gpsrMfrCity: p.gpsrMfrCity, gpsrMfrCountry: p.gpsrMfrCountry,
+    gpsrMfrEmail: p.gpsrMfrEmail, gpsrMfrPhone: p.gpsrMfrPhone, gpsrMfrUrl: p.gpsrMfrUrl,
+  });
+}
+
 interface GpsrModalProps {
   product: Product;
   onClose: () => void;
@@ -535,6 +560,20 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
   const [email, setEmail] = useState(product.gpsrEmail ?? "");
   const [phone, setPhone] = useState(product.gpsrPhone ?? "");
   const [country, setCountry] = useState(product.gpsrCountry ?? "");
+  const [mfrName, setMfrName] = useState(product.gpsrMfrName ?? "");
+  const [mfrAddress, setMfrAddress] = useState(product.gpsrMfrAddress ?? "");
+  const [mfrCity, setMfrCity] = useState(product.gpsrMfrCity ?? "");
+  const [mfrCountry, setMfrCountry] = useState(product.gpsrMfrCountry ?? "");
+  const [mfrEmail, setMfrEmail] = useState(product.gpsrMfrEmail ?? "");
+  const [mfrPhone, setMfrPhone] = useState(product.gpsrMfrPhone ?? "");
+  const [mfrUrl, setMfrUrl] = useState(product.gpsrMfrUrl ?? "");
+  const mfrCityValid = isMfrPostalCityFormat(mfrCity);
+  // Ampel live aus den Formularwerten (Rohtext nur als Fallback für leere Felder — wie beim Senden)
+  const ampel = gpsrAmpel({
+    gpsrRaw: product.gpsrRaw, gpsrName: name, gpsrAddress: address, gpsrCity: city, gpsrEmail: email, gpsrPhone: phone, gpsrCountry: country,
+    gpsrMfrName: mfrName, gpsrMfrAddress: mfrAddress, gpsrMfrCity: mfrCity, gpsrMfrCountry: mfrCountry,
+    gpsrMfrEmail: mfrEmail, gpsrMfrPhone: mfrPhone, gpsrMfrUrl: mfrUrl,
+  });
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [pdfUrl, setPdfUrl] = useState(product.manualPdfUrl ?? "");
@@ -587,6 +626,13 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
           gpsrEmail: email.trim() || null,
           gpsrPhone: phone.trim() || null,
           gpsrCountry: country.trim() || null,
+          gpsrMfrName: mfrName.trim() || null,
+          gpsrMfrAddress: mfrAddress.trim() || null,
+          gpsrMfrCity: mfrCity.trim() || null,
+          gpsrMfrCountry: mfrCountry.trim() || null,
+          gpsrMfrEmail: mfrEmail.trim() || null,
+          gpsrMfrPhone: mfrPhone.trim() || null,
+          gpsrMfrUrl: mfrUrl.trim() || null,
           manualPdfUrl: pdfUrl.trim() || null,
           certificationNote: certNote.trim() || null,
         }),
@@ -626,7 +672,7 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#0F172A", display: "flex", alignItems: "center", gap: 8 }}>
-              <ShieldCheck size={18} color="#0EA5E9" /> GPSR Verantwortliche Person
+              <ShieldCheck size={18} color="#0EA5E9" /> GPSR — Hersteller &amp; EU-Person
             </h2>
             <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748B" }}>{product.generatedTitle.slice(0, 50)}…</p>
           </div>
@@ -647,6 +693,64 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
           </div>
         )}
 
+        {/* A-008: Ampel (Live aus den Formularwerten, dieselbe Auflösung wie beim Senden) */}
+        <div style={{ background: ampelBg[ampel.overall], border: `1px solid ${ampelBorder[ampel.overall]}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#0F172A" }}>
+          <div style={{ fontWeight: 800, marginBottom: 4 }}>
+            GPSR-Ampel: {ampelDot[ampel.overall]} {gpsrAmpelLabel(ampel.overall)}
+            <span style={{ fontWeight: 600, color: "#475569" }}> — EU-Person {ampelDot[ampel.eu.ampel]} · Hersteller {ampelDot[ampel.manufacturer.ampel]}</span>
+          </div>
+          {[...ampel.eu.missing, ...ampel.manufacturer.missing].length > 0 ? (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {[...ampel.eu.missing, ...ampel.manufacturer.missing].map((m, i) => <li key={i}>{m}</li>)}
+            </ul>
+          ) : (
+            <span>Alle Pflichtangaben vorhanden.</span>
+          )}
+        </div>
+
+        {/* Hersteller (eigener Block — nie die EU-Person eintragen) */}
+        <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: "#0F172A" }}>Hersteller</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Name des Herstellers</label>
+            <input type="text" value={mfrName} onChange={e => setMfrName(e.target.value)} placeholder="z.B. Shenzhen Beispiel Technology Co., Ltd" style={fieldStyle} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Straße + Hausnummer</label>
+            <input type="text" value={mfrAddress} onChange={e => setMfrAddress(e.target.value)} style={fieldStyle} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>PLZ + Stadt</label>
+            <input type="text" value={mfrCity} onChange={e => setMfrCity(e.target.value)} placeholder="z.B. 518000 Shenzhen"
+              style={mfrCity.trim() && !mfrCityValid ? { ...fieldStyle, border: "2px solid #DC2626", background: "#FEF2F2" } : fieldStyle} />
+            <div style={{ fontSize: 11, marginTop: 3, color: mfrCity.trim() && !mfrCityValid ? "#DC2626" : "#64748B" }}>
+              Format „PLZ Stadt“ (PLZ bis 9 Zeichen). Adresse nur ganz oder gar nicht: Straße, PLZ + Stadt und Land gehören zusammen (sonst lehnt eBay mit 25110 ab, der Hersteller wird dann nicht mitgesendet).
+            </div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Land des Herstellers</label>
+            <select value={mfrCountry} onChange={e => setMfrCountry(e.target.value)} style={fieldStyle}>
+              <option value="">— bitte wählen —</option>
+              {mfrCountry && !MFR_COUNTRIES.some(c => c.code === mfrCountry) && <option value={mfrCountry}>{mfrCountry}</option>}
+              {MFR_COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.name} ({c.code})</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>E-Mail</label>
+            <input type="email" value={mfrEmail} onChange={e => setMfrEmail(e.target.value)} style={fieldStyle} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Kontakt-URL (alternativ zur E-Mail)</label>
+            <input type="text" value={mfrUrl} onChange={e => setMfrUrl(e.target.value)} placeholder="https://…" style={fieldStyle} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Telefon (optional)</label>
+            <input type="text" value={mfrPhone} onChange={e => setMfrPhone(e.target.value)} style={fieldStyle} />
+          </div>
+        </div>
+
+        {/* EU-Verantwortliche Person */}
+        <h3 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: "#0F172A" }}>EU-Verantwortliche Person</h3>
         {/* Felder */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div>
@@ -771,11 +875,11 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
         {/* Löschen-Button */}
         {!hasFallback && (
           <button onClick={async () => {
-            setName(""); setAddress(""); setCity(""); setEmail(""); setPhone("");
+            setName(""); setAddress(""); setCity(""); setEmail(""); setPhone(""); setMfrName(""); setMfrAddress(""); setMfrCity(""); setMfrCountry(""); setMfrEmail(""); setMfrPhone(""); setMfrUrl("");
             await fetch(`/api/products/${product.id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrPhone: null, gpsrCountry: null }),
+              body: JSON.stringify({ gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrPhone: null, gpsrCountry: null, gpsrMfrName: null, gpsrMfrAddress: null, gpsrMfrCity: null, gpsrMfrCountry: null, gpsrMfrEmail: null, gpsrMfrPhone: null, gpsrMfrUrl: null }),
             });
             setSaveMsg("GPSR gelöscht — beim Listen werden Angaben aus dem Rohtext ergänzt, sonst wird blockiert");
             onSaved();
@@ -1618,18 +1722,24 @@ export default function Produkte() {
                 </button>
 
                 {/* GPSR */}
-                <button onClick={() => setGpsrModal(product)} style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  padding: "6px 10px", borderRadius: 8,
-                  background: product.gpsrName ? "#F0F9FF" : "#F8FAFC",
-                  color: product.gpsrName ? "#0EA5E9" : "#94A3B8",
-                  fontSize: 11, fontWeight: 700,
-                  border: product.gpsrName ? "1px solid #BAE6FD" : "1px solid #E2E8F0",
-                  cursor: "pointer", fontFamily: "inherit",
-                }}>
-                  <ShieldCheck size={11} />
-                  {product.gpsrName ? "GPSR ✓" : "GPSR"}
-                </button>
+                {(() => {
+                  // A-008: Ampel statt "GPSR ✓" — Klartext je fehlendem Feld im Tooltip, Details im GPSR-Fenster
+                  const a = gpsrAmpelOf(product);
+                  const tip = [...a.eu.missing, ...a.manufacturer.missing].join(" · ") || "Alle Pflichtangaben vorhanden";
+                  return (
+                    <button onClick={() => setGpsrModal(product)} title={tip} style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8,
+                      background: ampelBg[a.overall], color: "#0F172A",
+                      fontSize: 11, fontWeight: 700,
+                      border: `1px solid ${ampelBorder[a.overall]}`,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}>
+                      <ShieldCheck size={11} />
+                      {ampelDot[a.overall]} GPSR
+                    </button>
+                  );
+                })()}
 
                 {/* Compliance-Übersteuerung (P-66 Schritt 3) */}
                 {product.complianceOverride && (

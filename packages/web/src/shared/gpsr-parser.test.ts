@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { parseGpsrRaw, resolveGpsrForListing, mfrFieldsFromRaw, planMfrBackfill } from "./gpsr-parser";
+import { parseGpsrRaw, resolveGpsrForListing, mfrFieldsFromRaw, planMfrBackfill, sameCompanyName } from "./gpsr-parser";
 
 // Alle Fixtures sind ECHTE gpsr_raw-Werte aus der Produktions-DB (per Skript geprüft,
 // wortgleich kopiert — siehe Format-Befund in gpsr-parser.ts), keine erfundenen Daten.
@@ -274,11 +274,20 @@ describe("mfrFieldsFromRaw / planMfrBackfill — A-008 Teil 2 (echte Rohtexte)",
     expect(mfrFieldsFromRaw("")).toEqual({});
     expect(mfrFieldsFromRaw(null)).toEqual({});
   });
-  it("planMfrBackfill überschreibt NIE: gefüllte Felder bleiben draußen, nur leere kommen aus dem Parser", () => {
-    const plan = planMfrBackfill({ gpsrMfrName: "Von Hand", gpsrMfrCity: "  ", gpsrMfrEmail: null }, RAW_92);
+  it("planMfrBackfill überschreibt NIE: gefüllte Felder bleiben draußen, nur leere kommen aus dem Parser (gleicher Hersteller)", () => {
+    const plan = planMfrBackfill({ gpsrMfrName: "Shenzhen Youtuobang Technology Co., Ltd", gpsrMfrCity: "  ", gpsrMfrEmail: null }, RAW_92);
     expect(plan.gpsrMfrName).toBeUndefined();
     expect(plan.gpsrMfrCity).toBe("518000 Shenzhen");
     expect(plan.gpsrMfrEmail).toBe("youtbus@163.com");
+  });
+  it("planMfrBackfill mischt NIE zwei Hersteller: anderer gespeicherter Name -> leerer Plan (keine Fremdadresse unter eigenem Namen)", () => {
+    expect(planMfrBackfill({ gpsrMfrName: "Ganz anderer Hersteller GmbH" }, RAW_92)).toEqual({});
+  });
+  it("sameCompanyName: Satzzeichen und Rechtsform-Suffixe sind egal", () => {
+    expect(sameCompanyName("X GmbH.", "x gmbh")).toBe(true);
+    expect(sameCompanyName("Foo Ltd", "Foo Limited")).toBe(true);
+    expect(sameCompanyName("Foo Ltd", "Bar Ltd")).toBe(false);
+    expect(sameCompanyName("", "")).toBe(false);
   });
   it("planMfrBackfill: alles gefüllt → leerer Plan", () => {
     const full = { gpsrMfrName: "a", gpsrMfrAddress: "b", gpsrMfrCity: "c", gpsrMfrCountry: "CN", gpsrMfrEmail: "e", gpsrMfrPhone: "p" };

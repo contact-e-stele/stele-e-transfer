@@ -326,6 +326,9 @@ export interface GpsrProductFields {
   gpsrPhone: string | null;
   /** Paket 3b: gespeichertes Land (ISO-2) der EU-Person, hat Vorrang vor dem aus dem Rohtext erkannten. */
   gpsrCountry?: string | null;
+  /** A-008: gespeicherte Herstellerfelder (products.gpsr_mfr_*); leere werden aus dem Rohtext ergänzt — nur bei per Titel belegtem Herstellerblock. */
+  gpsrMfrName?: string | null; gpsrMfrAddress?: string | null; gpsrMfrCity?: string | null; gpsrMfrCountry?: string | null;
+  gpsrMfrEmail?: string | null; gpsrMfrPhone?: string | null; gpsrMfrUrl?: string | null;
 }
 export interface GpsrParty {
   name: string;
@@ -344,6 +347,8 @@ export interface GpsrManufacturer {
   country: string;
   email: string | null;
   phone: string | null;
+  /** A-008: Kontakt-URL (eBay contactUrl), nur aus dem gespeicherten Feld. */
+  url?: string | null;
 }
 export interface ResolvedGpsr {
   eu: GpsrParty | null;
@@ -413,17 +418,36 @@ export function resolveGpsrForListing(p: GpsrProductFields): ResolvedGpsr {
   else if (!EU_EEA_CODES.has(country)) missing.push(`Land der verantwortlichen Person liegt außerhalb der EU/des EWR (${country}) — eBay verlangt eine Adresse in der EU, bitte im Produkt-Tab korrigieren`);
   // P71-C Teil 3 (Live-Fehler 148, eBay errorId 25110): ein Hersteller wird nur mitgesendet, wenn Name, Straße,
   // PLZ, Ort UND Land erkannt sind — sonst lehnt eBay das ganze Offer ab. Kein Ersatzwert.
-  const m = parsed.manufacturer;
+  // A-008: gespeicherte Herstellerfelder haben Vorrang; leere werden aus dem Rohtext ergänzt, aber NUR wenn der
+  // Herstellerblock dort per Titel belegt ist (sonst könnte bei vertauschten Blöcken die EU-Person als Hersteller landen).
+  // Außerdem nur, wenn der gespeicherte Name leer ist oder zum Rohtext-Hersteller passt — sonst würde ein anderer Hersteller still ergänzt (Fremdadresse unter eigenem Namen).
+  const rawMfr = parsed.manufacturerTitled ? parsed.manufacturer : null;
+  const m = rawMfr && (!p.gpsrMfrName?.trim() || sameCompanyName(p.gpsrMfrName, rawMfr.name)) ? rawMfr : null;
+  const mName = pick(p.gpsrMfrName ?? null, m?.name ?? null);
+  const mAddress = pick(p.gpsrMfrAddress ?? null, m?.address ?? null);
+  const mCityRaw = pick(p.gpsrMfrCity ?? null, m?.city ?? null);
+  const mEmailRaw = pick(p.gpsrMfrEmail ?? null, m?.email ?? null);
+  const mEmail = mEmailRaw && isEmailShape(mEmailRaw) && mEmailRaw.length <= 180 ? mEmailRaw : null; // ungültige/zu lange E-Mail wird nicht gesendet (kippt sonst das Offer)
+  const mPhone = pick(p.gpsrMfrPhone ?? null, m?.phone ?? null);
+  const mUrl = pick(p.gpsrMfrUrl ?? null, null);
   let manufacturer: GpsrManufacturer | null = null;
   const manufacturerMissing: string[] = [];
-  if (m && m.name) {
-    const mCity = m.city?.match(PLZ_CITY_RE_MFR);
-    const mCountry = normalizeCountryCode(m.country);
-    if (!m.address) manufacturerMissing.push('Straße');
+  if (mName) {
+    const mCity = mCityRaw ? mCityRaw.match(PLZ_CITY_RE_MFR) : null;
+    const mCountry = normalizeCountryCode(p.gpsrMfrCountry) ?? normalizeCountryCode(m?.country);
+    if (!mAddress) manufacturerMissing.push('Straße');
     if (!mCity) manufacturerMissing.push('PLZ und Ort');
     if (!mCountry) manufacturerMissing.push('Land');
-    if (manufacturerMissing.length === 0 && m.address && mCity && mCountry) {
-      manufacturer = { name: m.name, address: m.address, postalCode: mCity[1], city: mCity[2], country: mCountry, email: m.email, phone: m.phone };
+    if (manufacturerMissing.length === 0 && mAddress && mCity && mCountry) {
+      const zuLang = [mName.length > 100 && 'Name (max. 100 Zeichen)', mAddress.length > 180 && 'Straße (max. 180 Zeichen)', mCity[2].length > 64 && 'Ort (max. 64 Zeichen)', (mUrl?.length ?? 0) > 250 && 'Kontakt-URL (max. 250 Zeichen)'].filter(Boolean) as string[];
+      // Die EU-Person ist NIE der Hersteller: gleicher Name und Hersteller-Sitz außerhalb der EU/des EWR → nicht senden.
+      if (zuLang.length > 0) {
+        manufacturerMissing.push(`Hersteller zu lang: ${zuLang.join(', ')} — wird nicht gesendet`);
+      } else if (name && sameCompanyName(mName, name) && !EU_EEA_CODES.has(mCountry)) {
+        manufacturerMissing.push('Hersteller-Name ist identisch mit der EU-Person (Hersteller außerhalb der EU) — bitte den echten Hersteller eintragen');
+      } else {
+        manufacturer = { name: mName, address: mAddress, postalCode: mCity[1], city: mCity[2], country: mCountry, email: mEmail, phone: mPhone, ...(mUrl ? { url: mUrl } : {}) };
+      }
     }
   }
 
@@ -460,6 +484,14 @@ export function gpsrFieldsFromRaw(raw: string | null | undefined, onlyIfComplete
 // Der Hersteller ist ein eigener Block (products.gpsr_mfr_*). Nur sicher erkannte Felder, nie geraten:
 // Stadt nur im Format "PLZ Stadt" (PLZ_CITY_RE_MFR, 6-stellig erlaubt), Land nur als ISO-2 aus einem
 // Länderwort im Text — nie aus Stadtnamen. Die EU-Person landet hier NIE.
+/** A-008: Namensvergleich robust gegen Satzzeichen und Rechtsform-Suffixe ("X GmbH." == "x gmbh" == "X Ltd"). */
+export function sameCompanyName(a: string | null | undefined, b: string | null | undefined): boolean {
+  const norm = (v: string | null | undefined) => (v ?? '').toLowerCase().replace(/[.,;()]/g, ' ')
+    .replace(/\b(limited|ltd|gmbh|co|inc|llc|sl|sa|ug|ag|kg|ohg|bv|srl|sarl)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  const x = norm(a), y = norm(b);
+  return !!x && x === y;
+}
+
 export interface GpsrMfrFields {
   gpsrMfrName?: string; gpsrMfrAddress?: string; gpsrMfrCity?: string;
   gpsrMfrCountry?: string; gpsrMfrEmail?: string; gpsrMfrPhone?: string; gpsrMfrUrl?: string;
@@ -483,10 +515,22 @@ export function mfrFieldsFromRaw(raw: string | null | undefined): GpsrMfrFields 
 /** Backfill-Plan: nur Felder, die in der DB LEER sind, werden aus dem Parser gefüllt — nie überschrieben. */
 export function planMfrBackfill(existing: Partial<Record<keyof GpsrMfrFields, string | null>>, raw: string | null | undefined): GpsrMfrFields {
   const parsed = mfrFieldsFromRaw(raw);
+  // Steht in der DB schon ein Herstellername, der NICHT zum Rohtext-Hersteller passt (Hersteller gewechselt / von Hand anderer), wird nichts gemischt.
+  if (existing.gpsrMfrName?.trim() && !sameCompanyName(existing.gpsrMfrName, parsed.gpsrMfrName)) return {};
   const plan: GpsrMfrFields = {};
   for (const key of Object.keys(parsed) as Array<keyof GpsrMfrFields>) {
     const cur = existing[key];
     if (!cur || !cur.trim()) plan[key] = parsed[key];
   }
   return plan;
+}
+
+/** A-008: E-Mail-Format (dieselbe Regel wie beim Parser) — für die Ampel. */
+export function isEmailShape(v: string | null | undefined): boolean {
+  return !!v && EMAIL_SHAPE_RE.test(v.trim());
+}
+
+/** A-008: Format "PLZ Stadt" für den Hersteller (6-stellige PLZ erlaubt) — Formularprüfung im GPSR-Fenster. */
+export function isMfrPostalCityFormat(v: string | null | undefined): boolean {
+  return PLZ_CITY_RE_MFR.test((v ?? '').trim());
 }
