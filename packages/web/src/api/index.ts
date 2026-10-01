@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
-import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw, mfrFieldsFromRaw, planMfrBackfill } from '../shared/gpsr-parser';
+import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { parseMfrPatch } from '../shared/gpsr-mfr-patch';
+import { resolveEuImportFields, resolveMfrImportFields, resolveMfrUpdateFields, validateGpsrFlat, crossCheckParties, buildPartyOptions, type GpsrFlatFields } from '../shared/gpsr-import-fields';
 import { findForeignEmails } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, checkOutgoingListingText, formatComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { resolveListingDescription } from './ebay-description-builder';
@@ -2135,6 +2136,9 @@ const app = new Hono()
         specs?: Record<string, string>;
         variantContents?: Record<string, string>;
         gpsrRaw?: string;
+        // A-010: Einzelfelder aus dem Import-Tab (Feldwerte haben Vorrang vor dem Parser, leer = Parser-Fallback)
+        gpsrName?: string; gpsrAddress?: string; gpsrCity?: string; gpsrCountry?: string; gpsrEmail?: string; gpsrPhone?: string;
+        gpsrMfrName?: string; gpsrMfrAddress?: string; gpsrMfrCity?: string; gpsrMfrCountry?: string; gpsrMfrEmail?: string; gpsrMfrPhone?: string; gpsrMfrUrl?: string;
         gpsrHtml?: string; // Paket 3b: wird nicht mehr gespeichert (Kontakte Dritter gehören nicht in gpsr_html)
         shipsFrom?: string;
         shippingCost?: number;
@@ -2155,6 +2159,26 @@ const app = new Hono()
         console.log(`[Compliance-Override] SKU=${aliexpressItemId ?? '(unbekannt)'} Kategorie=${body.complianceOverrideCategory ?? '-'} Stichwort="${body.complianceOverrideKeyword ?? '-'}" Feld=${body.complianceOverrideField ?? '-'} Grund=${body.complianceOverrideReason ?? '-'}`);
       }
 
+      const existing = await db.select().from(schema.products).where(eq(schema.products.asin, body.asin)).limit(1);
+
+      // A-010: Einzelfelder aus dem Import-Tab — Formatfehler (PLZ-Format, ISO-Land, E-Mail, Längen, EU-Person-als-Hersteller) → 400, bevor irgendetwas generiert/gespeichert wird.
+      const gpsrBody: GpsrFlatFields = {
+        gpsrName: body.gpsrName, gpsrAddress: body.gpsrAddress, gpsrCity: body.gpsrCity, gpsrCountry: body.gpsrCountry, gpsrEmail: body.gpsrEmail, gpsrPhone: body.gpsrPhone,
+        gpsrMfrName: body.gpsrMfrName, gpsrMfrAddress: body.gpsrMfrAddress, gpsrMfrCity: body.gpsrMfrCity, gpsrMfrCountry: body.gpsrMfrCountry,
+        gpsrMfrEmail: body.gpsrMfrEmail, gpsrMfrPhone: body.gpsrMfrPhone, gpsrMfrUrl: body.gpsrMfrUrl,
+      };
+      for (const [k, v] of Object.entries(gpsrBody)) if (v != null && typeof v !== 'string') return c.json({ error: `"${k}" muss ein Text sein` }, 400);
+      const gpsrFormatErrors = validateGpsrFlat(gpsrBody);
+      if (gpsrFormatErrors.length > 0) return c.json({ error: `GPSR-Angaben ungültig: ${gpsrFormatErrors.join('; ')}` }, 400);
+      // Endwerte EINMAL auflösen (Feldwerte > Parser > bestehende DB-Werte) und auf diesen prüfen: EU-Person nie als Hersteller.
+      const euImportFields = resolveEuImportFields(gpsrFieldsFromRaw(body.gpsrRaw, existing.length > 0) as GpsrFlatFields, gpsrBody);
+      const mfrImportFields = existing.length > 0 ? resolveMfrUpdateFields(existing[0], body.gpsrRaw, gpsrBody) : resolveMfrImportFields(body.gpsrRaw, gpsrBody);
+      const partyConflict = crossCheckParties(
+        { name: euImportFields.gpsrName ?? existing[0]?.gpsrName },
+        { name: mfrImportFields.gpsrMfrName ?? existing[0]?.gpsrMfrName, country: mfrImportFields.gpsrMfrCountry ?? existing[0]?.gpsrMfrCountry },
+      );
+      if (partyConflict) return c.json({ error: `GPSR-Angaben ungültig: ${partyConflict}` }, 400);
+
       // Titel + Beschreibung parallel generieren (schneller)
       const specs = body.specs ?? {};
       const rawTitle = body.generatedTitle ?? body.title;
@@ -2165,7 +2189,6 @@ const app = new Hono()
       ]);
       console.log(`[Import] Titel: "${germanTitle}" | Beschreibung generiert`);
 
-      const existing = await db.select().from(schema.products).where(eq(schema.products.asin, body.asin)).limit(1);
       if (existing.length > 0) {
         await db.update(schema.products).set({
           generatedTitle: germanTitle,
@@ -2182,9 +2205,10 @@ const app = new Hono()
           adRate: body.adRate ?? undefined,
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
           gpsrRaw: body.gpsrRaw ?? undefined,
-          ...gpsrFieldsFromRaw(body.gpsrRaw, true),
-          // A-008: Hersteller aus dem Rohtext — nur in LEERE Felder (Hand-Pflege im GPSR-Fenster wird nie überschrieben).
-          ...planMfrBackfill(existing[0], body.gpsrRaw),
+          // A-010: EU-Person — Feldwerte aus dem Import-Tab vor dem Parser (Parser nur bei vollständigem Block, wie bisher).
+          ...euImportFields,
+          // A-008/A-010: Hersteller — Feldwerte vor dem Parser; der Parser füllt nur LEERE Felder und nie einen anderen Hersteller dazu.
+          ...mfrImportFields,
           shipsFrom: body.shipsFrom ?? undefined,
           shippingCost: body.shippingCost ?? undefined,
           storeCategoryId: body.storeCategoryId ?? undefined,
@@ -2222,8 +2246,8 @@ const app = new Hono()
         specs: body.specs ? JSON.stringify(body.specs) : null,
         variantContents: body.variantContents ? JSON.stringify(body.variantContents) : null,
         gpsrRaw: body.gpsrRaw ?? null,
-        ...gpsrFieldsFromRaw(body.gpsrRaw),
-        ...mfrFieldsFromRaw(body.gpsrRaw),
+        ...euImportFields,
+        ...mfrImportFields,
         shipsFrom: body.shipsFrom ?? null,
         shippingCost: body.shippingCost ?? 0,
         storeCategoryId: body.storeCategoryId ?? null,
@@ -2241,6 +2265,22 @@ const app = new Hono()
       return c.json({ id: result[0].id, created: true }, 201);
     } catch (e) {
       console.error('DB error:', e);
+      return c.json({ error: 'DB nicht verfügbar' }, 503);
+    }
+  })
+
+  // A-010 Nachtrag: gespeicherte, VOLLSTÄNDIGE (Ampel grün) EU-Personen und Hersteller ohne Dubletten — nur lesen.
+  .get('/gpsr/parties', async (c) => {
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const p = schema.products;
+      const rows = await db.select({
+        gpsrRaw: p.gpsrRaw, gpsrName: p.gpsrName, gpsrAddress: p.gpsrAddress, gpsrCity: p.gpsrCity, gpsrEmail: p.gpsrEmail, gpsrPhone: p.gpsrPhone, gpsrCountry: p.gpsrCountry,
+        gpsrMfrName: p.gpsrMfrName, gpsrMfrAddress: p.gpsrMfrAddress, gpsrMfrCity: p.gpsrMfrCity, gpsrMfrCountry: p.gpsrMfrCountry,
+        gpsrMfrEmail: p.gpsrMfrEmail, gpsrMfrPhone: p.gpsrMfrPhone, gpsrMfrUrl: p.gpsrMfrUrl,
+      }).from(p);
+      return c.json(buildPartyOptions(rows), 200);
+    } catch (e) {
       return c.json({ error: 'DB nicht verfügbar' }, 503);
     }
   })
