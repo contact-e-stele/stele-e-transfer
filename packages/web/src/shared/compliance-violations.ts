@@ -97,7 +97,8 @@ export function groupByListing(
   });
 }
 
-const cell = (s: string | number | null) => String(s ?? '').replace(/\|/g, '\\|');
+const cell = (s: string | number | null) =>
+  String(s ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
 
 export function formatReport(args: {
   summaryCounts: Record<string, number>;

@@ -58,3 +58,13 @@ describe('compliance-violations', () => {
     expect(md).toContain('| 333 | 7 | Sauber |');
   });
 });
+
+describe('formatReport Escaping', () => {
+  test('Pipe und Zeilenumbruch im Titel brechen die Tabellenzeile nicht', () => {
+    const md = formatReport({
+      summaryCounts: {}, listings: [], activeTotal: 1,
+      activeWithoutViolation: [{ itemId: '1', title: 'a|b\nc', productId: 2 }],
+    });
+    expect(md).toContain('| 1 | 2 | a\\|b c |');
+  });
+});

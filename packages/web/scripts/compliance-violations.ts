@@ -31,13 +31,13 @@ async function getJson(path: string, token: string): Promise<any> {
 
 async function fetchViolations(type: string, token: string): Promise<RawListingViolation[]> {
   const all: RawListingViolation[] = [];
-  const limit = 200;
+  const limit = 100; // eBay-Maximum je Seite laut Doku (vom Reviewer genannt, nicht live belegt)
   for (let offset = 0; ; offset += limit) {
     const data = await getJson(
       `/listing_violation?compliance_type=${type}&limit=${limit}&offset=${offset}`, token);
-    const page: RawListingViolation[] = data.listingViolations ?? [];
+    const page: RawListingViolation[] = Array.isArray(data.listingViolations) ? data.listingViolations : [];
     all.push(...page);
-    if (page.length < limit || (typeof data.total === 'number' && all.length >= data.total)) break;
+    if (page.length === 0 || (typeof data.total === 'number' && all.length >= data.total)) break;
   }
   return all;
 }
@@ -74,15 +74,17 @@ try {
     .filter(a => !violatingIds.has(a.itemId))
     .map(a => ({ itemId: a.itemId, title: a.title, productId: byListing.get(a.itemId) ?? null }));
 
+  const warnung = active.length === 0
+    ? '**WARNUNG: getAllSellerListings lieferte 0 aktive Angebote — Liste "aktiv ohne Verstoß" nicht belastbar.**\n\n' : '';
   const report = [
     '# P71-D — Compliance-Verstöße (nur lesend)', '',
     `Lauf: ${new Date().toISOString()}`, '',
-    formatReport({ summaryCounts, listings, activeWithoutViolation, activeTotal: active.length }),
+    warnung + formatReport({ summaryCounts, listings, activeWithoutViolation, activeTotal: active.length }),
   ].join('\n');
   writeFileSync(outPath, report, 'utf-8');
   console.log(report);
 } catch (err) {
   // Wörtlich ausgeben, NICHT neu autorisieren.
   console.error(`FEHLER (Abbruch ohne Änderung): ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(0);
+  process.exitCode = 1;
 }
