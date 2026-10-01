@@ -12,7 +12,7 @@ import { describe, expect, mock, test } from 'bun:test';
 process.env.TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'file:/tmp/price-monitor-test.db';
 const {
   computeVariantPriceRows, safeUniformVariantPrice, repairVariantPricesForProduct,
-  computeRepairBatchRange, updateEbayVariantPricesIndividually, runAvailabilityCheck, mergeFreshVariantPrices,
+  computeRepairBatchRange, updateEbayVariantPricesIndividually, updateOfferPriceBySku, runAvailabilityCheck, mergeFreshVariantPrices,
   resolveVariantBuyPrice,
 } = await import('./price-monitor');
 
@@ -288,6 +288,10 @@ describe('updateEbayVariantPricesIndividually — Ships-From/Blacklist-Filterung
         const sku = decodeURIComponent(offerMatch[1]);
         return new Response(JSON.stringify({ offers: [{ offerId: `offer-${sku}`, sku }] }), { status: 200 });
       }
+      if (u.includes('/sell/inventory/v1/offer/offer-') && opts?.method === undefined) {
+        const sku = u.split('/sell/inventory/v1/offer/offer-')[1];
+        return new Response(JSON.stringify({ offerId: `offer-${sku}`, sku, marketplaceId: 'EBAY_DE', pricingSummary: { price: { value: '1.00', currency: 'EUR' } } }), { status: 200 });
+      }
       if (u.includes('/sell/inventory/v1/offer/offer-') && opts?.method === 'PUT') {
         const sku = u.split('/sell/inventory/v1/offer/offer-')[1];
         const body = JSON.parse(opts.body as string) as { pricingSummary: { price: { value: string } } };
@@ -528,5 +532,53 @@ describe('mergeFreshVariantPrices (A1: Merge statt Overwrite)', () => {
   test('leerer Scrape lässt den gespeicherten Stand unverändert', () => {
     const r = mergeFreshVariantPrices(JSON.stringify(old), []);
     expect(r.json).toBe(JSON.stringify(old));
+  });
+});
+
+// A-004 (01.10.2026): Preis-PUT darf keine Offer-Felder löschen (A-003: regulatory, listingDescription,
+// categoryId fehlten bei 34 von 42 Offers). Alle eBay-Aufrufe über injiziertes fetch.
+describe('updateOfferPriceBySku — volles Offer statt Teil-Body (A-004)', () => {
+  const fullOffer = {
+    offerId: 'o1', sku: 'stele-1-A', marketplaceId: 'EBAY_DE', format: 'FIXED_PRICE', status: 'PUBLISHED',
+    categoryId: '57920', listingDescription: '<p>Beschreibung</p>', availableQuantity: 7,
+    listingPolicies: { fulfillmentPolicyId: 'f1', paymentPolicyId: 'p1', returnPolicyId: 'r1' },
+    regulatory: { responsiblePersons: [{ companyName: 'E-CrossStu GmbH', types: ['EU_RESPONSIBLE_PERSON'] }] },
+    pricingSummary: { price: { value: '10.00', currency: 'EUR' } },
+  };
+
+  function mockFetch(opts: { fullGetStatus?: number } = {}) {
+    const puts: Array<{ url: string; body: any }> = [];
+    const fn = (async (url: string, init?: { method?: string; body?: string }) => {
+      const u = String(url);
+      if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'o1', sku: 'stele-1-A' }] }), { status: 200 });
+      if (init?.method === 'PUT') { puts.push({ url: u, body: JSON.parse(init.body as string) }); return new Response('', { status: 204 }); }
+      if (u.endsWith('/offer/o1')) {
+        return (opts.fullGetStatus ?? 200) === 200
+          ? new Response(JSON.stringify(fullOffer), { status: 200 })
+          : new Response('{"errors":[{"message":"Boom"}]}', { status: opts.fullGetStatus });
+      }
+      throw new Error('Unmocked: ' + u);
+    }) as unknown as typeof fetch;
+    return { fn, puts };
+  }
+
+  test('PUT-Body trägt regulatory, listingDescription, categoryId, listingPolicies, availableQuantity unverändert; nur der Preis ist neu', async () => {
+    const { fn, puts } = mockFetch();
+    const r = await updateOfferPriceBySku('stele-1-A', 12.95, 'tok', fn);
+    expect(r).toEqual({ ok: true });
+    expect(puts.length).toBe(1);
+    const { pricingSummary, ...rest } = puts[0].body;
+    const { pricingSummary: _old, ...restOld } = fullOffer;
+    expect(rest).toEqual(restOld);
+    expect(pricingSummary.price).toEqual({ value: '12.95', currency: 'EUR' });
+  });
+
+  test('GET des vollen Offers schlägt fehl → KEIN PUT, Fehlertext wörtlich im Ergebnis', async () => {
+    const { fn, puts } = mockFetch({ fullGetStatus: 500 });
+    const r = await updateOfferPriceBySku('stele-1-A', 12.95, 'tok', fn);
+    expect(puts.length).toBe(0);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('GET offer/o1: 500');
+    expect(r.error).toContain('Boom');
   });
 });

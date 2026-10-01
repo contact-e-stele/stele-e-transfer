@@ -228,7 +228,7 @@ export async function updateEbayVariantPricesIndividually(
       }
       const price = match.entry.price;
       if (price == null) continue;
-      const ok = await updateOfferPriceBySku(sku, price, token);
+      const { ok } = await updateOfferPriceBySku(sku, price, token);
       if (ok) {
         updatedCount++;
         console.log(`[PriceMonitor] ${productId}: Variante ${sku} → ${price.toFixed(2)}€`);
@@ -291,36 +291,60 @@ export function computeRepairBatchRange(
 
 // Holt das Offer zu einer EXAKTEN SKU und setzt dessen Preis (Inventory API).
 // eBays "sku"-Query-Parameter bei GET /offer ist ein exakter Match — kein Präfix-/Wildcard-Filter.
-export async function updateOfferPriceBySku(sku: string, newPrice: number, token: string): Promise<boolean> {
-  const res = await fetch(
+//
+// A-004 (01.10.2026): PUT /offer/{offerId} ERSETZT das komplette Offer. Der frühere Teil-Body
+// {sku, marketplaceId, pricingSummary} hat dabei regulatory, listingDescription und categoryId
+// gelöscht (A-003: 34 von 42 Offers der nachgezogenen Produkte). Jetzt wie
+// updateOfferDescriptionBySku() (ebay.ts): volles Offer holen → NUR pricingSummary.price ersetzen →
+// volles Objekt zurückschicken. Schlägt das GET fehl, wird für dieses Offer KEIN PUT gesendet.
+export async function updateOfferPriceBySku(
+  sku: string,
+  newPrice: number,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetchFn(
     `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
     { headers: { 'Authorization': `Bearer ${token}` } }
   );
-  if (!res.ok) return false;
+  if (!res.ok) return { ok: false, error: `GET offer?sku=${sku} fehlgeschlagen: ${res.status}` };
   const data = await res.json() as { offers?: Array<{ offerId: string; sku: string }> };
   const offers = data.offers ?? [];
-  if (offers.length === 0) return false;
+  if (offers.length === 0) return { ok: false, error: `Kein Offer für SKU ${sku} gefunden` };
 
   let anyOk = false;
+  const errors: string[] = [];
   for (const offer of offers) {
-    const patchRes = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
+    const fullRes = await fetchFn(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!fullRes.ok) {
+      const detail = await fullRes.text().catch(() => '');
+      errors.push(`GET offer/${offer.offerId}: ${fullRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}`);
+      continue;
+    }
+    const offerData = await fullRes.json() as Record<string, unknown>;
+    offerData.pricingSummary = {
+      ...(offerData.pricingSummary as Record<string, unknown> | undefined ?? {}),
+      price: { value: newPrice.toFixed(2), currency: 'EUR' },
+    };
+    const patchRes = await fetchFn(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
         'Content-Language': 'de-DE',
       },
-      body: JSON.stringify({
-        sku: offer.sku,
-        marketplaceId: 'EBAY_DE',
-        pricingSummary: {
-          price: { value: newPrice.toFixed(2), currency: 'EUR' },
-        },
-      }),
+      body: JSON.stringify(offerData),
     });
     if (patchRes.ok || patchRes.status === 204) anyOk = true;
+    else {
+      const detail = await patchRes.text().catch(() => '');
+      errors.push(`PUT offer/${offer.offerId}: ${patchRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}`);
+    }
   }
-  return anyOk;
+  if (errors.length > 0) console.warn(`[PriceMonitor] Preis-Update ${sku}: ${errors.join('; ')}`);
+  return anyOk ? { ok: true } : { ok: false, error: errors.join('; ') };
 }
 
 // eBay Preis über Inventory API updaten (für neue Listings die über Inventory API erstellt wurden)
@@ -331,7 +355,7 @@ export async function updateEbayPriceInventory(productId: number, newPrice: numb
     const sku = `stele-${productId}`;
 
     // 1. Einzelartikel-Listing: SKU direkt versuchen
-    if (await updateOfferPriceBySku(sku, newPrice, token)) {
+    if ((await updateOfferPriceBySku(sku, newPrice, token)).ok) {
       console.log(`[PriceMonitor] ✅ Inventory API: ${sku} → ${newPrice.toFixed(2)}€`);
       return true;
     }
@@ -346,7 +370,7 @@ export async function updateEbayPriceInventory(productId: number, newPrice: numb
     if (variantSkus.length > 0) {
       let anyOk = false;
       for (const varSku of variantSkus) {
-        if (await updateOfferPriceBySku(varSku, newPrice, token)) anyOk = true;
+        if ((await updateOfferPriceBySku(varSku, newPrice, token)).ok) anyOk = true;
       }
       if (anyOk) {
         console.log(`[PriceMonitor] ✅ Inventory API (Varianten): ${groupSku} → ${newPrice.toFixed(2)}€ (${variantSkus.length} SKUs)`);
