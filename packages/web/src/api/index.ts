@@ -3372,22 +3372,11 @@ const app = new Hono()
                 const invSku = `stele-${product.id}`;
                 const skusToTry = [invSku, `${invSku}-GROUP`];
                 let invOk = false;
+                // A-005: eine Prüfstelle — updateOfferPriceBySku() holt das volle Offer und ersetzt nur den
+                // Preis (ein eigener Teil-PUT würde regulatory/Beschreibung/categoryId löschen, s. A-003/A-004).
+                const { updateOfferPriceBySku } = await import('./price-monitor');
                 for (const trySku of skusToTry) {
-                  const offerRes = await fetch(
-                    `https://api.ebay.com/sell/inventory/v1/offer?sku=${encodeURIComponent(trySku)}&marketplace_id=EBAY_DE`,
-                    { headers: { 'Authorization': `Bearer ${ebayToken}` } }
-                  );
-                  if (!offerRes.ok) continue;
-                  const offerData = await offerRes.json() as { offers?: Array<{ offerId: string; sku: string }> };
-                  const offers = offerData.offers ?? [];
-                  if (offers.length > 0) {
-                    for (const offer of offers) {
-                      await fetch(`https://api.ebay.com/sell/inventory/v1/offer/${offer.offerId}`, {
-                        method: 'PUT',
-                        headers: { 'Authorization': `Bearer ${ebayToken}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
-                        body: JSON.stringify({ sku: offer.sku, marketplaceId: 'EBAY_DE', pricingSummary: { price: { value: decision.price.toFixed(2), currency: 'EUR' } } }),
-                      });
-                    }
+                  if ((await updateOfferPriceBySku(trySku, decision.price, ebayToken)).ok) {
                     invOk = true;
                     break;
                   }
