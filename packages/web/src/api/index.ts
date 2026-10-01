@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
-import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
+import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw, mfrFieldsFromRaw, planMfrBackfill } from '../shared/gpsr-parser';
+import { parseMfrPatch } from '../shared/gpsr-mfr-patch';
 import { findForeignEmails } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, checkOutgoingListingText, formatComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { resolveListingDescription } from './ebay-description-builder';
@@ -2182,6 +2183,8 @@ const app = new Hono()
           specs: body.specs ? JSON.stringify(body.specs) : undefined,
           gpsrRaw: body.gpsrRaw ?? undefined,
           ...gpsrFieldsFromRaw(body.gpsrRaw, true),
+          // A-008: Hersteller aus dem Rohtext — nur in LEERE Felder (Hand-Pflege im GPSR-Fenster wird nie überschrieben).
+          ...planMfrBackfill(existing[0], body.gpsrRaw),
           shipsFrom: body.shipsFrom ?? undefined,
           shippingCost: body.shippingCost ?? undefined,
           storeCategoryId: body.storeCategoryId ?? undefined,
@@ -2220,6 +2223,7 @@ const app = new Hono()
         variantContents: body.variantContents ? JSON.stringify(body.variantContents) : null,
         gpsrRaw: body.gpsrRaw ?? null,
         ...gpsrFieldsFromRaw(body.gpsrRaw),
+        ...mfrFieldsFromRaw(body.gpsrRaw),
         shipsFrom: body.shipsFrom ?? null,
         shippingCost: body.shippingCost ?? 0,
         storeCategoryId: body.storeCategoryId ?? null,
@@ -3057,6 +3061,10 @@ const app = new Hono()
         if (rawCountry && !code) return c.json({ error: '"gpsrCountry" muss ein zweistelliger Ländercode sein (z. B. DE)' }, 400);
         allowed.gpsrCountry = code;
       }
+      // A-008: Herstellerfelder (eigener Block, nie die EU-Person) — Validierung in shared/gpsr-mfr-patch.ts.
+      const mfrPatch = parseMfrPatch(body);
+      if (!mfrPatch.ok) return c.json({ error: mfrPatch.error }, 400);
+      Object.assign(allowed, mfrPatch.fields);
       if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
       if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);

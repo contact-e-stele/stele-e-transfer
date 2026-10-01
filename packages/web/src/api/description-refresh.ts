@@ -42,6 +42,9 @@ export interface DescriptionRefreshProduct extends ProductDescriptionFields {
   gpsrEmail?: string | null;
   gpsrPhone?: string | null;
   gpsrCountry?: string | null;
+  // A-008: gespeicherte Herstellerfelder
+  gpsrMfrName?: string | null; gpsrMfrAddress?: string | null; gpsrMfrCity?: string | null; gpsrMfrCountry?: string | null;
+  gpsrMfrEmail?: string | null; gpsrMfrPhone?: string | null; gpsrMfrUrl?: string | null;
 }
 
 export interface DescriptionRefreshDeps {
@@ -54,7 +57,20 @@ export interface DescriptionRefreshDeps {
 }
 
 // manufacturerMissing (P71-C Teil 3): fehlende Herstellerfelder — der Herstellerblock wird dann weggelassen.
-export interface GpsrPreview { complete: boolean; missing: string[]; manufacturerMissing: string[] }
+// A-008: EU-Person und Hersteller getrennt (eu / manufacturer je complete + missing); complete/missing/manufacturerMissing bleiben für Altaufrufer.
+export interface GpsrPreview {
+  complete: boolean; missing: string[]; manufacturerMissing: string[];
+  eu: { complete: boolean; missing: string[] };
+  manufacturer: { complete: boolean; missing: string[]; present: boolean };
+}
+function gpsrPreview(g: ReturnType<typeof resolveGpsrForListing>): GpsrPreview {
+  const mPresent = g.manufacturer !== null || g.manufacturerMissing.length > 0;
+  return {
+    complete: !!g.eu, missing: g.missing, manufacturerMissing: g.manufacturerMissing,
+    eu: { complete: !!g.eu, missing: g.missing },
+    manufacturer: { complete: g.manufacturer !== null, missing: g.manufacturerMissing, present: mPresent },
+  };
+}
 
 export type DescriptionRefreshOutcome =
   | { productId: number; ok: true; dryRun: true; itemId: string; changed: boolean; violationsBefore: DescriptionComplianceViolation[]; violationsAfter: DescriptionComplianceViolation[]; summaryBefore: DescriptionViolationSummary; summaryAfter: DescriptionViolationSummary; gpsr: GpsrPreview }
@@ -109,13 +125,15 @@ ${newTitle}`);
     gpsrRaw: product.gpsrRaw ?? null, gpsrName: product.gpsrName ?? null, gpsrAddress: product.gpsrAddress ?? null,
     gpsrCity: product.gpsrCity ?? null, gpsrEmail: product.gpsrEmail ?? null, gpsrPhone: product.gpsrPhone ?? null,
     gpsrCountry: product.gpsrCountry ?? null,
+    gpsrMfrName: product.gpsrMfrName ?? null, gpsrMfrAddress: product.gpsrMfrAddress ?? null, gpsrMfrCity: product.gpsrMfrCity ?? null,
+    gpsrMfrCountry: product.gpsrMfrCountry ?? null, gpsrMfrEmail: product.gpsrMfrEmail ?? null, gpsrMfrPhone: product.gpsrMfrPhone ?? null, gpsrMfrUrl: product.gpsrMfrUrl ?? null,
   });
   if (!gpsr.eu) {
-    return { productId, ok: false, httpStatus: 422, error: `GPSR-Pflichtangaben fehlen: ${gpsr.missing.join('; ')}`, summaryBefore, summaryAfter, gpsr: { complete: false, missing: gpsr.missing, manufacturerMissing: gpsr.manufacturerMissing } };
+    return { productId, ok: false, httpStatus: 422, error: `GPSR-Pflichtangaben fehlen: ${gpsr.missing.join('; ')}`, summaryBefore, summaryAfter, gpsr: gpsrPreview(gpsr) };
   }
 
   if (opts.confirm !== true) {
-    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter, summaryBefore, summaryAfter, gpsr: { complete: true, missing: [], manufacturerMissing: gpsr.manufacturerMissing } };
+    return { productId, ok: true, dryRun: true, itemId: product.ebayListingId, changed: after !== before, violationsBefore, violationsAfter, summaryBefore, summaryAfter, gpsr: gpsrPreview(gpsr) };
   }
 
   try {
