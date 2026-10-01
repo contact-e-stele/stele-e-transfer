@@ -47,6 +47,8 @@ export interface ParsedGpsr {
   country: string | null;
   /** Paket 3: Herstellerblock, getrennt von der EU-Person gehalten (nie ersatzweise in die Hauptfelder). */
   manufacturer: GpsrBlockFields | null;
+  /** A-008: true nur, wenn die Zuordnung des Herstellerblocks durch einen Titel belegt ist (nicht bloß durch die Position). */
+  manufacturerTitled?: boolean;
   /** Paket 3: true nur, wenn ein Block als "verantwortliche Person in der EU" identifiziert wurde. */
   euBlockFound: boolean;
   /** 'vollstaendig' nur wenn alle 5 Felder sicher erkannt sind. */
@@ -93,8 +95,9 @@ const PL_CHARS = "A-Za-zÀ-ÿŁŚŻŹĆŃÓĄĘłśżźćńóąę.'\\-";
 // Reihenfolge zählt: NL/PT vor dem allgemeinen 4–5-Ziffern-Fall, sonst würde "1012 AB Amsterdam" still als
 // PLZ "1012" + Stadt "AB Amsterdam" zerlegt (belegter Fehlweg).
 const PLZ_ALT = '\\d{4}-\\d{3}|\\d{2}-\\d{3}|\\d{4}\\s?[A-Z]{2}(?![A-Za-z])|\\d{4,5}';
-const FORWARD_RE = new RegExp(`(?<![\\d/-])(?<!\\b(?:No|Nr|Room|Raum|Suite|Zimmer)\\.?\\s*)(${PLZ_ALT})[\\s,]+([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})`, 'g');
-const REVERSED_RE = new RegExp(`([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,1})\\s*,\\s*(\\d{4,5})(?!\\d)`, 'g');
+const FORWARD_RE = new RegExp(`(?<![\\d/-])(?<!\\b(?:[Nn][Oo]|[Nn][Rr]|[Rr][Oo][Oo][Mm]|[Rr][Aa][Uu][Mm]|[Ss][Uu][Ii][Tt][Ee]|[Zz][Ii][Mm][Mm][Ee][Rr])\\.?\\s*)(${PLZ_ALT})[\\s,]+([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})`, 'g');
+const makeReversedRe = (maxDigits: number) => new RegExp(`([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,1})\\s*,\\s*(\\d{4,${maxDigits}})(?!\\d)`, 'g');
+const REVERSED_RE = makeReversedRe(5);
 
 function trimTrailingCountryWords(words: string[]): string[] {
   const out = [...words];
@@ -110,10 +113,21 @@ interface AddressSplit { street: string; city: string | null; matched: boolean }
 
 // A-008: chinesische PLZ sind 6-stellig ("Shenzhen, 518000"). Nur für den Herstellerblock und nur in der
 // Reihenfolge "Stadt, PLZ" (am Ende) — vorwärts ("322200 Zhejiang Province, Jinhua City") wäre die Stadt geraten.
-const REVERSED_RE_CN = new RegExp(`([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,1})\\s*,\\s*(\\d{4,6})(?!\\d)`, 'g');
+const REVERSED_RE_CN = makeReversedRe(6);
 
 function splitStreetAndCity(rawAddress: string, allowSixDigitPlz = false): AddressSplit {
   const addr = normalizeAddress(rawAddress);
+
+  // 0) A-008, nur Hersteller: eine 6-stellige PLZ ganz am Ende ("…, Shenzhen, 518000") hat Vorrang vor der
+  // Vorwärts-Regel, die sonst Zimmer-/Stockwerknummern wie "1001 Floor" als PLZ greifen könnte.
+  if (allowSixDigitPlz) {
+    const tail = [...addr.matchAll(REVERSED_RE_CN)].pop();
+    if (tail && /^\d{6}$/.test(tail[2]) && tail.index! + tail[0].length >= addr.trimEnd().length) {
+      const words = tail[1].trim().split(/\s+/);
+      const street = addr.slice(0, tail.index).replace(/[\s,]+$/, '').trim();
+      if (street && !isCountryWord(words[words.length - 1])) return { street, city: `${tail[2]} ${words.join(' ')}`, matched: true };
+    }
+  }
 
   // 1) Vorwärts: "…, PLZ Stadt[, Land]" — von rechts (nächstgelegen am Ende) nach links versuchen.
   const forwardMatches = [...addr.matchAll(FORWARD_RE)];
@@ -167,20 +181,22 @@ const COUNTRY_ISO: Record<string, string> = {
 };
 // Länderwort erkennen: (1) letztes Wort der Adresse ("…,75017,PARIS FR", "…28947 Spanien"), (2) letztes
 // Komma-Segment ("…, DE(Germany)"), (3) führendes Länderkürzel ("ES-CALLE…", "FR-79 rue…"). Nur bekannte Wörter.
-function detectCountry(rawAddress: string): string | null {
+// `extended` (A-008, nur Herstellerblock): zusätzlich "CN, …" und ein führendes ausgeschriebenes Länderwort.
+// Beim EU-Block bleibt es beim bisherigen Verhalten — ein stilles falsches EU-Land wäre schlimmer als ein sichtbarer Blocker.
+function detectCountry(rawAddress: string, extended = false): string | null {
   const addr = normalizeAddress(rawAddress);
   const lookup = (w: string) => COUNTRY_ISO[w.replace(/\(.*\)/, '').replace(/[.,;]/g, '').trim().toLowerCase()] ?? null;
   const lastToken = addr.split(/[\s,]+/).filter(Boolean).pop() ?? '';
   const lastSegment = addr.split(',').pop() ?? '';
-  const prefix = addr.match(/^\s*([A-Za-z]{2})(?:-|,\s)/)?.[1] ?? '';
+  const prefix = addr.match(extended ? /^\s*([A-Za-z]{2})(?:-|,\s)/ : /^\s*([A-Za-z]{2})-/)?.[1] ?? '';
   // A-008: führendes ausgeschriebenes Länderwort ohne Trenner ("China 201, Gebäude 1, …"), keine 2-Buchstaben-Kürzel.
-  const leadWord = addr.match(/^\s*([A-Za-zäöüÄÖÜ]{3,})\b/)?.[1] ?? '';
+  const leadWord = extended ? (addr.match(/^\s*([A-Za-zäöüÄÖÜ]{3,})\b/)?.[1] ?? '') : '';
   return lookup(lastToken) ?? lookup(lastSegment) ?? (prefix ? lookup(prefix) : null) ?? (leadWord ? lookup(leadWord) : null);
 }
 
 const KEY_LINE_RE = /^\s*:?\s*(Name|Adresse|Address|E-?Mail(?:-Adresse)?|Telefon|Phone)\s*:/i;
-const EU_TITLE_RE = /verantwortlich|EU[-\s]?Vertreter/i;
-const MANUF_TITLE_RE = /hersteller/i;
+const EU_TITLE_RE = /verantwortlich|EU[-\s]?Vertreter|responsible\s+person|EU[-\s]?representative/i;
+const MANUF_TITLE_RE = /hersteller|manufacturer/i;
 
 function parseBlockFields(blockText: string, notes: string[], label: string, allowSixDigitPlz = false): GpsrBlockFields {
   const nameMatch = blockText.match(NAME_LINE_RE);
@@ -213,7 +229,7 @@ function parseBlockFields(blockText: string, notes: string[], label: string, all
     address = addressRaw;
     notes.push('Adresse liegt als Formularfeld-Dump der Importquelle vor (z. B. "Address_District_1:…") — nicht zuverlässig in Straße/PLZ/Stadt aufteilbar, Rohwert in gpsr_address übernommen, gpsr_city nicht erkannt');
   } else {
-    country = detectCountry(addressRaw);
+    country = detectCountry(addressRaw, allowSixDigitPlz);
     const split = splitStreetAndCity(addressRaw, allowSixDigitPlz);
     if (split.matched) {
       address = cleanValue(split.street);
@@ -244,7 +260,7 @@ export function parseGpsrRaw(raw: string | null | undefined): ParsedGpsr {
   }
 
   // A-008: die Quelle bricht "E-Mail:" teils nach "E-" um (Produkte 95, 149) — "E-" zurück an die Schlüsselzeile, nicht an die Adresse.
-  const lines = raw.replace(/[ \t]*E-[ \t]*\r?\n([ \t]*Mail[ \t]*:)/gi, '\nE-$1').split(/\r?\n/);
+  const lines = raw.replace(/[ \t]*(?<![A-Za-z])E-[ \t]*\r?\n([ \t]*Mail[ \t]*:)/gi, '\nE-$1').split(/\r?\n/);
   const nameLineIdx = findTopLevelNameLineIndices(lines);
 
   if (nameLineIdx.length < 1 || nameLineIdx.length > 2) {
@@ -271,23 +287,24 @@ export function parseGpsrRaw(raw: string | null | undefined): ParsedGpsr {
 
   let euNo: number | null = null;
   let manufNo: number | null = null;
+  let manufTitled = false;
   const notes: string[] = [];
 
   if (nameLineIdx.length === 2) {
     const h0 = headerOf(0), h1 = headerOf(1);
-    if (isEu(h0) && !isEu(h1)) { euNo = 0; manufNo = 1; }        // vertauschte Reihenfolge, per Titel erkannt
-    else { euNo = 1; manufNo = 0; }                              // Standard: Position (Titel fehlen oder passen)
+    if (isEu(h0) && !isEu(h1)) { euNo = 0; manufNo = 1; manufTitled = true; }   // vertauschte Reihenfolge, per Titel erkannt
+    else { euNo = 1; manufNo = 0; manufTitled = isManuf(h0) || isEu(h1); }      // Standard: Position; "belegt" nur, wenn ein Titel dazu passt
   } else {
     const h0 = headerOf(0);
     if (isEu(h0)) euNo = 0;
-    else if (isManuf(h0)) manufNo = 0;
+    else if (isManuf(h0)) { manufNo = 0; manufTitled = true; }
     else notes.push('Einzelner Block ohne erkennbaren Titel — nicht als EU-Verantwortlicher oder Hersteller zuordenbar');
   }
 
   const manufacturer = manufNo !== null ? parseBlockFields(blockText(manufNo), [], 'Hersteller', true) : null;
   if (euNo === null) {
     notes.push('EU-Block (verantwortliche Person in der EU) fehlt — EU-Felder bleiben leer, es wird NICHT ersatzweise der Hersteller eingetragen');
-    return { ...empty, manufacturer, notes };
+    return { ...empty, manufacturer, manufacturerTitled: manufTitled, notes };
   }
 
   const eu = parseBlockFields(blockText(euNo), notes, 'EU');
@@ -295,7 +312,7 @@ export function parseGpsrRaw(raw: string | null | undefined): ParsedGpsr {
   const nameOrEmailFound = !!(eu.name || eu.email);
   const confidence: ParsedGpsr['confidence'] = allFive ? 'vollstaendig' : (nameOrEmailFound ? 'teilweise' : 'nicht_erkannt');
 
-  return { name: eu.name, address: eu.address, city: eu.city, email: eu.email, phone: eu.phone, country: eu.country, manufacturer, euBlockFound: true, confidence, notes };
+  return { name: eu.name, address: eu.address, city: eu.city, email: eu.email, phone: eu.phone, country: eu.country, manufacturer, manufacturerTitled: manufTitled, euBlockFound: true, confidence, notes };
 }
 
 // ─── Paket 3: Pflichtangaben fürs Listing (eBay `regulatory`) ─────────────────────────────
@@ -448,8 +465,10 @@ export interface GpsrMfrFields {
   gpsrMfrCountry?: string; gpsrMfrEmail?: string; gpsrMfrPhone?: string; gpsrMfrUrl?: string;
 }
 export function mfrFieldsFromRaw(raw: string | null | undefined): GpsrMfrFields {
-  const m = parseGpsrRaw(raw).manufacturer;
-  if (!m || !m.name) return {};
+  const g = parseGpsrRaw(raw);
+  const m = g.manufacturer;
+  // Nur bei per Titel belegter Zuordnung: reine Positions-Zuordnung könnte (vertauschte Blöcke) die EU-Person als Hersteller liefern.
+  if (!m || !m.name || !g.manufacturerTitled) return {};
   const country = normalizeCountryCode(m.country);
   return {
     gpsrMfrName: m.name,

@@ -7,7 +7,7 @@
 
 import { db } from '../src/db/index';
 import * as schema from '../src/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { planMfrBackfill } from '../src/shared/gpsr-parser';
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
@@ -22,16 +22,28 @@ const rows = await db.select({
 
 const lines: string[] = [`# A-008 Hersteller-Backfill — ${apply ? 'APPLY (geschrieben)' : 'DRY-RUN (nichts geschrieben)'}`, '', `Lauf: ${new Date().toISOString()}`, ''];
 lines.push('| Produkt | gesetzte Felder |', '|---|---|');
-let touched = 0;
+const writes: Array<{ id: number; plan: Record<string, string> }> = [];
 for (const r of rows) {
-  const plan = planMfrBackfill(r, r.gpsrRaw);
+  const plan = planMfrBackfill(r, r.gpsrRaw) as Record<string, string>;
   const keys = Object.keys(plan);
   if (keys.length === 0) continue;
-  touched++;
-  lines.push(`| ${r.id} | ${keys.map(k => `${k}=${(plan as Record<string, string>)[k]}`).join('; ').replace(/\|/g, '/')} |`);
-  if (apply) await db.update(p).set(plan).where(eq(p.id, r.id));
+  lines.push(`| ${r.id} | ${keys.map(k => `${k}=${plan[k]}`).join('; ').replaceAll('|', '/')} |`);
+  writes.push({ id: r.id, plan });
 }
-lines.push('', `Produkte gesamt: ${rows.length}; mit Änderung: ${touched}; ${apply ? 'geschrieben' : 'würde schreiben'}: ${touched}`);
+lines.push('', `Produkte gesamt: ${rows.length}; mit Änderung: ${writes.length}; ${apply ? 'geschrieben' : 'würde schreiben'}: ${writes.length}`);
+
+if (apply) {
+  // Eine Transaktion; je Feld zusätzlich "in der DB (noch) leer" im WHERE — ein zwischenzeitlich (Import/Hand)
+  // gesetztes Feld wird nie überschrieben, auch wenn der Plan auf einem älteren Lesezustand beruht.
+  await db.transaction(async tx => {
+    for (const w of writes) {
+      for (const [key, value] of Object.entries(w.plan)) {
+        const col = (p as unknown as Record<string, typeof p.gpsrMfrName>)[key];
+        await tx.update(p).set({ [key]: value }).where(and(eq(p.id, w.id), or(isNull(col), eq(col, ''))));
+      }
+    }
+  });
+}
 
 const outDir = resolve(import.meta.dir, 'output');
 mkdirSync(outDir, { recursive: true });

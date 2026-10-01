@@ -212,7 +212,7 @@ describe("parseGpsrRaw — A-008 Herstellerblock (echte Rohtexte)", () => {
     const m = parseGpsrRaw(RAW_95).manufacturer!;
     expect(m.email).toBe("gzdlus@163.com");
     expect(m.city).toBe("510000 Guangzhou");
-    expect(m.address).not.toMatch(/E-s*$/);
+    expect(m.address).toBe("Raum 252, Selbstorganisiert, 2. Stock, Nr. 37, Nr. 1 (1), Zhusigang Erma Road, Yuexiu District");
   });
   it("132: Hausnummer \"No. 1288 HuxinRoad\" wird NICHT als PLZ gelesen; Land CN aus \"CN-\"", () => {
     const m = parseGpsrRaw(RAW_132).manufacturer!;
@@ -283,5 +283,35 @@ describe("mfrFieldsFromRaw / planMfrBackfill — A-008 Teil 2 (echte Rohtexte)",
   it("planMfrBackfill: alles gefüllt → leerer Plan", () => {
     const full = { gpsrMfrName: "a", gpsrMfrAddress: "b", gpsrMfrCity: "c", gpsrMfrCountry: "CN", gpsrMfrEmail: "e", gpsrMfrPhone: "p" };
     expect(planMfrBackfill(full, RAW_92)).toEqual({});
+  });
+});
+
+describe("A-008 Review-Fixes — EU-Person nie als Hersteller, EU-Block unverändert", () => {
+  const EU_FIRST = "EU responsible person information\nName: EU GmbH\nAddress: Hauptstr 1, 10115 Berlin, Germany\nEmail: eu@example.de\n\nManufacturer information\nName: Foo Ltd\nAddress: Building 2, Longgang District, Shenzhen, 518000, China\nEmail: foo@example.cn";
+  it("vertauschte Reihenfolge mit ENGLISCHEN Titeln: Hersteller = Foo Ltd, nie die EU-Person", () => {
+    const f = mfrFieldsFromRaw(EU_FIRST);
+    expect(f.gpsrMfrName).toBe("Foo Ltd");
+    expect(parseGpsrRaw(EU_FIRST).name).toBe("EU GmbH");
+  });
+  it("reine Positions-Zuordnung ohne passenden Titel: kein Hersteller (leer), statt zu raten", () => {
+    const raw = "Name: A Ltd\nAdresse: Weg 1, 10115 Berlin\nE-Mail: a@b.de\n\nName: B Ltd\nAdresse: Weg 2, 20095 Hamburg\nE-Mail: b@c.de";
+    expect(mfrFieldsFromRaw(raw)).toEqual({});
+  });
+  it("EU-Block: führendes Länderwort ändert das EU-Land NICHT (stilles falsches Land verhindert)", () => {
+    const mk = (addr: string) => "Hersteller\nName: H Ltd\nAdresse: Weg 1, Shenzhen\nE-Mail: h@h.cn\n\nEU-Verantwortlicher\nName: E GmbH\nAdresse: " + addr + "\nE-Mail: e@e.de";
+    expect(parseGpsrRaw(mk("Polen Strasse 5, 10115 Berlin")).country).toBeNull();
+    expect(parseGpsrRaw(mk("Italia 12, 10115 Berlin")).country).toBeNull();
+  });
+  it("Hausnummer-Sperre ist unabhängig von Groß-/Kleinschreibung (room 12345 Foo Road)", () => {
+    const raw = "Herstellerinformationen\nName: H Ltd\nAdresse: Building 2, room 12345 Foo Road, Shenzhen\nE-Mail: h@h.cn\n\nEU-Verantwortlicher\nName: E GmbH\nAdresse: Weg 1, 10115 Berlin, Germany\nE-Mail: e@e.de";
+    expect(parseGpsrRaw(raw).manufacturer!.city).toBeNull();
+  });
+  it("6-stellige PLZ am Ende hat Vorrang vor einer Stockwerkzahl (1001 Floor, Shenzhen, 518000)", () => {
+    const raw = "Herstellerinformationen\nName: H Ltd\nAdresse: Foo Rd, 1001 Floor, Shenzhen, 518000\nE-Mail: h@h.cn\n\nEU-Verantwortlicher\nName: E GmbH\nAdresse: Weg 1, 10115 Berlin, Germany\nE-Mail: e@e.de";
+    expect(parseGpsrRaw(raw).manufacturer!.city).toBe("518000 Shenzhen");
+  });
+  it("'E-' am Zeilenende eines Wortes (Pierre-) wird nicht als umgebrochenes E-Mail behandelt", () => {
+    const raw = "Herstellerinformationen\nName: Pierre-\nMail: x\nAdresse: Weg 1\n\nEU-Verantwortlicher\nName: E GmbH\nAdresse: Weg 1, 10115 Berlin, Germany\nE-Mail: e@e.de";
+    expect(parseGpsrRaw(raw).manufacturer!.name).toBe("Pierre-");
   });
 });
