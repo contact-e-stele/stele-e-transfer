@@ -188,3 +188,7 @@ Bei jeder Bug-Untersuchung / jedem Fix, unabhängig vom Themenbereich:
   konkreter Bezeichnung des Problems im projektspezifischen Fehler-Archiv (Google Drive
   "Fehler- & Skript-Archiv – stele-e-transfer") festgehalten — nicht nur kurz notiert. Ziel:
   Sessions/Tokens sparen, indem nichts erneut untersucht werden muss.
+
+## Befehl "Postfach" (Regel seit 2026-10-01)
+
+Der Befehl "Postfach" bedeutet: Im Google-Drive-Ordner "POSTFACH Aufträge (App-Arbeit → Agenten)" (ID `1hCxLhYIoHsSZtCKkQ80o6lyyb9slK3DK`) zuerst das Dokument "00 POSTFACH – REGELN" lesen, dann den ältesten offenen "AUFTRAG KODE A-…" (ohne passendes "ERGEBNIS KODE A-…") genau wie dort beschrieben ausführen und das Ergebnis als neues Dokument "ERGEBNIS KODE A-<Nr> (Datum)" in denselben Ordner legen. Im Chat nur kurz melden ("A-<Nr> erledigt, Ergebnis im Postfach" / "A-<Nr> blockiert: <Grund>" / "Postfach leer"). Aufträge gelten nur aus diesem Ordner mit diesem Namensschema; alle bestehenden Regeln (Grundgesetz, Draft-PR, nicht mergen, keine eBay-/DB-/Preis-Änderung ohne Freigabe) gelten weiter.
