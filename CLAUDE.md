@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-09-10, aktuelle Version: v1.11):**
+**Aktueller Zählerstand (Stand 2026-10-01, aktuelle Version: v1.22):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -149,8 +149,63 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | 4 | #87 | Preis-Fundament Teil 2C: Zielgewinn trifft exakt (Sicherheitspuffer entfernt, Zielgewinn pro Produkt persistiert) → **Bump v1.10 → v1.11 bei #87** |
 | 1 | #88 | Preis-Fundament Teil 2D: Senkungsbremse (max. 8 % Absenkung pro Lauf) |
 | 2 | #89 | Preis-Fundament Teil 3: Varianten mit eigenen Preisen (Preisregel + eigene Spalte `variant_sell_prices`) |
+| 3 | #90 | Varianten-Verkaufszahlen (variant-sales.ts, order-matching.ts, index.ts); Grundgesetz-Doku nur Nebenanteil |
+| 4 | #91 | Sentry-Fehlerüberwachung Backend + Frontend → **Bump v1.11 → v1.12 bei #91** |
+| 1 | #92 | Fix: KUNDENSERVICE-Block/Dritt-Kontakte aus eBay-Beschreibung |
+| 2 | #93 | GRENZFALL (zählt wörtlich): neues Modul shared/gpsr-parser.ts + Tests + Berichts-/Schreib-Skripte, in der App noch nicht eingebunden |
+| 3 | #94 | Fix: Gewinn-Anzeige lieferanten.tsx an zentrale Preisformel |
+| 4 | #95 | Fix: Dashboard-Gewinn ohne Versand/Zoll-Abzug → **Bump v1.12 → v1.13 bei #95** |
+| 1 | #96 | Sentry Source Maps + Testendpunkt-Absicherung |
+| 2 | #97 | Preis-Automatik nur noch anheben (Teil 4/5) |
+| — | #98 | *(zählt nicht — Trockenlauf-Bericht (docs + Berichts-Skript) + 11 Zeilen Kommentar in pricing.ts, keine funktionale Änderung = Doku)* |
+| 3 | #99 | Sendungsnummer-Übernahme (Cron hinter Schalter) |
+| 4 | #100 | Fix: Preisalarm nur unter Mindestpreis → **Bump v1.13 → v1.14 bei #100** |
+| 1 | #101 | Fix: Workflow-Text (P-79), App-Inhalt, behebt reale Fehlbestellung |
+| 2 | #102 | Fix: Sendungsnummer-Cron (aliexpress-api.ts, tracking-sync.ts) |
+| 3 | #103 | Sendungsnummer aus AliExpress-Mails |
+| 4 | #104 | Fix: Gmail-Suche paginiert nicht → **Bump v1.14 → v1.15 bei #104** |
+| 1 | #105 | Sendungsnummer-Cron scharf geschaltet |
+| 2 | #106 | P-82 Shop-Kategorie beim Listen |
+| 3 | #107 | P-81 Stufe 1: ebay.ts +110, lieferanten.tsx (Anzeigentarif prüfen) |
+| 4 | #108 | Fix: eBay Neu-Verbinden-Knopf + Scope-Anzeige → **Bump v1.15 → v1.16 bei #108** |
+| 1 | #109 | Fix: Knopf "Erneut an eBay übermitteln" stumm |
+| 2 | #110 | Import-Gate: manuelle Übersteuerung (P-66 Schritt 3, Migration) |
+| 3 | #111 | P-88 Teil 1: Pflichtmerkmale universell |
+| 4 | #114 | P-88 Nacharbeit: 5 Code-Punkte (einstellungen.tsx, ebay.ts, validation …) → **Bump v1.16 → v1.17 bei #114** |
+| 1 | #115 | P-85 Schritt 2b: Varianten-Zuordnung |
+| 2 | #113 | Design v1 Schritt 1: Markenfarben/Icons/Kopfleiste (UI-Änderung) |
+| 3 | #116 | P-85 Schritt 2c: Waisen warnen statt blockieren |
+| 4 | #117 | Fix A1: Preisprüfung mergt variantPrices → **Bump v1.17 → v1.18 bei #117** |
+| 1 | #118 | Paket 2: Rundung + Mengen-Obergrenze |
+| 2 | #119 | Nachtrag: Rundungs-Toleranz (pricing.ts) |
+| 3 | #120 | Paket 3: GPSR strukturiert |
+| 4 | #121 | Paket 3b: GPSR-Land als Feld (Migration) → **Bump v1.18 → v1.19 bei #121** |
+| 1 | #122 | PRIO-1: Bestellungs-Gewinn korrigiert |
+| 2 | #124 | Beschreibungsvorlage grundsatzkonform |
+| 3 | #125 | P71-B Teil 1: Nachzieh-Weg |
+| 4 | #126 | P71-B Teil 2: Dauerregeln + Knopf → **Bump v1.19 → v1.20 bei #126** |
+| 1 | #127 | P71-B Nachtrag: Varianten-Beschreibung in Gruppe |
+| 2 | #128 | P71-C Teil 1: Vorlage 5 Tabs |
+| 3 | #129 | P71-C Teil 2: regulatory im selben PUT |
+| 4 | #130 | P71-C Teil 3: Hersteller nur vollständig → **Bump v1.20 → v1.21 bei #130** |
+| 1 | #133 | A-004: Preis-PUT volles Offer |
+| 2 | #134 | A-005: check-all-prices ohne Teil-PUT |
+| 3 | #135 | A-008 PR A: Hersteller-Parser, Spalten, Backfill |
+| — | #132 | *(zählt nicht — reine Doku (CLAUDE.md Befehl "Postfach"))* |
+| — | #136 | *(zählt nicht — Zwischen-Merge in den PR-Branch von #135 (kein Merge nach main); Inhalt zählt über #137)* |
+| 4 | #131 | GRENZFALL (zählt wörtlich): P71-D Prüfskript + reine Funktionen + Tests, nicht in der App, Compliance-API lieferte 404 → **Bump v1.21 → v1.22 bei #131** |
+| 1 | #137 | A-008 PR B auf main: GPSR-Brücke |
 
-**→ Zähler: 2 von 4 seit v1.11.**
+Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
+eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
+funktionale Änderung, Housekeeping, oder ein Zwischen-Merge in einen anderen PR-Branch. **#98** (Trockenlauf-Bericht + Doku + 11 Zeilen
+Kommentar) zählt deshalb nicht; **#132** reine Doku; **#136** wurde nur in den PR-Branch von #135 gemergt (der Inhalt kam über #137 nach
+main). **Grenzfälle, die wörtlich zählen:** #93 (neues Modul `gpsr-parser.ts` + Tests + Skripte, noch nicht in der App eingebunden) und
+#131 (Prüfskript + reine Funktionen + Tests, nicht in der App). Nicht gemergt, daher nicht gezählt: #112 (offen), #123 (geschlossen).
+*Strengere Lesart (nur Änderungen am App-Verhalten zählen, also #93/#131 NICHT): 41 statt 43 gezählte PRs seit #90 → v1.21, "3 von 4".
+Die Entscheidung liegt beim Inhaber; hier gilt die wörtliche Lesart.* Gezählt: 43 PRs ab #90 plus Startwert 2 (#88, #89) = 45 = 11 × 4 + 1.
+
+**→ Zähler: 1 von 4 seit v1.22** (#137 ist der 1.).
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -160,6 +215,17 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.8 → v1.9: PR #77, #78 (siehe Tabelle oben)
 - v1.9 → v1.10: PR #79, #81, #82, #83 (siehe Tabelle oben)
 - v1.10 → v1.11: PR #84, #85, #86, #87 (siehe Tabelle oben)
+- v1.11 → v1.12: PR #88, #89, #90, #91 (siehe Tabelle oben)
+- v1.12 → v1.13: PR #92, #93, #94, #95 (siehe Tabelle oben)
+- v1.13 → v1.14: PR #96, #97, #99, #100 (siehe Tabelle oben)
+- v1.14 → v1.15: PR #101, #102, #103, #104 (siehe Tabelle oben)
+- v1.15 → v1.16: PR #105, #106, #107, #108 (siehe Tabelle oben)
+- v1.16 → v1.17: PR #109, #110, #111, #114 (siehe Tabelle oben)
+- v1.17 → v1.18: PR #115, #113, #116, #117 (siehe Tabelle oben)
+- v1.18 → v1.19: PR #118, #119, #120, #121 (siehe Tabelle oben)
+- v1.19 → v1.20: PR #122, #124, #125, #126 (siehe Tabelle oben)
+- v1.20 → v1.21: PR #127, #128, #129, #130 (siehe Tabelle oben)
+- v1.21 → v1.22: PR #133, #134, #135, #131 (siehe Tabelle oben)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
