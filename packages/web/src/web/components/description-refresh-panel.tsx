@@ -19,7 +19,12 @@ interface RefreshOutcome {
   error?: string;
   summaryBefore?: DescriptionViolationSummary;
   summaryAfter?: DescriptionViolationSummary;
-  gpsr?: { complete: boolean; missing: string[]; manufacturerMissing: string[] };
+  gpsr?: {
+    complete: boolean; missing: string[]; manufacturerMissing: string[];
+    // A-008: EU-Person und Hersteller getrennt
+    eu?: { complete: boolean; missing: string[] };
+    manufacturer?: { complete: boolean; missing: string[]; present: boolean };
+  };
 }
 
 async function callRefresh(productId: number, confirm: boolean): Promise<RefreshOutcome> {
@@ -107,9 +112,16 @@ export function DescriptionRefreshPanel({ productId, onSent }: { productId: numb
               {preview.ok && <div style={{ marginBottom: 6 }}><strong>Text ändert sich:</strong> {preview.changed ? "ja" : "nein"}</div>}
             </>
           )}
-          {preview?.ok && preview.gpsr && preview.gpsr.manufacturerMissing.length > 0 && (
-            <div style={{ marginBottom: 6, padding: "6px 8px", borderRadius: 6, background: "#FEF08A", color: "#713F12", fontWeight: 600 }}>
-              Hersteller unvollständig: {preview.gpsr.manufacturerMissing.join(", ")} — wird ohne Herstellerblock gesendet
+          {preview?.gpsr?.eu && preview.gpsr.manufacturer && (
+            <div style={{ marginBottom: 6, padding: "6px 8px", borderRadius: 6, background: "#F1F5F9", color: "#0F172A", fontWeight: 600 }}>
+              <div>EU-Person: {preview.gpsr.eu.complete ? "vollständig" : `unvollständig — ${preview.gpsr.eu.missing.join("; ")}`}</div>
+              <div>
+                Hersteller: {preview.gpsr.manufacturer.complete
+                  ? "vollständig — wird mitgesendet"
+                  : preview.gpsr.manufacturer.present
+                    ? `unvollständig (${preview.gpsr.manufacturer.missing.join(", ")}) — wird ohne Herstellerblock gesendet`
+                    : "nicht vorhanden — es wird nur die EU-Person gesendet"}
+              </div>
             </div>
           )}
           {error && (

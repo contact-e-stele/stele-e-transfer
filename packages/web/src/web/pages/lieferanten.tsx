@@ -5,6 +5,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
+import { gpsrAmpel, gpsrAmpelLabel } from "../../shared/gpsr-ampel";
 import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
@@ -1413,6 +1414,23 @@ export default function Lieferanten() {
                       }}
                     />
                   </div>
+                  {/* A-008: GPSR-Ampel aus dem eingefügten Text (EU-Person + Hersteller, Klartext je fehlendem Feld) */}
+                  {gpsrHersteller.trim() && (() => {
+                    const a = gpsrAmpel({ gpsrRaw: gpsrHersteller, gpsrName: null, gpsrAddress: null, gpsrCity: null, gpsrEmail: null, gpsrPhone: null, gpsrCountry: null });
+                    const dot = { GRUEN: "🟢", GELB: "🟡", ROT: "🔴" } as const;
+                    const items = [...a.eu.missing, ...a.manufacturer.missing];
+                    return (
+                      <div style={{ background: "#161616", padding: "6px 10px", borderTop: "1px solid #2a2a2a", fontSize: 11, color: "#ddd", lineHeight: 1.5 }}>
+                        <b>GPSR-Ampel: {dot[a.overall]} {gpsrAmpelLabel(a.overall)}</b>
+                        <span style={{ color: "#999" }}> — EU-Person {dot[a.eu.ampel]} · Hersteller {dot[a.manufacturer.ampel]}</span>
+                        {items.length > 0 ? (
+                          <ul style={{ margin: "4px 0 0", paddingLeft: 16, color: "#bbb" }}>{items.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                        ) : (
+                          <div style={{ color: "#4caf50" }}>Alle Pflichtangaben vorhanden.</div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {/* Vorschau */}
                   {gpsrHersteller.trim() && (
                     <div style={{

@@ -268,7 +268,7 @@ describe('refreshOneProductDescription — P71-C Teil 2: GPSR-Pflichtangaben (re
     const deps = makeDeps([product]);
     const outcome = await refreshOneProductDescription(9, {}, deps);
     expect(outcome.ok).toBe(true);
-    if (outcome.ok && outcome.dryRun) expect(outcome.gpsr).toEqual({ complete: true, missing: [], manufacturerMissing: [] });
+    if (outcome.ok && outcome.dryRun) expect(outcome.gpsr).toEqual({ complete: true, missing: [], manufacturerMissing: [], eu: { complete: true, missing: [] }, manufacturer: { complete: false, missing: [], present: false } });
     expect(deps.revisedItemIds).toEqual([]);
   });
 
@@ -291,7 +291,7 @@ describe('refreshOneProductDescription — P71-C Teil 2: GPSR-Pflichtangaben (re
     const product = makeProduct({ id: 11, ebayListingId: '198600000011', gpsrRaw: raw });
     const dry = await refreshOneProductDescription(11, {}, makeDeps([product]));
     expect(dry.ok).toBe(true);
-    if (dry.ok && dry.dryRun) expect(dry.gpsr).toEqual({ complete: true, missing: [], manufacturerMissing: ['PLZ und Ort'] });
+    if (dry.ok && dry.dryRun) expect(dry.gpsr).toEqual({ complete: true, missing: [], manufacturerMissing: ['PLZ und Ort'], eu: { complete: true, missing: [] }, manufacturer: { complete: false, missing: ['PLZ und Ort'], present: true } });
     const seen: any[] = [];
     const deps = makeDeps([product]);
     const inner = deps.reviseListingContent;
