@@ -72,7 +72,7 @@ async function runOne(
     if (!row) return { productId: id, title: '', isLive: false, status: 'not_found', error: 'Produkt nicht gefunden' };
     const isLive = isLiveListed(row);
     const base = { productId: id, title: row.generatedTitle, isLive };
-    const plan = planTierReprice(row, input.targetMarginEur);
+    const plan = planTierReprice(row, input.targetMarginEur, parseGroups(row.variants));
     const decision = decideTierRepriceAction({ mode: input.mode, confirm: input.confirm, sendToEbay: input.sendToEbay, isLive });
 
     if (decision.action === 'preview') return { ...base, status: 'preview', plan };
