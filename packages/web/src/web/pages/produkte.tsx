@@ -12,8 +12,9 @@ import {
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
-import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
-import { TargetBadge } from "../components/target-badge";
+import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { productProfitRows, productTarget } from "../../shared/target-margin-bulk";
+import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
@@ -1613,7 +1614,13 @@ export default function Produkte() {
                     </div>
                   )}
                   <PriceBadge buy={product.buyPrice} sell={product.sellPrice} />
-                  <TargetBadge product={product} onChange={(t) => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, targetMarginEur: t } : p))} />
+                  <TargetBadge
+                    product={product}
+                    isLive={product.ebayStatus === "listed" && !!product.ebayListingId}
+                    onChange={(t, patch) => setProducts(prev => prev.map(p => p.id === product.id
+                      ? { ...p, targetMarginEur: t, ...(patch?.variantSellPrices !== undefined ? { variantSellPrices: patch.variantSellPrices } : {}), ...(patch?.sellPrice !== undefined ? { sellPrice: patch.sellPrice } : {}) }
+                      : p))}
+                  />
                   {/* VK Preis setzen */}
                   {editingPrice === product.id ? (
                     <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
@@ -1782,6 +1789,10 @@ export default function Produkte() {
                 if (vp.length === 0) return null;
                 const isOpen = expandedVariants.has(product.id);
                 const minP = Math.min(...vp.map(v => v.price));
+                // A-017: "eBay" und "Gewinn" je Variante aus derselben Funktion wie "Erwartet" (productProfitRows, Formel v2) — keine eigene
+                // Formel-Kopie mehr (vorher 13 % + 0,45 €, ohne Versand/Einfuhrabgaben, feste Grenze 1,6 €).
+                const profitRowsBySku = new Map(productProfitRows(product).rows.filter(r => r.skuId).map(r => [r.skuId as string, r]));
+                const variantTarget = productTarget(product);
                 return (
                   <div style={{ marginTop: 8 }}>
                     <button onClick={() => setExpandedVariants(prev => { const s = new Set(prev); s.has(product.id) ? s.delete(product.id) : s.add(product.id); return s; })}
@@ -1795,17 +1806,18 @@ export default function Produkte() {
                             <tr style={{ background:"#F8FAFC" }}>
                               {Object.keys(vp[0]?.attrs ?? {}).filter(k => k.toLowerCase() !== 'ships from' && k.toLowerCase() !== 'ships_from' && k.toLowerCase() !== 'versandland').map(k => <th key={k} style={{ padding:"6px 10px", textAlign:"left", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>{k}</th>)}
                               <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Einkauf</th>
-                              {vp.some(v => v.ebayPrice) && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>eBay</th>}
-                              {vp.some(v => v.ebayPrice) && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Gewinn</th>}
+                              {profitRowsBySku.size > 0 && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>eBay</th>}
+                              {profitRowsBySku.size > 0 && <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }} title="Formel v2 beim gesetzten VK; gelb = unter Ziel, rot = unter Boden">Gewinn</th>}
                               <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#64748B", borderBottom:"1px solid #E2E8F0" }}>Lager</th>
                             </tr>
                           </thead>
                           <tbody>
                             {vp.map((v, i) => {
-                              const hasEbay = vp.some(x => x.ebayPrice);
-                              const ebayP = v.ebayPrice as number | undefined;
-                              const adR = product.adRate ?? 5;
-                              const profit = ebayP ? ebayP - ebayP*(13+adR)/100*1.19 - 0.45*1.19 - v.price : null;
+                              const hasEbay = profitRowsBySku.size > 0;
+                              const pr = profitRowsBySku.get(v.skuId);
+                              const ebayP = pr?.sellPrice;
+                              const profit = pr ? pr.profit : null;
+                              const profitLevel = profit !== null ? evaluateTargetDisplay(variantTarget, profit).level : null;
                               return (
                               <tr key={v.skuId} style={{ background: v.price === minP ? "#F0FDF4" : i%2===0 ? "#fff" : "#FAFAFA" }}>
                                 {Object.entries(v.attrs).filter(([k]) => k.toLowerCase() !== 'ships from' && k.toLowerCase() !== 'ships_from' && k.toLowerCase() !== 'versandland').map(([k, val]) => <td key={k} style={{ padding:"6px 10px", color:"#0F172A", borderBottom:"1px solid #F1F5F9" }}>{String(val)}</td>)}
@@ -1813,7 +1825,7 @@ export default function Produkte() {
                                   {v.price.toFixed(2)} €{v.price === minP && <span style={{fontSize:9,color:"#16A34A"}}> ▼</span>}
                                 </td>
                                 {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", color:"#0F172A", borderBottom:"1px solid #F1F5F9", fontWeight:600 }}>{ebayP ? `${ebayP.toFixed(2)} €` : "–"}</td>}
-                                {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", borderBottom:"1px solid #F1F5F9", fontWeight:700, color: profit === null ? "#94A3B8" : profit >= 1.6 ? "#16A34A" : profit >= 0 ? "#F59E0B" : "#DC2626" }}>
+                                {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", borderBottom:"1px solid #F1F5F9", fontWeight:700, color: profitLevel === null ? "#94A3B8" : TARGET_LEVEL_STYLE[profitLevel].color }}>
                                   {profit !== null ? `${profit >= 0 ? "+" : ""}${profit.toFixed(2)} €` : "–"}
                                 </td>}
                                 <td style={{ padding:"6px 10px", textAlign:"right", color:"#64748B", borderBottom:"1px solid #F1F5F9" }}>{v.stock ?? "–"}</td>
