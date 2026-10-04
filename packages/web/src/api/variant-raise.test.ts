@@ -33,12 +33,12 @@ const product95 = (over: Partial<VariantRaiseProduct> = {}): VariantRaiseProduct
 function makeDeps(over: Partial<VariantRaiseDeps> = {}) {
   const calls = { send: 0, store: 0 };
   const logs: string[] = [];
-  const stored: string[] = [];
+  const stored: Array<Record<string, number>> = [];
   const sentRaises: Array<Array<{ skuId: string; newSell: number }>> = [];
   const deps: VariantRaiseDeps = {
     enabled: true,
     send: async (raises) => { calls.send++; sentRaises.push(raises.map(r => ({ skuId: r.skuId, newSell: r.newSell }))); return { resolved: true, results: raises.map(r => ({ skuId: r.skuId, ok: true })) }; },
-    store: async (json) => { calls.store++; stored.push(json); },
+    store: async (updates) => { calls.store++; stored.push(updates); },
     log: (m) => logs.push(m),
     ...over,
   };
@@ -125,14 +125,14 @@ describe('runVariantRaise — Schalter, Senden, Speichern, Log', () => {
     expect(o.status).toBe('sent');
     expect(calls).toEqual({ send: 1, store: 1 });
     expect(sentRaises[0]).toEqual([{ skuId: 'v200', newSell: 15.95 }]);
-    expect(JSON.parse(stored[0])).toEqual({ v200: 15.95 });
+    expect(stored[0]).toEqual({ v200: 15.95 });
     expect(logs.some(l => l.includes('ANGEHOBEN') && l.includes('v200') && l.includes('14.95 → 15.95') && l.includes('EK 4.79'))).toBe(true);
   });
 
-  test('Speichern behält bestehende Einträge anderer SKUs (Merge)', async () => {
+  test('store bekommt NUR die angehobenen Einträge — das Mergen gegen den frischen DB-Stand macht der Aufrufer (kein Überschreiben eines zwischenzeitlichen Stufenwechsels)', async () => {
     const { deps, stored } = makeDeps();
     await runVariantRaise(product119({ variantSellPrices: JSON.stringify({ v100a: 13.95 }) }), deps);
-    expect(JSON.parse(stored[0])).toEqual({ v100a: 13.95, v200: 15.95 });
+    expect(stored[0]).toEqual({ v200: 15.95 });
   });
 
   test('nicht live gelistet → nichts (0 Aufrufe)', async () => {
@@ -164,7 +164,7 @@ describe('runVariantRaise — Schalter, Senden, Speichern, Log', () => {
     });
     const o = await runVariantRaise(p, deps);
     expect(o.status).toBe('partial');
-    expect(JSON.parse(stored[0])).toEqual({ v100a: 11.95, v200: 15.95 }); // v100a unverändert (übersprungen)
+    expect(stored[0]).toEqual({ v200: 15.95 }); // v100a (übersprungen) wird NICHT gespeichert
     expect(logs.some(l => l.includes('NICHT angehoben') && l.includes('nie senken'))).toBe(true);
   });
 
@@ -243,6 +243,41 @@ describe('sendVariantRaises / updateOfferPriceBySku (raise-only) mit gemocktem e
     const b = await sendVariantRaises(119, GROUPS119, entries, [{ skuId: 'unbekannt', newSell: 15.95 }], 'tok', fn);
     expect(b.resolved).toBe(false);
     expect(puts).toHaveLength(0);
+  });
+
+  test('Exception bei Variante B (fetch wirft) verwirft das Ergebnis von Variante A NICHT: A ok, B ok:false mit Fehlertext', async () => {
+    const puts: string[] = [];
+    const skuA = skuOf('200pcs');
+    const skuB = skuOf('100pcs A');
+    const fn = (async (url: string, init?: { method?: string; body?: string }) => {
+      const u = String(url);
+      if (u.includes('/inventory_item_group/')) return new Response(JSON.stringify({ variantSKUs: [skuA, skuB, skuOf('100pcs B')] }), { status: 200 });
+      const m = /offer\?sku=([^&]+)/.exec(u);
+      if (m) { const sku = decodeURIComponent(m[1]); if (sku === skuB) throw new Error('Netz weg'); return new Response(JSON.stringify({ offers: [{ offerId: 'o-' + sku, sku }] }), { status: 200 }); }
+      const o = /\/offer\/o-(.+)$/.exec(u);
+      if (o) { if (init?.method === 'PUT') { puts.push(o[1]); return new Response('', { status: 204 }); } return new Response(JSON.stringify(offerFor(o[1], '10.00')), { status: 200 }); }
+      throw new Error('Unmocked: ' + u);
+    }) as unknown as typeof fetch;
+    const res = await sendVariantRaises(119, GROUPS119, entries, [{ skuId: 'v200', newSell: 15.95 }, { skuId: 'v100a', newSell: 13.95 }], 'tok', fn);
+    expect(res.resolved).toBe(true);
+    expect(res.results[0].ok).toBe(true);
+    expect(res.results[1].ok).toBe(false);
+    expect(res.results[1].error).toContain('Ausnahme beim Senden');
+    expect(puts).toEqual([skuA]);
+  });
+
+  test('raise-only: nicht lesbarer Live-Preis → NICHT schreiben (Fehler statt PUT)', async () => {
+    const puts: string[] = [];
+    const fn = (async (url: string, init?: { method?: string }) => {
+      const u = String(url);
+      if (/offer\?sku=/.test(u)) return new Response(JSON.stringify({ offers: [{ offerId: 'o1', sku: 'x' }] }), { status: 200 });
+      if (init?.method === 'PUT') { puts.push(u); return new Response('', { status: 204 }); }
+      return new Response(JSON.stringify({ offerId: 'o1', pricingSummary: {} }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const r = await updateOfferPriceBySku('x', 15.95, 'tok', fn, true);
+    expect(puts).toHaveLength(0);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('nicht lesbar');
   });
 
   test('updateOfferPriceBySku ohne raiseOnly (bisheriges Verhalten) schreibt auch einen niedrigeren Preis — der Standardaufruf ist unverändert', async () => {
