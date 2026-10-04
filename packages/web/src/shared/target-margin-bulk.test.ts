@@ -9,23 +9,29 @@ import {
 } from './target-margin-bulk';
 
 const single = (id: number, sell: number | null, buy: number | null, china: boolean): ProfitProduct => ({
-  id, targetMarginEur: 2, shipsFrom: china ? 'China' : 'DE', adRate: 5, sellPrice: sell, buyPrice: buy, variantPrices: null,
+  id, variants: '[]', targetMarginEur: 2, shipsFrom: china ? 'China' : 'DE', adRate: 5, sellPrice: sell, buyPrice: buy, variantPrices: null,
 });
-const p95 = single(95, 15.95, 8.99, false);                 // Gewinn 0,8169 — unter jedem Boden
+// Produkt 95 ist in Produktion ein Varianten-Produkt mit EINER Variante (Varianten-Gruppen + 1 variantPrices-Eintrag, eBay-Gruppe
+// stele-95-GROUP) — deshalb hier mit Gruppen: die Preisprüfung behandelt es als Varianten-Produkt (A-019).
+const p95: ProfitProduct = {
+  id: 95, variants: '[{"name":"Set","values":["6pcs set"]},{"name":"Stk.","values":["10ml x 6pcs"]}]', targetMarginEur: 2, shipsFrom: null, adRate: 5,
+  sellPrice: 15.95, buyPrice: 8.99,
+  variantPrices: JSON.stringify([{ skuId: '12000056840616727', attrs: { Color: '6pcs set', 'Net Contents': '10ml x 6pcs', 'Ships From': 'Germany' }, price: 8.99, stock: 17 }]),
+}; // Gewinn 0,8169 — unter jedem Boden
 const pGrenze = single(1, 13.55, 3.15, true);               // Gewinn 1,2581 — über Boden B (1,20), unter Boden C (1,30)
 const pYellow = single(2, 13.95, 3.15, true);               // Gewinn 1,5629
 const pOhneVk = single(3, null, null, true);                // nicht berechenbar
 const p119: ProfitProduct = {
-  id: 119, targetMarginEur: 2, shipsFrom: 'China', adRate: 5, sellPrice: 14.95, buyPrice: 3.15,
+  id: 119, variants: '[{"name":"Menge","values":["100PCS","200PCS"]}]', targetMarginEur: 2, shipsFrom: 'China', adRate: 5, sellPrice: 14.95, buyPrice: 3.15,
   variantPrices: JSON.stringify([{ skuId: 'a', attrs: { Menge: '100PCS' }, price: 3.15 }, { skuId: 'b', attrs: { Menge: '200PCS' }, price: 4.79 }]),
   variantSellPrices: JSON.stringify({ a: 11.95, b: 14.95 }),
 };
 const ALL = [p95, pGrenze, pYellow, p119, pOhneVk];
 
 describe('productProfitRows', () => {
-  test('Einzelartikel: Gewinn beim heutigen VK nach Formel v2 (95: 0,8169 €)', () => {
+  test('Produkt 95 (Varianten-Gruppen, nur 1 variantPrices-Eintrag): Varianten-Produkt, Gewinn beim heutigen VK nach Formel v2 0,8169 €', () => {
     const r = productProfitRows(p95);
-    expect(r.isVariant).toBe(false);
+    expect(r.isVariant).toBe(true);
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0].profit).toBeCloseTo(0.8169, 4);
   });
@@ -49,7 +55,7 @@ describe('productProfitRows', () => {
 describe('previewTierChange — "N Listings → Stufe X. Davon rot nach Wechsel: M"', () => {
   test('Stufe A (1,00/1,00): rot sind 95 und 119 (Variante); Grenzfall-Produkt (1,2581) ist nicht rot', () => {
     const p = previewTierChange(ALL, 1.0);
-    expect(p).toEqual({ total: 5, red: 2, redSingle: 1, redVariant: 1, yellow: 0, unknown: 1, redIds: [95, 119] });
+    expect(p).toEqual({ total: 5, red: 2, redSingle: 0, redVariant: 2, yellow: 0, unknown: 1, redIds: [95, 119] });
   });
 
   test('Stufe B (1,50/1,20): Grenzfall (1,2581 ≥ 1,20) ist gelb statt rot', () => {
@@ -60,7 +66,7 @@ describe('previewTierChange — "N Listings → Stufe X. Davon rot nach Wechsel:
 
   test('Stufe C (2,00/1,30): Grenzfall-Produkt (1,2581 < 1,30) wird rot — der Stufenwechsel verändert die Zahl M', () => {
     const p = previewTierChange(ALL, 2.0);
-    expect(p).toEqual({ total: 5, red: 3, redSingle: 2, redVariant: 1, yellow: 1, unknown: 1, redIds: [95, 1, 119] });
+    expect(p).toEqual({ total: 5, red: 3, redSingle: 1, redVariant: 2, yellow: 1, unknown: 1, redIds: [95, 1, 119] });
   });
 
   test('Stufe D (3,00/1,50): wie C (rot 3), 13,95-Produkt (1,5629 ≥ 1,50) bleibt gelb', () => {
@@ -70,7 +76,7 @@ describe('previewTierChange — "N Listings → Stufe X. Davon rot nach Wechsel:
   });
 
   test('Einzelartikel und Varianten-Produkte werden getrennt gezählt (nur Einzelartikel hebt die Automatik an)', () => {
-    const p = previewTierChange([p95, p119], 2.0);
+    const p = previewTierChange([pGrenze, p119], 2.0);
     expect(p.redSingle).toBe(1);
     expect(p.redVariant).toBe(1);
   });

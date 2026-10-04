@@ -29,6 +29,11 @@ export const MIN_PROFIT_FLOOR_EUR = 1.00;
 // bis der Inhaber bestätigt.
 export const VARIANT_RULE_6C_ENABLED = false;
 
+// A-019 Teil 2: Preisprüfung hebt bei Varianten-Produkten NUR die Variante an, deren Gewinn unter dem Boden der Stufe liegt (raise-only,
+// Formel v2, GET→PUT volles Offer je Variante). Default AUS: bei AUS wird nur geloggt, was angehoben WÜRDE (0 Sende-/Speicher-Aufrufe).
+// Einschalten nur durch den Inhaber (Geld-Logik).
+export const AUTO_VARIANT_RAISE_ENABLED = false;
+
 // Mindestgewinn pro Verkauf (€) — wird in der Preisempfehlung/automatischer Neuberechnung mit einkalkuliert
 // Geaendert von 1,60€ auf 2,00€ am 2026-07-14 auf Wunsch des Users
 export const MIN_GEWINN_EUR = 2.00;

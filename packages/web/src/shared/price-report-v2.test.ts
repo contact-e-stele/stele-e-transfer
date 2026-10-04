@@ -8,13 +8,13 @@ import { describe, expect, test } from 'bun:test';
 import { buildPriceReportRows, renderPriceReportMarkdown, profitOldFormulaV1, tierLabelFor, type ReportProduct } from './price-report-v2';
 
 const stele119: ReportProduct = {
-  id: 119, title: 'Backpapier', ebayStatus: 'listed', buyPrice: 3.15, sellPrice: 14.95,
+  id: 119, variants: '[{"name":"Menge","values":["100PCS","200PCS"]}]', title: 'Backpapier', ebayStatus: 'listed', buyPrice: 3.15, sellPrice: 14.95,
   variantPrices: JSON.stringify([{ skuId: 'a', attrs: { Menge: '100PCS' }, price: 3.15 }, { skuId: 'b', attrs: { Menge: '200PCS' }, price: 4.79 }]),
   variantSellPrices: JSON.stringify({ a: 11.95, b: 14.95 }),
   shippingCost: 0, shipsFrom: 'China', adRate: 5, targetMarginEur: 2,
 };
 const einzelAlt450: ReportProduct = {
-  id: 200, title: 'Einzel', ebayStatus: 'listed', buyPrice: 12, sellPrice: 21.95, variantPrices: null, variantSellPrices: null,
+  id: 200, variants: '[]', title: 'Einzel', ebayStatus: 'listed', buyPrice: 12, sellPrice: 21.95, variantPrices: null, variantSellPrices: null,
   shippingCost: 1.99, shipsFrom: 'China', adRate: 5, targetMarginEur: 4.5,
 };
 const ohneEk: ReportProduct = { ...einzelAlt450, id: 201, title: 'ohne EK', buyPrice: null, targetMarginEur: null };
