@@ -232,6 +232,9 @@ export async function updateEbayVariantPricesIndividually(
         console.log(`[PriceMonitor] ${productId}: Variante ${sku} → ${price.toFixed(2)}€`);
       } else {
         console.warn(`[PriceMonitor] ${productId}: Preis für ${sku} konnte nicht auf ${price.toFixed(2)}€ gesetzt werden`);
+        // A-017: einzelne fehlgeschlagene PUTs sichtbar machen (ok bleibt "mindestens eine aktualisiert"), damit der Aufrufer
+        // "alles gesendet" von "teilweise" unterscheiden kann.
+        errors.push(`${sku}: Preis konnte nicht auf ${price.toFixed(2)}€ gesetzt werden`);
       }
     }
     return { ok: updatedCount > 0, updatedCount, errors };

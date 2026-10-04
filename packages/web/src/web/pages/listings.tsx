@@ -1,7 +1,7 @@
 /**
  * Listings-Tab — alle eBay Listings direkt von eBay + App-DB Match
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ShoppingCart, RefreshCw, Loader, CheckCircle, XCircle,
   ExternalLink, Package, TrendingUp, StopCircle, Link2, Link2Off,
@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { buildEbayHTMLLight } from "../lib/ebay-description";
 import { DescriptionRefreshPanel } from "../components/description-refresh-panel";
-import { TargetBadge } from "../components/target-badge";
+import { TargetBadge, postTierReprice, type RepriceResult, type TierPatch } from "../components/target-badge";
+import { TIER_REPRICE_MAX_PRODUCTS, expectedFromPlan } from "../../shared/tier-reprice";
 import { MARGIN_TIERS } from "../../shared/constants";
 import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
 
@@ -49,6 +50,21 @@ interface EbayListing {
 }
 
 type FilterMode = "all" | "linked" | "unlinked";
+
+// A-017: Ergebnis eines Stufenwechsels (Ziel + ggf. neue Preise) in einen Listing-Eintrag übernehmen. currentPrice ist der
+// eBay-Preis des Einzelartikels — er ändert sich nur, wenn der Preis tatsächlich gesendet wurde (patch.sellPrice gesetzt).
+function withTierPatch(l: EbayListing, t: number, patch?: TierPatch): EbayListing {
+  if (!l.appProduct) return l;
+  return {
+    ...l,
+    currentPrice: patch?.sellPrice !== undefined ? patch.sellPrice : l.currentPrice,
+    appProduct: {
+      ...l.appProduct, targetMarginEur: t,
+      ...(patch?.variantSellPrices !== undefined ? { variantSellPrices: patch.variantSellPrices } : {}),
+      ...(patch?.sellPrice !== undefined ? { sellPrice: patch.sellPrice } : {}),
+    },
+  };
+}
 
 // Datum formatieren: "12.06.2025"
 function fmtDate(iso: string): string {
@@ -157,6 +173,9 @@ export default function Listings() {
   const [tierPending, setTierPending] = useState<number | null>(null); // gewählte Stufe, wartet auf Bestätigung
   const [tierSaving, setTierSaving] = useState(false);
   const [tierMsg, setTierMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // A-017: Preisvorschau/Senden nach "Stufe für alle" (live gelistet → nur auf ausdrücklichen Klick, Chargen zu 10)
+  const sendingRef = useRef(false); // Doppelklick-Schutz für das Senden (State-Closure allein reicht nicht)
+  const [reprice, setReprice] = useState<null | { tier: number; plans: RepriceResult[]; phase: "loading" | "ready" | "sending" | "done"; progress: number; summary?: string; summaryOk?: boolean }>(null);
   const [expiryFilter, setExpiryFilter] = useState<"all" | "3days" | "7days" | "30days">("all");
 
   // ─── Bearbeiten-Modal (Titel + Beschreibung, live auf eBay) ───────────────
@@ -530,7 +549,7 @@ export default function Listings() {
 
   // A-016: Ändert sich die angezeigte Menge (Filter/Suche), gilt eine offene Stufen-Bestätigung nicht mehr — Dialog schließen,
   // damit nie unbemerkt eine andere Menge als die bestätigte betroffen ist.
-  useEffect(() => { setTierPending(null); }, [filter, search, minSold, maxSold, minPrice, maxPrice, expiryFilter, newFilter]);
+  useEffect(() => { setTierPending(null); setReprice(null); }, [filter, search, minSold, maxSold, minPrice, maxPrice, expiryFilter, newFilter]);
 
   // Filter + Suche
   const filtered = listings
@@ -1051,6 +1070,51 @@ export default function Listings() {
           const preview = tierPending != null ? previewTierChange(targets, tierPending) : null;
           const tier = tierPending != null ? MARGIN_TIERS.find(t => t.targetEur === tierPending) : null;
           const fmt = (n: number) => n.toFixed(2).replace(".", ",");
+          const loadReprice = async () => {
+            if (tierPending == null || targets.length === 0) return;
+            setTierMsg(null);
+            setReprice({ tier: tierPending, plans: [], phase: "loading", progress: 0 });
+            const plans: RepriceResult[] = [];
+            for (let i = 0; i < targets.length; i += TIER_REPRICE_MAX_PRODUCTS) {
+              const r = await postTierReprice({ productIds: targets.slice(i, i + TIER_REPRICE_MAX_PRODUCTS).map(p => p.id), targetMarginEur: tierPending, mode: "preview" });
+              if (!r.results) { setReprice(null); setTierMsg({ ok: false, text: r.error ?? "Vorschau fehlgeschlagen" }); return; }
+              plans.push(...r.results);
+            }
+            setReprice({ tier: tierPending, plans, phase: "ready", progress: 0 });
+          };
+          const sendReprice = async () => {
+            if (!reprice || reprice.phase !== "ready" || sendingRef.current) return;
+            sendingRef.current = true;
+            const tierEur = reprice.tier;
+            // bestätigte Preise je Produkt aus der Vorschau — der Server lehnt ab, wenn sich der Plan zwischenzeitlich geändert hat
+            const expectedAll: Record<string, Record<string, number>> = {};
+            for (const pl of reprice.plans) if (pl.plan) expectedAll[String(pl.productId)] = expectedFromPlan(pl.plan);
+            setReprice({ ...reprice, phase: "sending", progress: 0 });
+            const all: RepriceResult[] = [];
+            for (let i = 0; i < targets.length; i += TIER_REPRICE_MAX_PRODUCTS) {
+              const r = await postTierReprice({
+                productIds: targets.slice(i, i + TIER_REPRICE_MAX_PRODUCTS).map(p => p.id), targetMarginEur: tierEur,
+                mode: "apply", confirm: true, sendToEbay: true, expected: expectedAll,
+              });
+              const part: RepriceResult[] = r.results ?? targets.slice(i, i + TIER_REPRICE_MAX_PRODUCTS).map(p => ({ productId: p.id, status: "send_failed" as const, error: r.error ?? "Aufruf fehlgeschlagen" }));
+              all.push(...part);
+              setListings(prev => prev.map(l => {
+                const hit = l.appProduct ? part.find(x => x.productId === l.appProduct!.id && (x.status === "sent" || x.status === "stored") && x.stored) : undefined;
+                return hit ? withTierPatch(l, tierEur, hit.stored) : l;
+              }));
+              setReprice(cur => cur ? { ...cur, progress: Math.min(targets.length, i + TIER_REPRICE_MAX_PRODUCTS) } : cur);
+            }
+            const sent = all.filter(x => x.status === "sent").length;
+            const storedOnly = all.filter(x => x.status === "stored").length;
+            const failed = all.filter(x => x.status !== "sent" && x.status !== "stored");
+            setReprice({
+              tier: tierEur, plans: all, phase: "done", progress: targets.length, summaryOk: failed.length === 0,
+              summary: sent + " Produkte an eBay gesendet, " + storedOnly + " nur Ziel gesetzt (Preise schon passend)" +
+                (failed.length > 0 ? "; " + failed.length + " fehlgeschlagen: " + failed.map(f => f.productId + ": " + (f.error ?? f.status)).join(" | ") : "."),
+            });
+            setTierPending(null);
+            sendingRef.current = false;
+          };
           const applyTier = async () => {
             if (tierPending == null || targets.length === 0) return;
             setTierSaving(true); setTierMsg(null);
@@ -1106,19 +1170,80 @@ export default function Listings() {
                     {preview.yellow > 0 && <> · gelb (unter Ziel, über Boden): {preview.yellow}</>}
                     {preview.unknown > 0 && <> · nicht berechenbar (kein VK/EK): {preview.unknown}</>}
                   </div>
-                  <div style={{ marginTop: 4, color: "#64748B" }}>Ändert nur das Ziel in der App — es wird kein Preis an eBay gesendet.</div>
+                  <div style={{ marginTop: 4, color: "#64748B" }}>"Stufe … für N Listings setzen" ändert nur das Ziel in der App — es wird kein Preis an eBay gesendet. Preise ziehst du über "Preise neu berechnen & an eBay senden …" nach (erst Vorschau, dann Bestätigung).</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                     <button type="button" onClick={applyTier} disabled={tierSaving}
                       style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: tierSaving ? "wait" : "pointer", fontFamily: "inherit" }}>
                       {tierSaving ? "Setze …" : "Stufe " + tier.label + " für " + preview.total + " Listings setzen"}
                     </button>
-                    <button type="button" onClick={() => setTierPending(null)} disabled={tierSaving}
+                    <button type="button" onClick={loadReprice} disabled={tierSaving || reprice != null}
+                      title="Berechnet die neuen Verkaufspreise nach Formel v2 und zeigt sie als Vorschau — gesendet wird erst nach einem weiteren Klick"
+                      style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid #16A34A", background: "#fff", color: "#16A34A", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      Preise neu berechnen & an eBay senden …
+                    </button>
+                    <button type="button" onClick={() => { setTierPending(null); setReprice(null); }} disabled={tierSaving}
                       style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid #E2E8F0", background: "#fff", color: "#64748B", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                       Abbrechen
                     </button>
                   </div>
                 </div>
               )}
+              {reprice && (
+                <div style={{ marginTop: 10, background: "#F8FAFC", border: "1.5px solid #CBD5E1", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#0F172A" }}>
+                  {reprice.phase === "loading" && <div>Berechne Vorschau …</div>}
+                  {(reprice.phase === "ready" || reprice.phase === "sending") && (() => {
+                    const changed = reprice.plans.filter(r => r.plan && r.plan.changedCount > 0);
+                    return (
+                      <>
+                        <div style={{ fontWeight: 700 }}>
+                          Preisvorschau Stufe {tier?.label}: {changed.length} von {reprice.plans.length} Produkten ändern Preise (live bei eBay gelistet).
+                        </div>
+                        <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 6 }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                            <thead><tr style={{ color: "#64748B", textAlign: "left" }}>
+                              <th>Produkt</th><th style={{ textAlign: "right" }}>Preise geändert</th><th style={{ textAlign: "right" }}>VK-Spanne alt → neu</th><th style={{ textAlign: "right" }}>schlechtester Gewinn alt → neu</th>
+                            </tr></thead>
+                            <tbody>
+                              {changed.map(r => {
+                                const rows = r.plan!.rows;
+                                const olds = rows.map(x => x.oldSell).filter((x): x is number => x != null);
+                                const news = rows.map(x => x.newSell);
+                                const oldW = rows.map(x => x.oldProfit).filter((x): x is number => x != null);
+                                const span = (a: number[]) => a.length === 0 ? "–" : (Math.min(...a) === Math.max(...a) ? fmt(a[0]) : fmt(Math.min(...a)) + "–" + fmt(Math.max(...a)));
+                                return (
+                                  <tr key={r.productId}>
+                                    <td>{r.productId} {(r.title ?? "").slice(0, 36)}</td>
+                                    <td style={{ textAlign: "right" }}>{r.plan!.changedCount} / {rows.length}</td>
+                                    <td style={{ textAlign: "right" }}>{span(olds)} → <strong>{span(news)}</strong> €</td>
+                                    <td style={{ textAlign: "right" }}>{oldW.length ? fmt(Math.min(...oldW)) : "–"} → <strong>{fmt(Math.min(...rows.map(x => x.newProfit)))}</strong> €</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div style={{ marginTop: 6, color: "#64748B" }}>
+                          Nichts wird gesendet, bis du klickst. Preise können dabei auch sinken. Gesendet wird in Chargen zu {TIER_REPRICE_MAX_PRODUCTS} Produkten (Weg: Offer GET→PUT je Variante); App-Preise werden nur nach erfolgreichem Senden gespeichert.
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button type="button" onClick={sendReprice} disabled={reprice.phase === "sending" || changed.length === 0}
+                            style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: reprice.phase === "sending" ? "wait" : "pointer", fontFamily: "inherit", opacity: changed.length === 0 ? 0.5 : 1 }}>
+                            {reprice.phase === "sending" ? "Sende … (" + reprice.progress + " / " + targets.length + ")" : "Jetzt an eBay senden (" + changed.length + " Produkte)"}
+                          </button>
+                          <button type="button" onClick={() => setReprice(null)} disabled={reprice.phase === "sending"}
+                            style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid #E2E8F0", background: "#fff", color: "#64748B", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                            Abbrechen
+                          </button>
+                        </div>
+                      </>
+                    );
+                  })()}
+                  {reprice.phase === "done" && (
+                    <div style={{ fontWeight: 600, color: reprice.summaryOk ? "#16A34A" : "#DC2626" }}>{reprice.summary}</div>
+                  )}
+                </div>
+              )}
+
               {tierMsg && (
                 <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: tierMsg.ok ? "#16A34A" : "#DC2626" }}>{tierMsg.text}</div>
               )}
@@ -1329,8 +1454,8 @@ export default function Listings() {
                   {listing.appProduct && (
                     <TargetBadge
                       product={listing.appProduct}
-                      onChange={(t) => setListings(prev => prev.map(l =>
-                        l.itemId === listing.itemId && l.appProduct ? { ...l, appProduct: { ...l.appProduct, targetMarginEur: t } } : l))}
+                      isLive
+                      onChange={(t, patch) => setListings(prev => prev.map(l => l.itemId === listing.itemId ? withTierPatch(l, t, patch) : l))}
                     />
                   )}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>

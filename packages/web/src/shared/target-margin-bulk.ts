@@ -19,7 +19,8 @@ export interface ProfitProduct {
   variantSellPrices?: string | null;  // JSON {skuId: VK}
 }
 
-export interface ProfitRow { label: string; profit: number }
+// skuId/sellPrice nur bei Varianten-Zeilen bzw. immer der VK, mit dem gerechnet wurde (A-017: Gewinn-Spalte der Varianten-Tabelle)
+export interface ProfitRow { label: string; profit: number; skuId?: string; sellPrice: number }
 
 export function productTarget(p: Pick<ProfitProduct, 'targetMarginEur'>): number {
   return p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
@@ -47,10 +48,10 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
       const sell = resolveVariantSellPrice(v.skuId, stored, v).sellPrice ?? p.sellPrice;
       if (sell == null) continue;
       const label = Object.values(v.attrs ?? {}).join(' / ') || `…${v.skuId.slice(-6)}`;
-      rows.push({ label, profit: profitAt(sell, v.price) });
+      rows.push({ label, profit: profitAt(sell, v.price), skuId: v.skuId, sellPrice: sell });
     }
   } else if (p.sellPrice && p.buyPrice) {
-    rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice) });
+    rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice), sellPrice: p.sellPrice });
   }
   return { rows, isVariant };
 }

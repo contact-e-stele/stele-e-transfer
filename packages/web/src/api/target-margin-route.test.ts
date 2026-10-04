@@ -53,3 +53,39 @@ describe('PATCH /api/products/target-margin (Sammel-Stufenwechsel)', () => {
     expect((await patch({ productIds: [1], targetMarginEur: 2, confirm: true }, false)).status).toBe(401);
   });
 });
+
+// A-017: POST /api/products/tier-reprice — Validierung vor jedem DB-/eBay-Zugriff und Auth.
+const postReprice = (body: unknown, withCookie = true) => app.request('/api/products/tier-reprice', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', ...(withCookie ? { Cookie: cookie } : {}) },
+  body: typeof body === 'string' ? body : JSON.stringify(body),
+});
+
+describe('POST /api/products/tier-reprice (Stufenwechsel → neue Preise)', () => {
+  const ok = { productIds: [1], targetMarginEur: 2, mode: 'preview' };
+
+  test('ohne Session-Cookie: 401', async () => {
+    expect((await postReprice(ok, false)).status).toBe(401);
+  });
+
+  test('ungültige Stufe 4,50, ungültiger mode, kaputtes JSON → 400', async () => {
+    const a = await postReprice({ ...ok, targetMarginEur: 4.5 });
+    expect(a.status).toBe(400);
+    expect(((await a.json()) as { error: string }).error).toContain('Margen-Stufe');
+    expect((await postReprice({ ...ok, mode: 'senden' })).status).toBe(400);
+    expect((await postReprice('{kaputt')).status).toBe(400);
+  });
+
+  test('apply ohne confirm:true wird abgelehnt (400) — Preise werden nie ohne Bestätigung gespeichert/gesendet', async () => {
+    const r = await postReprice({ ...ok, mode: 'apply' });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toContain('confirm');
+  });
+
+  test('mehr als 10 Produkte je Aufruf werden abgelehnt (400)', async () => {
+    const ids = Array.from({ length: 11 }, (_, i) => i + 1);
+    const r = await postReprice({ ...ok, productIds: ids });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toContain('10');
+  });
+});
