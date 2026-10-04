@@ -226,3 +226,46 @@ describe('expected-Preise (Plan darf sich seit der Vorschau nicht geändert habe
     }
   });
 });
+
+// A-023 (c): stele-119 (echte Daten, 04.10.2026): 100pcs doppelt in variantPrices (EK 3,15 / 3,45), Stufe B (1,50), China, Anzeige 5 %.
+// Handrechnung 100pcs bei EK 3,45: K = 3,45 + 1,99 + 3,57 = 9,01; f = 1 − 0,20 × 1,19 = 0,762; roh = (9,01 + 1,50 + 0,357)/0,762 = 14,26 → ,95 darunter 13,95,
+// Gewinn 13,95 × 0,762 − 0,357 − 9,01 = 1,26 ≥ Boden 1,20 → 13,95. 200pcs bei EK 4,79: K = 10,35, roh = 16,02 → 15,95, Gewinn 1,45 ≥ 1,20.
+describe('A-023: Dubletten im Stufenwechsel (stele-119)', () => {
+  const g119 = [{ name: 'Varianten ', values: ['200pcs', '100pcs'] }];
+  const p119: RepriceProduct = {
+    id: 119, buyPrice: 3.15, sellPrice: 14.95, shipsFrom: 'China', adRate: 5, variantSellPrices: null, variants: JSON.stringify(g119),
+    variantPrices: JSON.stringify([
+      { skuId: '12000050569622128', attrs: { Color: '200pcs', 'Ships From': 'China Mainland' }, price: 4.79, stock: 1965 },
+      { skuId: '12000050569622130', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.15, stock: 3 },
+      { skuId: '12000050569622129', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.45, stock: 1998 },
+    ]),
+  };
+  test('ohne groups (bisher): drei Zeilen, 100pcs doppelt — beim Senden mehrdeutig', () => {
+    expect(planTierReprice(p119, 1.5).rows).toHaveLength(3);
+  });
+  test('mit groups: genau eine Zeile je eBay-Variante; 100pcs rechnet mit dem HÖCHSTEN EK 3,45 (nicht 3,15), 200pcs 15,95 / 100pcs 13,95', () => {
+    const plan = planTierReprice(p119, 1.5, g119);
+    expect(plan.rows.map(r => [r.skuId, r.ware, r.newSell])).toEqual([['12000050569622128', 4.79, 15.95], ['12000050569622129', 3.45, 13.95]]);
+    expect(plan.rows.every(r => r.newProfit >= 1.2)).toBe(true);
+  });
+  test('Dublette mit hohem EK zuerst (Reihenfolge egal): Zeile trägt weiter den höchsten EK', () => {
+    const rev = { ...p119, variantPrices: JSON.stringify(JSON.parse(p119.variantPrices!).reverse()) };
+    expect(planTierReprice(rev, 1.5, g119).rows.find(r => r.label.includes('100pcs'))!.ware).toBe(3.45);
+  });
+});
+
+// Review A-023: nur EINE Kombination + Dubletten bleibt ein Varianten-Produkt (EK der Variante, nicht Produkt-EK)
+describe('A-023 Review: isVariant bleibt nach dem Zusammenlegen', () => {
+  test('eine Kombination, zwei Dubletten: Plan bleibt Varianten-Plan (skuId gesetzt, EK 3,45), kein Einzelartikel-Plan', () => {
+    const one: RepriceProduct = {
+      id: 7, buyPrice: 9.99, sellPrice: 20.95, shipsFrom: 'China', adRate: 5, variantSellPrices: null, variants: JSON.stringify([{ name: 'Color', values: ['100pcs'] }]),
+      variantPrices: JSON.stringify([
+        { skuId: 'X1', attrs: { Color: '100pcs' }, price: 3.15, stock: 3 },
+        { skuId: 'X2', attrs: { Color: '100pcs' }, price: 3.45, stock: 9 },
+      ]),
+    };
+    const plan = planTierReprice(one, 1.5, [{ name: 'Color', values: ['100pcs'] }]);
+    expect(plan.isVariant).toBe(true);
+    expect(plan.rows.map(r => [r.skuId, r.ware])).toEqual([['X2', 3.45]]);
+  });
+});

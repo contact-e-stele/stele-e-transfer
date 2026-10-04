@@ -3,7 +3,7 @@
 // 16 später angehängte Scrape-Einträge (skuIds ...60727277997–000, ...60780948001–004, ...60793086376–383). Erwartungen wurden vorab
 // von Hand aus den Rohdaten abgeleitet und dann gegen den Trockenlauf des Skripts bestätigt (Grundgesetz Regel 3).
 import { describe, expect, test } from 'bun:test';
-import { planVariantDedupe, renderDedupeMarkdown, type DedupeEntry } from './variant-dedupe';
+import { planVariantDedupe, renderDedupeMarkdown, collapseDuplicateEntries, staleSellPriceNotes, type DedupeEntry } from './variant-dedupe';
 import { resolveVariantEntries } from './variant-resolver';
 
 const GROUPS = [
@@ -66,9 +66,9 @@ describe('planVariantDedupe — stele-194 (echte Daten)', () => {
   });
 
   test('"Green" (frisch) wird der Kombination "green" zugeordnet (Groß-/Kleinschreibung egal)', () => {
-    const e = plan.newEntries.find(x => x.attrs.Color === 'green' && x.attrs.Size === '5m')!;
+    const e = plan.newEntries.find(x => x.attrs!.Color === 'green' && x.attrs!.Size === '5m')!;
     expect(e.price).toBe(6.69);
-    expect(plan.newEntries.some(x => x.attrs.Color === 'Green')).toBe(false);
+    expect(plan.newEntries.some(x => x.attrs!.Color === 'Green')).toBe(false);
   });
 
   test('ebayPrice, imageUrl, displayValues und attrs des ursprünglichen Eintrags bleiben unverändert', () => {
@@ -132,12 +132,13 @@ describe('planVariantDedupe — Randfälle', () => {
     expect(p.changes[0].priceNote).toBeNull();
   });
 
-  test('keine Dublette → nichts geändert; Kombination ohne ursprünglichen Eintrag → mehrdeutig, nichts geändert', () => {
+  test('keine Dublette → nichts geändert; Kombination ohne ursprünglichen Eintrag (A-023) → frischester bleibt Träger, Maximum-Preis', () => {
     expect(planVariantDedupe(g, [orig('O', 'Rot', 2.0), orig('P', 'Blau', 2.5)]).changes).toEqual([]);
-    const p = planVariantDedupe(g, [fresh('F1', 'Rot', 3.0), fresh('F2', 'Rot', 3.5)]);
-    expect(p.changes).toEqual([]);
-    expect(p.ambiguous).toHaveLength(1);
-    expect(p.newEntries).toHaveLength(2);
+    const p = planVariantDedupe(g, [fresh('F1', 'Rot', 3.5), fresh('F2', 'Rot', 3.0)]);
+    expect(p.ambiguous).toEqual([]);
+    expect(p.changes).toHaveLength(1);
+    expect(p.changes[0]).toMatchObject({ keeperOldSkuId: 'F2', keeperNewSkuId: 'F2', newPrice: 3.5, removedSkuIds: ['F1'], keeperIsOriginal: false });
+    expect(p.newEntries).toEqual([{ skuId: 'F2', attrs: { Color: 'Rot' }, price: 3.5, stock: 7 }]);
   });
 
   test('zwei ursprüngliche Einträge derselben Kombination → mehrdeutig, nichts geändert', () => {
@@ -168,5 +169,82 @@ describe('planVariantDedupe — Randfälle', () => {
     const p = planVariantDedupe(g, [orig('O', 'Rot', 2.0), e]);
     expect(p.changes).toHaveLength(1);
     expect(p.newEntries).toHaveLength(1);
+  });
+});
+
+// A-023: ECHTE Daten stele-119 (Produktion, 04.10.2026, nur gelesen): 100pcs steht zweimal in variantPrices (...130 EK 3,15 Lager 3 /
+// ...129 EK 3,45 Lager 1998), eBay hat nur EINE Variante "100pcs". Keiner der Einträge hat displayValues/ebayPrice/imageUrl.
+const G119 = [{ name: 'Varianten ', values: ['200pcs', '100pcs'] }];
+const E119: DedupeEntry[] = [
+  { skuId: '12000050569622128', attrs: { Color: '200pcs', 'Ships From': 'China Mainland' }, price: 4.79, stock: 1965 },
+  { skuId: '12000050569622130', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.15, stock: 3 },
+  { skuId: '12000050569622129', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.45, stock: 1998 },
+];
+describe('A-023: stele-119 (echte Daten, keine ursprünglichen Einträge)', () => {
+  const plan = planVariantDedupe(G119, E119);
+  test('Resolver meldet vorher "Mehrdeutig", nach der Bereinigung nichts mehr', () => {
+    expect(resolveVariantEntries(119, G119, E119 as never).filter(r => r.error?.startsWith('Mehrdeutig'))).toHaveLength(1);
+    expect(resolveVariantEntries(119, G119, plan.newEntries as never).filter(r => r.error)).toEqual([]);
+  });
+  test('100pcs: EK = höchster (3,45), skuId/Lager vom frischesten (...129, 1998), ...130 entfällt; 200pcs unverändert', () => {
+    expect(plan.changes).toHaveLength(1);
+    expect(plan.changes[0]).toMatchObject({ keeperNewSkuId: '12000050569622129', newPrice: 3.45, newStock: 1998, removedSkuIds: ['12000050569622130'], keeperIsOriginal: false });
+    expect(plan.newEntries.map(e => [e.skuId, e.price])).toEqual([['12000050569622128', 4.79], ['12000050569622129', 3.45]]);
+  });
+  test('Reihenfolge der Dubletten egal für den Preis: frischester Eintrag billiger als ein älterer → trotzdem Maximum', () => {
+    const swapped = [E119[0], { ...E119[2], skuId: 'A', price: 3.45 }, { ...E119[1], skuId: 'B', price: 3.15 }];
+    const p = planVariantDedupe(G119, swapped);
+    expect(p.changes[0]).toMatchObject({ keeperNewSkuId: 'B', newPrice: 3.45 });
+  });
+  test('idempotent', () => { expect(planVariantDedupe(G119, plan.newEntries).changes).toEqual([]); });
+});
+
+describe('collapseDuplicateEntries (A-023, für tier-reprice)', () => {
+  test('stele-119: eine Zeile je Kombination mit dem höchsten EK (3,45, skuId ...129)', () => {
+    const c = collapseDuplicateEntries(G119, E119);
+    expect(c.entries.map(e => [e.skuId, e.price])).toEqual([['12000050569622128', 4.79], ['12000050569622129', 3.45]]);
+    expect(c.collapsed).toHaveLength(1);
+  });
+  test('keine Dubletten → identisch; keine Gruppen → identisch; zwei ursprüngliche Einträge → unverändert (Resolver meldet Mehrdeutig)', () => {
+    expect(collapseDuplicateEntries(G119, [E119[0], E119[2]]).entries).toEqual([E119[0], E119[2]]);
+    expect(collapseDuplicateEntries([], E119).entries).toEqual(E119);
+    const o = (skuId: string, price: number): DedupeEntry => ({ skuId, attrs: { Color: '100pcs' }, price, displayValues: { 'Varianten ': '100pcs' }, ebayPrice: 9.95 });
+    const two = [o('O1', 3.0), o('O2', 3.2)];
+    expect(collapseDuplicateEntries(G119, two).entries).toEqual(two);
+  });
+});
+
+describe('staleSellPriceNotes (A-023)', () => {
+  const change = planVariantDedupe(G119, E119).changes;
+  test('gespeicherter VK an einer entfallenden skuId → Hinweis mit Zahl; an der bleibenden skuId → kein Hinweis; nichts gespeichert → leer', () => {
+    expect(staleSellPriceNotes(change, { '12000050569622130': 11.95 })[0]).toContain('12000050569622130 = 11.95');
+    expect(staleSellPriceNotes(change, { '12000050569622129': 14.95 })).toEqual([]);
+    expect(staleSellPriceNotes(change, {})).toEqual([]);
+  });
+});
+
+// Review A-023: Einträge ohne gültigen EK, Original + Scrape bei collapse
+describe('A-023 Review: ungültige EK und Träger-Regel', () => {
+  test('Dublette ohne price: Maximum über die GÜLTIGEN EK (nie NaN/null in der DB); Eintrag ohne price als frischester → Hinweis', () => {
+    const e = [{ skuId: 'A', attrs: { Color: '100pcs' }, price: 3.15, stock: 3 }, { skuId: 'B', attrs: { Color: '100pcs' }, stock: 5 } as unknown as DedupeEntry];
+    const p = planVariantDedupe(G119, e);
+    expect(p.changes[0]).toMatchObject({ keeperNewSkuId: 'B', newPrice: 3.15 });
+    expect(Number.isFinite(p.changes[0].newPrice)).toBe(true);
+    expect(p.changes[0].priceNote).toContain('ohne gültigen EK');
+    expect(JSON.stringify(p.newEntries)).not.toContain('null');
+  });
+  test('keine Dublette hat einen gültigen EK → mehrdeutig, nichts geändert', () => {
+    const e = [{ skuId: 'A', attrs: { Color: '100pcs' } }, { skuId: 'B', attrs: { Color: '100pcs' }, price: 0 }] as unknown as DedupeEntry[];
+    const p = planVariantDedupe(G119, e);
+    expect(p.changes).toEqual([]);
+    expect(p.ambiguous[0].reason).toContain('kein gültiger EK');
+    expect(p.newEntries).toHaveLength(2);
+  });
+  test('collapse = Bereinigung (eine Regel): Original + Scrape-Dublette → Original bleibt (displayValues/ebayPrice), skuId des frischesten, Preis = Scrape-Maximum', () => {
+    const o: DedupeEntry = { skuId: 'O', attrs: { Color: '100pcs' }, price: 2.0, stock: 1, ebayPrice: 11.95, displayValues: { 'Varianten ': '100pcs' } };
+    const s1: DedupeEntry = { skuId: 'S1', attrs: { Color: '100pcs' }, price: 3.45, stock: 9 };
+    const c = collapseDuplicateEntries(G119, [o, s1]);
+    expect(c.entries).toEqual([{ ...o, skuId: 'S1', price: 3.45, stock: 9 }]);
+    expect(c.entries).toEqual(planVariantDedupe(G119, [o, s1]).newEntries);
   });
 });

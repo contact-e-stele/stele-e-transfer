@@ -7,6 +7,8 @@
 // variant_sell_prices (Einzelartikel: sellPrice); das alte ebayPrice wird weiter nur gelesen, nie neu geschrieben.
 import { MARGIN_TIERS } from './constants';
 import { isVariantProduct } from './variant-product';
+import { collapseDuplicateEntries } from './variant-dedupe';
+import type { VariantGroup } from './variant-resolver';
 import {
   computeMinSellPrice, profitAtSellPrice, isChinaShipping, parseVariantSellPrices, resolveVariantSellPrice,
   serializeVariantSellPrices, DEFAULT_PRICING_CONFIG,
@@ -47,7 +49,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // Plan für den Wechsel auf `newTargetEur`: je Variante (Einzelartikel: eine Zeile) der Formelpreis nach v2. Zeilen ohne
 // Einkaufspreis fehlen (nichts geraten). Alter VK: variant_sell_prices → altes ebayPrice → Produkt-VK; Einzelartikel: sellPrice.
-export function planTierReprice(p: RepriceProduct, newTargetEur: number): TierPlan {
+// groups (A-023): Varianten-Gruppen des Produkts. Mit groups werden Dubletten (dieselbe Kombination mehrfach in variantPrices) zu EINER Zeile
+// mit dem höchsten EK zusammengelegt — sonst ist die Zuordnung beim Senden mehrdeutig (Live-Fund stele-119).
+export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?: VariantGroup[]): TierPlan {
   const china = isChinaShipping(p.shipsFrom);
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const fees = {
@@ -68,7 +72,9 @@ export function planTierReprice(p: RepriceProduct, newTargetEur: number): TierPl
 
   let entries: Array<{ skuId: string; attrs?: Record<string, string>; displayValues?: Record<string, string>; price: number; ebayPrice?: number }> = [];
   try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
+  // isVariant VOR dem Zusammenlegen, über die EINE Definition (A-019, variant-product.ts): ein Produkt mit einer einzigen Kombination und Dubletten bleibt ein Varianten-Produkt.
   const isVariant = isVariantProduct(p.variants, p.variantPrices);
+  if (groups) entries = collapseDuplicateEntries(groups, entries).entries;
   const rows: TierPlanRow[] = [];
   if (isVariant) {
     const stored = parseVariantSellPrices(p.variantSellPrices);

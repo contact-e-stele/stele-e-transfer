@@ -235,3 +235,35 @@ describe('Charge mit mehreren Produkten', () => {
     expect(calls.sendVariants + calls.sendSingle).toBe(0);
   });
 });
+
+// A-023 (c): stele-119 (echte Daten) — 100pcs doppelt in variantPrices. sendVariants bildet hier die ECHTE Zuordnung nach
+// (updateEbayVariantPricesIndividually: resolveVariantEntries über die gesendeten Zeilen, eine eBay-SKU je Kombination).
+describe('A-023: Dubletten in variantPrices beim Senden (stele-119)', () => {
+  const p119 = (): TierRepriceProductRow => ({
+    id: 119, generatedTitle: 'Shower Cap', buyPrice: 3.15, sellPrice: 14.95, shipsFrom: 'China', adRate: 5,
+    variants: JSON.stringify([{ name: 'Varianten ', values: ['200pcs', '100pcs'] }]),
+    variantPrices: JSON.stringify([
+      { skuId: '12000050569622128', attrs: { Color: '200pcs', 'Ships From': 'China Mainland' }, price: 4.79, stock: 1965 },
+      { skuId: '12000050569622130', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.15, stock: 3 },
+      { skuId: '12000050569622129', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.45, stock: 1998 },
+    ]),
+    variantSellPrices: null, ebayStatus: 'listed', ebayListingId: '198601077240',
+  });
+
+  test('Senden: je eBay-Variante genau eine Zeile (2 statt 3), jede wird zugeordnet → voller Erfolg; gespeichert wird der Preis zum höchsten EK', async () => {
+    const sentRows: Array<{ skuId: string; price: number; ware: number }> = [];
+    deps.sendVariants = async (id, groups, rows) => {
+      calls.sendVariants++;
+      const { resolveVariantEntries } = await import('../shared/variant-resolver');
+      const resolved = resolveVariantEntries(id, groups, rows.map(r => ({ skuId: r.skuId, attrs: r.attrs, price: r.correctSellPrice, displayValues: r.displayValues })));
+      const errors = resolved.filter(r => r.error).map(r => r.error!);
+      for (const r of resolved) if (r.entry) sentRows.push({ skuId: r.entry.skuId, price: r.entry.price!, ware: rows.find(x => x.skuId === r.entry!.skuId)!.buyPrice });
+      return { ok: sentRows.length > 0, updatedCount: sentRows.length, errors };
+    };
+    const [r] = await runTierReprice(new Map([[119, p119()]]), input('apply', { ids: [119], confirm: true, sendToEbay: true }), deps);
+    expect(r.error).toBeUndefined();
+    expect(r.status).toBe('sent');
+    expect(sentRows).toEqual([{ skuId: '12000050569622128', price: 15.95, ware: 4.79 }, { skuId: '12000050569622129', price: 13.95, ware: 3.45 }]);
+    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ '12000050569622128': 15.95, '12000050569622129': 13.95 });
+  });
+});
