@@ -10,7 +10,7 @@ import { eq, isNotNull, and } from 'drizzle-orm';
 import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -372,7 +372,8 @@ export async function updateOfferPriceBySku(
     // einen älteren Preis für diese Variante gespeichert hat).
     if (raiseOnly) {
       const live = parseFloat(String((offerData.pricingSummary as { price?: { value?: string } } | undefined)?.price?.value ?? ''));
-      if (Number.isFinite(live) && live >= newPrice - 0.004) { skippedLive.push(live); continue; }
+      if (!Number.isFinite(live)) { errors.push(`GET offer/${offer.offerId}: Live-Preis nicht lesbar — im raise-only-Modus NICHT geschrieben`); continue; }
+      if (live >= newPrice - 0.004) { skippedLive.push(live); continue; }
     }
     offerData.pricingSummary = {
       ...(offerData.pricingSummary as Record<string, unknown> | undefined ?? {}),
@@ -424,8 +425,14 @@ export async function sendVariantRaises(
   }
   const results: VariantSendResult['results'] = [];
   for (const t of targets) {
-    const res = await updateOfferPriceBySku(t.sku, t.newSell, token, fetchFn, true);
-    results.push({ skuId: t.skuId, sku: t.sku, ok: res.ok, skipped: res.skipped, error: res.error });
+    // Je Variante abgefangen: eine Exception (Netz, JSON) bei Variante B darf das Ergebnis von bereits angehobener Variante A nicht verwerfen
+    // (sonst würde A nie gespeichert, obwohl eBay sie schon trägt).
+    try {
+      const res = await updateOfferPriceBySku(t.sku, t.newSell, token, fetchFn, true);
+      results.push({ skuId: t.skuId, sku: t.sku, ok: res.ok, skipped: res.skipped, error: res.error });
+    } catch (e) {
+      results.push({ skuId: t.skuId, sku: t.sku, ok: false, error: 'Ausnahme beim Senden: ' + String(e) });
+    }
   }
   return { resolved: true, results };
 }
@@ -450,8 +457,14 @@ export async function maybeRaiseVariants(
         const token = await getAccessToken();
         return sendVariantRaises(product.id, groups, entries, raises, token);
       },
-      store: async (json) => {
-        await db.update(schema.products).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+      store: async (updates) => {
+        // Frischer Stand der Spalte (nicht der Snapshot vom Lauf-Anfang) — ein zwischenzeitlicher Stufenwechsel bleibt erhalten.
+        const [cur] = await db.select({ v: schema.products.variantSellPrices }).from(schema.products).where(eq(schema.products.id, product.id));
+        const merged = parseVariantSellPrices(cur?.v ?? null);
+        for (const [skuId, price] of Object.entries(updates)) merged[skuId] = price;
+        await db.update(schema.products)
+          .set({ variantSellPrices: serializeVariantSellPrices(Object.entries(merged).map(([skuId, sellPrice]) => ({ skuId, sellPrice }))), updatedAt: new Date().toISOString() })
+          .where(eq(schema.products.id, product.id));
       },
       log: (m) => console.log(m),
     });

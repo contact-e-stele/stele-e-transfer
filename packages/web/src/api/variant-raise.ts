@@ -5,7 +5,7 @@
 //
 // Bewusst ohne direkte DB-/eBay-Importe: Senden/Speichern/Log kommen als `deps` (Grundgesetz Regel 2 — mit Mocks testbar).
 import { planTierReprice, type RepriceProduct, type TierPlanRow } from '../shared/tier-reprice';
-import { profitFloorFor, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { profitFloorFor, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 
 export interface VariantRaiseProduct extends RepriceProduct {
   targetMarginEur: number | null;
@@ -36,7 +36,9 @@ export interface VariantSendResult {
 export interface VariantRaiseDeps {
   enabled: boolean;
   send: (raises: VariantRaise[]) => Promise<VariantSendResult>;
-  store: (variantSellPricesJson: string) => Promise<void>;
+  // Nur die tatsächlich angehobenen Einträge (skuId → neuer VK). Der Aufrufer MERGT gegen den frischen DB-Stand der Spalte (nicht gegen den
+  // Snapshot vom Lauf-Anfang), damit z. B. ein zwischenzeitlicher Stufenwechsel nicht überschrieben wird.
+  store: (updates: Record<string, number>) => Promise<void>;
   log: (msg: string) => void;
 }
 
@@ -69,13 +71,13 @@ export async function runVariantRaise(product: VariantRaiseProduct, deps: Varian
     for (const r of raises) {
       const x = res.results.find(y => y.skuId === r.skuId);
       if (x?.ok && !x.skipped) { okIds.add(r.skuId); deps.log(`[VariantRaise] stele-${product.id} ANGEHOBEN ${describe(r)}`); }
-      else deps.log(`[VariantRaise] stele-${product.id} NICHT angehoben ${describe(r)} — ${x?.skipped ?? x?.error ?? 'kein Ergebnis'}`);
+      else deps.log(`[VariantRaise] stele-${product.id} NICHT angehoben ${describe(r)} — ${x?.skipped ?? x?.error ?? 'kein Ergebnis'}${x?.skipped ? ' (App-Preis weicht von eBay ab — bitte im Produkte-Tab abgleichen)' : ''}`);
     }
     if (okIds.size === 0) return { status: 'failed', raises, sentSkuIds: [] };
-    // Speichern erst nach Erfolg und nur für die tatsächlich gesendeten Varianten (bestehende Einträge bleiben).
-    const merged = parseVariantSellPrices(product.variantSellPrices);
-    for (const r of raises) if (okIds.has(r.skuId)) merged[r.skuId] = r.newSell;
-    await deps.store(serializeVariantSellPrices(Object.entries(merged).map(([skuId, sellPrice]) => ({ skuId, sellPrice }))));
+    // Speichern erst nach Erfolg und nur für die tatsächlich gesendeten Varianten.
+    const updates: Record<string, number> = {};
+    for (const r of raises) if (okIds.has(r.skuId)) updates[r.skuId] = r.newSell;
+    await deps.store(updates);
     return { status: okIds.size === raises.length ? 'sent' : 'partial', raises, sentSkuIds: [...okIds] };
   } catch (e) {
     deps.log(`[VariantRaise] stele-${product.id}: Fehler — ${String(e)} (App-Preise nicht gespeichert, eBay-Stand ggf. teilweise geändert, bitte prüfen)`);
