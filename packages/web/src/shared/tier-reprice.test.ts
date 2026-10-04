@@ -233,7 +233,7 @@ describe('expected-Preise (Plan darf sich seit der Vorschau nicht geändert habe
 describe('A-023: Dubletten im Stufenwechsel (stele-119)', () => {
   const g119 = [{ name: 'Varianten ', values: ['200pcs', '100pcs'] }];
   const p119: RepriceProduct = {
-    id: 119, buyPrice: 3.15, sellPrice: 14.95, shipsFrom: 'China', adRate: 5, variantSellPrices: null,
+    id: 119, buyPrice: 3.15, sellPrice: 14.95, shipsFrom: 'China', adRate: 5, variantSellPrices: null, variants: JSON.stringify(g119),
     variantPrices: JSON.stringify([
       { skuId: '12000050569622128', attrs: { Color: '200pcs', 'Ships From': 'China Mainland' }, price: 4.79, stock: 1965 },
       { skuId: '12000050569622130', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.15, stock: 3 },
@@ -258,7 +258,7 @@ describe('A-023: Dubletten im Stufenwechsel (stele-119)', () => {
 describe('A-023 Review: isVariant bleibt nach dem Zusammenlegen', () => {
   test('eine Kombination, zwei Dubletten: Plan bleibt Varianten-Plan (skuId gesetzt, EK 3,45), kein Einzelartikel-Plan', () => {
     const one: RepriceProduct = {
-      id: 7, buyPrice: 9.99, sellPrice: 20.95, shipsFrom: 'China', adRate: 5, variantSellPrices: null,
+      id: 7, buyPrice: 9.99, sellPrice: 20.95, shipsFrom: 'China', adRate: 5, variantSellPrices: null, variants: JSON.stringify([{ name: 'Color', values: ['100pcs'] }]),
       variantPrices: JSON.stringify([
         { skuId: 'X1', attrs: { Color: '100pcs' }, price: 3.15, stock: 3 },
         { skuId: 'X2', attrs: { Color: '100pcs' }, price: 3.45, stock: 9 },
