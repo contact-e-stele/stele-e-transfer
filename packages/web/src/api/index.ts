@@ -2,6 +2,10 @@ import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
 import { sentPricesToPatch } from '../shared/sent-prices';
+import { earUmlageFor, evaluateElectricGate, suggestElectric, weeeLineForListing, parseElectricPatch, parseElectricSettingsBody } from '../shared/electric';
+import { getElectricSettings, setElectricSettings } from './electric-settings';
+import { electricSalesCsv } from './electric-export';
+import { BATTERY_REGISTRATION_PRESENT, EAR_UMLAGE_EUR } from '../shared/constants';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { parseMfrPatch } from '../shared/gpsr-mfr-patch';
 import { resolveEuImportFields, resolveMfrImportFields, resolveMfrUpdateFields, validateGpsrFlat, crossCheckParties, buildPartyOptions, type GpsrFlatFields } from '../shared/gpsr-import-fields';
@@ -1262,6 +1266,7 @@ const app = new Hono()
         id: schema.products.id,
         ebayListingId: schema.products.ebayListingId,
         ebayStatus: schema.products.ebayStatus,
+        isElectric: schema.products.isElectric, // A-029
         buyPrice: schema.products.buyPrice,
         shippingCost: schema.products.shippingCost,
         adRate: schema.products.adRate,
@@ -1341,7 +1346,7 @@ const app = new Hono()
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
         const rawNewPrice = computeMinSellPrice({
-          buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
+          earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
@@ -1429,7 +1434,7 @@ const app = new Hono()
         } else {
           const rawNewPrice = product.buyPrice != null
             ? computeMinSellPrice({
-                buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
+                earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
                 ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
                 targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
@@ -1804,6 +1809,37 @@ const app = new Hono()
       return c.json({ ok: true }, 200);
     } catch (e) {
       return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
+  // A-029 (P-E01): Elektro Kat. 5 — Einstellungen (WEEE-Reg.-Nr. wird NIE vorbelegt; Batterie-Registrierung ist fest AUS und hier nur lesbar).
+  .get('/settings/electric', async (c) => {
+    try {
+      const s = await getElectricSettings();
+      return c.json({ weeeRegNr: s.weeeRegNr, registeredDeviceTypes: s.registeredDeviceTypes, batteryRegistration: BATTERY_REGISTRATION_PRESENT, earUmlageEur: EAR_UMLAGE_EUR }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/electric', async (c) => {
+    try {
+      const parsed = parseElectricSettingsBody(await c.req.json().catch(() => null));
+      if (!parsed.ok) return c.json({ ok: false, error: parsed.error }, 400);
+      await setElectricSettings({ weeeRegNr: parsed.weeeRegNr, registeredDeviceTypes: parsed.registeredDeviceTypes });
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
+  // A-029 Punkt 6: CSV "Elektro-Verkäufe je Geräteart und Monat" — nur lesen, keine Meldung an die stiftung ear. Optional ?from=YYYY-MM-DD&to=YYYY-MM-DD.
+  .get('/electric/sales-export.csv', async (c) => {
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const orders = await getAllOrders();
+      const products = await db.select({ id: schema.products.id, asin: schema.products.asin, isElectric: schema.products.isElectric, deviceType: schema.products.deviceType }).from(schema.products);
+      const csv = electricSalesCsv(orders, products, c.req.query('from') || undefined, c.req.query('to') || undefined);
+      return c.body(csv, 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="elektro-verkaeufe.csv"' });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
     }
   })
   // PRIO-1-PAKET (2026-09-24) / Punkt "ZOLL": Zollpauschale für den Bestellungs-Einkauf
@@ -2245,6 +2281,8 @@ const app = new Hono()
         storeCategoryId: body.storeCategoryId ?? null,
         storeCategoryName: body.storeCategoryName ?? null,
         ebayStatus: 'none',
+        // A-029 (P-E01): Elektro beim Import nur VORSCHLAGEN (gelb "Elektro?"), nie setzen — der Inhaber bestätigt ja/nein; unbestätigt sperrt das Listen.
+        electricSuggested: suggestElectric([body.title, germanTitle, body.description, ...(body.bullets ?? []), ...Object.values(body.specs ?? {})]).suggested ? 1 : 0,
         aliexpressItemId,
         complianceOverride: body.complianceOverride ?? false,
         complianceOverrideAt: body.complianceOverride ? new Date().toISOString() : null,
@@ -2317,6 +2355,15 @@ const app = new Hono()
       return c.json({ error: `Artikel ist bereits auf eBay gelistet (Listing-ID: ${product.ebayListingId}). Zuerst beenden oder Status zurücksetzen.` }, 409);
     }
 
+    // A-029 (P-E01): Elektro-Sperre VOR eBay (wie die GPSR-Sperre: Klartext im Fehlerfeld, nichts wird gesendet). Nicht-Elektro-Produkte
+    // (nie markiert, kein Vorschlag) laufen unverändert durch. Live gelistete Produkte erreichen diese Stelle nicht (Duplikat-Schutz oben).
+    const electricSettings = await getElectricSettings();
+    const electricGate = evaluateElectricGate(product, electricSettings);
+    if (electricGate.blocked) {
+      await db.update(schema.products).set({ ebayStatus: 'error', ebayError: electricGate.message, ebayMissingAspect: null, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
+      return c.json({ error: electricGate.message }, 400);
+    }
+
     // Bestands-Gate: Varianten ohne bekannten Lagerbestand würden sonst stillschweigend mit der
     // festen Fallback-Menge (siehe unten, quantity: 3) gelistet — das ist Geld-/Bestandslogik und
     // erfordert laut Standing-Regel eine explizite Bestätigung statt Automatismus. Nur bei echten
@@ -2353,6 +2400,7 @@ const app = new Hono()
     const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
     const adRateForListing = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
+      earUmlageEur: earUmlageFor(product), // A-029: nur Elektro = ja, sonst 0 → Formel unverändert
       buyPrice, isChinaOrigin: isChinaShippingForListing(product.shipsFrom),
       ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
@@ -2391,7 +2439,9 @@ const app = new Hono()
     // neu gebaut (P71-C Teil 2) — Fehler nur, wenn auch der Neubau verstößt. Dieselbe Rechenstelle
     // wie der Beschreibungs-Nachzieh-Weg (GRUNDGESETZ Regel 8).
     const listingDescription = resolveListingDescription(product, product.htmlDescription);
-    const fullDescription = listingDescription.html;
+    // A-029: bei bestätigtem Elektro (Sperre oben bestanden) die WEEE-Reg.-Nr. als reine Textzeile — ohne Link/URL/E-Mail.
+    const weeeLine = weeeLineForListing(product, electricSettings.weeeRegNr);
+    const fullDescription = weeeLine ? `${listingDescription.html}<p>${weeeLine}</p>` : listingDescription.html;
     let complianceViolations: DescriptionComplianceViolation[] = listingDescription.violations;
     // Code-Review-Fund (eBay-Verstoßserie 2026-09-28): der Titel geht genauso an eBay wie die
     // Beschreibung (<Title>/Item-Titel) und lief bisher NICHT durch den Compliance-Validator —
@@ -2540,6 +2590,7 @@ const app = new Hono()
         title: titleForListing,
         description: fullDescription,
         price: effectiveSellPrice,
+        earUmlageEur: earUmlageFor(product), // A-029
         sentPrices,
         quantity: 3,
         condition: 'NEW',
@@ -3127,7 +3178,7 @@ const app = new Hono()
       const rows = await db.select({
         id: p.id, generatedTitle: p.generatedTitle, buyPrice: p.buyPrice, sellPrice: p.sellPrice, shipsFrom: p.shipsFrom, adRate: p.adRate,
         variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices, variants: p.variants,
-        ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId,
+        ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId, isElectric: p.isElectric,
       }).from(p).where(inArray(p.id, parsed.productIds)).all();
       const byId = new Map<number, TierRepriceProductRow>(rows.map(r => [r.id, { ...r, ebayStatus: r.ebayStatus ?? 'none' }]));
       const { updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
@@ -3180,6 +3231,15 @@ const app = new Hono()
       if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
       if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
+      // A-029 (P-E01): Elektro-Felder (Elektro ja/nein/offen, Geräteart nur aus den registrierten, Batterie, Nachweise)
+      if (['isElectric', 'hasBattery', 'deviceType', 'electricProofs'].some(k => k in body)) {
+        // Live-Angebote werden nicht angefasst: bei einem live gelisteten Produkt sind die Elektro-Felder gesperrt (auch per API / älterem Tab).
+        const [cur] = await db.select({ st: schema.products.ebayStatus, lid: schema.products.ebayListingId }).from(schema.products).where(eq(schema.products.id, id));
+        if (cur?.st === 'listed' || cur?.lid) return c.json({ error: 'Produkt ist live gelistet — Elektro-Felder sind gesperrt (Live-Angebote werden nicht angefasst)' }, 409);
+        const electricPatch = parseElectricPatch(body, (await getElectricSettings()).registeredDeviceTypes);
+        if (!electricPatch.ok) return c.json({ error: electricPatch.error }, 400);
+        Object.assign(allowed, electricPatch.fields);
+      }
       // A-014: Zielgewinn des Produkts nur als Margen-Stufe A–D (Inhaber-Entscheid 04.10.2026); die ausgeblendete
       // 4,50-Stufe bleibt für Bestandsprodukte erhalten, ist aber nicht neu setzbar.
       if ('targetMarginEur' in body) {
@@ -3443,7 +3503,7 @@ const app = new Hono()
             // Teil 2A: nur der Aufruf selbst ersetzt (strikte Vorgabe), sonst keine Änderung an
             // diesem Endpunkt.
             const rawNewSellPrice = computeMinSellPrice({
-              buyPrice: newPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
+              earUmlageEur: earUmlageFor(product), buyPrice: newPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,

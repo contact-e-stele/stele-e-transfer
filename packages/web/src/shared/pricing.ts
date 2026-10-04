@@ -100,6 +100,7 @@ export interface PricingInput {
   safetyBufferEur: number;    // zusätzlicher Sicherheitspuffer in EUR (0, wenn an dieser Stelle nicht verwendet)
   rounding: RoundingMode;     // Rundungsmodus für minSellPrice
   profitFloorEur?: number;    // nur Modus 'floor95': Boden explizit setzen (sonst profitFloorFor(targetMarginEur))
+  earUmlageEur?: number;      // A-029: EAR-Umlage je Stück, wird bei Elektro = ja zu K addiert (weggelassen/0 = Formel unverändert, siehe earUmlageFor())
 }
 
 export interface PricingResult {
@@ -121,7 +122,9 @@ export interface PricingResult {
 // Produkte-Tab-Badge), dieselben Gebühren-Konstanten wiederverwenden können, statt sie ein
 // zweites Mal selbst zu berechnen.
 export function computeMinSellPrice(input: PricingInput): PricingResult {
-  const { shipping, customs, totalCost } = computeAliCosts(input.buyPrice, input.isChinaOrigin);
+  const ali = computeAliCosts(input.buyPrice, input.isChinaOrigin);
+  const { shipping, customs } = ali;
+  const totalCost = ali.totalCost + (input.earUmlageEur ?? 0); // A-029: K + EAR-Umlage (nur bei Elektro = ja, sonst 0)
   const baseFeeRateGross = (input.ebayFeeRatePercent / 100) * input.vatFactor;
   const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
@@ -217,13 +220,14 @@ export interface ProfitAtSellPriceInput {
   ebayFixedFeeEur: number;
   vatFactor: number;
   adRatePercent: number;
+  earUmlageEur?: number;     // A-029: EAR-Umlage je Stück (Elektro = ja), 0/weggelassen = unverändert
 }
 
 // Gewinn bei einem GEGEBENEN Verkaufspreis — die Umkehrung von computeMinSellPrice(), Formel v2 (A-014):
 //   Gewinn = Preis × f − Fix − K,  f = 1 − (15% + adRate) × 1,19,  Fix = 0,30 × 1,19,
 //   K = Ware + Versand + Einfuhrabgaben (computeAliCosts)
 export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
-  const totalCost = computeAliCosts(input.buyPrice, input.isChinaOrigin).totalCost;
+  const totalCost = computeAliCosts(input.buyPrice, input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0);
   const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);

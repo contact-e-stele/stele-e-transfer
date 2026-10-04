@@ -16,6 +16,7 @@ import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } fr
 import { productProfitRows, productTarget } from "../../shared/target-margin-bulk";
 import { matchesProductSearch } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
+import { ElectricPanel } from "../components/electric-panel";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
@@ -68,6 +69,12 @@ interface Product {
   targetMarginEur?: number | null; // A-014: Zielgewinn = Margen-Stufe A–D (null → Standard 2,00)
   shipsFrom?: string | null;
   variantSellPrices?: string | null; // JSON {skuId: VK}
+  // A-029 (P-E01): Elektro Kat. 5
+  isElectric?: number | null;
+  electricSuggested?: number | null;
+  deviceType?: string | null;
+  hasBattery?: number | null;
+  electricProofs?: string | null;
   ean: string | null;
   handlingTimeDays: number | null;
   gpsrName: string | null;
@@ -1849,6 +1856,10 @@ export default function Produkte() {
                 }}>
                   {listingResult.msg}
                 </div>
+              )}
+              {/* A-029 (P-E01): Elektro Kat. 5 — ja/nein/offen, Geräteart, Batterie, Nachweise; zeigt die Listen-Sperre live */}
+              {product.ebayStatus !== "listed" && (
+                <ElectricPanel key={product.id} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               )}
               {/* EAN/GTIN manuell setzen — viele eBay-Kategorien verlangen einen Produkt-Identifier */}
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>

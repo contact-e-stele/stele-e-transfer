@@ -8,6 +8,7 @@
 import { MARGIN_TIERS } from './constants';
 import { isVariantProduct } from './variant-product';
 import { collapseDuplicateEntries } from './variant-dedupe';
+import { earUmlageFor } from './electric';
 import type { VariantGroup } from './variant-resolver';
 import {
   computeMinSellPrice, profitAtSellPrice, isChinaShipping, parseVariantSellPrices, resolveVariantSellPrice,
@@ -23,6 +24,7 @@ export interface RepriceProduct {
   adRate: number | null;
   variantPrices: string | null;       // JSON [{skuId, attrs, price, ebayPrice?, displayValues?}]
   variantSellPrices?: string | null;  // JSON {skuId: VK}
+  isElectric?: number | boolean | null; // A-029: Elektro = ja → EAR-Umlage in K (nicht gesetzt = 0)
 }
 
 export interface TierPlanRow {
@@ -57,6 +59,7 @@ export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?
   const fees = {
     isChinaOrigin: china, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+    earUmlageEur: earUmlageFor(p.isElectric), // A-029: nur Elektro = ja
   };
   const newSellFor = (ware: number) => computeMinSellPrice({
     ...fees, buyPrice: ware, targetMarginEur: newTargetEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95',

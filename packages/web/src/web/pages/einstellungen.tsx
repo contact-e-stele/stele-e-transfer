@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { ElectricSettingsCard } from "../components/electric-panel";
 
 interface AliStatus {
   connected: boolean;
@@ -684,6 +685,9 @@ export default function Einstellungen() {
           {orderZollMsg && <span style={{ fontSize: 12, fontWeight: 600, color: orderZollMsg.ok ? "#16A34A" : "#DC2626" }}>{orderZollMsg.text}</span>}
         </div>
       </div>
+
+      {/* A-029 (P-E01): Elektro Kat. 5 */}
+      <ElectricSettingsCard />
 
       {/* App Info */}
       <div style={{ ...card, background: "#F8FAFC" }}>

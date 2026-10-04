@@ -11,6 +11,7 @@ import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { earUmlageFor } from '../shared/electric';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -879,6 +880,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
 
       const rawNewSellPrice = computeMinSellPrice({
+        earUmlageEur: earUmlageFor(product), // A-029
         buyPrice: newBuyPrice, isChinaOrigin: isChina,
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
