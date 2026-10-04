@@ -2579,13 +2579,15 @@ const app = new Hono()
         storeCategoryName: product.storeCategoryName ?? undefined,
       });
 
+      // A-021: frischen Stand von variant_sell_prices lesen (das Listing dauert; Preisprüfung/Stufenwechsel könnten inzwischen geschrieben haben)
+      const [freshRow] = await db.select({ v: schema.products.variantSellPrices }).from(schema.products).where(eq(schema.products.id, body.productId));
       await db.update(schema.products).set({
         ebayListingId: listingId,
         ebayStatus: 'listed',
         ebayError: null,
         ebayMissingAspect: null,
         // A-021: genau die gesendeten Preise in der App festhalten (Varianten → variant_sell_prices, Einzelartikel → sellPrice) — keine Neuberechnung
-        ...sentPricesToPatch(sentPrices),
+        ...sentPricesToPatch(sentPrices, freshRow?.v),
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, body.productId));
 

@@ -112,6 +112,12 @@ describe('sentPricesToPatch (rein)', () => {
     expect(sentPricesToPatch([{ skuId: 'a', sku: 'x', price: 0 }, { skuId: null, sku: 'y', price: NaN }])).toEqual({});
   });
 
+  test('Merge gegen frischen DB-Stand: gesendete Preise überschreiben, fremde/neuere Einträge bleiben', () => {
+    const cur = JSON.stringify({ a: 10.95, c: 21.95 });
+    expect(parseVariantSellPrices(sentPricesToPatch([{ skuId: 'a', sku: 'x-A', price: 13.95 }, { skuId: 'b', sku: 'x-B', price: 15.95 }], cur).variantSellPrices)).toEqual({ a: 13.95, b: 15.95, c: 21.95 });
+    expect(sentPricesToPatch([{ skuId: null, sku: 's', price: 9.95 }], cur)).toEqual({ sellPrice: 9.95 });
+  });
+
   test('Varianten: Map skuId → Preis, bei doppelter skuId gewinnt der zuletzt gesendete; Einzelartikel: sellPrice', () => {
     expect(parseVariantSellPrices(sentPricesToPatch([
       { skuId: 'a', sku: 'x-A', price: 13.95 }, { skuId: 'b', sku: 'x-B', price: 15.95 }, { skuId: 'a', sku: 'x-A2', price: 14.95 },
@@ -123,13 +129,13 @@ describe('sentPricesToPatch (rein)', () => {
 // Verdrahtung (Regressionsschutz ohne Datenbank): index.ts reicht das OUT-Array an listOnEbay und wendet den Patch NUR im Erfolgs-Update an.
 describe('index.ts: gesendete Preise nur im Erfolgszweig gespeichert', () => {
   const src = readFileSync(resolve(import.meta.dir, 'index.ts'), 'utf8');
-  const ok = src.indexOf('...sentPricesToPatch(sentPrices)');
+  const ok = src.indexOf('...sentPricesToPatch(sentPrices, freshRow?.v)');
 
   test('sentPrices wird an listOnEbay übergeben und der Patch steht im Update mit ebayStatus "listed"', () => {
     expect(src).toMatch(/const sentPrices: SentListingPrice\[\] = \[\];/);
     expect(src).toMatch(/listOnEbay\(\{[\s\S]{0,400}sentPrices,/);
     expect(ok).toBeGreaterThan(0);
-    const before = src.slice(Math.max(0, ok - 400), ok);
+    const before = src.slice(Math.max(0, ok - 800), ok);
     expect(before).toContain("ebayStatus: 'listed'");
   });
 
