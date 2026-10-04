@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent, extractMissingAspectName, updateInventoryItemTitle, sanitizeItemProductForPut } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent, extractMissingAspectName, updateInventoryItemTitle, sanitizeItemProductForPut, stripZeroWeight } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -1205,5 +1205,32 @@ describe('updateInventoryItemTitle (A-013)', () => {
     expect(p.title).toBe('Neuer Titel');
     expect((p.aspects as Record<string, string[]>)['EAN']).toEqual(['Nicht zutreffend']);
     expect((p.aspects as Record<string, string[]>)['MPN']).toEqual(['Nicht zutreffend']);
+  });
+});
+
+
+// A-013b: Live nach #141 (83/87/96/140/143): 400 errorId 25709 "Invalid value for weight.value." bei weight 0.0.
+describe('stripZeroWeight / Titel-PUT ohne Gewicht 0 (A-013b)', () => {
+  test('weight 0.0 + nur shippingIrregular → ganzer Block weg', () => {
+    const item: Record<string, unknown> = { packageWeightAndSize: { weight: { value: 0.0, unit: 'KILOGRAM' }, shippingIrregular: false } };
+    stripZeroWeight(item);
+    expect(item.packageWeightAndSize).toBeUndefined();
+  });
+  test('echtes Gewicht bleibt', () => {
+    const item: Record<string, unknown> = { packageWeightAndSize: { weight: { value: 0.2, unit: 'KILOGRAM' } } };
+    stripZeroWeight(item);
+    expect(item.packageWeightAndSize).toEqual({ weight: { value: 0.2, unit: 'KILOGRAM' } });
+  });
+  test('Titel-PUT schickt kein Gewicht 0 mehr', async () => {
+    let putBody: Record<string, unknown> | null = null;
+    const live = { ...LIVE_ITEM_83, packageWeightAndSize: { weight: { value: 0.0, unit: 'KILOGRAM' }, shippingIrregular: false } };
+    const fetchFn = (async (_u: string, init?: RequestInit) => {
+      if (!init?.method) return new Response(JSON.stringify(live), { status: 200 });
+      putBody = JSON.parse(String(init.body));
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    const res = await updateInventoryItemTitle('stele-83', 'T', 'tok', fetchFn);
+    expect(res.ok).toBe(true);
+    expect((putBody as unknown as Record<string, unknown>).packageWeightAndSize).toBeUndefined();
   });
 });

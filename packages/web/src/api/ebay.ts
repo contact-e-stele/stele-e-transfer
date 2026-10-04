@@ -2151,6 +2151,7 @@ export async function updateInventoryItemTitle(
   if (!getRes.ok) return { ok: false, error: `GET inventory_item/${sku} fehlgeschlagen: ${getRes.status}` };
   const item = await getRes.json() as Record<string, unknown>;
   item.product = sanitizeItemProductForPut({ ...(item.product as Record<string, unknown> | undefined ?? {}), title });
+  stripZeroWeight(item);
   const putRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
@@ -2165,6 +2166,18 @@ export async function updateInventoryItemTitle(
 // A-013 (04.10.2026): Der Titel-PUT schickt das bestehende Inventory Item zurück. Bei alten Angeboten
 // (83, 87, 96, 140, 143 – live per GET belegt) fehlt darin das EAN-Merkmal (vgl. A-012) und MPN ist die
 // AliExpress-ID (P71-B Regel 5, Verstoßserie 28.09.). Beides beim Zurückschicken bereinigen, sonst nichts ändern.
+// A-013b (04.10.2026, Live-Beleg nach #141): eBay lehnt das zurückgeschickte Item mit 25709 "Invalid value for
+// weight.value." ab – alte Angebote tragen packageWeightAndSize.weight.value = 0.0. Ein Gewicht 0 wird deshalb
+// weggelassen (kein erfundenes Gewicht, Regel 4); bleibt danach nur shippingIrregular übrig, fällt der Block ganz weg.
+export function stripZeroWeight(item: Record<string, unknown>): void {
+  const pws = item.packageWeightAndSize as Record<string, unknown> | undefined;
+  if (!pws) return;
+  const weight = pws.weight as { value?: number } | undefined;
+  if (weight && !(typeof weight.value === 'number' && weight.value > 0)) delete pws.weight;
+  const rest = Object.keys(pws).filter(k => k !== 'shippingIrregular');
+  if (rest.length === 0) delete item.packageWeightAndSize;
+}
+
 export function sanitizeItemProductForPut(product: Record<string, unknown>): Record<string, unknown> {
   const aspects = { ...((product.aspects as Record<string, string[]> | undefined) ?? {}) };
   if (!aspects['EAN']?.length) aspects['EAN'] = ['Nicht zutreffend'];
