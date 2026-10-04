@@ -334,12 +334,20 @@ export interface VariantGroup {
   values: string[]; // z.B. ["Rot", "Blau"]
 }
 
+// A-021: Ein gesendeter Offer-Preis (genau der Wert, der im Offer-Body an eBay ging). skuId = AliExpress-skuId der Variante (variantPrices[].skuId),
+// null beim Einzelartikel.
+export interface SentListingPrice { skuId: string | null; sku: string; price: number }
+
 export interface EbayListingInput {
   sku: string;
   title: string;
   description: string; // HTML – geht in listingDescription (Offer), max 500KB
   shortDescription?: string; // Plain-Text – geht in inventory_item description, max 4000 Zeichen
   price: number; // EUR
+  // A-021: OUT-Parameter. listOnEbay/listOnEbayWithVariants hängen hier jeden Offer-Preis an, sobald das Offer bei eBay angelegt ist. Der Aufrufer
+  // darf ihn erst auswerten (= in der App speichern), NACHDEM listOnEbay erfolgreich zurückgekehrt ist (Publish erfolgreich) — bei einem Fehler
+  // wirft listOnEbay, und nichts davon wird gespeichert.
+  sentPrices?: SentListingPrice[];
   quantity: number;
   condition: 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD';
   imageUrls: string[];
@@ -1858,6 +1866,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     }
 
     offerIds.push(finalOfferId);
+    input.sentPrices?.push({ skuId: varPriceEntry.skuId, sku: varSku, price: Math.round(varPrice * 100) / 100 });
     console.log(`[eBay] Offer ready for ${varSku}: ${finalOfferId}`);
   }
 
@@ -1935,6 +1944,7 @@ export async function listOnEbay(input: EbayListingInput): Promise<string> {
   await deleteExistingOffers(input.sku);
   await createOrUpdateInventoryItem(input);
   const offerId = await createOffer(input);
+  input.sentPrices?.push({ skuId: null, sku: input.sku, price: Math.round(input.price * 100) / 100 });
   // P-91: dieselbe Selbstheilung wie im Varianten-Pfad — auch Einzelartikel-Listings können an
   // einem Aspekt scheitern, den eBays Taxonomy-API nicht als "required" gemeldet hat.
   const token = await getAccessToken();

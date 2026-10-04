@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
+import { sentPricesToPatch } from '../shared/sent-prices';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { parseMfrPatch } from '../shared/gpsr-mfr-patch';
 import { resolveEuImportFields, resolveMfrImportFields, resolveMfrUpdateFields, validateGpsrFlat, crossCheckParties, buildPartyOptions, type GpsrFlatFields } from '../shared/gpsr-import-fields';
@@ -2543,11 +2544,15 @@ const app = new Hono()
         for (const w of variantWarnings) console.warn(`[ebay/list] Produkt ${product.id}: ${w}`);
       }
 
+      // A-021: die an eBay gesendeten Preise einsammeln (OUT-Array, von ebay.ts beim Anlegen der Offers gefüllt) — gespeichert wird erst nach
+      // erfolgreichem listOnEbay (s. unten), nie vorher.
+      const sentPrices: SentListingPrice[] = [];
       const listingId = await listOnEbay({
         sku: `stele-${product.id}`,
         title: titleForListing,
         description: fullDescription,
         price: effectiveSellPrice,
+        sentPrices,
         quantity: 3,
         condition: 'NEW',
         imageUrls: images.filter(u => u.startsWith('http')).slice(0, 8),
@@ -2579,6 +2584,8 @@ const app = new Hono()
         ebayStatus: 'listed',
         ebayError: null,
         ebayMissingAspect: null,
+        // A-021: genau die gesendeten Preise in der App festhalten (Varianten → variant_sell_prices, Einzelartikel → sellPrice) — keine Neuberechnung
+        ...sentPricesToPatch(sentPrices),
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, body.productId));
 
