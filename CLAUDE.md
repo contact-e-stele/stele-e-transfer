@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-04, aktuelle Version: v1.23):**
+**Aktueller Zählerstand (Stand 2026-10-04, aktuelle Version: v1.24):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -199,6 +199,15 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | — | #138 | *(zählt nicht — Versions-Nachtrag A-009, Housekeeping)* |
 | 3 | #140 | A-012: EAN immer setzen ("Nicht zutreffend"), "Das Feld … fehlt" erkennen |
 | 4 | #141 | A-013: Titel-PUT Fehlertext, EAN ergänzen, AliExpress-ID als MPN ersetzen → **Bump v1.22 → v1.23 bei #141** |
+| — | #142 | *(zählt nicht — Versions-Nachtrag v1.23, Housekeeping)* |
+| 1 | #143 | A-013b: Titel-PUT ohne Gewicht 0 (eBay 25709) |
+| 2 | #144 | A-014: Preisformel v2 (Kosten Ware+Versand+Einfuhr, ,95-Rundung mit Boden, Margen-Stufen A–D) |
+| 3 | #145 | A-016: Listings-Tab Margen-Stufen A–D + Filter "Neu eingestellt" |
+| 4 | #147 | A-015: Merge ohne Dubletten (neue skuId = derselbe Eintrag) + Einmal-Skript Bereinigung stele-194 → **Bump v1.23 → v1.24 bei #147** |
+| — | #146 | *(zählt nicht — Zwischen-Merge in den PR-Branch von #145 (kein Merge nach main); Inhalt kam über #148)* |
+| 1 | #148 | A-017: Stufe A–D → Varianten-/Einzelpreise (Formel v2), Senden an eBay nur auf Knopfdruck (auf main) |
+| — | #149 | *(zählt nicht — Ersatz-PR mit gleichem Inhalt wie #148, Baum identisch: `git diff 327c974 39096ac` leer)* |
+| — | #150 | *(zählt nicht — A-019: in den alten A-017-Branch gemergt, NICHT nach main; `variant-raise.ts` fehlt auf main — Nachtrag A-020)* |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -209,7 +218,7 @@ main). **Grenzfälle, die wörtlich zählen:** #93 (neues Modul `gpsr-parser.ts`
 *Strengere Lesart (nur Änderungen am App-Verhalten zählen, also #93/#131 NICHT): 41 statt 43 gezählte PRs seit #90 → v1.21, "3 von 4".
 Die Entscheidung liegt beim Inhaber; hier gilt die wörtliche Lesart.* Gezählt: 43 PRs ab #90 plus Startwert 2 (#88, #89) = 45 = 11 × 4 + 1.
 
-**→ Zähler: 0 von 4 seit v1.23.**
+**→ Zähler: 1 von 4 seit v1.24** (#148 ist der 1.).
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -231,6 +240,7 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.20 → v1.21: PR #127, #128, #129, #130 (siehe Tabelle oben)
 - v1.21 → v1.22: PR #133, #134, #135, #131 (siehe Tabelle oben)
 - v1.22 → v1.23: PR #137, #139, #140, #141 (siehe Tabelle oben)
+- v1.23 → v1.24: PR #143, #144, #145, #147 (siehe Tabelle oben)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
