@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent, extractMissingAspectName } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -1124,5 +1124,37 @@ describe('reviseListingDescription — Inventory-API zuerst, Trading-API als zwe
     expect(result.error).toContain('Inventory-API:');
     expect(result.error).toContain('Trading-API:');
     expect(result.error).toContain('warenbestandsbasierte Angebotsverwaltung');
+  });
+});
+
+
+// A-012 (04.10.2026, Live-Fund stele-218, Kategorie 86174, Varianten): eBay "Das Feld EAN fehlt",
+// weil die Taxonomy-API EAN dort nicht als Pflicht meldet und ohne hinterlegte EAN gar nichts gesetzt wurde.
+describe('buildAspects — EAN immer gesetzt (A-012)', () => {
+  test('Kategorie meldet EAN NICHT als Pflicht, keine EAN hinterlegt → EAN "Nicht zutreffend"', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Rot'] }])) as unknown as typeof fetch;
+    const result = await buildAspects({}, undefined, 'CAT-EAN-1', undefined, undefined, [], undefined, fetchFn, testTokenFn);
+    expect(result['EAN']).toEqual(['Nicht zutreffend']);
+  });
+
+  test('echte EAN hinterlegt → echte EAN, nicht der Sentinel', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Rot'] }])) as unknown as typeof fetch;
+    const result = await buildAspects({}, undefined, 'CAT-EAN-2', '4006381333931', undefined, [], undefined, fetchFn, testTokenFn);
+    expect(result['EAN']).toEqual(['4006381333931']);
+  });
+
+  test('manuell nachgetragene EAN gewinnt weiterhin', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Farbe', required: true, values: ['Rot'] }])) as unknown as typeof fetch;
+    const result = await buildAspects({}, undefined, 'CAT-EAN-3', undefined, { EAN: '1234567890128' }, [], undefined, fetchFn, testTokenFn);
+    expect(result['EAN']).toEqual(['1234567890128']);
+  });
+});
+
+describe('extractMissingAspectName — "Das Feld … fehlt" (A-012)', () => {
+  test('erkennt eBays Produkt-Identifier-Meldung (wörtlich stele-218)', () => {
+    expect(extractMissingAspectName('A user error has occurred. Das Feld EAN fehlt. Fügen Sie bitte EAN zum Angebot hinzu und versuchen Sie es noch einmal.')).toBe('EAN');
+  });
+  test('alte Meldung "Das Artikelmerkmal … fehlt" funktioniert weiter', () => {
+    expect(extractMissingAspectName('Das Artikelmerkmal Produktart fehlt.')).toBe('Produktart');
   });
 });

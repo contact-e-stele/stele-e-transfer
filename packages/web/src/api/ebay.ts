@@ -663,7 +663,8 @@ export async function getAspectAllowedValues(categoryId: string | undefined, asp
 // gemeinsam genutzt vom Selbstheilungs-Loop und von prettifyEbayError(), damit der Feldname 1:1
 // mit dem übereinstimmt, was im manuellen Eingabefeld (Frontend) angezeigt wird.
 export function extractMissingAspectName(rawMessage: string): string | null {
-  return rawMessage.match(/Das Artikelmerkmal\s+(.+?)\s+fehlt/)?.[1]?.trim() ?? null;
+  // A-012: eBay meldet Produkt-Identifier als "Das Feld EAN fehlt" statt "Das Artikelmerkmal … fehlt".
+  return rawMessage.match(/Das (?:Artikelmerkmal|Feld)\s+(.+?)\s+fehlt/)?.[1]?.trim() ?? null;
 }
 
 // P-91: Generischer Retry-Wrapper für JEDEN Publish-Aufruf (Einzelartikel wie Varianten-Gruppe) —
@@ -920,9 +921,12 @@ export async function buildAspects(
   const safe = safeMpn(mpn);
   if (safe) aspects['MPN'] = [safe];
 
-  // EAN — explizit setzen wenn vorhanden, auch wenn die Kategorie sie nicht als "required"
-  // Aspekt listet (eBays Produkt-Identifier-Prüfung greift teils unabhängig davon)
-  if (ean?.trim()) aspects['EAN'] = [ean.trim()];
+  // EAN — IMMER setzen, auch wenn die Kategorie sie nicht als "required" Aspekt listet (eBays
+  // Produkt-Identifier-Prüfung greift teils unabhängig davon). A-012 (04.10.2026, Live-Fund stele-218,
+  // Kategorie 86174 mit Varianten): ohne hinterlegte EAN fehlte das Merkmal ganz, weil die Taxonomy-API
+  // EAN dort nicht als Pflicht meldet → eBay "Das Feld EAN fehlt". Ohne EAN gilt der Identifier-Sentinel
+  // "Nicht zutreffend" (wie bei MPN/Herstellernummer). Manuelle Werte (manualMap) überschreiben weiter unten.
+  aspects['EAN'] = [ean?.trim() || 'Nicht zutreffend'];
 
   // P-88: manuell nachgetragene Werte haben immer Vorrang — unconditional override, auch über
   // bereits gesetzte Auto-Heal-/Default-Werte hinweg, da der Nutzer sie gezielt für ein Feld
