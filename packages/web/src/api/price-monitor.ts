@@ -55,11 +55,28 @@ export function parseVariantGroupsJson(json: string | null | undefined): Variant
 // stock aus dem frischen Scrape übernehmen (gleiche Schreibweise wie /products/:id/refresh-stock),
 // neue SKUs anhängen, im Scrape fehlende SKUs unverändert lassen (sonst bricht die Zuordnung zu
 // den bereits vergebenen eBay-SKUs).
+//
+// A-015 (04.10.2026, Inhaber-Entscheid A): AliExpress vergibt für dieselbe Größe/Farbe-Kombination gelegentlich NEUE skuIds
+// (Live-Fund 194: dieselbe Kombination stand danach 2–3 Mal in variantPrices, resolveVariantEntries meldete "Mehrdeutig" und das
+// Listing scheiterte). Eine unbekannte skuId, deren attrs (ohne Versand-Attribute, ohne Groß-/Kleinschreibung) schon bei einem
+// bestehenden Eintrag vorkommen, wird deshalb NICHT mehr einfach angehängt:
+//   - genau EIN bestehender Eintrag mit diesen attrs fehlt im Scrape UND genau EINE unbekannte frische skuId hat diese attrs →
+//     derselbe Eintrag: skuId/price/stock werden ersetzt, ebayPrice/imageUrl/displayValues bleiben (replaced);
+//   - sonst mehrdeutig (mehrere Kandidaten oder der bestehende Eintrag ist im Scrape noch vorhanden) → NICHTS raten, nicht
+//     anhängen (sonst entstünde die nächste Dublette), nur melden (ambiguous);
+//   - attrs kommen noch gar nicht vor → wirklich neue Variante, wie bisher angehängt (added).
+// Die im Scrape fehlenden Einträge (missing) werden weiterhin unverändert behalten.
+const attrsKey = (attrs: unknown): string =>
+  JSON.stringify(Object.entries((attrs && typeof attrs === 'object' ? attrs : {}) as Record<string, unknown>)
+    .filter(([k]) => !NON_VARIATION_ASPECTS.has(k))
+    .map(([k, v]) => [k.trim().toLowerCase(), String(v).trim().toLowerCase()])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+
 export function mergeFreshVariantPrices(
   existingJson: string | null,
   fresh: Array<{ skuId: string; attrs: Record<string, string>; price: number; stock?: number }>,
-): { json: string | null; added: string[]; missing: string[] } {
-  if (fresh.length === 0) return { json: existingJson, added: [], missing: [] };
+): { json: string | null; added: string[]; missing: string[]; replaced: Array<{ from: string; to: string }>; ambiguous: string[] } {
+  if (fresh.length === 0) return { json: existingJson, added: [], missing: [], replaced: [], ambiguous: [] };
   let existing: Array<Record<string, unknown>> = [];
   try { const p = existingJson ? JSON.parse(existingJson) : []; existing = Array.isArray(p) ? p : []; } catch { /* leer */ }
   const freshBySku = new Map(fresh.map(f => [String(f.skuId), f]));
@@ -68,10 +85,32 @@ export function mergeFreshVariantPrices(
     const f = freshBySku.get(String(e.skuId));
     return f ? { ...e, price: f.price, stock: typeof f.stock === 'number' ? f.stock : e.stock } : e;
   });
-  const added = fresh.filter(f => !existingSkus.has(String(f.skuId)));
+
+  const unknownFresh = fresh.filter(f => !existingSkus.has(String(f.skuId)));
+  const unknownByKey = new Map<string, typeof unknownFresh>();
+  for (const f of unknownFresh) {
+    const k = attrsKey(f.attrs);
+    unknownByKey.set(k, [...(unknownByKey.get(k) ?? []), f]);
+  }
+  const added: typeof unknownFresh = [];
+  const replaced: Array<{ from: string; to: string }> = [];
+  const ambiguous: string[] = [];
+  for (const [key, group] of unknownByKey) {
+    const sameAttrs = merged.map((e, i) => ({ e, i })).filter(x => attrsKey(x.e.attrs) === key);
+    if (sameAttrs.length === 0) { added.push(...group); continue; } // wirklich neue Variante
+    const absent = sameAttrs.filter(x => !freshBySku.has(String(x.e.skuId)));
+    if (absent.length === 1 && group.length === 1) {
+      const { e, i } = absent[0];
+      const f = group[0];
+      replaced.push({ from: String(e.skuId), to: String(f.skuId) });
+      merged[i] = { ...e, skuId: f.skuId, price: f.price, stock: typeof f.stock === 'number' ? f.stock : e.stock };
+    } else {
+      ambiguous.push(`attrs ${JSON.stringify(group[0].attrs)}: ${group.length} neue skuId(s) [${group.map(g => g.skuId).join(', ')}] vs. ${sameAttrs.length} bestehende(r) Eintrag/Einträge [${sameAttrs.map(x => String(x.e.skuId)).join(', ')}], davon ${absent.length} im Scrape fehlend — nichts geändert, nicht angehängt`);
+    }
+  }
   for (const f of added) merged.push({ skuId: f.skuId, attrs: f.attrs, price: f.price, stock: f.stock });
-  const missing = existing.map(e => String(e.skuId)).filter(id => !freshBySku.has(id));
-  return { json: JSON.stringify(merged), added: added.map(f => f.skuId), missing };
+  const missing = merged.map(e => String(e.skuId)).filter(id => !freshBySku.has(id));
+  return { json: JSON.stringify(merged), added: added.map(f => f.skuId), missing, replaced, ambiguous };
 }
 
 // PRIO-1-PAKET, Fund A9 (2026-09-24, live gemessen: stele-195 3,75€→1,45€ zurückgesetzt; stele-123
@@ -644,6 +683,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         const merge = mergeFreshVariantPrices(product.variantPrices, data.variantPrices);
         const freshVariantPricesJson = merge.json;
         if (merge.added.length > 0) console.log(`[PriceMonitor] ${product.id}: neue Varianten-SKUs angehängt: ${merge.added.join(', ')}`);
+        if (merge.replaced.length > 0) console.log(`[PriceMonitor] ${product.id}: skuId neu vergeben (gleiche attrs, genau ein Eintrag fehlte im Scrape) — ersetzt: ${merge.replaced.map(r => `${r.from}→${r.to}`).join(', ')}`);
+        for (const a of merge.ambiguous) console.warn(`[PriceMonitor] ${product.id}: mehrdeutige neue SKU (nichts geraten): ${a}`);
         if (merge.missing.length > 0) console.warn(`[PriceMonitor] ${product.id}: SKUs im Scrape nicht mehr vorhanden (unverändert behalten): ${merge.missing.join(', ')}`);
 
         // P-93: Verfügbarkeits-Sync — die eBay-Inventory-Item-Menge für GENAU die passende
