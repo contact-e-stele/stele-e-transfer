@@ -10,7 +10,7 @@ import { useState } from "react";
 import { MARGIN_TIERS } from "../../shared/constants";
 import { evaluateTargetDisplay } from "../../shared/pricing";
 import { productProfitRows, productTarget, type ProfitProduct } from "../../shared/target-margin-bulk";
-import type { TierPlan } from "../../shared/tier-reprice";
+import { expectedFromPlan, type TierPlan } from "../../shared/tier-reprice";
 
 export const TARGET_LEVEL_STYLE = {
   ok: { bg: "#F0FDF4", color: "#16A34A" },
@@ -21,7 +21,7 @@ export const TARGET_LEVEL_STYLE = {
 export interface TierPatch { variantSellPrices?: string; sellPrice?: number }
 
 export interface RepriceResult {
-  productId: number; title?: string; isLive?: boolean; status: "preview" | "stored" | "sent" | "send_failed" | "rejected" | "not_found";
+  productId: number; title?: string; isLive?: boolean; status: "preview" | "stored" | "sent" | "send_failed" | "sent_not_stored" | "error" | "rejected" | "not_found";
   plan?: TierPlan; error?: string; sentCount?: number; stored?: { targetMarginEur: number } & TierPatch;
 }
 
@@ -96,7 +96,9 @@ export function TargetBadge({ product, isLive, onChange }: {
     if (!pending || busy) return;
     setBusy(true); setMsg(null);
     try {
-      const r = await callTierReprice({ productIds: [product.id], targetMarginEur: pending.tier, mode: "apply", confirm: true, sendToEbay: true });
+      const r = await callTierReprice({ productIds: [product.id], targetMarginEur: pending.tier, mode: "apply", confirm: true, sendToEbay: true,
+        expected: { [String(product.id)]: expectedFromPlan(pending.plan) }, // nur senden, was in der Vorschau bestätigt wurde
+      });
       const res = r.result;
       if (res?.status === "sent" && res.stored) {
         onChange(pending.tier, { variantSellPrices: res.stored.variantSellPrices, sellPrice: res.stored.sellPrice });

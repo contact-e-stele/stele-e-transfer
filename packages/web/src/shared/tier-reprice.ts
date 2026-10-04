@@ -98,8 +98,31 @@ export function storePatchForPlan(p: RepriceProduct, plan: TierPlan): { variantS
 export const TIER_REPRICE_MAX_PRODUCTS = 10;
 
 export type TierRepriceMode = 'preview' | 'apply';
+
+// Die in der Vorschau bestätigten Preise: productId (als Text) → { skuId bzw. '' bei Einzelartikel → neuer VK }. Der Server rechnet bei
+// 'apply' neu und lehnt ab, wenn sich der Plan seit der Vorschau geändert hat (z. B. Einkaufspreis per Scrape) — gesendet wird nur,
+// was bestätigt wurde.
+export type ExpectedPrices = Record<string, Record<string, number>>;
+
+export const expectedKey = (skuId: string | null): string => skuId ?? '';
+export function expectedFromPlan(plan: TierPlan): Record<string, number> {
+  return Object.fromEntries(plan.rows.map(r => [expectedKey(r.skuId), r.newSell]));
+}
+// null = passt; sonst Klartext, was abweicht.
+export function compareExpected(plan: TierPlan, expected: Record<string, number> | undefined): string | null {
+  if (!expected) return null;
+  const keys = new Set([...plan.rows.map(r => expectedKey(r.skuId)), ...Object.keys(expected)]);
+  for (const k of keys) {
+    const row = plan.rows.find(r => expectedKey(r.skuId) === k);
+    const exp = expected[k];
+    if (!row || typeof exp !== 'number' || Math.round(row.newSell * 100) !== Math.round(exp * 100)) {
+      return `Der Preisplan hat sich seit der Vorschau geändert (${k === '' ? 'Artikel' : 'Variante ' + k}: bestätigt ${exp ?? '–'}, jetzt ${row ? row.newSell : '–'}) — bitte Vorschau neu laden.`;
+    }
+  }
+  return null;
+}
 export type TierRepriceParse =
-  | { ok: true; productIds: number[]; targetMarginEur: number; mode: TierRepriceMode; confirm: boolean; sendToEbay: boolean }
+  | { ok: true; productIds: number[]; targetMarginEur: number; mode: TierRepriceMode; confirm: boolean; sendToEbay: boolean; expected?: ExpectedPrices }
   | { ok: false; error: string };
 
 // Validierung für POST /products/tier-reprice. Nur Stufen A–D (4,50 nicht wählbar, kanonischer Wert), max. 10 Produkte je Aufruf,
@@ -115,9 +138,17 @@ export function parseTierRepriceBody(body: unknown): TierRepriceParse {
   if (ids.length > TIER_REPRICE_MAX_PRODUCTS) return { ok: false, error: `Höchstens ${TIER_REPRICE_MAX_PRODUCTS} Produkte je Aufruf (übergeben: ${ids.length})` };
   if (!ids.every(i => typeof i === 'number' && Number.isInteger(i) && i > 0)) return { ok: false, error: '"productIds" darf nur positive ganze Zahlen enthalten' };
   if (b.sendToEbay !== undefined && typeof b.sendToEbay !== 'boolean') return { ok: false, error: '"sendToEbay" muss true oder false sein' };
+  let expected: ExpectedPrices | undefined;
+  if (b.expected !== undefined) {
+    const e = b.expected;
+    const valid = !!e && typeof e === 'object' && !Array.isArray(e) && Object.values(e as Record<string, unknown>).every(m =>
+      !!m && typeof m === 'object' && !Array.isArray(m) && Object.values(m as Record<string, unknown>).every(v => typeof v === 'number' && Number.isFinite(v)));
+    if (!valid) return { ok: false, error: '"expected" muss { productId: { skuId: Preis } } sein' };
+    expected = e as ExpectedPrices;
+  }
   const confirm = b.confirm === true;
   if (b.mode === 'apply' && !confirm) return { ok: false, error: '"confirm": true fehlt — Preise werden nur nach ausdrücklicher Bestätigung gespeichert/gesendet' };
-  return { ok: true, productIds: [...new Set(ids as number[])], targetMarginEur: tier.targetEur, mode: b.mode, confirm, sendToEbay: b.sendToEbay === true };
+  return { ok: true, productIds: [...new Set(ids as number[])], targetMarginEur: tier.targetEur, mode: b.mode, confirm, sendToEbay: b.sendToEbay === true, expected };
 }
 
 export type TierRepriceAction =
@@ -131,6 +162,9 @@ export type TierRepriceAction =
 export function decideTierRepriceAction(input: { mode: TierRepriceMode; confirm: boolean; sendToEbay: boolean; isLive: boolean }): TierRepriceAction {
   if (input.mode === 'preview') return { action: 'preview' };
   if (!input.confirm) return { action: 'rejected', error: 'confirm fehlt' };
+  // Wer ausdrücklich an eBay senden will, aber ein Produkt trifft, das laut App NICHT live gelistet ist (Status/ListingId), bekommt keine
+  // stille Nur-App-Speicherung (sonst weichen App-Preise unbemerkt von eBay ab).
+  if (!input.isLive && input.sendToEbay) return { action: 'rejected', error: 'Laut App nicht live gelistet (Status/ListingId) — nichts gesendet, nichts gespeichert. Listing in der App verknüpfen oder ohne Senden speichern.' };
   if (!input.isLive) return { action: 'store_only' };
   if (!input.sendToEbay) return { action: 'rejected', error: 'Live gelistet: Preise nur mit sendToEbay:true (ausdrückliches Senden an eBay) — sonst nur das Ziel setzen' };
   return { action: 'store_and_send' };
