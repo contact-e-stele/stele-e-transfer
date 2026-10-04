@@ -14,6 +14,7 @@ import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { productProfitRows, productTarget } from "../../shared/target-margin-bulk";
+import { matchesProductSearch } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
@@ -1145,8 +1146,7 @@ export default function Produkte() {
 
   const filtered = products.filter(p => {
     if (!showListed && p.ebayStatus === "listed") return false;
-    if (!search) return true;
-    return p.generatedTitle.toLowerCase().includes(search.toLowerCase()) || p.title.toLowerCase().includes(search.toLowerCase());
+    return matchesProductSearch(p, search);
   });
 
   const stats = {
