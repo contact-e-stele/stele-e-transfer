@@ -12,11 +12,8 @@ import {
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
-import {
-  computeMinSellPrice, profitAtSellPrice, evaluateTargetDisplay, isChinaShipping,
-  parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
-} from "../../shared/pricing";
-import { MARGIN_TIERS } from "../../shared/constants";
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { TargetBadge } from "../components/target-badge";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
@@ -157,110 +154,6 @@ function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) 
         <span style={{ fontSize: 11, background: margin > 15 ? "#F0FDF4" : margin > 5 ? "#FEF9C3" : "#FEF2F2", color: margin > 15 ? "#16A34A" : margin > 5 ? "#CA8A04" : "#DC2626", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>
           {margin > 15 ? <TrendingUp size={10} /> : <TrendingDown size={10} />} {margin.toFixed(1)}%
         </span>
-      )}
-    </div>
-  );
-}
-
-// A-014 (Preisformel v2, Nachtrag Margen-Stufen): je Produkt UND je Variante "Ziel <Stufe> · Erwartet <echter Gewinn beim
-// gesetzten VK nach Formel v2>". Gelb = Erwartet < Ziel, rot = Erwartet < Boden (Preis anheben). Dazu die Stufen-Auswahl A–D.
-const TARGET_LEVEL_STYLE = {
-  ok: { bg: "#F0FDF4", color: "#16A34A" },
-  yellow: { bg: "#FEF9C3", color: "#A16207" },
-  red: { bg: "#FEF2F2", color: "#DC2626" },
-} as const;
-
-function TargetBadge({ product, onChange }: { product: Product; onChange: (targetMarginEur: number) => void }) {
-  const [saving, setSaving] = useState(false);
-  const target = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
-  const china = isChinaShipping(product.shipsFrom);
-  const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-  const profitAt = (sellPrice: number, buyPrice: number) => profitAtSellPrice({
-    sellPrice, buyPrice, isChinaOrigin: china,
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
-  });
-
-  const rows: Array<{ label: string; profit: number }> = [];
-  let variantEntries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; ebayPrice?: number }> = [];
-  try { variantEntries = product.variantPrices ? JSON.parse(product.variantPrices) : []; } catch { /* ignorieren */ }
-  const isVariant = variantEntries.length > 1;
-  if (isVariant) {
-    const stored = parseVariantSellPrices(product.variantSellPrices);
-    for (const v of variantEntries) {
-      if (typeof v.price !== "number" || v.price <= 0) continue;
-      const sell = resolveVariantSellPrice(v.skuId, stored, v).sellPrice ?? product.sellPrice;
-      if (sell == null) continue;
-      const label = Object.values(v.attrs ?? {}).join(" / ") || `…${v.skuId.slice(-6)}`;
-      rows.push({ label, profit: profitAt(sell, v.price) });
-    }
-  } else if (product.sellPrice && product.buyPrice) {
-    rows.push({ label: "", profit: profitAt(product.sellPrice, product.buyPrice) });
-  }
-
-  const worst = rows.length > 0 ? Math.min(...rows.map(r => r.profit)) : null;
-  const display = worst != null ? evaluateTargetDisplay(target, worst) : null;
-  const style = display ? TARGET_LEVEL_STYLE[display.level] : null;
-  const fmt = (n: number) => n.toFixed(2).replace(".", ",");
-  const knownTier = MARGIN_TIERS.some(t => Math.abs(t.targetEur - target) < 0.005);
-
-  const select = async (t: number) => {
-    if (saving || Math.abs(t - target) < 0.005) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/products/${product.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetMarginEur: t }),
-      });
-      if (res.ok) onChange(t);
-    } finally { setSaving(false); }
-  };
-
-  return (
-    <div style={{ marginTop: 6 }}>
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-        {display && style && (
-          <span
-            title={`Boden dieser Stufe: ${fmt(display.floorEur)} € — rot = darunter (Preis anheben), gelb = unter dem Ziel`}
-            style={{ fontSize: 11, background: style.bg, color: style.color, padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}
-          >
-            Ziel {fmt(display.targetEur)} € · Erwartet {fmt(display.expectedEur)} €{isVariant ? " (schlechteste Variante)" : ""}
-          </span>
-        )}
-        {MARGIN_TIERS.map(t => (
-          <button
-            key={t.label}
-            type="button"
-            disabled={saving}
-            onClick={() => select(t.targetEur)}
-            title={`Stufe ${t.label}: Ziel ${fmt(t.targetEur)} €, Boden ${fmt(t.floorEur)} €`}
-            style={{
-              fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 6, cursor: saving ? "wait" : "pointer", fontFamily: "inherit",
-              border: Math.abs(t.targetEur - target) < 0.005 ? "1.5px solid #16A34A" : "1px solid #E2E8F0",
-              background: Math.abs(t.targetEur - target) < 0.005 ? "#F0FDF4" : "#fff",
-              color: Math.abs(t.targetEur - target) < 0.005 ? "#16A34A" : "#64748B",
-            }}
-          >{t.label}</button>
-        ))}
-        {!knownTier && (
-          <span title="Bestandswert, nicht mehr als Stufe wählbar (bleibt unverändert, bis eine Stufe A–D gewählt wird)" style={{ fontSize: 10, color: "#92400E", fontWeight: 700 }}>
-            Ziel {fmt(target)} € (alt)
-          </span>
-        )}
-      </div>
-      {isVariant && rows.length > 0 && (
-        <details style={{ marginTop: 4 }}>
-          <summary style={{ fontSize: 10, color: "#64748B", cursor: "pointer" }}>je Variante</summary>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 2 }}>
-            {rows.map((r, i) => {
-              const d = evaluateTargetDisplay(target, r.profit);
-              return (
-                <span key={i} style={{ fontSize: 10, color: TARGET_LEVEL_STYLE[d.level].color }}>
-                  {r.label}: Ziel {fmt(d.targetEur)} · Erwartet {fmt(d.expectedEur)} €
-                </span>
-              );
-            })}
-          </div>
-        </details>
       )}
     </div>
   );

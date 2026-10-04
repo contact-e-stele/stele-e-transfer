@@ -12,11 +12,12 @@ import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAli
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
 import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail, addressMatchesEmailByStreetOnly } from './gmail';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { eq, or, like } from 'drizzle-orm';
+import { eq, or, like, inArray } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
 import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT, ALI_EINFUHR_EUR, MARGIN_TIERS } from '../shared/constants';
 import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
 import { isStringRecord } from '../shared/validation';
+import { parseBulkTargetMarginBody } from '../shared/target-margin-bulk';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
 import { evaluateVariantGate } from '../shared/variant-gate';
 import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
@@ -625,6 +626,10 @@ const app = new Hono()
         adRate: schema.products.adRate,
         lastPriceCheck: schema.products.lastPriceCheck,
         shipsFrom: schema.products.shipsFrom,
+        // A-016: für "Ziel · Erwartet" + Stufen-Knöpfe im Listings-Tab (gleiche Anzeige wie im Produkte-Tab)
+        targetMarginEur: schema.products.targetMarginEur,
+        variantPrices: schema.products.variantPrices,
+        variantSellPrices: schema.products.variantSellPrices,
         htmlDescription: schema.products.htmlDescription,
       }).from(schema.products).all();
 
@@ -3068,6 +3073,40 @@ const app = new Hono()
       return c.json({ ok: true }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // A-016: Margen-Stufe für mehrere Produkte auf einmal (Listings-Tab "Stufe für alle angezeigten setzen"). Ändert NUR
+  // products.target_margin_eur — kein eBay-Aufruf, kein Preis-Schreibvorgang. Muss VOR '/products/:id' stehen, sonst fängt
+  // die :id-Route "target-margin" ab. Validierung (nur Stufen A–D, confirm:true, Obergrenze) in shared/target-margin-bulk.ts.
+  .patch('/products/target-margin', async (c) => {
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+    const parsed = parseBulkTargetMarginBody(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const existing = await db.select({ id: schema.products.id }).from(schema.products)
+        .where(inArray(schema.products.id, parsed.productIds)).all();
+      const found = new Set(existing.map(r => r.id));
+      const results: Array<{ id: number; ok: boolean; error?: string }> = [];
+      for (const id of parsed.productIds) {
+        if (!found.has(id)) { results.push({ id, ok: false, error: 'Produkt nicht gefunden' }); continue; }
+        try {
+          await db.update(schema.products)
+            .set({ targetMarginEur: parsed.targetMarginEur, updatedAt: new Date().toISOString() })
+            .where(eq(schema.products.id, id));
+          results.push({ id, ok: true });
+        } catch {
+          results.push({ id, ok: false, error: 'DB Fehler' });
+        }
+      }
+      return c.json({ ok: results.every(r => r.ok), targetMarginEur: parsed.targetMarginEur, results }, 200);
+    } catch {
+      return c.json({ error: 'DB Fehler' }, 503);
     }
   })
 
