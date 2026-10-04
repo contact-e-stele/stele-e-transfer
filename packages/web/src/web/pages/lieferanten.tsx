@@ -8,6 +8,7 @@ import { safeJson } from "../lib/safeFetch";
 import { emptyOverrides, overridesToFlat, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
 import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fields-editor";
 import { ALI_EINFUHR_EUR, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
+import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
@@ -489,6 +490,8 @@ export default function Lieferanten() {
   const matchedSupplier = product ? findMatchingSupplier(product.seller, trustedSuppliers) : undefined;
   const supplierVerified = matchedSupplier?.complianceStatus === 'geprueft';
   const complianceBlocked = regulatedMatches.length > 0 && !supplierVerified;
+  // A-029 (P-E01): Elektro beim Import nur VORSCHLAGEN (gelb "Elektro?"); gespeichert wird nur der Vorschlag, bestätigt (ja/nein) wird im Produkte-Tab.
+  const electricHint = product ? suggestElectric([product.title, editableTitle, product.description, ...Object.entries(product.specs ?? {}).map(([k, v]) => `${k} ${v}`)]) : null;
 
   // ─── Auto-Start from Suche-Tab ────────────────────────────────────────────
   useEffect(() => {
@@ -2180,6 +2183,12 @@ export default function Lieferanten() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: "#0F172A" }}>In DB speichern</span>
                 {saveResult?.id && <span style={{ fontSize: 12, color: "#15803D", fontWeight: 600 }}>✓ Gespeichert (ID: {saveResult.id})</span>}
               </div>
+
+              {electricHint?.suggested && (
+                <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 12, background: "#FEFCE8", border: "1px solid #FACC15", fontSize: 12, color: "#A16207", fontWeight: 600 }}>
+                  Elektro? — Treffer: {electricHint.matches.join(", ")}. Wird als Vorschlag gespeichert; das Listen bleibt gesperrt, bis im Produkte-Tab Elektro ja/nein gewählt ist (Elektro nur Kat. 5, keine Batterie/Akku).
+                </div>
+              )}
 
               {complianceBlocked && (
                 <div style={{

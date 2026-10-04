@@ -67,3 +67,13 @@ export const SHOP_CATEGORIES = [
   'Garten & Outdoor',
   'Sonstiges',
 ] as const;
+
+// ─── A-029 (P-E01, Beschluss Inhaber 04.10.2026): Elektro Kat. 5 Kleingeräte ───────────────────────────────────────────
+// EAR-Umlage je verkauftem Stück (stiftung ear / Garantie / Entsorgung), wird bei Elektro = ja zu den Kosten K der Preisformel v2 addiert.
+// Standard 0,00 — den Betrag legt der Inhaber fest, sobald Gebühr und Garantie bekannt sind (Geld-Logik: nur der Inhaber ändert ihn).
+export const EAR_UMLAGE_EUR = 0.00;
+// Batterie-Registrierung (BattG) liegt NICHT vor und ist fest AUS: ein Produkt mit Batterie/Akku wird nie gelistet.
+// Nur der Inhaber ändert das per ausdrücklichem Beschluss (kein Einstellungsfeld, kein Schalter in der Oberfläche).
+export const BATTERY_REGISTRATION_PRESENT = false;
+// Start-Liste "Registrierte Gerätearten" (erweiterbar nur durch den Inhaber in den Einstellungen).
+export const DEFAULT_REGISTERED_DEVICE_TYPES: string[] = ['Kat. 5 Kleingeräte'];

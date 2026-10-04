@@ -141,6 +141,12 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN compliance_override_category TEXT`,
   `ALTER TABLE products ADD COLUMN compliance_override_keyword TEXT`,
   `ALTER TABLE products ADD COLUMN compliance_override_field TEXT`,
+  // A-029 (P-E01): Elektro Kat. 5 — additiv, nullable bzw. Default 0, keine bestehende Spalte verändert
+  `ALTER TABLE products ADD COLUMN is_electric INTEGER`,
+  `ALTER TABLE products ADD COLUMN electric_suggested INTEGER DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN device_type TEXT`,
+  `ALTER TABLE products ADD COLUMN has_battery INTEGER DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN electric_proofs TEXT`,
 ];
 
 export async function runMigrations() {

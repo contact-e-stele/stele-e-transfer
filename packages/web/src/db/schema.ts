@@ -79,6 +79,12 @@ export const products = sqliteTable('products', {
   complianceOverrideCategory: text('compliance_override_category'),   // erkannte Kategorie(n) als Klartext-Label (labelDe), Komma-getrennt falls mehrere
   complianceOverrideKeyword: text('compliance_override_keyword'),     // ausgelöste(s) Stichwort(e), Komma-getrennt falls mehrere
   complianceOverrideField: text('compliance_override_field'),         // 'title' | 'description', Komma-getrennt falls mehrere
+  // A-029 (P-E01, 04.10.2026): Elektro Kat. 5. Alle additiv; Bestandsprodukte: is_electric NULL, electric_suggested/has_battery 0 → wie bisher (kein Elektro).
+  isElectric: integer('is_electric'),                                  // NULL = nicht entschieden, 0 = nein, 1 = ja (nur der Inhaber bestätigt)
+  electricSuggested: integer('electric_suggested').default(0),         // 1 = Import-Vorschlag (gelb "Elektro?"), solange is_electric NULL sperrt das Listen
+  deviceType: text('device_type'),                                     // Geräteart, nur aus den registrierten Gerätearten (Einstellungen)
+  hasBattery: integer('has_battery').default(0),                       // 1 = enthält Batterie/Akku → nie gelistet (Batterie-Registrierung fest AUS)
+  electricProofs: text('electric_proofs'),                             // JSON {ce|declaration|manual|weeeSymbol: {ok, note}} — Häkchen + Beleg, intern
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

@@ -345,6 +345,7 @@ export interface EbayListingInput {
   description: string; // HTML – geht in listingDescription (Offer), max 500KB
   shortDescription?: string; // Plain-Text – geht in inventory_item description, max 4000 Zeichen
   price: number; // EUR
+  earUmlageEur?: number; // A-029: EAR-Umlage je Stück (nur Elektro = ja, sonst 0/weggelassen) — nur für den Fallback-Preis einer Variante ohne ebayPrice
   // A-021: OUT-Parameter. listOnEbay/listOnEbayWithVariants hängen hier jeden Offer-Preis an, sobald das Offer bei eBay angelegt ist. Der Aufrufer
   // darf ihn erst auswerten (= in der App speichern), NACHDEM listOnEbay erfolgreich zurückgekehrt ist (Publish erfolgreich) — bei einem Fehler
   // wirft listOnEbay, und nichts davon wird gespeichert.
@@ -1792,6 +1793,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     const varPrice: number | undefined = varPriceEntry.ebayPrice ??
       (varPriceEntry.price != null && varPriceEntry.price > 0
         ? computeMinSellPrice({
+            earUmlageEur: input.earUmlageEur,
             buyPrice: varPriceEntry.price, isChinaOrigin: isChinaShipping(input.shipsFrom),
             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
