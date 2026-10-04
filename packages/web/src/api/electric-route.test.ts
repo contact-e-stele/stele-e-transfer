@@ -151,6 +151,14 @@ describe('Elektro-Sperre in POST /api/ebay/list (Klartext im Fehlerfeld, vor eBa
     expect(final.error).not.toContain('Elektro-Sperre');
     expect(final.error).toContain('Keine Bilder'); // erst NACH der Sperre
   });
+  test('Live gelistetes Produkt: Elektro-Felder per PATCH gesperrt (409) — Live-Angebote werden nicht angefasst; unrelated Felder bleiben änderbar', async () => {
+    await insertProduct(15, { ebayStatus: 'listed', ebayListingId: '198600000099' });
+    const res = await call('PATCH', '/api/products/15', { isElectric: true });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain('live gelistet');
+    expect((await readProduct(15)).isElectric).toBeNull();
+    expect((await call('PATCH', '/api/products/15', { ean: '4006381333931' })).status).toBe(200);
+  });
   test('in keinem dieser Fälle wurde das Netzwerk berührt (kein eBay-Aufruf)', () => {
     expect(fetchCalls).toBe(0);
   });

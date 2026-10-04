@@ -3233,6 +3233,9 @@ const app = new Hono()
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
       // A-029 (P-E01): Elektro-Felder (Elektro ja/nein/offen, Geräteart nur aus den registrierten, Batterie, Nachweise)
       if (['isElectric', 'hasBattery', 'deviceType', 'electricProofs'].some(k => k in body)) {
+        // Live-Angebote werden nicht angefasst: bei einem live gelisteten Produkt sind die Elektro-Felder gesperrt (auch per API / älterem Tab).
+        const [cur] = await db.select({ st: schema.products.ebayStatus, lid: schema.products.ebayListingId }).from(schema.products).where(eq(schema.products.id, id));
+        if (cur?.st === 'listed' || cur?.lid) return c.json({ error: 'Produkt ist live gelistet — Elektro-Felder sind gesperrt (Live-Angebote werden nicht angefasst)' }, 409);
         const electricPatch = parseElectricPatch(body, (await getElectricSettings()).registeredDeviceTypes);
         if (!electricPatch.ok) return c.json({ error: electricPatch.error }, 400);
         Object.assign(allowed, electricPatch.fields);

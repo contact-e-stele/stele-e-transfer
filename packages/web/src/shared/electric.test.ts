@@ -97,17 +97,18 @@ describe('WEEE-Nummer', () => {
 
 describe('suggestElectric (nur vorschlagen)', () => {
   test('Wörter aus dem Auftrag werden erkannt (deutsch und englisch)', () => {
-    for (const t of ['USB Ladekabel', 'LED Lampe', 'Akku Staubsauger', 'Batterie 9V', 'Knopfzelle CR2032', 'elektrische Zahnbürste', 'Ladegerät schnell', 'Netzteil 12V', 'Ventilator klein', 'Heizdecke', '5000 mAh Power', '12 Volt', '40 Watt', 'Motor 12V', 'Stromkabel', 'rechargeable fan', 'button cell holder']) {
+    for (const t of ['USB Ladekabel', 'LED Lampe', 'Akku Staubsauger', 'Batterie 9V', 'Knopfzelle CR2032', 'elektrische Zahnbürste', 'Ladegerät schnell', 'Netzteil 12V', 'Ventilator klein', 'Heizdecke', '5000 mAh Power', '12 Volt', '40 Watt', 'Motor 12V', 'Stromkabel', 'rechargeable fan', 'button cell holder', 'cables 2m', 'Mini fans', 'garden lamps', '2 chargers', 'Heaters winter', '12V Pumpe', '3.7V Modul', 'Bluetooth Tracker', 'Wireless Maus', 'Solar Garten', 'Sensor Set', 'Speaker klein', 'Kopfhörer', 'Lautsprecher', 'Steckdose', 'Lüfter 12cm', 'Leuchte', 'Timer 60min']) {
       expect(suggestElectric([t]).suggested).toBe(true);
     }
   });
   test('Nicht-Elektro (auch Beinahe-Treffer) bleibt ohne Vorschlag', () => {
-    for (const t of ['Silikon Backmatte', 'Wattestäbchen 200 Stück', 'Haarspange Gold', 'Bleder Kabelbinder-freie Matte'.replace('Kabelbinder-freie ', ''), 'Hundeleine Nylon 5m', 'Reiseflaschen Set 11-teilig']) {
+    for (const t of ['Silikon Backmatte', 'Wattestäbchen 200 Stück', 'Haarspange Gold', 'Bleder Kabelbinder-freie Matte'.replace('Kabelbinder-freie ', ''), 'Hundeleine Nylon 5m', 'Reiseflaschen Set 11-teilig', 'Größe 5 V-Ausschnitt weit', 'Fansticker Aufkleber']) {
       expect(suggestElectric([t]).suggested).toBe(false);
     }
   });
   test('mehrere Quellen (Titel, Beschreibung, Merkmale) werden zusammen geprüft; leere/null-Werte stören nicht', () => {
     expect(suggestElectric([null, undefined, 'Haarspange', 'mit LED Licht']).matches).toEqual(['led']);
+    expect(suggestElectric(['(LED)-Leiste, 12V']).matches).toEqual(['led', '12v']);
     expect(suggestElectric([null, '']).suggested).toBe(false);
   });
 });

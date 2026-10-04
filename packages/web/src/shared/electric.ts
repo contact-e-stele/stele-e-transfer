@@ -86,16 +86,17 @@ export function evaluateElectricGate(p: ElectricProduct, s: ElectricSettings): E
 // Kurze/mehrdeutige Begriffe nur als ganzes Wort (LED, USB, Watt, Volt, mAh, englische Wörter — "Wattestäbchen" ist kein Treffer).
 // Deutsche Stämme auch mitten im Wort (Stromkabel, Ladekabel, Beheizt, Taschenlampe): ein übersehener Elektro-Artikel ist riskanter als ein
 // Fehlalarm (der Vorschlag sperrt nur, bis der Inhaber ja/nein wählt).
-const WHOLE_WORDS = ['USB', 'LED', 'Watt', 'Volt', 'mAh', 'cable', 'lamp', 'power', 'charger', 'fan', 'heater', 'electric'];
-const STEMS = ['Kabel', 'Motor', 'Lampe', 'Strom', 'Akku', 'Batter', 'Knopfzelle', 'elektr', 'Ladeger', 'Netzteil', 'Ventilator', 'Heiz', 'rechargeable', 'button\\s+cell'];
+const WHOLE_WORDS = ['USB', 'LED', 'Watt', 'Volt', 'mAh', 'cables?', 'lamps?', 'power', 'chargers?', 'fans?', 'heaters?', 'electric', 'bluetooth', 'wireless', 'solar', 'sensors?', 'speakers?', 'headphones?', 'earphones?', 'timer'];
+const STEMS = ['Kabel', 'Motor', 'Lampe', 'Strom', 'Akku', 'Batter', 'Knopfzelle', 'elektr', 'Ladeger', 'Netzteil', 'Ventilator', 'Heiz', 'Steckdose', 'Lautsprecher', 'Kopfh\u00f6rer', 'L\u00fcfter', 'Leuchte', 'rechargeable', 'button\\s+cell'];
+// Ohne Lookbehind (ältere Browser): Ganzwort = Trennzeichen davor (oder Anfang) + Wort + kein Buchstabe danach; Spannung "12V"/"5V"/"3.7V".
 const SUGGEST_SRC =
-  `(?<![\\p{L}\\p{N}])(?:${WHOLE_WORDS.join('|')})(?![\\p{L}\\p{N}])|(?:${STEMS.join('|')})`;
+  `(?:^|[^\\p{L}\\p{N}])(?:${WHOLE_WORDS.join('|')})(?![\\p{L}\\p{N}])|\\d+(?:[.,]\\d+)?V(?![\\p{L}\\p{N}])|(?:${STEMS.join('|')})`;
 
 export function suggestElectric(texts: Array<string | null | undefined>): { suggested: boolean; matches: string[] } {
   const matches = new Set<string>();
   for (const t of texts) {
     if (!t) continue;
-    for (const m of t.matchAll(new RegExp(SUGGEST_SRC, 'giu'))) matches.add(m[0].toLowerCase());
+    for (const m of t.matchAll(new RegExp(SUGGEST_SRC, 'giu'))) matches.add(m[0].replace(/^[^\p{L}\p{N}]+/u, '').toLowerCase());
   }
   return { suggested: matches.size > 0, matches: [...matches] };
 }
