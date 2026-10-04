@@ -2150,14 +2150,29 @@ export async function updateInventoryItemTitle(
   });
   if (!getRes.ok) return { ok: false, error: `GET inventory_item/${sku} fehlgeschlagen: ${getRes.status}` };
   const item = await getRes.json() as Record<string, unknown>;
-  item.product = { ...(item.product as Record<string, unknown> | undefined ?? {}), title };
+  item.product = sanitizeItemProductForPut({ ...(item.product as Record<string, unknown> | undefined ?? {}), title });
   const putRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
     body: JSON.stringify(item),
   });
   if (putRes.ok || putRes.status === 204) return { ok: true };
-  return { ok: false, error: `PUT inventory_item/${sku} fehlgeschlagen: ${putRes.status}` };
+  // A-013: eBays Antworttext anhängen (vorher nur der Status → Ursache der 400er bei 83/87/96/140/143 nicht ermittelbar).
+  const detail = await putRes.text().catch(() => '');
+  return { ok: false, error: `PUT inventory_item/${sku} fehlgeschlagen: ${putRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}` };
+}
+
+// A-013 (04.10.2026): Der Titel-PUT schickt das bestehende Inventory Item zurück. Bei alten Angeboten
+// (83, 87, 96, 140, 143 – live per GET belegt) fehlt darin das EAN-Merkmal (vgl. A-012) und MPN ist die
+// AliExpress-ID (P71-B Regel 5, Verstoßserie 28.09.). Beides beim Zurückschicken bereinigen, sonst nichts ändern.
+export function sanitizeItemProductForPut(product: Record<string, unknown>): Record<string, unknown> {
+  const aspects = { ...((product.aspects as Record<string, string[]> | undefined) ?? {}) };
+  if (!aspects['EAN']?.length) aspects['EAN'] = ['Nicht zutreffend'];
+  const aspectMpn = aspects['MPN']?.[0];
+  if (aspectMpn !== undefined && isForbiddenMpn(aspectMpn)) aspects['MPN'] = ['Nicht zutreffend'];
+  const out: Record<string, unknown> = { ...product, aspects };
+  if (typeof out.mpn === 'string' && isForbiddenMpn(out.mpn)) delete out.mpn;
+  return out;
 }
 
 export async function updateInventoryItemGroupTitle(
@@ -2178,7 +2193,8 @@ export async function updateInventoryItemGroupTitle(
     body: JSON.stringify(group),
   });
   if (putRes.ok || putRes.status === 204) return { ok: true };
-  return { ok: false, error: `PUT inventory_item_group/${groupSku} fehlgeschlagen: ${putRes.status}` };
+  const detail = await putRes.text().catch(() => '');
+  return { ok: false, error: `PUT inventory_item_group/${groupSku} fehlgeschlagen: ${putRes.status}${detail ? ` ${detail.slice(0, 300)}` : ''}` };
 }
 
 // P71-B Nachtrag (Live-Fund 29.09., Produkt 147): bei Varianten-Angeboten liegt die ANGEZEIGTE

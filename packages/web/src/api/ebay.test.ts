@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent, extractMissingAspectName } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent, extractMissingAspectName, updateInventoryItemTitle, sanitizeItemProductForPut } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -1021,7 +1021,8 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
 
     const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok');
     expect(result.ok).toBe(true);
-    expect(putBodies.item.product).toEqual({ title: 'Neuer Titel', description: 'Plain-Text bleibt' });
+    // A-013: beim Zurückschicken wird ein fehlendes EAN-Merkmal mit "Nicht zutreffend" ergänzt (sonst eBay 400).
+    expect(putBodies.item.product).toEqual({ title: 'Neuer Titel', description: 'Plain-Text bleibt', aspects: { EAN: ['Nicht zutreffend'] } });
   });
 
   test('Einzelartikel: Beschreibung ok, aber Titel-PUT scheitert → Gesamtergebnis ok:false (kein stiller Titel-Verlust)', async () => {
@@ -1156,5 +1157,53 @@ describe('extractMissingAspectName — "Das Feld … fehlt" (A-012)', () => {
   });
   test('alte Meldung "Das Artikelmerkmal … fehlt" funktioniert weiter', () => {
     expect(extractMissingAspectName('Das Artikelmerkmal Produktart fehlt.')).toBe('Produktart');
+  });
+});
+
+
+// A-013 (04.10.2026): Titel-PUT bei 83/87/96/140/143 → 400. Live-GET (stele-83) belegt: kein EAN, MPN = AliExpress-ID.
+const LIVE_ITEM_83 = {
+  sku: 'stele-83', locale: 'de_DE',
+  product: { title: 'Backpapier Rechteckig 300 Blatt Antihaft, Lebensmittelqualität Hitzebeständig',
+    aspects: { Herstellernummer: ['Nicht zutreffend'], Marke: ['Markenlos'], Abteilung: ['Unisex'], MPN: ['1005012645336465'] },
+    brand: 'Markenlos', mpn: '1005012645336465', imageUrls: ['https://ae01.alicdn.com/kf/x.jpg'] },
+  condition: 'NEW',
+  availability: { shipToLocationAvailability: { quantity: 3 } },
+};
+
+describe('sanitizeItemProductForPut (A-013)', () => {
+  test('ergänzt EAN "Nicht zutreffend" und ersetzt AliExpress-ID als MPN, lässt den Rest unverändert', () => {
+    const out = sanitizeItemProductForPut({ ...LIVE_ITEM_83.product, title: 'Neu' });
+    expect((out.aspects as Record<string, string[]>)['EAN']).toEqual(['Nicht zutreffend']);
+    expect((out.aspects as Record<string, string[]>)['MPN']).toEqual(['Nicht zutreffend']);
+    expect(out.mpn).toBeUndefined();
+    expect(out.title).toBe('Neu');
+    expect(out.brand).toBe('Markenlos');
+    expect((out.aspects as Record<string, string[]>)['Marke']).toEqual(['Markenlos']);
+  });
+  test('vorhandene EAN und zulässige MPN bleiben', () => {
+    const out = sanitizeItemProductForPut({ aspects: { EAN: ['4006381333931'], MPN: ['AB-12'] }, mpn: 'AB-12' });
+    expect((out.aspects as Record<string, string[]>)['EAN']).toEqual(['4006381333931']);
+    expect((out.aspects as Record<string, string[]>)['MPN']).toEqual(['AB-12']);
+    expect(out.mpn).toBe('AB-12');
+  });
+});
+
+describe('updateInventoryItemTitle (A-013)', () => {
+  test('PUT-Body bereinigt + eBay-Fehlertext landet in der Meldung', async () => {
+    let putBody: Record<string, unknown> | null = null;
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      if (!init?.method) return new Response(JSON.stringify(LIVE_ITEM_83), { status: 200 });
+      putBody = JSON.parse(String(init.body));
+      return new Response('{"errors":[{"errorId":25002,"message":"Boom-Grund"}]}', { status: 400 });
+    }) as unknown as typeof fetch;
+    const res = await updateInventoryItemTitle('stele-83', 'Neuer Titel', 'tok', fetchFn);
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('400');
+    expect(res.error).toContain('Boom-Grund');
+    const p = (putBody as unknown as { product: Record<string, unknown> }).product;
+    expect(p.title).toBe('Neuer Titel');
+    expect((p.aspects as Record<string, string[]>)['EAN']).toEqual(['Nicht zutreffend']);
+    expect((p.aspects as Record<string, string[]>)['MPN']).toEqual(['Nicht zutreffend']);
   });
 });
