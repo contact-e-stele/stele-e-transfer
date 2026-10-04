@@ -18,6 +18,8 @@ import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT, ALI_EINFUHR_EUR, MARGIN_TIE
 import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
 import { isStringRecord } from '../shared/validation';
 import { parseBulkTargetMarginBody } from '../shared/target-margin-bulk';
+import { parseTierRepriceBody } from '../shared/tier-reprice';
+import { runTierReprice, type TierRepriceProductRow } from './tier-reprice';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
 import { evaluateVariantGate } from '../shared/variant-gate';
 import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
@@ -3107,6 +3109,46 @@ const app = new Hono()
       return c.json({ ok: results.every(r => r.ok), targetMarginEur: parsed.targetMarginEur, results }, 200);
     } catch {
       return c.json({ error: 'DB Fehler' }, 503);
+    }
+  })
+
+  // A-017: Stufenwechsel → neue VK je Variante/Einzelartikel nach Formel v2. mode:'preview' schreibt/sendet NICHTS. mode:'apply'
+  // braucht confirm:true; nicht live gelistet → Preise nur in der App speichern (variant_sell_prices bzw. sellPrice); live gelistet →
+  // nur mit sendToEbay:true, dann ERST eBay (updateOfferPriceBySku: GET→PUT volles Offer, je Variante; Einzelartikel Inventory-API
+  // mit Trading-Fallback), die App-Preise nur bei vollem Erfolg. Max. 10 Produkte je Aufruf. Entscheidung: shared/tier-reprice.ts.
+  .post('/products/tier-reprice', async (c) => {
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+    const parsed = parseTierRepriceBody(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => {
+        const s = await import('../db/schema');
+        return { db: m.db, schema: s };
+      });
+      const p = schema.products;
+      const rows = await db.select({
+        id: p.id, generatedTitle: p.generatedTitle, buyPrice: p.buyPrice, sellPrice: p.sellPrice, shipsFrom: p.shipsFrom, adRate: p.adRate,
+        variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices, variants: p.variants,
+        ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId,
+      }).from(p).where(inArray(p.id, parsed.productIds)).all();
+      const byId = new Map<number, TierRepriceProductRow>(rows.map(r => [r.id, { ...r, ebayStatus: r.ebayStatus ?? 'none' }]));
+      const { updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
+      const results = await runTierReprice(byId, parsed, {
+        sendVariants: (id, groups, vrows) => updateEbayVariantPricesIndividually(id, groups, vrows),
+        sendSingle: async (id, listingId, price) => {
+          if (await updateEbayPriceInventory(id, price)) return { ok: true };
+          const t = await updateEbayPriceTrading(listingId, price);
+          return { ok: t.ok, error: t.error };
+        },
+        store: async (id, patch) => {
+          await db.update(p).set({ ...patch, updatedAt: new Date().toISOString() }).where(eq(p.id, id));
+        },
+      });
+      return c.json({ mode: parsed.mode, targetMarginEur: parsed.targetMarginEur, results }, 200);
+    } catch (e) {
+      console.error('[tier-reprice]', e);
+      return c.json({ error: 'Fehler beim Stufenwechsel: ' + String(e) }, 500);
     }
   })
 
