@@ -78,7 +78,7 @@ function filteredAttrValues(attrs: Record<string, string> | undefined): string[]
     .map(([, v]) => v);
 }
 
-function buildCombinations(groups: VariantGroup[]): Array<Record<string, string>> {
+export function buildCombinations(groups: VariantGroup[]): Array<Record<string, string>> {
   const result: Array<Record<string, string>> = [{}];
   for (const group of groups) {
     const next: Array<Record<string, string>> = [];
@@ -96,7 +96,7 @@ function buildCombinations(groups: VariantGroup[]): Array<Record<string, string>
 // Zuordnung (wenn vorhanden — dann verbindlich, attrs wird für DIESEN Eintrag nicht mehr geprüft),
 // oder — falls (noch) keine displayValues gesetzt sind — über exakten, getrimmten, case-
 // insensitiven Wertevergleich gegen die (NON_VARIATION_ASPECTS-gefilterten) attrs-Werte.
-function entryMatchesCombo(combo: Record<string, string>, entry: VariantPriceEntry): boolean {
+export function entryMatchesCombo(combo: Record<string, string>, entry: VariantPriceEntry): boolean {
   if (entry.displayValues) {
     return Object.entries(combo).every(([k, v]) => norm(entry.displayValues![k] ?? '') === norm(v));
   }

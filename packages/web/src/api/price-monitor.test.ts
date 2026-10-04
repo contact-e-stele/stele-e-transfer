@@ -536,6 +536,109 @@ describe('mergeFreshVariantPrices (A1: Merge statt Overwrite)', () => {
   });
 });
 
+// A-015 (04.10.2026): AliExpress vergibt neue skuIds für dieselbe Kombination → keine Dubletten mehr anhängen (Live-Fund stele-194).
+describe('mergeFreshVariantPrices (A-015: neue skuId für bekannte attrs)', () => {
+  const orig = { skuId: 'OLD-1', attrs: { Size: '5m', Color: 'Pink' }, price: 6.09, stock: 18, ebayPrice: 18.95, imageUrl: 'http://img/p.jpg', displayValues: { Size: '5m', Color: 'Pink' } };
+  const other = { skuId: 'OLD-2', attrs: { Size: '3m', Color: 'Pink' }, price: 4.19, stock: 9, ebayPrice: 16.95, imageUrl: 'http://img/p3.jpg', displayValues: { Size: '3m', Color: 'Pink' } };
+  const run = (existing: unknown[], fresh: Array<{ skuId: string; attrs: Record<string, string>; price: number; stock?: number }>) =>
+    mergeFreshVariantPrices(JSON.stringify(existing), fresh);
+
+  test('genau ein bestehender Eintrag fehlt im Scrape + genau eine neue skuId mit denselben attrs → ersetzt skuId/price/stock, ebayPrice/imageUrl/displayValues bleiben', () => {
+    const r = run([orig, other], [
+      { skuId: 'NEW-1', attrs: { Size: '5m', Color: 'Pink' }, price: 6.39, stock: 499 },
+      { skuId: 'OLD-2', attrs: { Size: '3m', Color: 'Pink' }, price: 4.19, stock: 9 },
+    ]);
+    const out = JSON.parse(r.json!);
+    expect(out).toHaveLength(2); // keine Dublette
+    expect(out[0]).toEqual({ ...orig, skuId: 'NEW-1', price: 6.39, stock: 499 });
+    expect(r.replaced).toEqual([{ from: 'OLD-1', to: 'NEW-1', oldPrice: 6.09, newPrice: 6.39 }]);
+    expect(r.added).toEqual([]);
+    expect(r.ambiguous).toEqual([]);
+    expect(r.missing).toEqual([]); // der ersetzte Eintrag gilt nicht mehr als "fehlend"
+  });
+
+  test('Groß-/Kleinschreibung und Versand-Attribute egal ("green" ↔ "Green", Ships From)', () => {
+    const o = { skuId: 'G-OLD', attrs: { Size: '5m', Color: 'green' }, price: 5.99, stock: 13, ebayPrice: 18.95, displayValues: { Size: '5m', Color: 'green' } };
+    const r = run([o], [{ skuId: 'G-NEW', attrs: { Size: '5m', Color: 'Green', 'Ships From': 'China' }, price: 6.69, stock: 500 }]);
+    const out = JSON.parse(r.json!);
+    expect(out).toHaveLength(1);
+    expect(out[0].skuId).toBe('G-NEW');
+    expect(out[0].attrs).toEqual({ Size: '5m', Color: 'green' }); // attrs des ursprünglichen Eintrags bleiben
+    expect(r.replaced).toHaveLength(1);
+  });
+
+  test('mehrdeutig: zwei neue skuIds für dieselben attrs → nichts geraten, nichts angehängt, nur gemeldet', () => {
+    const r = run([orig], [
+      { skuId: 'NEW-1', attrs: { Size: '5m', Color: 'Pink' }, price: 6.29, stock: 499 },
+      { skuId: 'NEW-2', attrs: { Size: '5m', Color: 'Pink' }, price: 6.39, stock: 499 },
+    ]);
+    expect(JSON.parse(r.json!)).toEqual([orig]);
+    expect(r.replaced).toEqual([]);
+    expect(r.added).toEqual([]);
+    expect(r.ambiguous).toHaveLength(1);
+    expect(r.ambiguous[0]).toContain('NEW-1');
+    expect(r.ambiguous[0]).toContain('NEW-2');
+  });
+
+  test('mehrdeutig: mehrere bestehende Einträge mit denselben attrs fehlen im Scrape (bestehende Dubletten) → nichts geraten', () => {
+    const dup = { skuId: 'OLD-1B', attrs: { Size: '5m', Color: 'Pink' }, price: 6.29, stock: 499 };
+    const r = run([orig, dup], [{ skuId: 'NEW-1', attrs: { Size: '5m', Color: 'Pink' }, price: 6.39, stock: 499 }]);
+    expect(JSON.parse(r.json!)).toHaveLength(2);
+    expect(r.replaced).toEqual([]);
+    expect(r.ambiguous).toHaveLength(1);
+  });
+
+  test('der bestehende Eintrag ist im Scrape noch vorhanden und daneben taucht eine unbekannte skuId mit denselben attrs auf (Fall 214) → nicht anhängen, melden', () => {
+    const r = run([orig], [
+      { skuId: 'OLD-1', attrs: { Size: '5m', Color: 'Pink' }, price: 6.09, stock: 18 },
+      { skuId: 'EXTRA', attrs: { Size: '5m', Color: 'Pink' }, price: 5.0, stock: 3 },
+    ]);
+    expect(JSON.parse(r.json!)).toHaveLength(1);
+    expect(r.added).toEqual([]);
+    expect(r.ambiguous).toHaveLength(1);
+  });
+
+  test('bestehende Dublette bleibt, wenn eine neue skuId auftaucht: A fehlt im Scrape, B ist vorhanden, C neu → A wird durch C ersetzt, B bleibt (keine weitere Anhängung)', () => {
+    const a = { skuId: 'A', attrs: { Size: '5m', Color: 'Pink' }, price: 6.09, stock: 18, ebayPrice: 18.95, displayValues: { Size: '5m', Color: 'Pink' } };
+    const b = { skuId: 'B', attrs: { Size: '5m', Color: 'Pink' }, price: 6.29, stock: 499 };
+    const r = run([a, b], [
+      { skuId: 'B', attrs: { Size: '5m', Color: 'Pink' }, price: 6.29, stock: 499 },
+      { skuId: 'C', attrs: { Size: '5m', Color: 'Pink' }, price: 6.39, stock: 480 },
+    ]);
+    const out = JSON.parse(r.json!);
+    expect(out.map((e: { skuId: string }) => e.skuId)).toEqual(['C', 'B']);
+    expect(r.replaced).toEqual([{ from: 'A', to: 'C', oldPrice: 6.09, newPrice: 6.39 }]);
+    expect(out[0].ebayPrice).toBe(18.95);
+    expect(r.added).toEqual([]);
+  });
+
+  test('Nicht-String-Werte in attrs (Zahl, null) brechen den Vergleich nicht', () => {
+    const o = { skuId: 'N-OLD', attrs: { Size: 5 as unknown as string, Color: null as unknown as string }, price: 1, stock: 1 };
+    const r = run([o], [{ skuId: 'N-NEW', attrs: { Size: '5', Color: 'null' }, price: 2, stock: 2 }]);
+    expect(JSON.parse(r.json!)).toHaveLength(1);
+    expect(r.replaced).toHaveLength(1);
+  });
+
+  test('wirklich neue Kombination (attrs kommen noch nicht vor) wird wie bisher angehängt', () => {
+    const r = run([orig], [
+      { skuId: 'OLD-1', attrs: { Size: '5m', Color: 'Pink' }, price: 6.09, stock: 18 },
+      { skuId: 'NEW-9', attrs: { Size: '5m', Color: 'Teal' }, price: 6.99, stock: 5 },
+    ]);
+    expect(JSON.parse(r.json!)).toHaveLength(2);
+    expect(r.added).toEqual(['NEW-9']);
+    expect(r.replaced).toEqual([]);
+  });
+
+  test('Regression stele-194: der Zustand "alt + zwei Schübe neue skuIds" entsteht nicht mehr — zweiter Schub ersetzt statt anzuhängen', () => {
+    // Schub 1: genau ein Eintrag fehlt → Ersatz. Schub 2 (wieder neue skuId, der Eintrag trägt jetzt NEW-1): wieder genau einer → Ersatz.
+    const step1 = run([orig], [{ skuId: 'NEW-1', attrs: { Size: '5m', Color: 'Pink' }, price: 6.29, stock: 499 }]);
+    const step2 = mergeFreshVariantPrices(step1.json, [{ skuId: 'NEW-2', attrs: { Size: '5m', Color: 'Pink' }, price: 6.39, stock: 499 }]);
+    const out = JSON.parse(step2.json!);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toEqual({ ...orig, skuId: 'NEW-2', price: 6.39, stock: 499 });
+  });
+});
+
 // A-004 (01.10.2026): Preis-PUT darf keine Offer-Felder löschen (A-003: regulatory, listingDescription,
 // categoryId fehlten bei 34 von 42 Offers). Alle eBay-Aufrufe über injiziertes fetch.
 describe('updateOfferPriceBySku — volles Offer statt Teil-Body (A-004)', () => {
