@@ -128,20 +128,21 @@ describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
   // wieder auf den globalen 2€-Default zurückfallen — genau der Ursache-2-Bug aus dem Auftrag.
   test('targetMarginEur-Parameter wird honoriert: höherer Zielgewinn ergibt höheren correctSellPrice', () => {
     const variantPricesJson = JSON.stringify([
-      { skuId: 'v1', attrs: { Color: 'Red' }, price: 2.55 },
+      { skuId: 'v1', attrs: { Color: 'Red' }, price: 3.80 },
     ]);
     const rowsDefault = computeVariantPriceRows(variantPricesJson, 0, null, 5); // kein 5. Arg → globaler Default (2€)
     const rowsMargin2 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 2.00);
-    const rowsMargin4 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 4.00);
+    const rowsMargin3 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00);
 
-    // buyPrice=2,55€ rundet mit 'nearest95' auf 5,95€ — mit dem alten 'up95' (Teil 2B) wären es
-    // 6,95€ gewesen. Diese Fixture unterscheidet die beiden Rundungsmodi bewusst (anders als ein
-    // Rohwert, der zufällig für beide Modi gleich rundet), damit ein Regress auf 'up95' an dieser
-    // realen Aufrufstelle (nicht nur an der reinen Funktion in pricing.test.ts) erkannt würde.
-    expect(rowsDefault[0].correctSellPrice).toBe(5.95);
-    expect(rowsMargin2[0].correctSellPrice).toBe(5.95);
-    expect(rowsMargin4[0].correctSellPrice).toBe(8.95);
-    expect(rowsMargin4[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
+    // A-014 (Formel v2): Ware 3,80 €, keine China-Herkunft → K = 3,80 + 1,99 Versand = 5,79 €; Rohpreis bei Ziel 2,00 € =
+    // 10,6916 €. 'floor95' rundet auf die ,95 UNTER dem Rohpreis → 9,95 € (Gewinn 1,4349 ≥ Boden 1,30). Die alte Regel
+    // 'nearest95' ergäbe 10,95 €, 'up95' ebenfalls 10,95 € — diese Fixture unterscheidet die Modi bewusst, damit ein
+    // Rückfall an dieser realen Aufrufstelle (nicht nur an der reinen Funktion in pricing-v2.test.ts) erkannt würde.
+    // Das Produktfeld shippingCost (hier 0) fließt nicht mehr in die Formel ein.
+    expect(rowsDefault[0].correctSellPrice).toBe(9.95);
+    expect(rowsMargin2[0].correctSellPrice).toBe(9.95);
+    expect(rowsMargin3[0].correctSellPrice).toBe(11.95); // Stufe D
+    expect(rowsMargin3[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
   });
 
   test('targetMarginEur=null (nicht gesetztes Produktfeld) fällt auf den globalen 2€-Default zurück, wie undefined', () => {

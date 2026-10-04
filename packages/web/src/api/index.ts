@@ -14,7 +14,7 @@ import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTr
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT } from '../shared/constants';
+import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT, ALI_EINFUHR_EUR, MARGIN_TIERS } from '../shared/constants';
 import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
 import { isStringRecord } from '../shared/validation';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
@@ -779,8 +779,7 @@ const app = new Hono()
       // Extract, identische Logik), damit das Verkaufszahlen-Berichtsskript dieselbe Zuordnung nutzt.
       const productLookups = buildProductLookups(allProducts);
       const findProductForSku = (sku: string | null) => findProductForSkuShared(sku, productLookups);
-      // PRIO-1-PAKET (2026-09-24), Punkt "ZOLL": Einstellung statt Pauschale, s. order-matching.ts.
-      const orderChinaZollEur = await getOrderChinaZollEur();
+      // A-014: der Rückfall-Einkauf rechnet nach Preisformel v2 (computeAliCosts), s. order-matching.ts.
 
       const merged = (orders as import('./ebay').EbayOrder[]).map(order => {
         const note = notesByOrderId.get(order.orderId) ?? null;
@@ -835,7 +834,6 @@ const app = new Hono()
             const product = findProductForSku(sku);
             return product ? { buyPrice: product.buyPrice, shipsFrom: product.shipsFrom } : null;
           },
-          zollEur: orderChinaZollEur,
         });
         return {
           ...order,
@@ -1302,7 +1300,7 @@ const app = new Hono()
           // jetzt gleichermaßen hier wie in computeVariantPriceRows() und im Einzelartikel-Zweig
           // unten.
           const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-          const variantZoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
+          const variantZoll = isChinaShipping(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
           const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
           const rawNewPrice = safeUniformVariantPrice(rows);
           if (rawNewPrice == null) continue;
@@ -1333,16 +1331,15 @@ const app = new Hono()
         if (product.buyPrice == null) continue;
         // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08).
         // adRateWasNull im debug-Feld zeigt weiterhin an, ob der Default hier gerade greift.
-        const zoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
+        const zoll = isChinaShipping(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
         const rawNewPrice = computeMinSellPrice({
-          buyPrice: product.buyPrice, supplierShipping: versand,
-          isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+          buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-          rounding: 'nearest95',
+          rounding: 'floor95',
         }).minSellPrice;
         const oldPrice = listing.currentPrice;
         // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
@@ -1430,12 +1427,11 @@ const app = new Hono()
         } else {
           const rawNewPrice = product.buyPrice != null
             ? computeMinSellPrice({
-                buyPrice: product.buyPrice, supplierShipping: product.shippingCost ?? 0,
-                isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+                buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
                 ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
                 targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-                rounding: 'nearest95',
+                rounding: 'floor95',
               }).minSellPrice
             : null;
           // Teil 2D ("Senkungsbremse"): dies ist der tatsächliche eBay-Schreibvorgang (unten,
@@ -2359,15 +2355,13 @@ const app = new Hono()
     // angelegtes Produkt ohne AliExpress-Quelle), bleibt der gespeicherte sellPrice die Quelle.
     const { isChinaShipping: isChinaShippingForListing } = await import('./price-monitor');
     const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
-    const versandForListing = product.shippingCost ?? 0;
     const adRateForListing = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
-      buyPrice, supplierShipping: versandForListing,
-      isChinaOrigin: isChinaShippingForListing(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+      buyPrice, isChinaOrigin: isChinaShippingForListing(product.shipsFrom),
       ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
       targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-      rounding: 'nearest95',
+      rounding: 'floor95',
     }).minSellPrice;
 
     let effectiveSellPrice: number | null = product.buyPrice != null
@@ -2707,7 +2701,7 @@ const app = new Hono()
       const priceChanged = evaluatePriceAlarm({
         currentSellPrice: old.sellPrice,
         variants: [{ buyPrice: body.buyPrice }],
-        supplierShipping: old.shippingCost ?? 0, isChinaOrigin: isChinaShipping(old.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+        isChinaOrigin: isChinaShipping(old.shipsFrom),
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: old.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
         targetMarginEur: old.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
@@ -3108,6 +3102,15 @@ const app = new Hono()
       if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
       if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
+      // A-014: Zielgewinn des Produkts nur als Margen-Stufe A–D (Inhaber-Entscheid 04.10.2026); die ausgeblendete
+      // 4,50-Stufe bleibt für Bestandsprodukte erhalten, ist aber nicht neu setzbar.
+      if ('targetMarginEur' in body) {
+        const t = body.targetMarginEur;
+        if (typeof t !== 'number' || !MARGIN_TIERS.some(x => Math.abs(x.targetEur - t) < 0.005)) {
+          return c.json({ error: '"targetMarginEur" muss eine Margen-Stufe sein (1,00 / 1,50 / 2,00 / 3,00)' }, 400);
+        }
+        allowed.targetMarginEur = t;
+      }
       if ('manualAspects' in body) {
         const val = body.manualAspects as Record<string, string> | null;
         allowed.manualAspects = val && Object.keys(val).length > 0 ? JSON.stringify(val) : null;
@@ -3361,21 +3364,28 @@ const app = new Hono()
             // gebühr, Cent- statt ,95-Rundung) — jetzt dieselbe zentrale Funktion wie überall sonst.
             // Teil 2A: nur der Aufruf selbst ersetzt (strikte Vorgabe), sonst keine Änderung an
             // diesem Endpunkt.
-            const versand = product.shippingCost ?? 0;
             const rawNewSellPrice = computeMinSellPrice({
-              buyPrice: newPrice, supplierShipping: versand,
-              isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+              buyPrice: newPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-              rounding: 'nearest95',
+              rounding: 'floor95',
             }).minSellPrice;
             // Teil 4/5 (2026-09-13): dieser Job ist komplett unbeaufsichtigt und darf
             // AUSSCHLIESSLICH anheben, nie senken — applyDecreaseCap() (Senkungsbremse) wird hier
             // bewusst NICHT mehr aufgerufen, sie bleibt für recalculate-preview/-apply gültig.
             // applyRaiseOnly() ist das alleinige Gate: computedMinPrice <= aktueller Preis →
             // 'none', kein Schreibvorgang, kein eBay-Call.
-            const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice);
+            // A-014 (Preisformel v2): nur anheben, wenn der Gewinn beim aktuellen Preis unter dem Boden liegt.
+            const alarm = evaluatePriceAlarm({
+              currentSellPrice: product.sellPrice,
+              variants: [{ buyPrice: newPrice }],
+              isChinaOrigin: isChinaShipping(product.shipsFrom),
+              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+              targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+            }).isAlarm;
+            const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
             const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
             // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): vorher hier eine reine
             // Quellpreis-Diff (Math.abs(alter EK − neuer EK) > 0,01€) — feuerte bei JEDER
@@ -3383,14 +3393,6 @@ const app = new Hono()
             // Cause für den Grossteil der 50/53 gemeldeten "Preisalarme"). Jetzt derselbe exakte
             // Gewinn-unter-Zielmarge-Vergleich wie in price-monitor.ts checkOne() — siehe
             // evaluatePriceAlarm() in shared/pricing.ts.
-            const alarm = evaluatePriceAlarm({
-              currentSellPrice: product.sellPrice,
-              variants: [{ buyPrice: newPrice }],
-              supplierShipping: versand, isChinaOrigin: isChinaShipping(product.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
-              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-              vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
-              targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
-            }).isAlarm;
             await db.insert(schema.priceHistory).values({ productId: product.id, price: newPrice, source: 'aliexpress' });
 
             if (decision.action === 'raise') {

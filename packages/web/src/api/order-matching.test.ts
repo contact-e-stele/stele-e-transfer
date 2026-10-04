@@ -31,7 +31,6 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
       lineItems: [{ sku: 'x', quantity: 1 }],
       manualBuyPrice: 11.56,
       findProduct: () => null, // manueller Zweig braucht findProduct nicht
-      zollEur: 3.58,
     });
     expect(result.nettoQuelle).toBe('manuell');
     expect(result.nettoEinkauf).toBe(11.56);
@@ -39,27 +38,39 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
     expect(result.nettoGebuehren).not.toBeNull();
   });
 
-  test('automatischer Zweig: Zoll wird nur bei China-Versand addiert, aus der übergebenen Einstellung', () => {
+  // A-014 (Preisformel v2): Rückfall-Einkauf = Ware + Versand (1,99 € bei Ware < 10 €) + Einfuhrabgaben (3,57 € nur bei China).
+  test('automatischer Zweig (Formel v2): Ware 5,00 € aus China → 5,00 + 1,99 + 3,57 = 10,56 €', () => {
     const result = computeOrderNettoErgebnis({
       orderTotal: 20,
       lineItems: [{ sku: 'a', quantity: 1 }],
       manualBuyPrice: null,
       findProduct: () => ({ buyPrice: 5, shipsFrom: 'China' }),
-      zollEur: 3.58,
     });
     expect(result.nettoQuelle).toBe('automatisch');
-    expect(result.nettoEinkauf).toBe(5 + 3.58); // Einkauf + Zoll, keine Zoll-Verdopplung
+    expect(result.nettoEinkauf).toBeCloseTo(10.56, 10); // Ware + Versand + Einfuhrabgaben, keine Verdopplung
   });
 
-  test('kein Zoll bei nicht-China-Versand', () => {
+  test('keine Einfuhrabgaben bei nicht-China-Versand: Ware 5,00 € → 5,00 + 1,99 Versand = 6,99 €', () => {
     const result = computeOrderNettoErgebnis({
       orderTotal: 20,
       lineItems: [{ sku: 'a', quantity: 1 }],
       manualBuyPrice: null,
       findProduct: () => ({ buyPrice: 5, shipsFrom: 'DE' }),
-      zollEur: 3.58,
     });
-    expect(result.nettoEinkauf).toBe(5);
+    expect(result.nettoEinkauf).toBeCloseTo(6.99, 10);
+  });
+
+  test('Ware ab 10,00 € ohne Versand; Menge zählt zur Ware der Position (eine AliExpress-Bestellung je Position)', () => {
+    const ab10 = computeOrderNettoErgebnis({
+      orderTotal: 30, lineItems: [{ sku: 'a', quantity: 1 }], manualBuyPrice: null,
+      findProduct: () => ({ buyPrice: 10.29, shipsFrom: 'China' }),
+    });
+    expect(ab10.nettoEinkauf).toBeCloseTo(13.86, 10); // 10,29 + 0 + 3,57 (Beleg 27.08.: Ali Gesamt 13,86)
+    const zwei = computeOrderNettoErgebnis({
+      orderTotal: 30, lineItems: [{ sku: 'a', quantity: 2 }], manualBuyPrice: null,
+      findProduct: () => ({ buyPrice: 5, shipsFrom: 'China' }),
+    });
+    expect(zwei.nettoEinkauf).toBeCloseTo(13.57, 10); // Ware 2 × 5,00 = 10,00 → kein Versand, 10,00 + 3,57
   });
 
   test('unbekannter Einkauf (kein Produkt-Match) ergibt null statt einer geratenen Zahl', () => {
@@ -68,7 +79,6 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
       lineItems: [{ sku: 'unbekannt', quantity: 1 }],
       manualBuyPrice: null,
       findProduct: () => null,
-      zollEur: 3.58,
     });
     expect(result.nettoEinkauf).toBeNull();
     expect(result.nettoErgebnis).toBeNull();
@@ -121,20 +131,22 @@ describe('computeOrderNettoErgebnis — Regressionsbeweis mit echten Live-Bestel
     { orderId: '15-14878-63954', total: 20.94, manualBuyPrice: 13.96, sku: 'stele-71-6PCS-50X40CM' },
   ];
 
-  test('17 reale Bestellungen, 15 mit bekanntem Einkauf: Summe 51,23 € (neu, inkl. eBay-Geb.) statt 105,81 € (alt, Rohdifferenz)', () => {
+  // A-014: der eingefrorene Datenstand (buyPrice-Fixtures) bleibt; NUR die Rückfall-Formel ohne manuellen Einkauf ist Formel v2.
+  // Die Summe 31,43 € wurde unabhängig mit bun nachgerechnet (computeAliCosts + computeOrderProfit je Bestellung); vorher unter der
+  // v1-Formel (Zoll 3,58 € je Stück) 51,23 €.
+  test('17 reale Bestellungen, 15 mit bekanntem Einkauf: Summe 31,43 € (Formel v2, inkl. eBay-Geb.) statt 105,81 € (alt, Rohdifferenz)', () => {
     const results = orders.map(o => computeOrderNettoErgebnis({
       orderTotal: o.total,
       lineItems: [{ sku: o.sku, quantity: 1 }],
       manualBuyPrice: o.manualBuyPrice,
       findProduct,
-      zollEur: 3.58,
     }));
 
     const bekannt = results.filter(r => r.nettoErgebnis != null);
     expect(bekannt.length).toBe(15);
 
     const neuSumme = Math.round(bekannt.reduce((a, r) => a + (r.nettoErgebnis ?? 0), 0) * 100) / 100;
-    expect(neuSumme).toBe(51.23);
+    expect(neuSumme).toBe(31.43);
 
     // ALT (vor diesem PR): Rohdifferenz ohne eBay-Gebühren, Zoll 4,00€ — zum Vergleich, exakt die
     // bisherige index.ts-Formel, hier separat nachgerechnet (nicht Teil der neuen Funktion).
