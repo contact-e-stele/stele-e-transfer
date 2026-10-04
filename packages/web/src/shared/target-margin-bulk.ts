@@ -3,6 +3,7 @@
 // Vorschau "was wird rot nach einem Stufenwechsel", Validierung des Sammel-Endpunkts und der Filter "neu eingestellt".
 // Nichts hier schreibt an eBay oder in die DB.
 import { MARGIN_TIERS } from './constants';
+import { isVariantProduct } from './variant-product';
 import {
   profitAtSellPrice, evaluateTargetDisplay, isChinaShipping,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
@@ -10,6 +11,7 @@ import {
 
 export interface ProfitProduct {
   id: number;
+  variants: unknown;                  // product.variants (JSON-Text oder geparst) — für isVariantProduct (A-019)
   targetMarginEur?: number | null;
   shipsFrom?: string | null;
   adRate: number | null;
@@ -39,7 +41,7 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
 
   let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; ebayPrice?: number }> = [];
   try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
-  const isVariant = entries.length > 1;
+  const isVariant = isVariantProduct(p.variants, p.variantPrices);
   const rows: ProfitRow[] = [];
   if (isVariant) {
     const stored = parseVariantSellPrices(p.variantSellPrices);

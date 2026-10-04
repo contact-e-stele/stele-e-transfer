@@ -19,6 +19,7 @@ import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/miss
 import { isStringRecord } from '../shared/validation';
 import { parseBulkTargetMarginBody } from '../shared/target-margin-bulk';
 import { parseTierRepriceBody } from '../shared/tier-reprice';
+import { isVariantProduct } from '../shared/variant-product';
 import { runTierReprice, type TierRepriceProductRow } from './tier-reprice';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
 import { evaluateVariantGate } from '../shared/variant-gate';
@@ -631,6 +632,7 @@ const app = new Hono()
         // A-016: für "Ziel · Erwartet" + Stufen-Knöpfe im Listings-Tab (gleiche Anzeige wie im Produkte-Tab)
         targetMarginEur: schema.products.targetMarginEur,
         variantPrices: schema.products.variantPrices,
+        variants: schema.products.variants,
         variantSellPrices: schema.products.variantSellPrices,
         htmlDescription: schema.products.htmlDescription,
       }).from(schema.products).all();
@@ -1296,11 +1298,7 @@ const app = new Hono()
         const product = dbByListingId.get(listing.itemId);
         if (!product || product.ebayStatus !== 'listed') continue;
 
-        let variantCount = 0;
-        try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
-        let variantGroupCount = 0;
-        try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
-        const isVariant = variantCount > 1 || variantGroupCount > 0;
+        const isVariant = isVariantProduct(product.variants, product.variantPrices); // A-019: eine Definition
 
         if (isVariant) {
           // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08) — gilt
@@ -1412,11 +1410,7 @@ const app = new Hono()
           continue;
         }
 
-        let variantCount = 0;
-        try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
-        let variantGroupCount = 0;
-        try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
-        const isVariant = variantCount > 1 || variantGroupCount > 0;
+        const isVariant = isVariantProduct(product.variants, product.variantPrices); // A-019: eine Definition
 
         let newPrice: number | null;
         let variantRows: ReturnType<typeof computeVariantPriceRows> = [];
@@ -1538,13 +1532,7 @@ const app = new Hono()
 
       const listedProducts = await db.select().from(schema.products).where(eq(schema.products.ebayStatus, 'listed'));
 
-      const variantProducts = listedProducts.filter(product => {
-        let variantCount = 0;
-        try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
-        let variantGroupCount = 0;
-        try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
-        return variantCount > 1 || variantGroupCount > 0;
-      });
+      const variantProducts = listedProducts.filter(product => isVariantProduct(product.variants, product.variantPrices)); // A-019: eine Definition
 
       // Tatsächliche Varianten-/SKU-Anzahl je Produkt — dieselbe Funktion, die auch
       // repairVariantPricesForProduct() intern nutzt, damit die Charge-Gewichtung exakt der
