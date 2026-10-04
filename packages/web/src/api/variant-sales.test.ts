@@ -95,8 +95,8 @@ describe('aggregateVariantSales — Verkäufe je Varianten-SKU', () => {
       [{ orderId: 'o1', orderDate: tageHer(5), lineItems: [{ sku: skuRot, title: 'Rot', quantity: 1, lineItemCost: 19.95 }] }],
       new Map([['o1', 5.00]]),
     );
-    // EK 5,00 (manuell) + 1,99 Versand + 3,57 Einfuhr = 10,56 → Gewinn = 19,95 − 10,56 − 5,1051 = 4,2849
-    expect(einePos.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(4.2849, 3);
+    // EK 5,00 (manuell = AliExpress-Gesamtsumme, KEIN Aufschlag) → Gewinn = 19,95 − 5,00 − 5,1051 = 9,8449
+    expect(einePos.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(9.8449, 3);
 
     // Mehrere Positionen: der manuelle Gesamt-EK ist keiner einzelnen Position zuzuordnen →
     // Rückfall auf den Produkt-EK statt einer willkürlichen Aufteilung.
