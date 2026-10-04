@@ -4,7 +4,7 @@
 // die Produkte 1–3 sind ERFUNDENE Test-Fixtures für die Stufen-Grenzfälle, keine Live-Daten.
 import { describe, expect, test } from 'bun:test';
 import {
-  productProfitRows, previewTierChange, parseBulkTargetMarginBody, isListedWithin, startTimeMillis,
+  productProfitRows, previewTierChange, parseBulkTargetMarginBody, isListedWithin, startTimeMillis, compareStartTimeDesc,
   BULK_TARGET_MARGIN_MAX, type ProfitProduct,
 } from './target-margin-bulk';
 
@@ -97,6 +97,10 @@ describe('parseBulkTargetMarginBody — Validierung des Sammel-Endpunkts (Regres
     if (!r.ok) expect(r.error).toContain('Margen-Stufe');
   });
 
+  test('es wird der kanonische Stufenwert gespeichert, nicht der Rohwert (2.004 → 2.0)', () => {
+    expect(parseBulkTargetMarginBody({ ...ok, targetMarginEur: 2.004 })).toEqual({ ok: true, productIds: [1, 2, 3], targetMarginEur: 2.0 });
+  });
+
   test('Stufe als Text oder fehlend wird abgelehnt', () => {
     expect(parseBulkTargetMarginBody({ ...ok, targetMarginEur: '2' }).ok).toBe(false);
     expect(parseBulkTargetMarginBody({ productIds: [1], confirm: true }).ok).toBe(false);
@@ -158,5 +162,15 @@ describe('isListedWithin / startTimeMillis — Filter "Neu eingestellt" (eBay-St
     expect(startTimeMillis('murks')).toBe(-Infinity);
     const sorted = ['', '2026-10-01T00:00:00Z', '2026-10-04T00:00:00Z'].sort((a, b) => startTimeMillis(b) - startTimeMillis(a));
     expect(sorted).toEqual(['2026-10-04T00:00:00Z', '2026-10-01T00:00:00Z', '']);
+  });
+});
+
+describe('compareStartTimeDesc', () => {
+  test('neueste zuerst; fehlende/ungültige ans Ende; zwei fehlende sind gleich (0, kein NaN)', () => {
+    expect(compareStartTimeDesc('2026-10-04T00:00:00Z', '2026-10-01T00:00:00Z')).toBeLessThan(0);
+    expect(compareStartTimeDesc('2026-10-01T00:00:00Z', '2026-10-04T00:00:00Z')).toBeGreaterThan(0);
+    expect(compareStartTimeDesc('', '2026-10-04T00:00:00Z')).toBeGreaterThan(0);
+    expect(compareStartTimeDesc('', undefined)).toBe(0);
+    expect(compareStartTimeDesc('murks', null)).toBe(0);
   });
 });

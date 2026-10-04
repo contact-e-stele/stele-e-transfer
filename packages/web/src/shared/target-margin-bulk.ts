@@ -94,14 +94,16 @@ export function parseBulkTargetMarginBody(body: unknown): BulkTargetMarginParse 
   const b = body as Record<string, unknown>;
   if (b.confirm !== true) return { ok: false, error: '"confirm": true fehlt — Stufenwechsel für mehrere Produkte nur nach Bestätigung' };
   const t = b.targetMarginEur;
-  if (typeof t !== 'number' || !MARGIN_TIERS.some(x => Math.abs(x.targetEur - t) < 0.005)) {
+  const tier = typeof t === 'number' ? MARGIN_TIERS.find(x => Math.abs(x.targetEur - t) < 0.005) : undefined;
+  if (!tier) {
     return { ok: false, error: '"targetMarginEur" muss eine Margen-Stufe sein (1,00 / 1,50 / 2,00 / 3,00)' };
   }
   const ids = b.productIds;
   if (!Array.isArray(ids) || ids.length === 0) return { ok: false, error: '"productIds" muss eine nicht-leere Liste sein' };
   if (ids.length > BULK_TARGET_MARGIN_MAX) return { ok: false, error: `Höchstens ${BULK_TARGET_MARGIN_MAX} Produkte je Aufruf (übergeben: ${ids.length})` };
   if (!ids.every(i => typeof i === 'number' && Number.isInteger(i) && i > 0)) return { ok: false, error: '"productIds" darf nur positive ganze Zahlen enthalten' };
-  return { ok: true, productIds: [...new Set(ids as number[])], targetMarginEur: t };
+  // Kanonischer Stufenwert (nicht der Rohwert): 2.004 würde sonst als 2.004 gespeichert.
+  return { ok: true, productIds: [...new Set(ids as number[])], targetMarginEur: tier.targetEur };
 }
 
 // Filter "Neu eingestellt": Die eBay-Anzeige trägt StartTime (Listings-API). days = 0 → heute (lokaler Kalendertag), sonst
@@ -115,6 +117,12 @@ export function isListedWithin(startTimeIso: string | null | undefined, days: nu
     return t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth() && t.getDate() === now.getDate();
   }
   return now.getTime() - t.getTime() <= days * 24 * 60 * 60 * 1000;
+}
+
+// Vergleichsfunktion "neueste zuerst": fehlende/ungültige StartTime sortiert ans Ende; zwei fehlende sind gleich (kein NaN).
+export function compareStartTimeDesc(a: string | null | undefined, b: string | null | undefined): number {
+  const ta = startTimeMillis(a), tb = startTimeMillis(b);
+  return ta === tb ? 0 : tb - ta;
 }
 
 export function startTimeMillis(startTimeIso: string | null | undefined): number {

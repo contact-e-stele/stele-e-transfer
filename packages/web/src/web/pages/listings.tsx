@@ -12,7 +12,7 @@ import { buildEbayHTMLLight } from "../lib/ebay-description";
 import { DescriptionRefreshPanel } from "../components/description-refresh-panel";
 import { TargetBadge } from "../components/target-badge";
 import { MARGIN_TIERS } from "../../shared/constants";
-import { previewTierChange, isListedWithin, startTimeMillis, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
+import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
 
 interface EbayListing {
   itemId: string;
@@ -528,6 +528,10 @@ export default function Listings() {
     runBulk("/api/ebay/listings/bulk/price", { mode: bulkPriceMode, value });
   };
 
+  // A-016: Ändert sich die angezeigte Menge (Filter/Suche), gilt eine offene Stufen-Bestätigung nicht mehr — Dialog schließen,
+  // damit nie unbemerkt eine andere Menge als die bestätigte betroffen ist.
+  useEffect(() => { setTierPending(null); }, [filter, search, minSold, maxSold, minPrice, maxPrice, expiryFilter, newFilter]);
+
   // Filter + Suche
   const filtered = listings
     .filter(l => {
@@ -555,7 +559,7 @@ export default function Listings() {
     .sort((a, b) => {
       // A-016: bei aktivem "Neu eingestellt"-Filter ohne andere Sortierung: neueste zuerst
       const sortKey = sortBy === "default" && newFilter !== "all" ? "start_desc" : sortBy;
-      if (sortKey === "start_desc") return startTimeMillis(b.startTime) - startTimeMillis(a.startTime);
+      if (sortKey === "start_desc") return compareStartTimeDesc(a.startTime, b.startTime);
       if (sortBy === "sold_desc") return b.quantitySold - a.quantitySold;
       if (sortBy === "sold_asc") return a.quantitySold - b.quantitySold;
       if (sortBy === "price_desc") return b.currentPrice - a.currentPrice;
@@ -1097,7 +1101,7 @@ export default function Listings() {
                   <div style={{ marginTop: 4 }}>
                     Davon rot (Gewinn unter Boden) nach dem Wechsel: <strong>{preview.red}</strong>
                     {preview.red > 0 && (
-                      <> — Einzelartikel ({preview.redSingle}) werden bei der nächsten Preisprüfung angehoben; Varianten-Produkte ({preview.redVariant}) werden nur markiert, nicht automatisch angehoben.</>
+                      <> — Einzelartikel ({preview.redSingle}) werden voraussichtlich bei der nächsten Preisprüfung auf den Zielpreis der neuen Stufe angehoben (die Prüfung rechnet mit dem dann frisch gelesenen AliExpress-Einkaufspreis, die Zahl kann deshalb abweichen); Varianten-Produkte ({preview.redVariant}) werden nur markiert, nicht automatisch angehoben.</>
                     )}
                     {preview.yellow > 0 && <> · gelb (unter Ziel, über Boden): {preview.yellow}</>}
                     {preview.unknown > 0 && <> · nicht berechenbar (kein VK/EK): {preview.unknown}</>}
