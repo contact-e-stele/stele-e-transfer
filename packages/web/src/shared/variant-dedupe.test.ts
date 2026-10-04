@@ -222,3 +222,29 @@ describe('staleSellPriceNotes (A-023)', () => {
     expect(staleSellPriceNotes(change, {})).toEqual([]);
   });
 });
+
+// Review A-023: Einträge ohne gültigen EK, Original + Scrape bei collapse
+describe('A-023 Review: ungültige EK und Träger-Regel', () => {
+  test('Dublette ohne price: Maximum über die GÜLTIGEN EK (nie NaN/null in der DB); Eintrag ohne price als frischester → Hinweis', () => {
+    const e = [{ skuId: 'A', attrs: { Color: '100pcs' }, price: 3.15, stock: 3 }, { skuId: 'B', attrs: { Color: '100pcs' }, stock: 5 } as unknown as DedupeEntry];
+    const p = planVariantDedupe(G119, e);
+    expect(p.changes[0]).toMatchObject({ keeperNewSkuId: 'B', newPrice: 3.15 });
+    expect(Number.isFinite(p.changes[0].newPrice)).toBe(true);
+    expect(p.changes[0].priceNote).toContain('ohne gültigen EK');
+    expect(JSON.stringify(p.newEntries)).not.toContain('null');
+  });
+  test('keine Dublette hat einen gültigen EK → mehrdeutig, nichts geändert', () => {
+    const e = [{ skuId: 'A', attrs: { Color: '100pcs' } }, { skuId: 'B', attrs: { Color: '100pcs' }, price: 0 }] as unknown as DedupeEntry[];
+    const p = planVariantDedupe(G119, e);
+    expect(p.changes).toEqual([]);
+    expect(p.ambiguous[0].reason).toContain('kein gültiger EK');
+    expect(p.newEntries).toHaveLength(2);
+  });
+  test('collapse = Bereinigung (eine Regel): Original + Scrape-Dublette → Original bleibt (displayValues/ebayPrice), skuId des frischesten, Preis = Scrape-Maximum', () => {
+    const o: DedupeEntry = { skuId: 'O', attrs: { Color: '100pcs' }, price: 2.0, stock: 1, ebayPrice: 11.95, displayValues: { 'Varianten ': '100pcs' } };
+    const s1: DedupeEntry = { skuId: 'S1', attrs: { Color: '100pcs' }, price: 3.45, stock: 9 };
+    const c = collapseDuplicateEntries(G119, [o, s1]);
+    expect(c.entries).toEqual([{ ...o, skuId: 'S1', price: 3.45, stock: 9 }]);
+    expect(c.entries).toEqual(planVariantDedupe(G119, [o, s1]).newEntries);
+  });
+});

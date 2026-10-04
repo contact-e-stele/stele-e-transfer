@@ -253,3 +253,19 @@ describe('A-023: Dubletten im Stufenwechsel (stele-119)', () => {
     expect(planTierReprice(rev, 1.5, g119).rows.find(r => r.label.includes('100pcs'))!.ware).toBe(3.45);
   });
 });
+
+// Review A-023: nur EINE Kombination + Dubletten bleibt ein Varianten-Produkt (EK der Variante, nicht Produkt-EK)
+describe('A-023 Review: isVariant bleibt nach dem Zusammenlegen', () => {
+  test('eine Kombination, zwei Dubletten: Plan bleibt Varianten-Plan (skuId gesetzt, EK 3,45), kein Einzelartikel-Plan', () => {
+    const one: RepriceProduct = {
+      id: 7, buyPrice: 9.99, sellPrice: 20.95, shipsFrom: 'China', adRate: 5, variantSellPrices: null,
+      variantPrices: JSON.stringify([
+        { skuId: 'X1', attrs: { Color: '100pcs' }, price: 3.15, stock: 3 },
+        { skuId: 'X2', attrs: { Color: '100pcs' }, price: 3.45, stock: 9 },
+      ]),
+    };
+    const plan = planTierReprice(one, 1.5, [{ name: 'Color', values: ['100pcs'] }]);
+    expect(plan.isVariant).toBe(true);
+    expect(plan.rows.map(r => [r.skuId, r.ware])).toEqual([['X2', 3.45]]);
+  });
+});

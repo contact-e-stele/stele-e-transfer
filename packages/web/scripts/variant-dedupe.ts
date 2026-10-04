@@ -19,6 +19,8 @@ const RUHT = new Set([214]);
 const apply = process.argv.includes('--apply');
 const idsArg = process.argv.find((a, i) => process.argv[i - 1] === '--ids') ?? '';
 const ids = [...new Set(idsArg.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0))];
+const ungueltig = idsArg.split(',').map(s => s.trim()).filter(s => s !== '' && !/^[1-9]\d*$/.test(s));
+if (ungueltig.length > 0) { console.error(`Ungültige Produkt-ID(s): ${ungueltig.join(', ')} — Abbruch (nichts gelesen/geschrieben).`); process.exit(1); }
 if (ids.length === 0) { console.error('Aufruf: bun --env-file=../../.env scripts/variant-dedupe.ts --ids 119,194 [--apply]'); process.exit(1); }
 const ruhend = ids.filter(i => RUHT.has(i));
 if (ruhend.length > 0) { console.error(`stele-${ruhend.join(', stele-')} ruht (Inhaber) — nicht angefasst, Abbruch.`); process.exit(1); }

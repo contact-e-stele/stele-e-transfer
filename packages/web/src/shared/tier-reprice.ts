@@ -72,6 +72,7 @@ export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?
 
   let entries: Array<{ skuId: string; attrs?: Record<string, string>; displayValues?: Record<string, string>; price: number; ebayPrice?: number }> = [];
   try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
+  // isVariant VOR dem Zusammenlegen, über die EINE Definition (A-019, variant-product.ts): ein Produkt mit einer einzigen Kombination und Dubletten bleibt ein Varianten-Produkt.
   const isVariant = isVariantProduct(p.variants, p.variantPrices);
   if (groups) entries = collapseDuplicateEntries(groups, entries).entries;
   const rows: TierPlanRow[] = [];

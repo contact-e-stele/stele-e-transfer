@@ -78,10 +78,16 @@ export function planVariantDedupe(groups: VariantGroup[], entries: DedupeEntry[]
     const keeper = originals.length === 1 ? originals[0] : members[members.length - 1];
     const scraped = originals.length === 1 ? members.filter(m => m !== keeper) : members; // Preis-Kandidaten (Scrape-Dubletten, Reihenfolge = Alter)
     const freshest = scraped[scraped.length - 1];
-    const maxPrice = Math.max(...scraped.map(s => s.price));
-    const priceNote = maxPrice > freshest.price + 1e-9
+    // Nur gültige EK (endlich, > 0) zählen: ein Eintrag ohne price darf nie NaN/null in die DB bringen (Review A-023).
+    const validPrices = scraped.map(s => s.price).filter(pr => Number.isFinite(pr) && pr > 0);
+    if (validPrices.length === 0) {
+      ambiguous.push({ label, reason: 'kein gültiger EK in den Dubletten — nichts geändert' });
+      return;
+    }
+    const maxPrice = Math.max(...validPrices);
+    const priceNote = Number.isFinite(freshest.price) && maxPrice > freshest.price + 1e-9
       ? `höherer EK ${maxPrice.toFixed(2)} statt ${freshest.price.toFixed(2)} (frischester Eintrag) gewählt — im Zweifel kein Verlust`
-      : null;
+      : (Number.isFinite(freshest.price) ? null : `frischester Eintrag ohne gültigen EK — höchster gültiger EK ${maxPrice.toFixed(2)} gewählt`);
     replacement.set(keeper, { ...keeper, skuId: freshest.skuId, price: maxPrice, stock: freshest.stock ?? keeper.stock });
     scraped.filter(s => s !== keeper).forEach(s => removed.add(s));
     changes.push({
@@ -118,30 +124,15 @@ export function renderDedupeMarkdown(productId: number, plan: DedupePlan, before
 
 // A-023 (c): Für die Preisberechnung (tier-reprice) EINE Zeile je eBay-Variante, auch wenn variantPrices dieselbe Kombination mehrfach
 // enthält (Dubletten) — sonst meldet der Resolver beim Senden "Mehrdeutig", und nur ein Teil der Preise geht raus (Live-Fund stele-119).
-// Der Eintrag je Kombination trägt den HÖCHSTEN EK der Dubletten (kein Minus, wie in der Bereinigung), skuId/Lager des Eintrags mit dem
-// höchsten EK, displayValues vom ersten Eintrag, der welche hat. Der Resolver bleibt unverändert STRENG (kein Raten); die Dubletten werden
-// hier nur für die Preisberechnung zusammengelegt, in der DB nichts verändert. Mehrere ursprüngliche Einträge (mit displayValues/ebayPrice/
-// imageUrl) sind weiter nicht eindeutig → unverändert durchgereicht, der Resolver meldet dann wie bisher "Mehrdeutig" (z. B. stele-214).
+// Dieselbe Regel wie die Bereinigung (planVariantDedupe, Regel 8 — eine Stelle): Träger = frischester Eintrag (bzw. der ursprüngliche mit
+// seinen displayValues/ebayPrice), Preis = HÖCHSTER gültige EK der Dubletten (kein Minus). Der Resolver bleibt unverändert STRENG; in der DB
+// wird hier nichts verändert. Mehrere ursprüngliche Einträge oder kein gültiger EK → unverändert durchgereicht (Resolver meldet dann wie bisher).
 export function collapseDuplicateEntries<T extends DedupeEntry>(groups: VariantGroup[], entries: T[]): { entries: T[]; collapsed: string[] } {
-  if (groups.length === 0) return { entries, collapsed: [] };
-  const combos = buildCombinations(groups);
-  const comboOf = new Map<T, number>();
-  for (const e of entries) { const i = combos.findIndex(c => entryMatchesCombo(c, e)); if (i >= 0) comboOf.set(e, i); }
-  const drop = new Set<T>();
-  const replace = new Map<T, T>();
-  const collapsed: string[] = [];
-  combos.forEach((combo, idx) => {
-    const members = entries.filter(e => comboOf.get(e) === idx);
-    if (members.length <= 1) return;
-    if (members.filter(isOriginal).length > 1) return; // nicht eindeutig → unverändert (Resolver meldet Mehrdeutig)
-    const top = members.reduce((a, b) => (b.price > a.price ? b : a));
-    const display = members.find(m => m.displayValues)?.displayValues;
-    const carrier = members[0];
-    replace.set(carrier, { ...top, ...(display ? { displayValues: display } : {}) });
-    members.slice(1).forEach(m => drop.add(m));
-    collapsed.push(`${Object.entries(combo).map(([k, v]) => `${k}=${v}`).join(', ')}: ${members.length} Einträge → EK ${top.price.toFixed(2)} (höchster)`);
-  });
-  return { entries: entries.filter(e => !drop.has(e)).map(e => replace.get(e) ?? e), collapsed };
+  const plan = planVariantDedupe(groups, entries);
+  return {
+    entries: plan.newEntries as T[],
+    collapsed: plan.changes.map(c => `${c.label}: ${c.removedSkuIds.length + 1} Einträge → EK ${c.newPrice.toFixed(2)} (höchster), skuId ${c.keeperNewSkuId}`),
+  };
 }
 
 // A-023: Warnhinweise für die Bereinigung — gespeicherte Verkaufspreise (products.variant_sell_prices) hängen an der skuId. Ändert sich die skuId
