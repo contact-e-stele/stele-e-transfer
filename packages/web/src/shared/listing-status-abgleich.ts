@@ -18,6 +18,7 @@ export interface ItemStatusInfo {
   errorHold: string | null;       // z. B. "ON_HOLD_FIXABLE" (ErrorParameter 4)
 }
 
+// Erster Treffer, nur Textinhalt (Tags mit Kind-Elementen und leere Tags ergeben null) — im Zweifel null = 'nicht lesbar' = check_manually.
 const tag = (xml: string, t: string): string | null => xml.match(new RegExp(`<${t}(?:\\s[^>]*)?>([^<]*)</${t}>`))?.[1]?.trim() || null;
 
 export function parseGetItemStatus(xml: string, httpStatus = 200): ItemStatusInfo {
@@ -88,10 +89,11 @@ export function planListingStatusAbgleich(products: AppListedProduct[], infos: M
 }
 
 // Was bei --apply in die DB geschrieben wird: der vorhandene Status für "nicht mehr gelistet" ('none', wie bei "Beenden" und der
-// Auto-Deaktivierung) und kein Fehlertext. ebayListingId bleibt UNVERÄNDERT als Historie (alle Stellen, die den Status 'listed' brauchen,
-// sehen das Produkt danach als nicht gelistet; "Bei eBay listen" überschreibt die ID beim Re-Listing).
-export function patchForEnded(): { ebayStatus: 'none'; ebayError: null } {
-  return { ebayStatus: 'none', ebayError: null };
+// Auto-Deaktivierung) und kein Fehlertext. STANDARD wie alle bestehenden End-Pfade (index.ts "Beenden", bulk/end, price-monitor Auto-
+// Deaktivierung): ebayListingId wird auf null gesetzt — mehrere Stellen prüfen nur die ID (End-Endpoint, Beschreibungs-Nachzug), ein 'none'
+// MIT ID wäre ein bisher nie vorkommender Zustand. Mit keepListingId (Skript-Option --keep-listing-id) bleibt die ID als Historie stehen.
+export function patchForEnded(keepListingId = false): { ebayStatus: 'none'; ebayError: null; ebayListingId?: null } {
+  return keepListingId ? { ebayStatus: 'none', ebayError: null } : { ebayStatus: 'none', ebayError: null, ebayListingId: null };
 }
 
 export function renderAbgleichMarkdown(rows: ReconcileRow[], totalListed: number, apply: boolean, generatedAt: string): string {

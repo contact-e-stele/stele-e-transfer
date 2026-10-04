@@ -2451,7 +2451,6 @@ export async function getItemStatusXml(itemId: string): Promise<{ httpStatus: nu
   <OutputSelector>ItemID</OutputSelector>
   <OutputSelector>SellingStatus</OutputSelector>
   <OutputSelector>ListingDetails</OutputSelector>
-  <OutputSelector>Errors</OutputSelector>
 </GetItemRequest>`;
   const res = await fetch('https://api.ebay.com/ws/api.dll', {
     method: 'POST',
@@ -2463,6 +2462,7 @@ export async function getItemStatusXml(itemId: string): Promise<{ httpStatus: nu
       'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
     },
     body: xml,
+    signal: AbortSignal.timeout(30000), // ein hängender Aufruf darf das Abgleich-Skript nicht blockieren
   });
   return { httpStatus: res.status, xml: await res.text() };
 }

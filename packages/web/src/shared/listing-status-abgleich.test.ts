@@ -55,9 +55,19 @@ describe('planListingStatusAbgleich', () => {
     const r = planListingStatusAbgleich([prod(5, '555'), prod(6, '666', 'none'), prod(7, '777', 'error')], new Map([['555', odd]]));
     expect(r.map(x => [x.productId, x.action])).toEqual([[5, 'check_manually']]);
   });
-  test('patchForEnded: nur Status "none" + kein Fehlertext — ebayListingId wird NICHT angefasst (Historie)', () => {
-    expect(patchForEnded()).toEqual({ ebayStatus: 'none', ebayError: null });
-    expect('ebayListingId' in patchForEnded()).toBe(false);
+  test('patchForEnded: Standard = Status "none", kein Fehlertext, ebayListingId null (wie alle End-Pfade); mit keepListingId bleibt die ID unangetastet', () => {
+    expect(patchForEnded()).toEqual({ ebayStatus: 'none', ebayError: null, ebayListingId: null });
+    expect(patchForEnded(true)).toEqual({ ebayStatus: 'none', ebayError: null });
+    expect('ebayListingId' in patchForEnded(true)).toBe(false);
+  });
+  test('HTTP 200 mit Ack Failure ohne ListingStatus (Item nicht gefunden) → check_manually, niemals mark_ended', () => {
+    const nf = parseGetItemStatus('<GetItemResponse><Ack>Failure</Ack><Errors><ErrorCode>17</ErrorCode><SeverityCode>Error</SeverityCode></Errors></GetItemResponse>', 200);
+    const r = planListingStatusAbgleich([prod(9, '999')], new Map([['999', nf]]));
+    expect(r[0].action).toBe('check_manually');
+    expect(r[0].reason).toContain('Fehler 17');
+  });
+  test('mehrfach vorkommendes ListingStatus-Tag: erster Treffer zählt (konservativ prüfbar)', () => {
+    expect(parseGetItemStatus('<A><ListingStatus>Active</ListingStatus><B><ListingStatus>Completed</ListingStatus></B></A>').listingStatus).toBe('Active');
   });
   test('Markdown: Zählung, deutsches Datum, "nichts geschrieben"', () => {
     const md = renderAbgleichMarkdown(rows, 4, false, '2026-10-04T00:00:00Z');
