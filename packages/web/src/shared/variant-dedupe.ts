@@ -9,7 +9,7 @@
 //  - Einträge ohne Gegenstück in product.variants (z. B. neue Farbe "Yellow") werden NICHT zugeordnet, nur aufgelistet und
 //    unverändert gelassen;
 //  - mehrdeutig (kein oder mehrere ursprüngliche Einträge) → nichts geändert, nur gemeldet.
-import { NON_VARIATION_ASPECTS, type VariantGroup } from './variant-resolver';
+import { buildCombinations, entryMatchesCombo, type VariantGroup } from './variant-resolver';
 
 export interface DedupeEntry {
   skuId: string;
@@ -41,28 +41,17 @@ export interface DedupePlan {
   ambiguous: Array<{ label: string; reason: string }>;  // Kombinationen, die nicht eindeutig lösbar sind — unverändert
 }
 
-const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
-
-function combos(groups: VariantGroup[]): Array<Record<string, string>> {
-  let result: Array<Record<string, string>> = [{}];
-  for (const g of groups) result = result.flatMap(c => g.values.map(v => ({ ...c, [g.name]: v })));
-  return result;
-}
-
-// Ein Eintrag gehört zu einer Kombination, wenn für JEDE Gruppe der attrs-Wert (getrimmt, ohne Groß-/Kleinschreibung) passt.
-// Versand-Attribute (NON_VARIATION_ASPECTS) zählen nicht.
-function entryMatches(combo: Record<string, string>, entry: DedupeEntry): boolean {
-  const attrs = Object.fromEntries(Object.entries(entry.attrs ?? {}).filter(([k]) => !NON_VARIATION_ASPECTS.has(k)).map(([k, v]) => [norm(k), norm(v)]));
-  return Object.entries(combo).every(([name, value]) => attrs[norm(name)] === norm(value));
-}
-
+// Zuordnung Eintrag → Kombination: EXAKT dieselbe Funktion wie beim Listing (variant-resolver.ts entryMatchesCombo: displayValues
+// haben Vorrang, sonst Wertevergleich getrimmt/ohne Groß-/Kleinschreibung, Versand-Attribute ignoriert) — Grundgesetz Regel 8.
 const isOriginal = (e: DedupeEntry) => !!e.displayValues || e.ebayPrice != null || !!e.imageUrl;
 
 export function planVariantDedupe(groups: VariantGroup[], entries: DedupeEntry[]): DedupePlan {
-  const comboList = combos(groups);
+  // Ohne Varianten-Gruppen gibt es keine Kombinationen, die sich zuordnen ließen — nichts anfassen.
+  if (groups.length === 0) return { newEntries: [...entries], changes: [], unchangedCombos: 0, orphans: [], ambiguous: [] };
+  const comboList = buildCombinations(groups);
   const comboOfEntry = new Map<DedupeEntry, number>();
   for (const e of entries) {
-    const idx = comboList.findIndex(c => entryMatches(c, e));
+    const idx = comboList.findIndex(c => entryMatchesCombo(c, e));
     if (idx >= 0) comboOfEntry.set(e, idx);
   }
 

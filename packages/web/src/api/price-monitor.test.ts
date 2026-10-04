@@ -551,7 +551,7 @@ describe('mergeFreshVariantPrices (A-015: neue skuId für bekannte attrs)', () =
     const out = JSON.parse(r.json!);
     expect(out).toHaveLength(2); // keine Dublette
     expect(out[0]).toEqual({ ...orig, skuId: 'NEW-1', price: 6.39, stock: 499 });
-    expect(r.replaced).toEqual([{ from: 'OLD-1', to: 'NEW-1' }]);
+    expect(r.replaced).toEqual([{ from: 'OLD-1', to: 'NEW-1', oldPrice: 6.09, newPrice: 6.39 }]);
     expect(r.added).toEqual([]);
     expect(r.ambiguous).toEqual([]);
     expect(r.missing).toEqual([]); // der ersetzte Eintrag gilt nicht mehr als "fehlend"
@@ -596,6 +596,27 @@ describe('mergeFreshVariantPrices (A-015: neue skuId für bekannte attrs)', () =
     expect(JSON.parse(r.json!)).toHaveLength(1);
     expect(r.added).toEqual([]);
     expect(r.ambiguous).toHaveLength(1);
+  });
+
+  test('bestehende Dublette bleibt, wenn eine neue skuId auftaucht: A fehlt im Scrape, B ist vorhanden, C neu → A wird durch C ersetzt, B bleibt (keine weitere Anhängung)', () => {
+    const a = { skuId: 'A', attrs: { Size: '5m', Color: 'Pink' }, price: 6.09, stock: 18, ebayPrice: 18.95, displayValues: { Size: '5m', Color: 'Pink' } };
+    const b = { skuId: 'B', attrs: { Size: '5m', Color: 'Pink' }, price: 6.29, stock: 499 };
+    const r = run([a, b], [
+      { skuId: 'B', attrs: { Size: '5m', Color: 'Pink' }, price: 6.29, stock: 499 },
+      { skuId: 'C', attrs: { Size: '5m', Color: 'Pink' }, price: 6.39, stock: 480 },
+    ]);
+    const out = JSON.parse(r.json!);
+    expect(out.map((e: { skuId: string }) => e.skuId)).toEqual(['C', 'B']);
+    expect(r.replaced).toEqual([{ from: 'A', to: 'C', oldPrice: 6.09, newPrice: 6.39 }]);
+    expect(out[0].ebayPrice).toBe(18.95);
+    expect(r.added).toEqual([]);
+  });
+
+  test('Nicht-String-Werte in attrs (Zahl, null) brechen den Vergleich nicht', () => {
+    const o = { skuId: 'N-OLD', attrs: { Size: 5 as unknown as string, Color: null as unknown as string }, price: 1, stock: 1 };
+    const r = run([o], [{ skuId: 'N-NEW', attrs: { Size: '5', Color: 'null' }, price: 2, stock: 2 }]);
+    expect(JSON.parse(r.json!)).toHaveLength(1);
+    expect(r.replaced).toHaveLength(1);
   });
 
   test('wirklich neue Kombination (attrs kommen noch nicht vor) wird wie bisher angehängt', () => {

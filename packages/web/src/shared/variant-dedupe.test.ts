@@ -147,6 +147,22 @@ describe('planVariantDedupe — Randfälle', () => {
     expect(p.newEntries).toHaveLength(3);
   });
 
+  test('ohne Varianten-Gruppen wird nichts angefasst (keine Sammel-Kombination)', () => {
+    const p = planVariantDedupe([], [orig('O', 'Rot', 2.0), fresh('F', 'Blau', 3.0)]);
+    expect(p.changes).toEqual([]);
+    expect(p.newEntries).toHaveLength(2);
+  });
+
+  test('Zuordnung wie beim Listing: nach Umbenennung der Gruppe (Größe statt Size) greifen displayValues des Originals, Scrape-Einträge nur über Werte', () => {
+    const gg = [{ name: 'Farbe', values: ['Rot'] }];
+    const o = { skuId: 'O', attrs: { Color: 'Rot' }, price: 2, stock: 1, ebayPrice: 9.95, displayValues: { Farbe: 'Rot' } } as DedupeEntry;
+    const f = { skuId: 'F', attrs: { Color: 'rot' }, price: 3, stock: 7 } as DedupeEntry;
+    const p = planVariantDedupe(gg, [o, f]);
+    expect(p.changes).toHaveLength(1);
+    expect(p.newEntries).toHaveLength(1);
+    expect(p.newEntries[0].skuId).toBe('F');
+  });
+
   test('Versand-Attribut (Ships From) unterscheidet Kombinationen nicht', () => {
     const e = { skuId: 'F', attrs: { Color: 'Rot', 'Ships From': 'China' }, price: 3.0, stock: 2 };
     const p = planVariantDedupe(g, [orig('O', 'Rot', 2.0), e]);

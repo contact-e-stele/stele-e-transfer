@@ -75,7 +75,7 @@ const attrsKey = (attrs: unknown): string =>
 export function mergeFreshVariantPrices(
   existingJson: string | null,
   fresh: Array<{ skuId: string; attrs: Record<string, string>; price: number; stock?: number }>,
-): { json: string | null; added: string[]; missing: string[]; replaced: Array<{ from: string; to: string }>; ambiguous: string[] } {
+): { json: string | null; added: string[]; missing: string[]; replaced: Array<{ from: string; to: string; oldPrice: number | null; newPrice: number }>; ambiguous: string[] } {
   if (fresh.length === 0) return { json: existingJson, added: [], missing: [], replaced: [], ambiguous: [] };
   let existing: Array<Record<string, unknown>> = [];
   try { const p = existingJson ? JSON.parse(existingJson) : []; existing = Array.isArray(p) ? p : []; } catch { /* leer */ }
@@ -93,7 +93,7 @@ export function mergeFreshVariantPrices(
     unknownByKey.set(k, [...(unknownByKey.get(k) ?? []), f]);
   }
   const added: typeof unknownFresh = [];
-  const replaced: Array<{ from: string; to: string }> = [];
+  const replaced: Array<{ from: string; to: string; oldPrice: number | null; newPrice: number }> = [];
   const ambiguous: string[] = [];
   for (const [key, group] of unknownByKey) {
     const sameAttrs = merged.map((e, i) => ({ e, i })).filter(x => attrsKey(x.e.attrs) === key);
@@ -102,7 +102,7 @@ export function mergeFreshVariantPrices(
     if (absent.length === 1 && group.length === 1) {
       const { e, i } = absent[0];
       const f = group[0];
-      replaced.push({ from: String(e.skuId), to: String(f.skuId) });
+      replaced.push({ from: String(e.skuId), to: String(f.skuId), oldPrice: typeof e.price === 'number' ? e.price : null, newPrice: f.price });
       merged[i] = { ...e, skuId: f.skuId, price: f.price, stock: typeof f.stock === 'number' ? f.stock : e.stock };
     } else {
       ambiguous.push(`attrs ${JSON.stringify(group[0].attrs)}: ${group.length} neue skuId(s) [${group.map(g => g.skuId).join(', ')}] vs. ${sameAttrs.length} bestehende(r) Eintrag/Einträge [${sameAttrs.map(x => String(x.e.skuId)).join(', ')}], davon ${absent.length} im Scrape fehlend — nichts geändert, nicht angehängt`);
@@ -683,7 +683,12 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         const merge = mergeFreshVariantPrices(product.variantPrices, data.variantPrices);
         const freshVariantPricesJson = merge.json;
         if (merge.added.length > 0) console.log(`[PriceMonitor] ${product.id}: neue Varianten-SKUs angehängt: ${merge.added.join(', ')}`);
-        if (merge.replaced.length > 0) console.log(`[PriceMonitor] ${product.id}: skuId neu vergeben (gleiche attrs, genau ein Eintrag fehlte im Scrape) — ersetzt: ${merge.replaced.map(r => `${r.from}→${r.to}`).join(', ')}`);
+        if (merge.replaced.length > 0) console.log(`[PriceMonitor] ${product.id}: skuId neu vergeben (gleiche attrs, genau ein Eintrag fehlte im Scrape) — ersetzt: ${merge.replaced.map(r => `${r.from}→${r.to} (EK ${r.oldPrice?.toFixed(2) ?? '–'}→${r.newPrice.toFixed(2)})`).join(', ')}`);
+        // Ein Ersatz übernimmt Preis UND Bestand des frischen Eintrags (Inhaber-Entscheid) — springt der EK dabei um mehr als 25 %, steht das hier
+        // ausdrücklich im Log (z. B. ein anderes Lager statt derselben Variante).
+        for (const r of merge.replaced) {
+          if (r.oldPrice && Math.abs(r.newPrice - r.oldPrice) / r.oldPrice > 0.25) console.warn(`[PriceMonitor] ${product.id}: ⚠️ EK-Sprung > 25 % beim skuId-Ersatz ${r.from}→${r.to}: ${r.oldPrice.toFixed(2)}€ → ${r.newPrice.toFixed(2)}€ — bitte prüfen`);
+        }
         for (const a of merge.ambiguous) console.warn(`[PriceMonitor] ${product.id}: mehrdeutige neue SKU (nichts geraten): ${a}`);
         if (merge.missing.length > 0) console.warn(`[PriceMonitor] ${product.id}: SKUs im Scrape nicht mehr vorhanden (unverändert behalten): ${merge.missing.join(', ')}`);
 
@@ -745,7 +750,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: margin,
-        }).isAlarm;
+        }).isAlarm
+          // A-015: eine mehrdeutige neue SKU (nichts geraten, nicht angehängt) heißt, dass frische Preise dieser Variante NICHT übernommen wurden —
+          // das darf nicht still bleiben: Preisalarm, bis die Dublette im Produkte-Tab bereinigt ist.
+          || merge.ambiguous.length > 0;
 
         // alarm zusätzlich als eigener Trigger (nicht nur pricesChangedEnough/buyPriceDiff): ein
         // echter Marge-Alarm unterhalb der ALERT_THRESHOLD-Schwelle (z.B. nur 0,20€ unter der
