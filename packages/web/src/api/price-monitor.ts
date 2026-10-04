@@ -7,8 +7,10 @@ import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } fro
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
 import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
-import { ALI_EINFUHR_EUR } from '../shared/constants';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
+import { isVariantProduct } from '../shared/variant-product';
+import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -342,7 +344,8 @@ export async function updateOfferPriceBySku(
   newPrice: number,
   token: string,
   fetchFn: typeof fetch = fetch,
-): Promise<{ ok: boolean; error?: string }> {
+  raiseOnly = false,
+): Promise<{ ok: boolean; error?: string; skipped?: string }> {
   const res = await fetchFn(
     `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
     { headers: { 'Authorization': `Bearer ${token}` } }
@@ -354,6 +357,7 @@ export async function updateOfferPriceBySku(
 
   let anyOk = false;
   const errors: string[] = [];
+  const skippedLive: number[] = [];
   for (const offer of offers) {
     const fullRes = await fetchFn(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
       headers: { 'Authorization': `Bearer ${token}` },
@@ -364,6 +368,13 @@ export async function updateOfferPriceBySku(
       continue;
     }
     const offerData = await fullRes.json() as Record<string, unknown>;
+    // A-019: raise-only — liegt der LIVE-Preis schon auf oder über dem neuen, wird NICHT geschrieben (nie senken, auch wenn die App
+    // einen älteren Preis für diese Variante gespeichert hat).
+    if (raiseOnly) {
+      const live = parseFloat(String((offerData.pricingSummary as { price?: { value?: string } } | undefined)?.price?.value ?? ''));
+      if (!Number.isFinite(live)) { errors.push(`GET offer/${offer.offerId}: Live-Preis nicht lesbar — im raise-only-Modus NICHT geschrieben`); continue; }
+      if (live >= newPrice - 0.004) { skippedLive.push(live); continue; }
+    }
     offerData.pricingSummary = {
       ...(offerData.pricingSummary as Record<string, unknown> | undefined ?? {}),
       price: { value: newPrice.toFixed(2), currency: 'EUR' },
@@ -384,7 +395,83 @@ export async function updateOfferPriceBySku(
     }
   }
   if (errors.length > 0) console.warn(`[PriceMonitor] Preis-Update ${sku}: ${errors.join('; ')}`);
+  if (!anyOk && errors.length === 0 && skippedLive.length > 0) return { ok: true, skipped: `Live-Preis ${skippedLive[0].toFixed(2)} € ist schon ≥ neuer Preis (nie senken)` };
   return anyOk ? { ok: true } : { ok: false, error: errors.join('; ') };
+}
+
+// A-019 Teil 2: Anhebungen je Variante senden. ERST die Zuordnung prüfen: jede anzuhebende Variante muss über den ECHTEN Resolver
+// (wie beim Listing) auf genau EINE Kombination und eine reale eBay-SKU der Gruppe zeigen, und im ganzen Produkt darf keine Kombination
+// mehrdeutig sein (z. B. stele-194-Dubletten) — sonst wird NICHTS gesendet. Dann je Variante updateOfferPriceBySku mit raiseOnly.
+export async function sendVariantRaises(
+  productId: number,
+  groups: VariantGroup[],
+  allEntries: VariantPriceEntry[],
+  raises: Array<{ skuId: string; newSell: number }>,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<VariantSendResult> {
+  const resolved = resolveVariantEntries(productId, groups, allEntries);
+  const ambiguous = resolved.filter(r => r.error?.startsWith('Mehrdeutig'));
+  if (ambiguous.length > 0) {
+    return { resolved: false, reason: `${ambiguous.length} mehrdeutige Kombination(en): ${ambiguous.map(a => a.error).join(' | ')}`, results: [] };
+  }
+  const realSkus = await getInventoryItemGroupSkus(`stele-${productId}-GROUP`, token, fetchFn);
+  const targets: Array<{ skuId: string; sku: string; newSell: number }> = [];
+  for (const r of raises) {
+    const hit = resolved.find(x => x.entry?.skuId === r.skuId && !x.error);
+    if (!hit) return { resolved: false, reason: `Variante ${r.skuId} lässt sich keiner Kombination eindeutig zuordnen`, results: [] };
+    if (!realSkus.includes(hit.sku)) return { resolved: false, reason: `Variante ${r.skuId}: SKU ${hit.sku} ist in der eBay-Gruppe nicht vorhanden`, results: [] };
+    targets.push({ skuId: r.skuId, sku: hit.sku, newSell: r.newSell });
+  }
+  const results: VariantSendResult['results'] = [];
+  for (const t of targets) {
+    // Je Variante abgefangen: eine Exception (Netz, JSON) bei Variante B darf das Ergebnis von bereits angehobener Variante A nicht verwerfen
+    // (sonst würde A nie gespeichert, obwohl eBay sie schon trägt).
+    try {
+      const res = await updateOfferPriceBySku(t.sku, t.newSell, token, fetchFn, true);
+      results.push({ skuId: t.skuId, sku: t.sku, ok: res.ok, skipped: res.skipped, error: res.error });
+    } catch (e) {
+      results.push({ skuId: t.skuId, sku: t.sku, ok: false, error: 'Ausnahme beim Senden: ' + String(e) });
+    }
+  }
+  return { resolved: true, results };
+}
+
+// Verdrahtung für die Preisprüfung (checkOne, Varianten-Zweig): darf den Cron NIE abbrechen.
+export async function maybeRaiseVariants(
+  product: {
+    id: number; variants: string | null; variantSellPrices: string | null; sellPrice: number | null; buyPrice: number | null;
+    adRate: number | null; targetMarginEur: number | null; ebayStatus: string | null; ebayListingId: string | null;
+  },
+  freshVariantPricesJson: string | null,
+  shipsFrom: string | null,
+): Promise<VariantRaiseOutcome | null> {
+  try {
+    const row = { ...product, shipsFrom, variantPrices: freshVariantPricesJson };
+    const groups = parseVariantGroupsJson(product.variants);
+    let entries: VariantPriceEntry[] = [];
+    try { const p = freshVariantPricesJson ? JSON.parse(freshVariantPricesJson) : []; entries = Array.isArray(p) ? p : []; } catch { /* leer */ }
+    return await runVariantRaise(row, {
+      enabled: AUTO_VARIANT_RAISE_ENABLED,
+      send: async (raises) => {
+        const token = await getAccessToken();
+        return sendVariantRaises(product.id, groups, entries, raises, token);
+      },
+      store: async (updates) => {
+        // Frischer Stand der Spalte (nicht der Snapshot vom Lauf-Anfang) — ein zwischenzeitlicher Stufenwechsel bleibt erhalten.
+        const [cur] = await db.select({ v: schema.products.variantSellPrices }).from(schema.products).where(eq(schema.products.id, product.id));
+        const merged = parseVariantSellPrices(cur?.v ?? null);
+        for (const [skuId, price] of Object.entries(updates)) merged[skuId] = price;
+        await db.update(schema.products)
+          .set({ variantSellPrices: serializeVariantSellPrices(Object.entries(merged).map(([skuId, sellPrice]) => ({ skuId, sellPrice }))), updatedAt: new Date().toISOString() })
+          .where(eq(schema.products.id, product.id));
+      },
+      log: (m) => console.log(m),
+    });
+  } catch (e) {
+    console.warn(`[VariantRaise] stele-${product.id}: unerwarteter Fehler (Preisprüfung läuft weiter): ${String(e)}`);
+    return null;
+  }
 }
 
 // eBay Preis über Inventory API updaten (für neue Listings die über Inventory API erstellt wurden)
@@ -671,11 +758,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // wenn sich der AliExpress-Preis geändert hat. So werden auch reine Formel-/Konstanten-
       // Änderungen (z.B. die China-Zoll-Einführung) erkannt, selbst wenn der Einkaufspreis
       // seither stabil war (genau das führte bei 19 Produkten zu nie korrigierten Preisen).
-      let variantCount = 0;
-      try { variantCount = product.variantPrices ? (JSON.parse(product.variantPrices) as unknown[]).length : 0; } catch { /* ignore */ }
-      let variantGroupCount = 0;
-      try { variantGroupCount = product.variants ? (JSON.parse(product.variants) as unknown[]).length : 0; } catch { /* ignore */ }
-      const hasVariants = variantCount > 1 || variantGroupCount > 0;
+      // A-019: eine Definition für alle (shared/variant-product.ts) — auch ein Produkt mit Varianten-Gruppen, aber nur einem
+      // variantPrices-Eintrag (stele-95) ist ein Varianten-Produkt.
+      const hasVariants = isVariantProduct(product.variants, product.variantPrices);
 
       if (hasVariants) {
         // P-13/P-14 galt bisher als Ausschluss für Varianten-Produkte — jetzt werden sie
@@ -787,6 +872,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
             updatedAt: new Date().toISOString(),
           }).where(eq(schema.products.id, product.id));
         }
+        // A-019 Teil 2: liegt der Gewinn EINER Variante unter dem Boden der Stufe → nur diese anheben (raise-only, GET→PUT je Variante, nach
+        // Erfolg in variant_sell_prices speichern). Hinter AUTO_VARIANT_RAISE_ENABLED (Default AUS: nur Log "würde anheben"). Bricht den Cron nie ab.
+        await maybeRaiseVariants(product, freshVariantPricesJson, data.shipsFrom ?? product.shipsFrom);
         return;
       }
 

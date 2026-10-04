@@ -23,7 +23,7 @@ const E: Array<[string, string, string, number, number]> = [
   ['12000056823911270', '100PCS', '11x16cm', 3.89, 15.95], ['12000056823911272', '100PCS', '4x6cm', 1.75, 13.95],
 ];
 const stele218: RepriceProduct = {
-  id: 218, buyPrice: 1.75, sellPrice: null, shipsFrom: 'China', adRate: 5, variantSellPrices: null,
+  id: 218, variants: '[{"name":"Size","values":["200PCS","100PCS"]},{"name":"Color","values":["6x8cm"]}]', buyPrice: 1.75, sellPrice: null, shipsFrom: 'China', adRate: 5, variantSellPrices: null,
   variantPrices: JSON.stringify(E.map(([skuId, size, color, price, ebayPrice]) => ({
     skuId, attrs: { Size: size, Color: color }, price, displayValues: { Size: size, Color: color }, ebayPrice,
   }))),
@@ -110,7 +110,7 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
   });
 
   test('Einzelartikel: ein Plan-Eintrag, Übernahme schreibt sellPrice (Ware 3,15 China, Stufe C → 13,95 €)', () => {
-    const single: RepriceProduct = { id: 5, buyPrice: 3.15, sellPrice: 11.95, shipsFrom: 'China', adRate: 5, variantPrices: null };
+    const single: RepriceProduct = { id: 5, variants: '[]', buyPrice: 3.15, sellPrice: 11.95, shipsFrom: 'China', adRate: 5, variantPrices: null };
     const p = planTierReprice(single, 2.0);
     expect(p.isVariant).toBe(false);
     expect(p.rows).toHaveLength(1);
@@ -121,7 +121,7 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
   });
 
   test('Zeilen ohne Einkaufspreis fehlen im Plan (nichts geraten); ganz ohne EK → leerer Plan, leerer Patch', () => {
-    const leer: RepriceProduct = { id: 6, buyPrice: null, sellPrice: null, adRate: 5, variantPrices: null };
+    const leer: RepriceProduct = { id: 6, variants: '[]', buyPrice: null, sellPrice: null, adRate: 5, variantPrices: null };
     const p = planTierReprice(leer, 2.0);
     expect(p.rows).toEqual([]);
     expect(storePatchForPlan(leer, p)).toEqual({});

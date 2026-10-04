@@ -10,9 +10,11 @@ import {
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
 } from './pricing';
 import { MARGIN_TIERS } from './constants';
+import { isVariantProduct } from './variant-product';
 
 export interface ReportProduct {
   id: number;
+  variants: unknown;                  // product.variants — für isVariantProduct (A-019)
   title: string;
   ebayStatus: string;
   buyPrice: number | null;
@@ -73,7 +75,7 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
     let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; ebayPrice?: number }> = [];
     try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
     entries = entries.filter(e => typeof e.price === 'number' && e.price > 0);
-    const isVariant = entries.length > 1;
+    const isVariant = isVariantProduct(p.variants, p.variantPrices);
 
     const lines: Array<{ label: string; ware: number; oldSell: number | null }> = [];
     if (isVariant) {

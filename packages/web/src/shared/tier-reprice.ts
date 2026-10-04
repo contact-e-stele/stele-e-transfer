@@ -6,6 +6,7 @@
 // Vorrang vor dem alten `variantPrices[].ebayPrice` (resolveVariantSellPrice). Neue Schreibvorgänge gehen deshalb NUR in
 // variant_sell_prices (Einzelartikel: sellPrice); das alte ebayPrice wird weiter nur gelesen, nie neu geschrieben.
 import { MARGIN_TIERS } from './constants';
+import { isVariantProduct } from './variant-product';
 import {
   computeMinSellPrice, profitAtSellPrice, isChinaShipping, parseVariantSellPrices, resolveVariantSellPrice,
   serializeVariantSellPrices, DEFAULT_PRICING_CONFIG,
@@ -13,6 +14,7 @@ import {
 
 export interface RepriceProduct {
   id: number;
+  variants: unknown;                  // product.variants (JSON-Text oder geparst) — für isVariantProduct (A-019)
   buyPrice: number | null;
   sellPrice: number | null;
   shipsFrom?: string | null;
@@ -66,7 +68,7 @@ export function planTierReprice(p: RepriceProduct, newTargetEur: number): TierPl
 
   let entries: Array<{ skuId: string; attrs?: Record<string, string>; displayValues?: Record<string, string>; price: number; ebayPrice?: number }> = [];
   try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
-  const isVariant = entries.length > 1;
+  const isVariant = isVariantProduct(p.variants, p.variantPrices);
   const rows: TierPlanRow[] = [];
   if (isVariant) {
     const stored = parseVariantSellPrices(p.variantSellPrices);

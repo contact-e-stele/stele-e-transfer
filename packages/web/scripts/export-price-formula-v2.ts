@@ -12,7 +12,7 @@ import { resolve } from 'path';
 
 const p = schema.products;
 const dbRows = await db.select({
-  id: p.id, title: p.generatedTitle, ebayStatus: p.ebayStatus, buyPrice: p.buyPrice, sellPrice: p.sellPrice,
+  id: p.id, variants: p.variants, title: p.generatedTitle, ebayStatus: p.ebayStatus, buyPrice: p.buyPrice, sellPrice: p.sellPrice,
   variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices, shippingCost: p.shippingCost,
   shipsFrom: p.shipsFrom, adRate: p.adRate, targetMarginEur: p.targetMarginEur,
 }).from(p).orderBy(p.id);

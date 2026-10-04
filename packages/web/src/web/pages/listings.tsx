@@ -42,6 +42,7 @@ interface EbayListing {
     // A-016: für die Anzeige "Ziel · Erwartet" + Stufen-Knöpfe (TargetBadge), kommt aus GET /api/ebay/listings
     targetMarginEur?: number | null;
     variantPrices: string | null;
+    variants: string | null;           // A-019: Varianten-Gruppen — gleiche Varianten-Erkennung wie die Preisprüfung (isVariantProduct)
     variantSellPrices?: string | null;
     // Paket 4: true, wenn die gespeicherte Beschreibung heute einen fremden Kontakt (E-Mail-Adresse
     // eines Lieferanten/Herstellers) enthält — reine Anzeige, kein Knopf lädt hier etwas hoch.
