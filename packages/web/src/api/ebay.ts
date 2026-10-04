@@ -1783,12 +1783,11 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     const varPrice: number | undefined = varPriceEntry.ebayPrice ??
       (varPriceEntry.price != null && varPriceEntry.price > 0
         ? computeMinSellPrice({
-            buyPrice: varPriceEntry.price, supplierShipping: input.shippingCost ?? 0,
-            isChinaOrigin: isChinaShipping(input.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+            buyPrice: varPriceEntry.price, isChinaOrigin: isChinaShipping(input.shipsFrom),
             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
             targetMarginEur: input.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-            rounding: 'nearest95',
+            rounding: 'floor95',
           }).minSellPrice
         : undefined);
     if (varPrice == null) {

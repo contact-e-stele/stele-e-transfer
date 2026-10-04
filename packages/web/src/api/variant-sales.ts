@@ -4,7 +4,7 @@
 // gesenkt werden, also müssen sie testbar sein. Das Berichtsskript reicht nur die Daten herein und
 // formatiert das Ergebnis.
 
-import { isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { isChinaShipping, computeAliCosts, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { buildVariantSku } from './price-monitor';
 import { buildProductLookups, findProductForSku, type UnmatchedReason } from './order-matching';
 
@@ -123,16 +123,16 @@ export function aggregateVariantSales(input: {
 
       // EK je Stück: ein manuell erfasster Einkaufspreis hat Vorrang (wie in der Bestellansicht der
       // App), gilt aber für die GESAMTE Bestellung — eindeutig zuordenbar nur bei genau einer
-      // Position. Sonst Produkt-EK + Zoll + Lieferantenversand.
-      const zoll = isChinaShipping(product.shipsFrom) ? DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur : 0;
-      const versand = product.shippingCost ?? 0;
+      // Position. Sonst Ware + Versand + Einfuhrabgaben nach Preisformel v2 (A-014, computeAliCosts).
+      const isChina = isChinaShipping(product.shipsFrom);
+      const nebenkosten = (ware: number) => { const c = computeAliCosts(ware, isChina); return c.shipping + c.customs; };
       // WICHTIG: der EK DIESER Variante, nicht der Produkt-EK — die Varianten unterscheiden sich
       // im Einkauf teils um ein Mehrfaches (stele-110: 2,15 bis 7,69 EUR). Der Produkt-EK dient nur
       // als Rueckfall, wenn die Variante keinen eigenen hat.
       const variantBuyPrice = Number.isFinite(variant.buyPrice) && variant.buyPrice > 0 ? variant.buyPrice : product.buyPrice;
       let unitCost: number | null = null;
-      if (manualBuyPrice != null && order.lineItems.length === 1) unitCost = manualBuyPrice / qty + zoll + versand;
-      else if (variantBuyPrice != null) unitCost = variantBuyPrice + zoll + versand;
+      if (manualBuyPrice != null && order.lineItems.length === 1) unitCost = manualBuyPrice / qty + nebenkosten(manualBuyPrice / qty);
+      else if (variantBuyPrice != null) unitCost = variantBuyPrice + nebenkosten(variantBuyPrice);
 
       const unitRevenue = li.lineItemCost != null ? li.lineItemCost / qty : null;
       if (unitCost == null || unitRevenue == null) {

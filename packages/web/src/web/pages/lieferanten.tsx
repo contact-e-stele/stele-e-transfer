@@ -7,9 +7,9 @@ import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
 import { emptyOverrides, overridesToFlat, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
 import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fields-editor";
-import { CHINA_ZOLL_EUR, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
+import { ALI_EINFUHR_EUR, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
-import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
@@ -269,7 +269,9 @@ export default function Lieferanten() {
   // wenn hier bewusst z.B. 4€ gewählt wurden).
   const [minGewinn, setMinGewinn] = useState<number>(() => {
     const saved = localStorage.getItem("stele_min_gewinn");
-    return saved ? parseFloat(saved) : MIN_GEWINN_EUR;
+    const savedNum = saved ? parseFloat(saved) : NaN;
+    // A-014: nur noch Margen-Stufen A–D (1,00 / 1,50 / 2,00 / 3,00); ein älterer gespeicherter Wert (z. B. 4) fällt auf den Standard zurück.
+    return MARGIN_TIERS.some(t => t.targetEur === savedNum) ? savedNum : MIN_GEWINN_EUR;
   });
   const [, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -463,16 +465,17 @@ export default function Lieferanten() {
   // Versand + Zoll vom Einkauf ab statt nur den reinen Einkaufspreis.
   const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
   const verkauf = parseFloat(ebayPrice.replace(",", ".")) || 0;
-  const versand = parseFloat(shippingCost.replace(",", ".")) || 0;
   const ebayFee = verkauf * (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor
     + DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
   const gewinn = profitAtSellPrice({
-    sellPrice: verkauf, buyPrice: einkauf, supplierShipping: versand,
-    isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)), customsFlat: CHINA_ZOLL_EUR,
+    sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)),
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
   });
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
+  // A-014: "Ziel <Stufe> · Erwartet <echter Gewinn beim gesetzten VK nach Formel v2>"; gelb = Erwartet < Ziel, rot = Erwartet < Boden.
+  const TARGET_LEVEL_COLOR = { ok: "#16A34A", yellow: "#CA8A04", red: "#DC2626" } as const;
+  const targetDisplay = evaluateTargetDisplay(minGewinn, gewinn);
 
   // ─── P-66 Schritt 2/3: Compliance-Gate für regulierte Produktgruppen ──────
   // Schritt 3: matchRegulatedCategoriesDetailed() statt matchRegulatedCategories() — liefert
@@ -1662,12 +1665,11 @@ export default function Lieferanten() {
                           // bleibt der laufenden automatischen Preisprüfung vorbehalten). Zentrale
                           // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A+2B, 2026-09-10).
                           const recommended = computeMinSellPrice({
-                            buyPrice: einkauf, supplierShipping: versand,
-                            isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)), customsFlat: CHINA_ZOLL_EUR,
+                            buyPrice: einkauf, isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)),
                             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                             targetMarginEur: minGewinn, safetyBufferEur: 0,
-                            rounding: 'nearest95-min',
+                            rounding: 'floor95',
                           }).minSellPrice;
                           setEbayPrice(recommended.toFixed(2));
                         }}
@@ -1783,12 +1785,13 @@ export default function Lieferanten() {
                   verwendet statt eines globalen Fallbacks. */}
               <div style={{ marginBottom: 14 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>
-                  Mindestgewinn beim Import (€)
+                  Zielgewinn (Margen-Stufe)
                 </label>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  {[2, 3, 4].map(v => (
+                  {MARGIN_TIERS.map(tier => { const v = tier.targetEur; return (
                     <button
                       key={v}
+                      title={`Stufe ${tier.label}: Ziel ${v.toFixed(2)} €, Boden ${tier.floorEur.toFixed(2)} € (Gewinn darf nie darunter fallen)`}
                       onClick={() => { setMinGewinn(v); localStorage.setItem("stele_min_gewinn", String(v)); }}
                       style={{
                         padding: "7px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
@@ -1797,11 +1800,11 @@ export default function Lieferanten() {
                         color: minGewinn === v ? "#16A34A" : "#64748B",
                         cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
                       }}
-                    >{v}€</button>
-                  ))}
+                    >{tier.label} · {v.toFixed(2).replace(".", ",")} €</button>
+                  ); })}
                 </div>
                 <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
-                  Wird beim Speichern für dieses Produkt gespeichert — gilt danach auch für die laufende automatische Preisprüfung und jede spätere Neuberechnung, nicht nur für diesen Import.
+                  Wird beim Speichern für dieses Produkt gespeichert — gilt danach auch für die laufende automatische Preisprüfung und jede spätere Neuberechnung, nicht nur für diesen Import. Boden dieser Stufe: {evaluateTargetDisplay(minGewinn, 0).floorEur.toFixed(2).replace(".", ",")} € — der Gewinn fällt nie darunter.
                 </div>
               </div>
 
@@ -1846,6 +1849,7 @@ export default function Lieferanten() {
                       { label: `Gebühr (${DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate}%)`, value: `−${ebayFee.toFixed(2)} €`, color: "#64748B" },
                       { label: "Gewinn", value: `${gewinn >= 0 ? "+" : ""}${gewinn.toFixed(2)} €`, color: gewinn >= 0 ? "#16A34A" : "#DC2626" },
                       { label: "Marge", value: `${margePercent.toFixed(1)}%`, color: margePercent >= 15 ? "#16A34A" : margePercent >= 5 ? "#F59E0B" : "#DC2626" },
+                      { label: "Ziel · Erwartet", value: `${targetDisplay.targetEur.toFixed(2)} · ${targetDisplay.expectedEur.toFixed(2)} €`, color: TARGET_LEVEL_COLOR[targetDisplay.level] },
                     ].map(s => (
                       <div key={s.label}>
                         <div style={{ fontSize: 15, fontWeight: 800, color: s.color }}>{s.value}</div>
@@ -1865,20 +1869,14 @@ export default function Lieferanten() {
               // hier einmal extrahiert, damit "Alle übernehmen" und Einzel-Button garantiert identisch rechnen.
               const recommendedFor = (v: VariantPrice): number => {
                 const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
-                const versandV = parseFloat(shippingCost.replace(",", ".")) || 0;
-                const sendungswertV = v.price + versandV;
-                const zollManuellV = parseFloat((variantZollManuell[v.skuId] ?? "").replace(",", ".")) || 0;
-                // Zoll-Schwellenlogik (Pauschale bis 150€ Sendungswert, sonst manueller Wert) bleibt
-                // hier — sie ist spezifisch für dieses Modal, nicht Teil der zentralen Formel.
-                const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
+                // A-014: Versand/Einfuhrabgaben rechnet die zentrale Formel v2 (computeAliCosts) selbst.
                 // Kein Sicherheitspuffer (Teil 2C: global entfernt, safetyBufferEur immer 0)
                 return computeMinSellPrice({
-                  buyPrice: v.price, supplierShipping: versandV,
-                  isChinaOrigin: ausChinaV, customsFlat: zollV,
+                  buyPrice: v.price, isChinaOrigin: ausChinaV,
                   ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                   vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                   targetMarginEur: minGewinn, safetyBufferEur: 0,
-                  rounding: 'nearest95-min',
+                  rounding: 'floor95',
                 }).minSellPrice;
               };
               return (
@@ -1931,17 +1929,18 @@ export default function Lieferanten() {
                       const versandV = parseFloat(shippingCost.replace(",", ".")) || 0;
                       const sendungswertV = v.price + versandV;
                       const ueberSchwelleV = ausChinaV && sendungswertV > 150;
-                      const zollManuellV = parseFloat((variantZollManuell[v.skuId] ?? "").replace(",", ".")) || 0;
-                      const zollV = !ausChinaV ? 0 : (sendungswertV <= 150 ? CHINA_ZOLL_EUR : zollManuellV);
-                      const wahrerEinkaufV = v.price + versandV + zollV;
+                      // A-014: angezeigter "wahrer Einkauf" = Ware + Versand + Einfuhrabgaben nach Formel v2 (computeAliCosts);
+                      // der manuelle Zoll > 150 € Sendungswert fließt in die zentrale Formel NICHT ein (Pauschale 3,57 €).
+                      const aliV = computeAliCosts(v.price, ausChinaV);
+                      const zollV = aliV.customs;
+                      const wahrerEinkaufV = aliV.totalCost;
                       // Fix "Preislogik vereinheitlichen" (2026-09-13): gleiche zentrale Formel
                       // (profitAtSellPrice/DEFAULT_PRICING_CONFIG) wie das Hauptpanel oben —
                       // Hauptpanel und Varianten-Anzeige zeigen für dieselben Eingaben jetzt nie
                       // unterschiedliche Gewinne mehr.
                       const varProfit = varEbay > 0
                         ? profitAtSellPrice({
-                            sellPrice: varEbay, buyPrice: v.price, supplierShipping: versandV,
-                            isChinaOrigin: ausChinaV, customsFlat: zollV,
+                            sellPrice: varEbay, buyPrice: v.price, isChinaOrigin: ausChinaV,
                             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                           })
@@ -1979,7 +1978,7 @@ export default function Lieferanten() {
                             <div className="stele-variant-stat-label">eBay</div>
                             <input
                               type="number" step="0.01" min="0"
-                              placeholder={`min. ${(v.price * 1.19 * (1 + (13 + adRate) / 100) + 0.54 + 1.6).toFixed(2)}`}
+                              placeholder={`min. ${recommendedFor(v).toFixed(2)}`}
                               value={varEbayRaw}
                               onChange={e => setVariantEbayPrices(prev => ({ ...prev, [v.skuId]: e.target.value }))}
                               style={{
@@ -1993,7 +1992,7 @@ export default function Lieferanten() {
                           <div className="stele-variant-stat">
                             <div className="stele-variant-stat-label">Gewinn</div>
                             {varProfit !== null
-                              ? <span style={{ fontSize: 12, fontWeight: 800, color: varProfit >= 1.6 ? "#16A34A" : varProfit >= 0 ? "#F59E0B" : "#DC2626" }}>{varProfit >= 0 ? "+" : ""}{varProfit.toFixed(2)} €</span>
+                              ? <span title={`Ziel ${minGewinn.toFixed(2)} € · Erwartet ${varProfit.toFixed(2)} €`} style={{ fontSize: 12, fontWeight: 800, color: TARGET_LEVEL_COLOR[evaluateTargetDisplay(minGewinn, varProfit).level] }}>{varProfit >= 0 ? "+" : ""}{varProfit.toFixed(2)} € <span style={{ fontSize: 9, fontWeight: 600, color: "#94A3B8" }}>Ziel {minGewinn.toFixed(2)}</span></span>
                               : <span style={{ color: "#CBD5E1", fontSize: 11 }}>–</span>
                             }
                           </div>
@@ -2036,7 +2035,7 @@ export default function Lieferanten() {
                             </div>
                             {ausChinaV && !ueberSchwelleV && (
                               <span style={{ fontSize: 10, color: "#94A3B8" }}>
-                                Zoll: {CHINA_ZOLL_EUR.toFixed(2)} €
+                                Einfuhrabgaben: {ALI_EINFUHR_EUR.toFixed(2)} €
                               </span>
                             )}
                             {ueberSchwelleV && (
@@ -2059,7 +2058,7 @@ export default function Lieferanten() {
                                 />
                               </>
                             )}
-                            {(versandV > 0 || zollV > 0) && (
+                            {(aliV.shipping > 0 || zollV > 0) && (
                               <span style={{ fontSize: 10, color: "#64748B" }}>
                                 wahrer Einkauf: <strong style={{ color: "#0F172A" }}>{wahrerEinkaufV.toFixed(2)} €</strong>
                               </span>

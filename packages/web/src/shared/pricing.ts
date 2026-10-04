@@ -19,9 +19,14 @@
 // von beiden Seiten importierbare Ort und wird hier in-place ersetzt statt eine zweite,
 // parallele Datei anzulegen.
 
-import { MIN_GEWINN_EUR, CHINA_ZOLL_EUR } from './constants';
+import {
+  MIN_GEWINN_EUR, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, ALI_EINFUHR_EUR,
+  MARGIN_TIERS, HIDDEN_MARGIN_TIER, MIN_PROFIT_FLOOR_EUR,
+} from './constants';
 
-export type RoundingMode = 'up95' | 'nearest95' | 'nearest95-min' | 'cent' | 'none';
+// 'floor95' = Preisformel v2 (A-014): ,95-Marke UNTER dem Rohpreis; liegt der Gewinn dann unter dem Boden der
+// Margen-Stufe, die nächste ,95 darüber, bis Gewinn >= Boden (nur in computeMinSellPrice, braucht die Gewinnformel).
+export type RoundingMode = 'up95' | 'nearest95' | 'floor95' | 'cent' | 'none';
 
 // Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Teil 2C (2026-09-10): keine produktive
 // Aufrufstelle mehr — genau dieses "immer aufwärts" trug zur Zielgewinn-Abweichung bei (s.u.
@@ -32,46 +37,45 @@ export function roundUpToX95(price: number): number {
 
 // Rundet zur NÄCHSTEN ,95-Endung (auf oder ab) — P-74, bewusst anders als roundUpToX95: im
 // manuellen Varianten-Import-Modal (lieferanten.tsx) darf der Preis auch knapp unter den
-// berechneten Mindestpreis fallen. (Für die Übernehmen-Knöpfe gilt stattdessen roundToNearest95NotBelow.)
+// berechneten Mindestpreis fallen. (Für die Übernehmen-Knöpfe gilt seit A-014 stattdessen Modus 'floor95'.)
 export function roundToNearest95(price: number): number {
   const nearestInt = Math.round(price - 0.95);
   return Math.round((nearestInt + 0.95) * 100) / 100;
 }
 
-// Nachtrag Paket 2 (21.09.2026, Entscheidung des Nutzers): erlaubte Gewinn-Unterschreitung des
-// Zielgewinns beim Runden für die Übernehmen-Knöpfe (Modus 'nearest95-min'), in EUR.
-export const PROFIT_TOLERANCE_EUR = 0.10;
-
-// Paket 2 / A2+A4 (2026-09-21): EINE Rundungsregel für beide Übernehmen-Knöpfe im Import-Modal
-// (Artikel-Knopf "≥X € Gewinn →" und "Alle Preisvorschläge übernehmen"). Rundet auf die
-// nächstgelegene ,95-Marke, auch abwärts — solange der Gewinn dadurch höchstens
-// PROFIT_TOLERANCE_EUR unter dem Zielgewinn liegt; sonst wird auf die nächste ,95-Marke nach OBEN
-// gerundet. rawMin ist rawMinSellPrice aus computeMinSellPrice (Zielgewinn schon eingerechnet).
-//
-// Warum ohne Toleranz nur "immer aufrunden" herauskäme: jede Abwärts-Marke liegt unter rawMin, also
-// unter dem Zielgewinn (nachgerechnet über 5901 Rohwerte 1,00–60,00 €: nie abwärts). Erst die
-// Toleranz gibt der Preisregel vom 13.09.2026 (Rohwert 2,10 → 1,95) wieder Wirkung. Ohne jede
-// Regel unterschritt roundToNearest95() den Zielgewinn live um bis zu ~0,34 € (Produkt 182:
-// 10 von 23 Varianten zwischen +1,66 und +1,95 € bei Ziel 2,00 €).
-//
-// Die Toleranz liegt auf dem GEWINN, nicht auf dem Preis: ein um X € niedrigerer Preis senkt den
-// Gewinn nur um X × (1 − totalFeeRateGross), weil die Gebühren mitsinken. Deshalb bekommt diese
-// Funktion die erlaubte PREIS-Unterschreitung (allowedPriceShortfall = Toleranz / (1 − Gebührensatz))
-// von computeMinSellPrice, wo der Gebührensatz bekannt ist — kein fester Preisbetrag. Der Parameter
-// allowedPriceShortfall ist deshalb in PREIS-Einheit (EUR), nicht Gewinn; Standard 0 = nie abwärts.
-// Bezugsgröße ist rawMin, also Zielgewinn + safetyBufferEur (die Übernehmen-Knöpfe nutzen Puffer 0).
-// Toleranz siehe PROFIT_TOLERANCE_EUR.
-// 1e-9 nur gegen Gleitkomma-Rauschen (14,950000000000001 ist "auf der Marke").
-export function roundToNearest95NotBelow(rawMin: number, allowedPriceShortfall = 0): number {
-  const nearest = roundToNearest95(rawMin);
-  return nearest + allowedPriceShortfall + 1e-9 >= rawMin ? nearest : roundUpToX95(rawMin);
+// Preisformel v2 (A-014, 04.10.2026): Kosten einer AliExpress-Bestellung K = Ware + Versand + Einfuhrabgaben.
+//   Ware = AliExpress-Preis der Variante OHNE Rabatte/Gutscheine/Münzen (die sind wechselnd → Bonus, nie einrechnen)
+//   Versand = ALI_VERSAND_EUR, wenn Ware < ALI_VERSAND_FREI_AB_EUR, sonst 0
+//   Einfuhrabgaben = ALI_EINFUHR_EUR je Bestellung, wenn shipsFrom = China, sonst 0
+// Ersetzt die alte Formel "Ware + Produktfeld shippingCost + CHINA_ZOLL_EUR (4,00)". Das Produktfeld
+// shippingCost bleibt in der DB, wird in der Formel aber nicht mehr gelesen.
+export interface AliCosts { ware: number; shipping: number; customs: number; totalCost: number }
+export function computeAliCosts(ware: number, isChinaOrigin: boolean): AliCosts {
+  const shipping = ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
+  const customs = isChinaOrigin ? ALI_EINFUHR_EUR : 0;
+  return { ware, shipping, customs, totalCost: ware + shipping + customs };
 }
 
-function applyRounding(price: number, mode: RoundingMode, allowedPriceShortfall = 0): number {
+// Boden (Mindest-Gewinn) zu einem Zielgewinn: Stufen A–D (MARGIN_TIERS) bzw. die ausgeblendete 4,50-Stufe für
+// Bestandsprodukte; jeder andere Zielgewinn → 1,00 € (nie Gewinn unter 1,00 €).
+export function profitFloorFor(targetMarginEur: number): number {
+  const tier = [...MARGIN_TIERS, HIDDEN_MARGIN_TIER].find(t => Math.abs(t.targetEur - targetMarginEur) < 0.005);
+  return tier ? tier.floorEur : MIN_PROFIT_FLOOR_EUR;
+}
+
+// Preisformel v2, Rundung: erst die ,95-Marke UNTER dem Rohpreis (Kunde soll den günstigeren Preis sehen);
+// liegt der Gewinn dort unter dem Boden → nächste ,95 darüber, so lange bis Gewinn >= Boden. Ersetzt die
+// 0,10-€-Toleranzregel vom 21.09. 1e-9 nur gegen Gleitkomma-Rauschen (14,950000000000001 ist "auf der Marke").
+export function roundToProfitFloor(rawPrice: number, profitAt: (sellPrice: number) => number, floorEur: number): number {
+  let price = Math.round((Math.floor(rawPrice - 0.95 + 1e-9) + 0.95) * 100) / 100;
+  for (let i = 0; i < 1000 && profitAt(price) < floorEur - 1e-9; i++) price = Math.round((price + 1) * 100) / 100;
+  return price;
+}
+
+function applyRounding(price: number, mode: Exclude<RoundingMode, 'floor95'>): number {
   switch (mode) {
     case 'up95': return roundUpToX95(price);
     case 'nearest95': return roundToNearest95(price);
-    case 'nearest95-min': return roundToNearest95NotBelow(price, allowedPriceShortfall);
     case 'cent': return Math.ceil(price * 100) / 100;
     case 'none': return price;
   }
@@ -86,23 +90,22 @@ function applyRounding(price: number, mode: RoundingMode, allowedPriceShortfall 
 // können soll (z.B. um ein Käufer-Gegenangebot bei einem angenommenen anderen Gebührensatz zu
 // prüfen), nicht weil der Wert falsch wäre.
 export interface PricingInput {
-  buyPrice: number;          // Einkaufspreis
-  supplierShipping: number;  // Versandkosten Lieferant
-  isChinaOrigin: boolean;    // Herkunft: China (Zoll wird angesetzt) oder EU/sonstige (kein Zoll)
-  customsFlat: number;       // Zollpauschale — wird nur angesetzt, wenn isChinaOrigin=true
+  buyPrice: number;          // Ware: AliExpress-Preis (ohne Rabatte/Gutscheine/Münzen)
+  isChinaOrigin: boolean;    // Herkunft: China (Einfuhrabgaben ALI_EINFUHR_EUR werden angesetzt) oder EU/sonstige (keine)
   ebayFeeRatePercent: number; // eBay-Gebührensatz in % (Default 15, siehe DEFAULT_PRICING_CONFIG)
   ebayFixedFeeEur: number;    // eBay-Fixbetrag in EUR, netto (vor MwSt)
   vatFactor: number;          // MwSt-Faktor (z.B. 1.19 = 19% MwSt.)
-  adRatePercent: number;      // Anzeigentarif in % (Promoted Listings)
-  targetMarginEur: number;    // Zielmarge/Mindestgewinn in EUR
+  adRatePercent: number;      // Anzeigentarif in % (Promoted Listings) — 0, wenn nicht wirklich beworben
+  targetMarginEur: number;    // Zielgewinn in EUR (Stufe A–D); der Boden dazu kommt aus profitFloorFor()
   safetyBufferEur: number;    // zusätzlicher Sicherheitspuffer in EUR (0, wenn an dieser Stelle nicht verwendet)
   rounding: RoundingMode;     // Rundungsmodus für minSellPrice
-  profitToleranceEur?: number; // nur Modus 'nearest95-min': erlaubte Gewinn-Unterschreitung, Standard PROFIT_TOLERANCE_EUR
+  profitFloorEur?: number;    // nur Modus 'floor95': Boden explizit setzen (sonst profitFloorFor(targetMarginEur))
 }
 
 export interface PricingResult {
-  totalCost: number;         // buyPrice + supplierShipping + customs
-  customs: number;           // tatsächlich angesetzter Zollbetrag (0 oder customsFlat)
+  totalCost: number;         // Ware + Versand + Einfuhrabgaben (computeAliCosts)
+  shipping: number;          // angesetzter AliExpress-Versand (0 oder ALI_VERSAND_EUR)
+  customs: number;           // tatsächlich angesetzte Einfuhrabgaben (0 oder ALI_EINFUHR_EUR)
   baseFeeRateGross: number;  // ebayFeeRatePercent/100 × vatFactor — OHNE Anzeigentarif
   totalFeeRateGross: number; // (ebayFeeRatePercent + adRatePercent)/100 × vatFactor — MIT Anzeigentarif
   fixedFeeGross: number;     // ebayFixedFeeEur × vatFactor
@@ -118,15 +121,15 @@ export interface PricingResult {
 // Produkte-Tab-Badge), dieselben Gebühren-Konstanten wiederverwenden können, statt sie ein
 // zweites Mal selbst zu berechnen.
 export function computeMinSellPrice(input: PricingInput): PricingResult {
-  const customs = input.isChinaOrigin ? input.customsFlat : 0;
-  const totalCost = input.buyPrice + input.supplierShipping + customs;
+  const { shipping, customs, totalCost } = computeAliCosts(input.buyPrice, input.isChinaOrigin);
   const baseFeeRateGross = (input.ebayFeeRatePercent / 100) * input.vatFactor;
   const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   const rawMinSellPrice = (totalCost + input.targetMarginEur + input.safetyBufferEur + fixedFeeGross) / (1 - totalFeeRateGross);
-  const priceShortfall = (input.profitToleranceEur ?? PROFIT_TOLERANCE_EUR) / (1 - totalFeeRateGross);
-  const minSellPrice = applyRounding(rawMinSellPrice, input.rounding, priceShortfall);
-  return { totalCost, customs, baseFeeRateGross, totalFeeRateGross, fixedFeeGross, rawMinSellPrice, minSellPrice };
+  const minSellPrice = input.rounding === 'floor95'
+    ? roundToProfitFloor(rawMinSellPrice, p => p * (1 - totalFeeRateGross) - fixedFeeGross - totalCost, input.profitFloorEur ?? profitFloorFor(input.targetMarginEur))
+    : applyRounding(rawMinSellPrice, input.rounding);
+  return { totalCost, shipping, customs, baseFeeRateGross, totalFeeRateGross, fixedFeeGross, rawMinSellPrice, minSellPrice };
 }
 
 // ─── Teil 3 (2026-09-13): Verkaufspreis JE VARIANTE ───────────────────────────────────────────
@@ -209,22 +212,18 @@ export function resolveVariantSellPrice(
 export interface ProfitAtSellPriceInput {
   sellPrice: number;
   buyPrice: number;
-  supplierShipping: number;
   isChinaOrigin: boolean;
-  customsFlat: number;
   ebayFeeRatePercent: number;
   ebayFixedFeeEur: number;
   vatFactor: number;
   adRatePercent: number;
 }
 
-// Gewinn bei einem GEGEBENEN Verkaufspreis — die Umkehrung von computeMinSellPrice(), exakt die
-// Formel aus dem Teil-3-Auftrag:
-//   Gewinn = Preis − (Varianten-EK + Lieferantenversand + Zollpauschale)
-//            − (Preis × (15% + adRate) × 1,19 + 0,30 × 1,19)
+// Gewinn bei einem GEGEBENEN Verkaufspreis — die Umkehrung von computeMinSellPrice(), Formel v2 (A-014):
+//   Gewinn = Preis × f − Fix − K,  f = 1 − (15% + adRate) × 1,19,  Fix = 0,30 × 1,19,
+//   K = Ware + Versand + Einfuhrabgaben (computeAliCosts)
 export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
-  const customs = input.isChinaOrigin ? input.customsFlat : 0;
-  const totalCost = input.buyPrice + input.supplierShipping + customs;
+  const totalCost = computeAliCosts(input.buyPrice, input.isChinaOrigin).totalCost;
   const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);
@@ -256,9 +255,7 @@ export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
 export interface PriceAlarmInput {
   currentSellPrice: number | null | undefined;
   variants: Array<{ buyPrice: number }>;
-  supplierShipping: number;
   isChinaOrigin: boolean;
-  customsFlat: number;
   ebayFeeRatePercent: number;
   ebayFixedFeeEur: number;
   vatFactor: number;
@@ -267,7 +264,7 @@ export interface PriceAlarmInput {
 }
 
 export interface PriceAlarmResult {
-  isAlarm: boolean;             // true nur, wenn currentSellPrice gesetzt ist UND mindestens eine Variante darunter die Zielmarge verfehlt
+  isAlarm: boolean;             // true nur, wenn currentSellPrice gesetzt ist UND mindestens eine Variante unter den BODEN der Stufe fällt (A-014)
   worstProfit: number | null;   // niedrigster Gewinn aller Varianten beim aktuellen Preis (null ohne currentSellPrice)
 }
 
@@ -278,24 +275,22 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
   const profits = input.variants.map(v => profitAtSellPrice({
     sellPrice: input.currentSellPrice as number,
     buyPrice: v.buyPrice,
-    supplierShipping: input.supplierShipping,
     isChinaOrigin: input.isChinaOrigin,
-    customsFlat: input.customsFlat,
     ebayFeeRatePercent: input.ebayFeeRatePercent,
     ebayFixedFeeEur: input.ebayFixedFeeEur,
     vatFactor: input.vatFactor,
     adRatePercent: input.adRatePercent,
   }));
   const worstProfit = Math.min(...profits);
-  return { isAlarm: worstProfit < input.targetMarginEur, worstProfit };
+  // A-014: die ,95-Rundung unter dem Rohpreis liegt BEWUSST unter dem Zielgewinn ("Erwartet" < "Ziel" = gelb);
+  // Alarm ist nur noch "Gewinn unter dem Boden" (= rot, darf nicht vorkommen → Preis anheben).
+  return { isAlarm: worstProfit < profitFloorFor(input.targetMarginEur) - 1e-9, worstProfit };
 }
 
 export interface VariantSellPriceInput {
   variants: Array<{ skuId: string; buyPrice: number; attrs?: Record<string, string> }>;
   anchorSellPrice: number;    // heutiger Verkaufspreis des Produkts — den behält die teuerste Variante exakt
-  supplierShipping: number;
   isChinaOrigin: boolean;
-  customsFlat: number;
   ebayFeeRatePercent: number;
   ebayFixedFeeEur: number;
   vatFactor: number;
@@ -348,9 +343,7 @@ export function computeVariantSellPrices(input: VariantSellPriceInput): VariantS
   }
 
   const costContext = {
-    supplierShipping: input.supplierShipping,
     isChinaOrigin: input.isChinaOrigin,
-    customsFlat: input.customsFlat,
     ebayFeeRatePercent: input.ebayFeeRatePercent,
     ebayFixedFeeEur: input.ebayFixedFeeEur,
     vatFactor: input.vatFactor,
@@ -376,12 +369,15 @@ export function computeVariantSellPrices(input: VariantSellPriceInput): VariantS
         isAnchor: true, limitedByAnchorPrice: false,
       };
     }
+    // A-014: Rundung wie überall nach Formel v2 ('floor95': ,95 unter dem Rohpreis, nötigenfalls darüber bis Gewinn >= Boden).
+    // Der Boden gehört zur gewählten Margen-Stufe (input.targetMarginEur), NICHT zum Gleich-Gewinn-Ziel targetProfit.
     const computed = computeMinSellPrice({
       ...costContext,
       buyPrice: v.buyPrice,
       targetMarginEur: targetProfit,
       safetyBufferEur: 0,
-      rounding: 'nearest95',
+      rounding: 'floor95',
+      profitFloorEur: profitFloorFor(input.targetMarginEur),
     }).minSellPrice;
     // Harte Schranke: nie über den heutigen sellPrice erhöhen.
     const limitedByAnchorPrice = computed > input.anchorSellPrice;
@@ -471,12 +467,21 @@ export interface RaiseOnlyDecision {
 //
 // computedMinPrice === currentPrice zählt ausdrücklich als "nichts tun" (kein Schreibvorgang) —
 // nicht als Anheben um 0€.
+//
+// A-014 (Preisformel v2): `belowFloor` = "Gewinn beim AKTUELLEN Preis liegt unter dem Boden der Stufe". Wird er
+// übergeben und ist false, wird NICHT angehoben (nur ein Preis unter dem Boden löst das sofortige,
+// ungedeckelte Anheben aus; zwischen Boden und Ziel bleibt der Preis, die Anzeige zeigt dort gelb). Ohne
+// Angabe (undefined) gilt das bisherige Verhalten: anheben, sobald der berechnete Preis höher ist.
 export function applyRaiseOnly(
   currentPrice: number | null | undefined,
-  computedMinPrice: number
+  computedMinPrice: number,
+  belowFloor?: boolean
 ): RaiseOnlyDecision {
   if (currentPrice == null) {
     return { action: 'raise', price: computedMinPrice, wasBelowBreakEven: false, isInitialPrice: true };
+  }
+  if (belowFloor === false) {
+    return { action: 'none', price: currentPrice, wasBelowBreakEven: false, isInitialPrice: false };
   }
   if (computedMinPrice > currentPrice) {
     return { action: 'raise', price: computedMinPrice, wasBelowBreakEven: true, isInitialPrice: false };
@@ -521,6 +526,57 @@ export function planCappedPriceSteps(
   return { nextPrice, runsToTarget: runs, reachesTarget: Math.abs(price - targetPrice) < 0.005 };
 }
 
+// A-014 Nachtrag (Anzeige): "Ziel <Stufe> · Erwartet <echter Gewinn beim gesetzten VK nach Formel v2>" je Produkt
+// und je Variante. 'yellow' = Erwartet < Ziel; 'red' = Erwartet < Boden (darf nicht vorkommen → Preis anheben).
+// Beträge auf Cent gerundet verglichen, damit 1,2999999 nicht als "unter Boden 1,30" rot wird.
+export interface TargetDisplay { targetEur: number; expectedEur: number; floorEur: number; level: 'ok' | 'yellow' | 'red' }
+export function evaluateTargetDisplay(targetMarginEur: number, expectedProfitEur: number): TargetDisplay {
+  const floorEur = profitFloorFor(targetMarginEur);
+  const expectedEur = Math.round(expectedProfitEur * 100) / 100;
+  const level = expectedEur < floorEur - 1e-9 ? 'red' : expectedEur < targetMarginEur - 1e-9 ? 'yellow' : 'ok';
+  return { targetEur: targetMarginEur, expectedEur, floorEur, level };
+}
+
+// A-014 Punkt 5 / Übergabe 6c — NUR VORBEREITET, im Betrieb AUS (VARIANT_RULE_6C_ENABLED = false in constants.ts,
+// Inhaber muss bestätigen; bisher ruft das nichts auf): jede Variante einzeln mit ihrem eigenen Ali-Preis; keine
+// Variante wird über die Formel erhöht (die teuerste behält ihren Preis) — AUSSER ihr Gewinn liegt beim aktuellen
+// Preis unter dem Boden: dann Anheben auf den Formelpreis (Schutz vor Verlust).
+export interface VariantRule6cInput {
+  variants: Array<{ skuId: string; buyPrice: number; currentSellPrice: number | null }>;
+  isChinaOrigin: boolean;
+  ebayFeeRatePercent: number;
+  ebayFixedFeeEur: number;
+  vatFactor: number;
+  adRatePercent: number;
+  targetMarginEur: number;
+}
+export interface VariantRule6cRow {
+  skuId: string;
+  currentSellPrice: number | null;
+  profitAtCurrent: number | null;
+  action: 'keep' | 'raise';
+  newSellPrice: number | null; // bei 'raise' der Formelpreis, sonst der unveränderte aktuelle Preis
+}
+export function evaluateVariantRule6c(input: VariantRule6cInput): VariantRule6cRow[] {
+  const floor = profitFloorFor(input.targetMarginEur);
+  return input.variants.map(v => {
+    if (v.currentSellPrice == null) return { skuId: v.skuId, currentSellPrice: null, profitAtCurrent: null, action: 'keep' as const, newSellPrice: null };
+    const common = {
+      isChinaOrigin: input.isChinaOrigin, ebayFeeRatePercent: input.ebayFeeRatePercent,
+      ebayFixedFeeEur: input.ebayFixedFeeEur, vatFactor: input.vatFactor, adRatePercent: input.adRatePercent,
+    };
+    const profitAtCurrent = profitAtSellPrice({ ...common, sellPrice: v.currentSellPrice, buyPrice: v.buyPrice });
+    if (profitAtCurrent >= floor - 1e-9) {
+      return { skuId: v.skuId, currentSellPrice: v.currentSellPrice, profitAtCurrent, action: 'keep' as const, newSellPrice: v.currentSellPrice };
+    }
+    const formulaPrice = computeMinSellPrice({
+      ...common, buyPrice: v.buyPrice, targetMarginEur: input.targetMarginEur,
+      safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95',
+    }).minSellPrice;
+    return { skuId: v.skuId, currentSellPrice: v.currentSellPrice, profitAtCurrent, action: 'raise' as const, newSellPrice: Math.max(formulaPrice, v.currentSellPrice) };
+  });
+}
+
 // ─── Konstanten-Konfiguration (Teil-2A-Vorgabe: Defaults gehören hierher, nicht in die Funktion) ──
 //
 // Teil 2B (2026-09-10): Gebührensatz + Fixbetrag auf die real gemessenen Werte umgestellt — aus
@@ -543,7 +599,8 @@ export const DEFAULT_PRICING_CONFIG = {
   defaultAdRatePercent: 5,                    // DB-Default (schema.ts ad_rate.default(5))
   targetMarginEur: MIN_GEWINN_EUR,            // 2,00 € — globaler Fallback, wenn product.targetMarginEur null ist (Teil 2C)
   safetyBufferEur: 0,                         // Teil 2C: kein Sicherheitspuffer mehr, s.o.
-  chinaCustomsFlatEur: CHINA_ZOLL_EUR,        // 4,00 €
+  // A-014: chinaCustomsFlatEur (4,00 €) entfällt — Einfuhrabgaben/Versand kommen aus computeAliCosts()
+  // (ALI_EINFUHR_EUR / ALI_VERSAND_EUR in constants.ts).
 } as const;
 
 export interface OrderProfitResult {

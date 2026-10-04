@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
-import { CHINA_ZOLL_EUR } from "../../shared/constants";
+import { ALI_EINFUHR_EUR } from "../../shared/constants";
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 
 // Teil 2B (2026-09-10): reicht für die Anzeigengebühr-Zuordnung im Preisrechner — nur die hier
@@ -107,7 +107,7 @@ export default function Index() {
   const [lieferant, setLieferant] = useState("aliexpress");
   const [versand, setVersand] = useState("");
   const [ausChina, setAusChina] = useState(true);
-  const [zollPauschale, setZollPauschale] = useState(String(CHINA_ZOLL_EUR));
+  const [zollPauschale, setZollPauschale] = useState(String(ALI_EINFUHR_EUR));
   const [zollManuell, setZollManuell] = useState("");
 
   const [copied, setCopied] = useState(false);
@@ -190,7 +190,7 @@ export default function Index() {
   // jetzt. Ein Mindestpreis wird hier nicht gebraucht (buyPrice/targetMargin daher neutral 0).
   const ebayFeeRatePercentInput = parseFloat(gebuehr.replace(",", ".")) || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent;
   const pricingRates = computeMinSellPrice({
-    buyPrice: 0, supplierShipping: 0, isChinaOrigin: false, customsFlat: 0,
+    buyPrice: 0, isChinaOrigin: false,
     ebayFeeRatePercent: ebayFeeRatePercentInput, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
     adRatePercent: anzeigegebuehrProzent * 100, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
   });

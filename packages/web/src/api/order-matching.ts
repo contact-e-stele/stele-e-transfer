@@ -6,7 +6,7 @@
 // bedeutet, dass Bericht und App unterschiedliche Bestellungen demselben Produkt zuordnen — bei
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
-import { computeOrderProfit, isChinaShipping } from '../shared/pricing';
+import { computeOrderProfit, computeAliCosts, isChinaShipping } from '../shared/pricing';
 
 export interface ProductForSkuMatch {
   id: number;
@@ -103,7 +103,6 @@ export interface OrderNettoInput {
   lineItems: Array<{ sku: string | null; quantity: number }>;
   manualBuyPrice: number | null | undefined;
   findProduct: (sku: string | null) => { buyPrice: number | null; shipsFrom: string | null } | null;
-  zollEur: number;
 }
 
 export interface OrderNettoResult {
@@ -128,8 +127,13 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
     // (isChinaShipping(), shared/pricing.ts) statt einer eigenen strikten `=== 'china'`-Prüfung —
     // die vorherige Version dieses Zweigs (index.ts) prüfte strikt und hätte z.B. "China Mainland"
     // verpasst (vgl. task.md, PR #82: ein uneindeutiger shipsFrom-Wert sprengte dort SKU-Matching).
-    const zoll = isChinaShipping(product.shipsFrom) ? input.zollEur : 0;
-    einkaufGesamt += (product.buyPrice + zoll) * li.quantity;
+    //
+    // A-014 (Preisformel v2): Rückfall ohne manuellen Einkauf = Kosten K der Formel (computeAliCosts: Ware + Versand 1,99 €
+    // wenn Ware < 10 € + Einfuhrabgaben 3,57 € bei China) — je Position als EINE AliExpress-Bestellung gerechnet (Versand und
+    // Einfuhrabgaben fallen je Bestellung an, nicht je Stück). Der manuell erfasste Einkauf (manualBuyPrice = "Insgesamt"
+    // laut AliExpress-Rechnung) hat weiterhin Vorrang. Die frühere Einstellung "order_china_zoll_eur" (3,58 €) fließt hier
+    // nicht mehr ein (eine Quelle: ALI_EINFUHR_EUR in constants.ts).
+    einkaufGesamt += computeAliCosts(product.buyPrice * li.quantity, isChinaShipping(product.shipsFrom)).totalCost;
   }
   if (!einkaufBekannt) {
     return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null };

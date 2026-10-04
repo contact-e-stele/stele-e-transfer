@@ -1,15 +1,33 @@
 // ─── Gemeinsame Konstanten (Backend + Frontend) ───────────────────────────────
 
-// EU-Zollregelung China-Versand (ab 01.07.2026)
-// Pauschal 4,00 € Zoll pro Sendung bis 150 € Warenwert (Übergangsregelung).
-// Am 2026-07-27 von 3,00 € auf 4,00 € angehoben: reale AliExpress-Zölle lagen bei
-// manchen Artikeln höher als die bisherige Pauschale (z.B. 3,65€ Einkauf + 1,99€
-// Versand → real 3,57€ Zoll statt angenommener 3,00€), wodurch die Gewinn-Vorschau
-// in Preise-Tab und Import-Tab zu optimistisch war.
-// ACHTUNG: Für Ende 2026 ist zusätzlich eine EU-weite Handling Fee (~2,00 €) geplant,
-// die diesen Betrag voraussichtlich weiter erhöht (Stand: noch nicht final beschlossen).
-// Bei offizieller Bestätigung hier zentral anpassen — wird in api/index.ts + lieferanten.tsx verwendet.
-export const CHINA_ZOLL_EUR = 4.00;
+// Preisformel v2 (A-014, 04.10.2026, Übergabe "Kalkulator – Preisformel v2"): Kosten K = Ware + Versand +
+// Einfuhrabgaben, belegt am AliExpress-Beleg 3077135261597211 (Ware 4,79 / Versand 1,99 / Einfuhrabgaben 3,57).
+// Ersetzt die frühere Pauschale CHINA_ZOLL_EUR (4,00 €) UND das Produktfeld shippingCost in der Formel.
+// ACHTUNG: Für Ende 2026 ist zusätzlich eine EU-weite Handling Fee (~2,00 €) geplant (noch nicht final
+// beschlossen) — bei Bestätigung hier zentral anpassen.
+export const ALI_VERSAND_EUR = 1.99;          // AliExpress-Versand je Bestellung, wenn Ware < ALI_VERSAND_FREI_AB_EUR
+export const ALI_VERSAND_FREI_AB_EUR = 10.00; // ab diesem Warenwert kein Versand (ANNAHME aus 1 Beleg, 27.08.: Ware 10,29 → Nebenkosten 3,57)
+export const ALI_EINFUHR_EUR = 3.57;          // Einfuhrabgaben je Bestellung bei shipsFrom China (ANNAHME 3,00 × 1,19, Festwert)
+
+// Margen-Stufen (Inhaber-Entscheid 04.10.2026, 10:21): Zielgewinn + Boden (Gewinn darf nie darunter fallen).
+// Ersetzen die bisherigen Auswahl-Stufen 1,50 / 3,00 / 4,50. Reihenfolge = Anzeige-Reihenfolge.
+export interface MarginTier { label: string; targetEur: number; floorEur: number }
+export const MARGIN_TIERS: readonly MarginTier[] = [
+  { label: 'A', targetEur: 1.00, floorEur: 1.00 },
+  { label: 'B', targetEur: 1.50, floorEur: 1.20 },
+  { label: 'C', targetEur: 2.00, floorEur: 1.30 },
+  { label: 'D', targetEur: 3.00, floorEur: 1.50 },
+];
+// 4,50 € / Boden 2,00 € bestätigt, aber vorerst NICHT zur Auswahl (erst bei höherem Umsatz freischalten).
+// Bestehende Produkte mit Zielgewinn 4,50 behalten ihren Wert und rechnen mit diesem Boden.
+export const HIDDEN_MARGIN_TIER: MarginTier = { label: '4,50', targetEur: 4.50, floorEur: 2.00 };
+// Boden für einen Zielgewinn, der in keiner Stufe vorkommt: nie Gewinn unter 1,00 €.
+export const MIN_PROFIT_FLOOR_EUR = 1.00;
+
+// Varianten-Regel 6c (Übergabe v2, Abschnitt 6c): jede Variante einzeln, keine wird über die Formel erhöht —
+// AUSSER sie fällt unter den Boden. Nur VORBEREITET (reine Funktion in shared/pricing.ts), im Betrieb AUS,
+// bis der Inhaber bestätigt.
+export const VARIANT_RULE_6C_ENABLED = false;
 
 // Mindestgewinn pro Verkauf (€) — wird in der Preisempfehlung/automatischer Neuberechnung mit einkalkuliert
 // Geaendert von 1,60€ auf 2,00€ am 2026-07-14 auf Wunsch des Users

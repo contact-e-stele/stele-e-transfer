@@ -139,8 +139,7 @@ export default function Dashboard() {
           const totalProfit = withProfit.reduce((sum, p) => {
             const adR = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
             const profit = profitAtSellPrice({
-              sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, supplierShipping: p.shippingCost ?? 0,
-              isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+              sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, isChinaOrigin: isChinaShipping(p.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adR,
             });

@@ -7,7 +7,7 @@ import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } fro
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
 import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
-import { CHINA_ZOLL_EUR } from '../shared/constants';
+import { ALI_EINFUHR_EUR } from '../shared/constants';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
@@ -117,14 +117,13 @@ export function resolveVariantBuyPrice(
 // Formel-/Konstanten-Änderungen wie die China-Zoll-Einführung, P-89).
 export function computeVariantPriceRows(
   variantPricesJson: string | null,
-  shippingCost: number | null,
+  _shippingCost: number | null, // seit A-014 (Preisformel v2) ungenutzt — Signatur bleibt für die Aufrufer stabil
   shipsFrom: string | null,
   adRate: number | null,
   targetMarginEur?: number | null // Teil 2C: product.targetMarginEur — null/undefined → globaler Fallback
 ): VariantPriceRow[] {
   let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number; displayValues?: Record<string, string> }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
-  const versand = shippingCost ?? 0;
   const isChina = isChinaShipping(shipsFrom);
   const rate = adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const margin = targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
@@ -136,12 +135,11 @@ export function computeVariantPriceRows(
       buyPrice: v.price,
       displayValues: v.displayValues,
       correctSellPrice: computeMinSellPrice({
-        buyPrice: v.price, supplierShipping: versand,
-        isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+        buyPrice: v.price, isChinaOrigin: isChina,
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
         targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-        rounding: 'nearest95',
+        rounding: 'floor95',
       }).minSellPrice,
     }));
 }
@@ -612,7 +610,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // unterschiedlichen Gebührensätzen für dasselbe Produkt je nachdem, ob es Varianten hat.
       const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
       if (isChina) {
-        console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Zollgebühr +${CHINA_ZOLL_EUR}€ wird addiert`);
+        console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Einfuhrabgaben +${ALI_EINFUHR_EUR}€ werden addiert`);
       }
 
       if (!data.price) { errors++; return; }
@@ -702,7 +700,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         const alarm = evaluatePriceAlarm({
           currentSellPrice: product.sellPrice,
           variants: rows.map(r => ({ buyPrice: r.buyPrice })),
-          supplierShipping: versand, isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+          isChinaOrigin: isChina,
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: margin,
@@ -741,19 +739,28 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
 
       const rawNewSellPrice = computeMinSellPrice({
-        buyPrice: newBuyPrice, supplierShipping: versand,
-        isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
+        buyPrice: newBuyPrice, isChinaOrigin: isChina,
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-        rounding: 'nearest95',
+        rounding: 'floor95',
       }).minSellPrice;
       // Teil 4/5 (2026-09-13): dieser Pfad ist komplett unbeaufsichtigt (8h-Cron) und darf
       // AUSSCHLIESSLICH anheben, nie senken — auch nicht gedeckelt über applyDecreaseCap() (die
       // bleibt für die manuellen Pfade recalculate-preview/-apply gültig, wird hier bewusst nicht
       // mehr aufgerufen). applyRaiseOnly() ist das alleinige Gate: computedMinPrice <= aktueller
       // Preis → 'none', kein Schreibvorgang, kein eBay-Call.
-      const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice);
+      // A-014 (Preisformel v2): sofort und ungedeckelt anheben NUR, wenn der Gewinn beim aktuellen Preis unter dem
+      // Boden der Stufe liegt (evaluatePriceAlarm = Gewinn < Boden). Zwischen Boden und Ziel bleibt der Preis.
+      const alarm = evaluatePriceAlarm({
+        currentSellPrice: product.sellPrice,
+        variants: [{ buyPrice: newBuyPrice }],
+        isChinaOrigin: isChina,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+        targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+      }).isAlarm;
+      const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
       calculatedSellPrice = decision.price;
       const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
       // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): priceChanged (= "Preisalarm" im
@@ -763,15 +770,6 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // jetzt ausschließlich der exakte, ungerundete evaluatePriceAlarm()-Gewinnvergleich; die
       // Anheben-Entscheidung selbst (applyRaiseOnly, ob geschrieben/an eBay gepusht wird) bleibt
       // unverändert.
-      const alarm = evaluatePriceAlarm({
-        currentSellPrice: product.sellPrice,
-        variants: [{ buyPrice: newBuyPrice }],
-        supplierShipping: versand, isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-        vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
-        targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
-      }).isAlarm;
-
       // alarm zusätzlich als eigener Trigger (wie im Varianten-Zweig oben): ein echter, aber
       // kleiner Marge-Alarm (Rundungsgrenzfall zwischen dem gerundeten computeMinSellPrice()-Wert
       // und der exakten Zielmarge) darf nicht übergangen werden, nur weil applyRaiseOnly() mit dem
