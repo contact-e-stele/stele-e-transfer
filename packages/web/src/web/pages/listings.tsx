@@ -1,7 +1,7 @@
 /**
  * Listings-Tab — alle eBay Listings direkt von eBay + App-DB Match
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ShoppingCart, RefreshCw, Loader, CheckCircle, XCircle,
   ExternalLink, Package, TrendingUp, StopCircle, Link2, Link2Off,
@@ -11,7 +11,7 @@ import {
 import { buildEbayHTMLLight } from "../lib/ebay-description";
 import { DescriptionRefreshPanel } from "../components/description-refresh-panel";
 import { TargetBadge, postTierReprice, type RepriceResult, type TierPatch } from "../components/target-badge";
-import { TIER_REPRICE_MAX_PRODUCTS } from "../../shared/tier-reprice";
+import { TIER_REPRICE_MAX_PRODUCTS, expectedFromPlan } from "../../shared/tier-reprice";
 import { MARGIN_TIERS } from "../../shared/constants";
 import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
 
@@ -174,6 +174,7 @@ export default function Listings() {
   const [tierSaving, setTierSaving] = useState(false);
   const [tierMsg, setTierMsg] = useState<{ ok: boolean; text: string } | null>(null);
   // A-017: Preisvorschau/Senden nach "Stufe für alle" (live gelistet → nur auf ausdrücklichen Klick, Chargen zu 10)
+  const sendingRef = useRef(false); // Doppelklick-Schutz für das Senden (State-Closure allein reicht nicht)
   const [reprice, setReprice] = useState<null | { tier: number; plans: RepriceResult[]; phase: "loading" | "ready" | "sending" | "done"; progress: number; summary?: string; summaryOk?: boolean }>(null);
   const [expiryFilter, setExpiryFilter] = useState<"all" | "3days" | "7days" | "30days">("all");
 
@@ -1082,14 +1083,18 @@ export default function Listings() {
             setReprice({ tier: tierPending, plans, phase: "ready", progress: 0 });
           };
           const sendReprice = async () => {
-            if (!reprice || reprice.phase !== "ready") return;
+            if (!reprice || reprice.phase !== "ready" || sendingRef.current) return;
+            sendingRef.current = true;
             const tierEur = reprice.tier;
+            // bestätigte Preise je Produkt aus der Vorschau — der Server lehnt ab, wenn sich der Plan zwischenzeitlich geändert hat
+            const expectedAll: Record<string, Record<string, number>> = {};
+            for (const pl of reprice.plans) if (pl.plan) expectedAll[String(pl.productId)] = expectedFromPlan(pl.plan);
             setReprice({ ...reprice, phase: "sending", progress: 0 });
             const all: RepriceResult[] = [];
             for (let i = 0; i < targets.length; i += TIER_REPRICE_MAX_PRODUCTS) {
               const r = await postTierReprice({
                 productIds: targets.slice(i, i + TIER_REPRICE_MAX_PRODUCTS).map(p => p.id), targetMarginEur: tierEur,
-                mode: "apply", confirm: true, sendToEbay: true,
+                mode: "apply", confirm: true, sendToEbay: true, expected: expectedAll,
               });
               const part: RepriceResult[] = r.results ?? targets.slice(i, i + TIER_REPRICE_MAX_PRODUCTS).map(p => ({ productId: p.id, status: "send_failed" as const, error: r.error ?? "Aufruf fehlgeschlagen" }));
               all.push(...part);
@@ -1108,6 +1113,7 @@ export default function Listings() {
                 (failed.length > 0 ? "; " + failed.length + " fehlgeschlagen: " + failed.map(f => f.productId + ": " + (f.error ?? f.status)).join(" | ") : "."),
             });
             setTierPending(null);
+            sendingRef.current = false;
           };
           const applyTier = async () => {
             if (tierPending == null || targets.length === 0) return;

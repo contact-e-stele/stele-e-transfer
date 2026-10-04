@@ -6,6 +6,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
   planTierReprice, storePatchForPlan, parseTierRepriceBody, decideTierRepriceAction, TIER_REPRICE_MAX_PRODUCTS, type RepriceProduct,
+  expectedFromPlan, compareExpected,
 } from './tier-reprice';
 import { productProfitRows } from './target-margin-bulk';
 import { evaluateTargetDisplay, profitFloorFor } from './pricing';
@@ -163,7 +164,9 @@ describe('parseTierRepriceBody / decideTierRepriceAction — kein eBay-Zugriff o
   test('Entscheidung: Vorschau berührt nie etwas; nicht live → nur speichern; live nur mit confirm UND sendToEbay → senden', () => {
     expect(decideTierRepriceAction({ mode: 'preview', confirm: false, sendToEbay: false, isLive: true })).toEqual({ action: 'preview' });
     expect(decideTierRepriceAction({ mode: 'preview', confirm: true, sendToEbay: true, isLive: true })).toEqual({ action: 'preview' });
-    expect(decideTierRepriceAction({ mode: 'apply', confirm: true, sendToEbay: true, isLive: false })).toEqual({ action: 'store_only' });
+    expect(decideTierRepriceAction({ mode: 'apply', confirm: true, sendToEbay: false, isLive: false })).toEqual({ action: 'store_only' });
+    // W3: wer senden will, aber ein laut App nicht live gelistetes Produkt trifft, bekommt KEINE stille Nur-App-Speicherung
+    expect(decideTierRepriceAction({ mode: 'apply', confirm: true, sendToEbay: true, isLive: false }).action).toBe('rejected');
     expect(decideTierRepriceAction({ mode: 'apply', confirm: true, sendToEbay: false, isLive: true }).action).toBe('rejected');
     expect(decideTierRepriceAction({ mode: 'apply', confirm: false, sendToEbay: true, isLive: true }).action).toBe('rejected');
     expect(decideTierRepriceAction({ mode: 'apply', confirm: true, sendToEbay: true, isLive: true })).toEqual({ action: 'store_and_send' });
@@ -188,5 +191,38 @@ describe('Listing-/Preispfade rechnen mit Rundung floor95 (Formel v2), nicht mit
     const src = readFileSync(resolve(import.meta.dir, '../../', f), 'utf8');
     expect(src).not.toMatch(/rounding:\s*'(nearest95|up95)'/);
     expect(src).toMatch(/rounding:\s*'floor95'/);
+  });
+});
+
+// W5: bestätigte Preise (expected) — gesendet wird nur, was in der Vorschau bestätigt wurde.
+describe('expected-Preise (Plan darf sich seit der Vorschau nicht geändert haben)', () => {
+  const plan = planTierReprice(stele218, 1.5);
+
+  test('expectedFromPlan → compareExpected passt (null)', () => {
+    expect(compareExpected(plan, expectedFromPlan(plan))).toBeNull();
+  });
+
+  test('ohne expected keine Prüfung; geänderter Preis, fehlende und überzählige Variante werden erkannt', () => {
+    expect(compareExpected(plan, undefined)).toBeNull();
+    const e = expectedFromPlan(plan);
+    expect(compareExpected(plan, { ...e, [SKU_6X8]: 12.95 })).toContain('seit der Vorschau geändert');
+    const rest = { ...e };
+    delete rest[SKU_6X8];
+    expect(compareExpected(plan, rest)).toContain('seit der Vorschau geändert');
+    expect(compareExpected(plan, { ...e, unbekannt: 9.95 })).toContain('seit der Vorschau geändert');
+  });
+
+  test('Einkaufspreis ändert sich nach der Vorschau (2,99 → 3,59): derselbe bestätigte Plan passt nicht mehr', () => {
+    const confirmed = expectedFromPlan(plan);
+    const drifted = planTierReprice({ ...stele218, variantPrices: stele218.variantPrices!.replace('"price":2.99', '"price":3.59') }, 1.5);
+    expect(compareExpected(drifted, confirmed)).not.toBeNull();
+  });
+
+  test('parseTierRepriceBody: expected muss { productId: { sku: Zahl } } sein', () => {
+    const base = { productIds: [1], targetMarginEur: 1.5, mode: 'apply', confirm: true, sendToEbay: true };
+    expect(parseTierRepriceBody({ ...base, expected: { '1': { a: 13.95 } } }).ok).toBe(true);
+    for (const bad of ['x', [], { '1': 5 }, { '1': { a: '13.95' } }, { '1': { a: NaN } }, { '1': [1] }]) {
+      expect(parseTierRepriceBody({ ...base, expected: bad }).ok).toBe(false);
+    }
   });
 });
