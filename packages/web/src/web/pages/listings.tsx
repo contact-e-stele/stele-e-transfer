@@ -10,6 +10,9 @@ import {
 } from "lucide-react";
 import { buildEbayHTMLLight } from "../lib/ebay-description";
 import { DescriptionRefreshPanel } from "../components/description-refresh-panel";
+import { TargetBadge } from "../components/target-badge";
+import { MARGIN_TIERS } from "../../shared/constants";
+import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
 
 interface EbayListing {
   itemId: string;
@@ -35,6 +38,10 @@ interface EbayListing {
     adRate: number | null;
     lastPriceCheck: string | null;
     shipsFrom: string | null;
+    // A-016: für die Anzeige "Ziel · Erwartet" + Stufen-Knöpfe (TargetBadge), kommt aus GET /api/ebay/listings
+    targetMarginEur?: number | null;
+    variantPrices: string | null;
+    variantSellPrices?: string | null;
     // Paket 4: true, wenn die gespeicherte Beschreibung heute einen fremden Kontakt (E-Mail-Adresse
     // eines Lieferanten/Herstellers) enthält — reine Anzeige, kein Knopf lädt hier etwas hoch.
     hasForeignContact?: boolean;
@@ -144,7 +151,12 @@ export default function Listings() {
   const [maxSold, setMaxSold] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc" | "sku_asc" | "price_check_asc">("default");
+  const [sortBy, setSortBy] = useState<"default" | "sold_desc" | "sold_asc" | "price_desc" | "price_asc" | "end_asc" | "sku_asc" | "price_check_asc" | "start_desc">("default");
+  // A-016: Filter "Neu eingestellt" (nach eBay-StartTime) und Stufe-für-alle-Dialog
+  const [newFilter, setNewFilter] = useState<"all" | "today" | "7days">("all");
+  const [tierPending, setTierPending] = useState<number | null>(null); // gewählte Stufe, wartet auf Bestätigung
+  const [tierSaving, setTierSaving] = useState(false);
+  const [tierMsg, setTierMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [expiryFilter, setExpiryFilter] = useState<"all" | "3days" | "7days" | "30days">("all");
 
   // ─── Bearbeiten-Modal (Titel + Beschreibung, live auf eBay) ───────────────
@@ -516,6 +528,10 @@ export default function Listings() {
     runBulk("/api/ebay/listings/bulk/price", { mode: bulkPriceMode, value });
   };
 
+  // A-016: Ändert sich die angezeigte Menge (Filter/Suche), gilt eine offene Stufen-Bestätigung nicht mehr — Dialog schließen,
+  // damit nie unbemerkt eine andere Menge als die bestätigte betroffen ist.
+  useEffect(() => { setTierPending(null); }, [filter, search, minSold, maxSold, minPrice, maxPrice, expiryFilter, newFilter]);
+
   // Filter + Suche
   const filtered = listings
     .filter(l => {
@@ -529,6 +545,8 @@ export default function Listings() {
       if (maxSold !== "" && l.quantitySold > parseInt(maxSold)) return false;
       if (minPrice !== "" && l.currentPrice < parseFloat(minPrice.replace(",", "."))) return false;
       if (maxPrice !== "" && l.currentPrice > parseFloat(maxPrice.replace(",", "."))) return false;
+      if (newFilter === "today" && !isListedWithin(l.startTime, 0)) return false;
+      if (newFilter === "7days" && !isListedWithin(l.startTime, 7)) return false;
       if (expiryFilter !== "all" && l.endTime) {
         const left = daysLeft(l.endTime);
         if (left === null) return true;
@@ -539,6 +557,9 @@ export default function Listings() {
       return true;
     })
     .sort((a, b) => {
+      // A-016: bei aktivem "Neu eingestellt"-Filter ohne andere Sortierung: neueste zuerst
+      const sortKey = sortBy === "default" && newFilter !== "all" ? "start_desc" : sortBy;
+      if (sortKey === "start_desc") return compareStartTimeDesc(a.startTime, b.startTime);
       if (sortBy === "sold_desc") return b.quantitySold - a.quantitySold;
       if (sortBy === "sold_asc") return a.quantitySold - b.quantitySold;
       if (sortBy === "price_desc") return b.currentPrice - a.currentPrice;
@@ -971,6 +992,16 @@ export default function Listings() {
                   <option value="30days">≤ 30 Tage</option>
                 </select>
               </div>
+              {/* A-016: Neu eingestellt (eBay-StartTime) */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Neu eingestellt</div>
+                <select value={newFilter} onChange={e => setNewFilter(e.target.value as typeof newFilter)}
+                  style={{ width: "100%", padding: "7px 10px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0F172A" }}>
+                  <option value="all">Alle</option>
+                  <option value="today">Heute</option>
+                  <option value="7days">Letzte 7 Tage</option>
+                </select>
+              </div>
             </div>
             {/* Sortierung */}
             <div style={{ marginTop: 12 }}>
@@ -985,6 +1016,7 @@ export default function Listings() {
                   ["end_asc", "Läuft bald ab"],
                   ["sku_asc", "Nach SKU"],
                   ["price_check_asc", "Preis zuletzt geprüft (älteste zuerst)"],
+                  ["start_desc", "Neu eingestellt zuerst"],
                 ] as [string, string][]).map(([val, label]) => (
                   <button key={val} onClick={() => setSortBy(val as typeof sortBy)} style={{
                     padding: "5px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600,
@@ -997,7 +1029,7 @@ export default function Listings() {
               </div>
             </div>
             {/* Reset */}
-            <button onClick={() => { setMinSold(""); setMaxSold(""); setMinPrice(""); setMaxPrice(""); setSortBy("default"); setExpiryFilter("all"); }}
+            <button onClick={() => { setMinSold(""); setMaxSold(""); setMinPrice(""); setMaxPrice(""); setSortBy("default"); setExpiryFilter("all"); setNewFilter("all"); }}
               style={{ marginTop: 10, fontSize: 11, color: "#DC2626", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>
               ✕ Filter zurücksetzen
             </button>
@@ -1010,6 +1042,89 @@ export default function Listings() {
             {filtered.length} von {listings.length} Listings
           </div>
         )}
+
+        {/* A-016: Margen-Stufe für alle angezeigten (gefilterten) Listings mit App-Produkt setzen. Ändert NUR das Ziel in der App
+            (products.target_margin_eur) — kein Preis-PUT an eBay; die Preisprüfung hebt später nur bei Gewinn < Boden an. */}
+        {(() => {
+          const targets = filtered.filter(l => l.appProduct).map(l => l.appProduct!);
+          const tooMany = targets.length > BULK_TARGET_MARGIN_MAX;
+          const preview = tierPending != null ? previewTierChange(targets, tierPending) : null;
+          const tier = tierPending != null ? MARGIN_TIERS.find(t => t.targetEur === tierPending) : null;
+          const fmt = (n: number) => n.toFixed(2).replace(".", ",");
+          const applyTier = async () => {
+            if (tierPending == null || targets.length === 0) return;
+            setTierSaving(true); setTierMsg(null);
+            try {
+              const res = await fetch("/api/products/target-margin", {
+                method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ productIds: targets.map(p => p.id), targetMarginEur: tierPending, confirm: true }),
+              });
+              const data = await res.json() as { ok?: boolean; error?: string; results?: Array<{ id: number; ok: boolean; error?: string }> };
+              if (!res.ok || !data.results) { setTierMsg({ ok: false, text: data.error ?? "Stufe konnte nicht gesetzt werden" }); return; }
+              const okIds = new Set(data.results.filter(r => r.ok).map(r => r.id));
+              setListings(prev => prev.map(l => l.appProduct && okIds.has(l.appProduct.id) ? { ...l, appProduct: { ...l.appProduct, targetMarginEur: tierPending } } : l));
+              const failed = data.results.filter(r => !r.ok);
+              setTierMsg({
+                ok: failed.length === 0,
+                text: failed.length === 0
+                  ? okIds.size + " Listings auf Stufe " + tier?.label + " gesetzt."
+                  : okIds.size + " gesetzt, " + failed.length + " fehlgeschlagen (" + failed.map(f => f.id + ": " + f.error).join("; ") + ").",
+              });
+              setTierPending(null);
+            } catch (e) {
+              setTierMsg({ ok: false, text: String(e) });
+            } finally { setTierSaving(false); }
+          };
+          return (
+            <div style={{ background: "#fff", borderRadius: 12, padding: "10px 14px", marginBottom: 10, border: "1.5px solid #E2E8F0" }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#64748B" }}>
+                  Stufe für alle angezeigten ({targets.length} mit App-Produkt) setzen:
+                </span>
+                {MARGIN_TIERS.map(t => (
+                  <button key={t.label} type="button" disabled={targets.length === 0 || tooMany || tierSaving}
+                    onClick={() => { setTierMsg(null); setTierPending(t.targetEur); }}
+                    title={"Stufe " + t.label + ": Ziel " + fmt(t.targetEur) + " €, Boden " + fmt(t.floorEur) + " €"}
+                    style={{
+                      fontSize: 12, fontWeight: 700, padding: "4px 12px", borderRadius: 8, cursor: targets.length === 0 || tooMany ? "not-allowed" : "pointer", fontFamily: "inherit",
+                      border: tierPending === t.targetEur ? "2px solid #16A34A" : "1.5px solid #E2E8F0",
+                      background: tierPending === t.targetEur ? "#F0FDF4" : "#F8FAFC", color: "#0F172A",
+                    }}>{t.label} · {fmt(t.targetEur)} €</button>
+                ))}
+                {tooMany && <span style={{ fontSize: 11, color: "#DC2626" }}>Höchstens {BULK_TARGET_MARGIN_MAX} Listings — Filter enger setzen.</span>}
+              </div>
+              {preview && tier && (
+                <div style={{ marginTop: 10, background: preview.red > 0 ? "#FFFBEB" : "#F0FDF4", border: "1px solid " + (preview.red > 0 ? "#FDE68A" : "#BBF7D0"), borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#0F172A" }}>
+                  <div style={{ fontWeight: 700 }}>
+                    {preview.total} Listings → Stufe {tier.label} (Ziel {fmt(tier.targetEur)} €, Boden {fmt(tier.floorEur)} €).
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    Davon rot (Gewinn unter Boden) nach dem Wechsel: <strong>{preview.red}</strong>
+                    {preview.red > 0 && (
+                      <> — Einzelartikel ({preview.redSingle}) werden voraussichtlich bei der nächsten Preisprüfung auf den Zielpreis der neuen Stufe angehoben (die Prüfung rechnet mit dem dann frisch gelesenen AliExpress-Einkaufspreis, die Zahl kann deshalb abweichen); Varianten-Produkte ({preview.redVariant}) werden nur markiert, nicht automatisch angehoben.</>
+                    )}
+                    {preview.yellow > 0 && <> · gelb (unter Ziel, über Boden): {preview.yellow}</>}
+                    {preview.unknown > 0 && <> · nicht berechenbar (kein VK/EK): {preview.unknown}</>}
+                  </div>
+                  <div style={{ marginTop: 4, color: "#64748B" }}>Ändert nur das Ziel in der App — es wird kein Preis an eBay gesendet.</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button type="button" onClick={applyTier} disabled={tierSaving}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: tierSaving ? "wait" : "pointer", fontFamily: "inherit" }}>
+                      {tierSaving ? "Setze …" : "Stufe " + tier.label + " für " + preview.total + " Listings setzen"}
+                    </button>
+                    <button type="button" onClick={() => setTierPending(null)} disabled={tierSaving}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid #E2E8F0", background: "#fff", color: "#64748B", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      Abbrechen
+                    </button>
+                  </div>
+                </div>
+              )}
+              {tierMsg && (
+                <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: tierMsg.ok ? "#16A34A" : "#DC2626" }}>{tierMsg.text}</div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Mehrfachauswahl-Leiste */}
         {!loading && filtered.length > 0 && (
@@ -1209,6 +1324,13 @@ export default function Listings() {
                       productId={listing.appProduct.id}
                       onSent={() => setListings(prev => prev.map(l =>
                         l.itemId === listing.itemId && l.appProduct ? { ...l, appProduct: { ...l.appProduct, hasForeignContact: false } } : l))}
+                    />
+                  )}
+                  {listing.appProduct && (
+                    <TargetBadge
+                      product={listing.appProduct}
+                      onChange={(t) => setListings(prev => prev.map(l =>
+                        l.itemId === listing.itemId && l.appProduct ? { ...l, appProduct: { ...l.appProduct, targetMarginEur: t } } : l))}
                     />
                   )}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
