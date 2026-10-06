@@ -2197,6 +2197,10 @@ export function sanitizeItemProductForPut(product: Record<string, unknown>): Rec
   if (aspectMpn !== undefined && isForbiddenMpn(aspectMpn)) aspects['MPN'] = ['Nicht zutreffend'];
   const out: Record<string, unknown> = { ...product, aspects };
   if (typeof out.mpn === 'string' && isForbiddenMpn(out.mpn)) delete out.mpn;
+  // A-043 (Live-Fund A-041, 87/140): eBay prüft product.brand + product.mpn als Paar ("BrandMPN", errorId 25002).
+  // Steht brand ohne mpn im Item (auch nachdem oben eine AliExpress-ID entfernt wurde), lehnt eBay den PUT ab.
+  // Kein erfundener MPN (Regel 4): brand fällt weg — die sichtbare Marke steht weiter im Merkmal "Marke".
+  if (out.brand !== undefined && !(typeof out.mpn === 'string' && out.mpn.trim())) delete out.brand;
   return out;
 }
 

@@ -1178,8 +1178,21 @@ describe('sanitizeItemProductForPut (A-013)', () => {
     expect((out.aspects as Record<string, string[]>)['MPN']).toEqual(['Nicht zutreffend']);
     expect(out.mpn).toBeUndefined();
     expect(out.title).toBe('Neu');
-    expect(out.brand).toBe('Markenlos');
+    // A-043: brand ohne mpn → eBay 25002 BrandMPN; brand fällt weg, Merkmal "Marke" bleibt sichtbar
+    expect(out.brand).toBeUndefined();
     expect((out.aspects as Record<string, string[]>)['Marke']).toEqual(['Markenlos']);
+  });
+  test('A-043: Live-Item 87/140 (brand Markenlos, KEIN product.mpn) → brand weg, Merkmale unverändert', () => {
+    const live87 = { title: 'x', brand: 'Markenlos', aspects: { Herstellernummer: ['Nicht zutreffend'], Marke: ['Markenlos'], Abteilung: ['Unisex'], EAN: ['Nicht zutreffend'], MPN: ['Nicht zutreffend'] } };
+    const out = sanitizeItemProductForPut(live87);
+    expect(out.brand).toBeUndefined();
+    expect(out.mpn).toBeUndefined();
+    expect(out.aspects).toEqual(live87.aspects);
+  });
+  test('A-043: brand + zulässiger mpn bleiben als Paar', () => {
+    const out = sanitizeItemProductForPut({ brand: 'Acme', mpn: 'AB-12', aspects: {} });
+    expect(out.brand).toBe('Acme');
+    expect(out.mpn).toBe('AB-12');
   });
   test('vorhandene EAN und zulässige MPN bleiben', () => {
     const out = sanitizeItemProductForPut({ aspects: { EAN: ['4006381333931'], MPN: ['AB-12'] }, mpn: 'AB-12' });
