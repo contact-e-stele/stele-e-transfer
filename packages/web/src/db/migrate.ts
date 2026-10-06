@@ -147,6 +147,12 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN device_type TEXT`,
   `ALTER TABLE products ADD COLUMN has_battery INTEGER DEFAULT 0`,
   `ALTER TABLE products ADD COLUMN electric_proofs TEXT`,
+  // A-045 (Beschreibung v2, Schritt 1): Material/Verwendung/Maße je Variante — additiv, alle nullable, keine bestehende Spalte verändert
+  `ALTER TABLE products ADD COLUMN material TEXT`,
+  `ALTER TABLE products ADD COLUMN usage_note TEXT`,
+  `ALTER TABLE products ADD COLUMN use_purpose TEXT`,
+  `ALTER TABLE products ADD COLUMN variant_details TEXT`,
+  `ALTER TABLE products ADD COLUMN material_source TEXT`,
 ];
 
 export async function runMigrations() {
