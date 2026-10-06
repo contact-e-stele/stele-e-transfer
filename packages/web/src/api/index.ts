@@ -11,6 +11,7 @@ import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '
 import { parseMfrPatch } from '../shared/gpsr-mfr-patch';
 import { resolveEuImportFields, resolveMfrImportFields, resolveMfrUpdateFields, validateGpsrFlat, crossCheckParties, buildPartyOptions, type GpsrFlatFields } from '../shared/gpsr-import-fields';
 import { findForeignEmails } from '../shared/gpsr-description';
+import { gpsrCompleteGate, gpsrGateMessage, gpsrFinalFields, GPSR_IMPORT_BLOCKED_PREFIX, GPSR_LISTING_BLOCKED_PREFIX } from '../shared/gpsr-import-gate';
 import { findDescriptionComplianceViolations, checkOutgoingListingText, formatComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { resolveListingDescription } from './ebay-description-builder';
 import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
@@ -2220,6 +2221,12 @@ const app = new Hono()
       );
       if (partyConflict) return c.json({ error: `GPSR-Angaben ungültig: ${partyConflict}` }, 400);
 
+      // A-040 (Inhaber 06.10.2026): Hersteller UND EU-Person müssen auf den ENDWERTEN vollständig sein (Ampel GRÜN),
+      // sonst wird nichts gespeichert und nichts generiert — auch nicht per Compliance-Override.
+      const gpsrFinal = gpsrFinalFields(existing[0], body.gpsrRaw, euImportFields, mfrImportFields);
+      const gpsrGate = gpsrCompleteGate(gpsrFinal);
+      if (!gpsrGate.ok) return c.json({ error: gpsrGateMessage(GPSR_IMPORT_BLOCKED_PREFIX, gpsrGate), missing: gpsrGate.missing }, 422);
+
       // Titel + Beschreibung parallel generieren (schneller)
       const specs = body.specs ?? {};
       const rawTitle = body.generatedTitle ?? body.title;
@@ -2514,6 +2521,13 @@ const app = new Hono()
         const msg = `GPSR-Pflichtangaben fehlen (strukturierte eBay-Felder): ${gpsrResolved.missing.join('; ')}. Bitte im Produkt nachtragen — es wird nichts ersatzweise in den Text geschrieben.`;
         await db.update(schema.products).set({ ebayStatus: 'error', ebayError: msg, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
         return c.json({ error: msg }, 400);
+      }
+      // A-040: auch der Hersteller muss vollständig sein — ein neues Angebot geht nie ohne Hersteller raus.
+      const gpsrListGate = gpsrCompleteGate(product);
+      if (!gpsrListGate.ok) {
+        const msg = gpsrGateMessage(GPSR_LISTING_BLOCKED_PREFIX, gpsrListGate);
+        await db.update(schema.products).set({ ebayStatus: 'error', ebayError: msg, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
+        return c.json({ error: msg, missing: gpsrListGate.missing }, 400);
       }
       const gpsrFromProduct = gpsrResolved;
 
