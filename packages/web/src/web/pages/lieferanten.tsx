@@ -5,7 +5,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
-import { emptyOverrides, overridesToFlat, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
+import { emptyOverrides, overridesToFlat, effectiveForm, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
+import { gpsrFormGate } from "../../shared/gpsr-import-gate";
 import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fields-editor";
 import { ALI_EINFUHR_EUR, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
@@ -490,6 +491,9 @@ export default function Lieferanten() {
   const matchedSupplier = product ? findMatchingSupplier(product.seller, trustedSuppliers) : undefined;
   const supplierVerified = matchedSupplier?.complianceStatus === 'geprueft';
   const complianceBlocked = regulatedMatches.length > 0 && !supplierVerified;
+  // A-040: Hersteller + EU-Person müssen vollständig sein (Ampel GRÜN), sonst geht der Import nicht weiter — kein Override.
+  const gpsrGate = gpsrFormGate(gpsrHersteller, effectiveForm(gpsrHersteller, gpsrOverrides));
+  const gpsrBlocked = !gpsrGate.ok;
   // A-029 (P-E01): Elektro beim Import nur VORSCHLAGEN (gelb "Elektro?"); gespeichert wird nur der Vorschlag, bestätigt (ja/nein) wird im Produkte-Tab.
   const electricHint = product ? suggestElectric([product.title, editableTitle, product.description, ...Object.entries(product.specs ?? {}).map(([k, v]) => `${k} ${v}`)]) : null;
 
@@ -653,6 +657,7 @@ export default function Lieferanten() {
   const handleSave = async (override?: { reason: string; reasonText: string }) => {
     if (!result || !product) return;
     if (complianceBlocked && !override) return; // P-66: harte Sperre bleibt Standard, nur expliziter Override umgeht sie
+    if (gpsrBlocked) return; // A-040: GPSR-Sperre gilt auch mit Override (Server prüft zusätzlich, 422)
     setSaveLoading(true);
     setSaveResult(null);
     try {
@@ -2230,20 +2235,26 @@ export default function Lieferanten() {
 
               <button
                 onClick={() => handleSave()}
-                disabled={saveLoading || !!saveResult?.id || complianceBlocked}
+                disabled={saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked}
                 style={{
                   width: "100%", padding: "13px 0", borderRadius: 12,
                   border: saveResult?.id ? "1.5px solid #BBF7D0" : "1.5px solid transparent",
-                  background: saveResult?.id ? "#F0FDF4" : complianceBlocked ? "#FEE2E2" : saveLoading ? "#E2E8F0" : "#0F172A",
-                  color: saveResult?.id ? "#15803D" : complianceBlocked ? "#991B1B" : saveLoading ? "#94A3B8" : "#C9A227",
+                  background: saveResult?.id ? "#F0FDF4" : (complianceBlocked || gpsrBlocked) ? "#FEE2E2" : saveLoading ? "#E2E8F0" : "#0F172A",
+                  color: saveResult?.id ? "#15803D" : (complianceBlocked || gpsrBlocked) ? "#991B1B" : saveLoading ? "#94A3B8" : "#C9A227",
                   fontWeight: 700, fontSize: 14,
-                  cursor: (saveLoading || !!saveResult?.id || complianceBlocked) ? "not-allowed" : "pointer",
+                  cursor: (saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked) ? "not-allowed" : "pointer",
                   fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
                 {saveLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={16} />}
-                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : complianceBlocked ? "Blockiert — Lieferant nicht geprüft" : "In DB speichern"}
+                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : gpsrBlocked ? "Blockiert — Hersteller/EU-Person unvollständig" : complianceBlocked ? "Blockiert — Lieferant nicht geprüft" : "In DB speichern"}
               </button>
+              {gpsrBlocked && !saveResult?.id && (
+                <div style={{ margin: "8px 0 0", padding: "8px 10px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12 }}>
+                  <b>Import gestoppt (GPSR):</b> Hersteller und EU-Person müssen vollständig sein (Name, Straße, PLZ + Stadt, Land, E-Mail; beim Hersteller E-Mail oder Kontakt-URL). Bitte oben im GPSR-Block eintragen.
+                  <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{gpsrGate.missing.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                </div>
+              )}
               {saveResult?.error && (
                 <p style={{ margin: "8px 0 0", color: "#DC2626", fontSize: 13, fontWeight: 600 }}>Fehler: {saveResult.error}</p>
               )}
