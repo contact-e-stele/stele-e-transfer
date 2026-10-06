@@ -37,7 +37,7 @@ describe('gpsrAmpel', () => {
     expect(a.manufacturer.ampel).toBe('ROT');
     expect(a.manufacturer.halbeAdresse).toBe(true);
     expect(a.manufacturer.missing.slice(0, 3)).toEqual(['Hersteller: PLZ und Ort fehlt', 'Hersteller: Land fehlt', 'Halbe Hersteller-Adresse (25110-Risiko: alles oder nichts)']);
-    expect(a.manufacturer.missing[3]).toContain('Listen/Nachziehen bleibt möglich');
+    expect(a.manufacturer.missing[3]).toContain('Import und neues Listen sind gesperrt');
     expect(a.overall).toBe('ROT');
   });
   it('EU-Person ohne Land → ROT mit Klartext, unabhängig vom Hersteller', () => {

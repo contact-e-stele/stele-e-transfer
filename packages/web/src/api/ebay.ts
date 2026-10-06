@@ -1575,8 +1575,8 @@ export async function getInventoryItemGroupSkus(groupKey: string, token: string,
 // Item — ein PUT mit nur { availability: ... } würde Titel/Bilder/Aspekte löschen. Deshalb
 // erst das bestehende Item holen und nur das quantity-Feld darin ändern, bevor es komplett
 // zurückgeschrieben wird.
-export async function setInventoryItemQuantity(sku: string, quantity: number, token: string): Promise<boolean> {
-  const getRes = await fetch(
+export async function setInventoryItemQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+  const getRes = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
     { headers: { 'Authorization': `Bearer ${token}` } }
   );
@@ -1588,7 +1588,11 @@ export async function setInventoryItemQuantity(sku: string, quantity: number, to
     ...existingAvailability,
     shipToLocationAvailability: { ...existingShipTo, quantity },
   };
-  const putRes = await fetch(
+  // A-048 (Gegenprüfung A-047): dasselbe volle GET/PUT wie der Titel-PUT — ohne Bereinigung lehnt eBay alte Items mit
+  // 25002 BrandMPN bzw. 25709 Gewicht 0 ab, und ausverkaufte Varianten blieben stehen. Gleiche Bereinigung, genau einmal.
+  if (item.product) item.product = sanitizeItemProductForPut(item.product as Record<string, unknown>);
+  stripZeroWeight(item);
+  const putRes = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
     {
       method: 'PUT',
@@ -1596,7 +1600,11 @@ export async function setInventoryItemQuantity(sku: string, quantity: number, to
       body: JSON.stringify(item),
     }
   );
-  return putRes.ok || putRes.status === 204;
+  if (putRes.ok || putRes.status === 204) return true;
+  // A-048 (Review): eBays Antworttext loggen, sonst ist ein 25xxx-Fehler hier wieder nicht ermittelbar (wie A-013 beim Titel-PUT).
+  const detail = await putRes.text().catch(() => '');
+  console.warn(`[setInventoryItemQuantity] PUT inventory_item/${sku} fehlgeschlagen: ${putRes.status} ${detail.slice(0, 300)}`);
+  return false;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -2200,7 +2208,11 @@ export function sanitizeItemProductForPut(product: Record<string, unknown>): Rec
   // A-043 (Live-Fund A-041, 87/140): eBay prüft product.brand + product.mpn als Paar ("BrandMPN", errorId 25002).
   // Steht brand ohne mpn im Item (auch nachdem oben eine AliExpress-ID entfernt wurde), lehnt eBay den PUT ab.
   // Kein erfundener MPN (Regel 4): brand fällt weg — die sichtbare Marke steht weiter im Merkmal "Marke".
-  if (out.brand !== undefined && !(typeof out.mpn === 'string' && out.mpn.trim())) delete out.brand;
+  if (out.brand !== undefined && !(typeof out.mpn === 'string' && out.mpn.trim())) {
+    // A-048: Marke als Merkmal sichern, bevor product.brand wegfällt (sonst ginge die sichtbare Marke verloren).
+    if (typeof out.brand === 'string' && out.brand.trim() && !aspects['Marke']?.length) aspects['Marke'] = [out.brand.trim()];
+    delete out.brand;
+  }
   return out;
 }
 

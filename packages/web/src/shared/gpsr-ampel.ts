@@ -5,8 +5,9 @@
 //         Hersteller-Adresse nur halb (25110), Hersteller-Name == EU-Person bei Sitz außerhalb der EU.
 // GELB  : Hersteller fehlt (nur EU-Person), Hersteller nur mit Name (ohne Anschrift), Hersteller ohne E-Mail/Kontakt-URL.
 // GRÜN  : EU-Person vollständig UND Hersteller vollständig (Name, Straße, PLZ+Ort, Land, E-Mail oder Kontakt-URL).
-// Hinweis: Die Ampel ist eine Anzeige. Gesperrt (422) wird das Listen/Nachziehen weiterhin nur bei ROT der EU-Person;
-// ein unvollständiger Hersteller wird beim Senden weggelassen (P71-C Teil 3), nicht gesendet.
+// Hinweis: Die Ampel ist eine Anzeige. Seit A-040 sperren Import und ERSTES Listen bei jeder nicht-grünen Ampel
+// (shared/gpsr-import-gate.ts). Beim Nachziehen laufender Angebote sperrt nur eine rote EU-Person; ein unvollständiger
+// Hersteller wird dort weggelassen (P71-C Teil 3), nicht gesendet.
 import { resolveGpsrForListing, isEmailShape, type GpsrProductFields } from './gpsr-parser';
 
 export type GpsrAmpelColor = 'GRUEN' | 'GELB' | 'ROT';
@@ -17,8 +18,8 @@ export interface GpsrAmpelResult {
   manufacturer: GpsrAmpelPart & { halbeAdresse: boolean };
 }
 
-// Die Ampel zeigt; gesperrt wird nur bei roter EU-Person. Ein roter Hersteller wird beim Senden weggelassen.
-const HINWEIS_OHNE_HERSTELLER = 'Folge: Der Hersteller wird nicht mitgesendet — Listen/Nachziehen bleibt möglich (nur eine rote EU-Person sperrt).';
+// A-048: Text an A-040 angepasst (Import/neues Listen gesperrt, Nachziehen ohne Hersteller).
+const HINWEIS_OHNE_HERSTELLER = 'Folge: Import und neues Listen sind gesperrt; beim Nachziehen laufender Angebote wird der Hersteller nicht mitgesendet.';
 const LIMITS = { name: 100, address: 180, city: 64, email: 180, url: 250 };
 const rank = (c: GpsrAmpelColor) => (c === 'ROT' ? 2 : c === 'GELB' ? 1 : 0);
 const worst = (...c: GpsrAmpelColor[]): GpsrAmpelColor => c.reduce((a, b) => (rank(b) > rank(a) ? b : a), 'GRUEN' as GpsrAmpelColor);
