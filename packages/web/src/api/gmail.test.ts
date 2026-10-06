@@ -167,3 +167,19 @@ describe('collectPaginatedIds — P2-Teil-2-Nachbesserung (Live-Fund: stillschwe
     expect(ids).toHaveLength(3);
   });
 });
+
+// A-038 (AH-02): die AliExpress-Bestellnummer (o_ids) ist nie eine Sendungsnummer.
+describe('parsePackageStatusEmail — AliExpress-Bestellnummer im Betreff (A-038)', () => {
+  const ORDER = '3077135261597211';
+  test('Betreff enthält NUR die Bestellnummer (= o_ids) → null (vorher fälschlich trackingNumber = Bestellnummer)', () => {
+    expect(parsePackageStatusEmail(`Bestellung ${ORDER} wurde versandt`, buildRealisticHtmlBody(ORDER))).toBeNull();
+  });
+  test('Betreff enthält Bestellnummer UND echte DHL-Nummer → die DHL-Nummer, auch wenn die Bestellnummer zuerst steht', () => {
+    const r = parsePackageStatusEmail(`Bestellung ${ORDER}: Paket ${TRACKING_LAZAREVIC} unterwegs`, buildRealisticHtmlBody(ORDER));
+    expect(r).toEqual({ trackingNumber: TRACKING_LAZAREVIC, aliexpressOrderId: ORDER, emailDate: '' });
+  });
+  test('o_ids als Komma-Liste: jede Nummer daraus wird übersprungen', () => {
+    const body = `<a href="https://x?o_ids=${ORDER},3075188992327211&amp;spm=1">t</a>`;
+    expect(parsePackageStatusEmail('Bestellung 3075188992327211 wurde versandt', body)).toBeNull();
+  });
+});

@@ -8,6 +8,7 @@
  */
 import { eq } from 'drizzle-orm';
 import { isAliInternalLogisticsId } from './aliexpress-api';
+import { isAliOrderIdNotTracking } from '../shared/tracking-guard';
 
 const CLIENT_ID = process.env.GOOGLE_GMAIL_CLIENT_ID ?? '';
 const CLIENT_SECRET = process.env.GOOGLE_GMAIL_CLIENT_SECRET ?? '';
@@ -261,8 +262,6 @@ export function parsePackageStatusEmail(subject: string, rawHtmlBody: string): P
   // PR #102 statt einer zweiten Prüfung) und als Absicherung, falls die Extraktion künftig auf
   // ganze Wörter statt reiner Ziffernfolgen umgestellt wird.
   const digitCandidates = subject.match(/\d{10,}/g) ?? [];
-  const trackingNumber = digitCandidates.find(no => looksLikeCarrierTrackingNumber(no) && !isAliInternalLogisticsId(no));
-  if (!trackingNumber) return null;
 
   // Live-Fund beim ersten echten Testlauf (Grundgesetz Regel 1): HTML-Mails kodieren das "&"
   // zwischen Query-Parametern in href-Attributen standardmäßig als Entity "&amp;", nicht als
@@ -270,6 +269,18 @@ export function parsePackageStatusEmail(subject: string, rawHtmlBody: string): P
   // einer realistischen Fixture). Jetzt wird das optionale "amp;" mit abgedeckt.
   const orderIdMatch = rawHtmlBody.match(/[?&](?:amp;)?o_ids=(\d+)/i);
   if (!orderIdMatch) return null;
+
+  // A-038 (AH-02): die AliExpress-Bestellnummer (o_ids, auch Komma-Listen) ist NIE eine Sendungsnummer.
+  // Steht sie im Betreff ("Bestellung 3077135261597211 wurde versandt"), wurde sie bisher als erste
+  // Ziffernfolge ab 10 Stellen übernommen. Kandidaten gleich einer o_ids-Nummer werden übersprungen;
+  // bleibt keiner übrig → null.
+  const orderIds: string[] = [];
+  for (const m of rawHtmlBody.matchAll(/[?&](?:amp;)?o_ids=([\d,]+(?:%2C\d+)*)/gi)) {
+    orderIds.push(...m[1].split(/,|%2C/i).filter(Boolean));
+  }
+  const trackingNumber = digitCandidates.find(no =>
+    looksLikeCarrierTrackingNumber(no) && !isAliInternalLogisticsId(no) && !isAliOrderIdNotTracking(no, orderIds));
+  if (!trackingNumber) return null;
 
   return { trackingNumber, aliexpressOrderId: orderIdMatch[1], emailDate: '' };
 }

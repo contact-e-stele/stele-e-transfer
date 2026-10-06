@@ -54,6 +54,7 @@
 
 import { eq, and, isNotNull, or, isNull } from 'drizzle-orm';
 import { searchRecentPackageStatusEmails, type PackageStatusEmailMatch } from './gmail';
+import { isAliOrderIdNotTracking } from '../shared/tracking-guard';
 
 // SCHALTER — P2 FINALE (2026-09-14): auf `true` gesetzt. Der Nutzer hat den echten Pagination-Fix
 // (PR #104) in der Render-Shell gegen das echte Gmail-Postfach laufen lassen
@@ -113,6 +114,15 @@ async function loadTargetsFromDb(): Promise<TrackingSyncOrder[]> {
   ));
 }
 
+// A-038: ALLE bekannten AliExpress-Bestellnummern (auch die von Bestellungen, die schon eine Sendungsnummer
+// haben) — eine Zusteller-Nummer darf mit keiner davon übereinstimmen (s. shared/tracking-guard.ts).
+async function loadAllAliOrderIdsFromDb(): Promise<string[]> {
+  const { db } = await import('../db/index');
+  const schema = await import('../db/schema');
+  const rows = await db.select({ id: schema.orderNotes.aliexpressOrderId }).from(schema.orderNotes).where(isNotNull(schema.orderNotes.aliexpressOrderId));
+  return rows.map(r => r.id!).filter(Boolean);
+}
+
 // Schreibt NUR trackingNumber (+ shippedAt, P-100) — siehe Root-Cause-/Abweichungs-Kommentar oben,
 // warum hier bewusst kein carrier gesetzt wird.
 //
@@ -170,6 +180,7 @@ export async function syncTrackingNumbers(options: {
   searchDays?: number;
   writeFn?: (ebayOrderId: string, trackingNumber: string) => Promise<void>;
   dryRun?: boolean;
+  knownAliOrderIds?: string[]; // A-038: Test-Override für alle bekannten AliExpress-Bestellnummern
 } = {}): Promise<TrackingSyncSummary> {
   const {
     writeFn = writeTrackingNumberToDb,
@@ -179,6 +190,11 @@ export async function syncTrackingNumbers(options: {
   } = options;
 
   const orders = options.orders ?? await loadTargetsFromDb();
+  // A-038: bekannte AliExpress-Bestellnummern (Test-Override: nur die der übergebenen Bestellungen + knownAliOrderIds).
+  const knownAliIds = [
+    ...orders.map(o => o.aliexpressOrderId),
+    ...(options.knownAliOrderIds ?? (options.orders ? [] : await loadAllAliOrderIdsFromDb())),
+  ];
   const targets = orders.filter(o => o.aliexpressOrderId?.trim() && !o.trackingNumber?.trim());
   console.log(`[TrackingSync] ${targets.length} Bestellungen mit AliExpress-Nr. ohne Sendungsnummer`);
 
@@ -201,7 +217,12 @@ export async function syncTrackingNumbers(options: {
   for (const order of targets) {
     const aliId = order.aliexpressOrderId!.trim();
     try {
-      const trackingNumber = trackingByOrderId.get(aliId) ?? null;
+      let trackingNumber = trackingByOrderId.get(aliId) ?? null;
+      // A-038: Zusteller-Nummer gleich einer AliExpress-Bestellnummer → nie übernehmen (weder DB noch eBay).
+      if (trackingNumber !== null && isAliOrderIdNotTracking(trackingNumber, knownAliIds)) {
+        console.warn(`[TrackingSync] eBay=${order.ebayOrderId} AliExpress=${aliId}: Treffer ${trackingNumber} ist eine AliExpress-Bestellnummer — verworfen`);
+        trackingNumber = null;
+      }
       const trackingFound = trackingNumber !== null;
       if (trackingFound) found++;
 
