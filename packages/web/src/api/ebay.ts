@@ -1600,7 +1600,11 @@ export async function setInventoryItemQuantity(sku: string, quantity: number, to
       body: JSON.stringify(item),
     }
   );
-  return putRes.ok || putRes.status === 204;
+  if (putRes.ok || putRes.status === 204) return true;
+  // A-048 (Review): eBays Antworttext loggen, sonst ist ein 25xxx-Fehler hier wieder nicht ermittelbar (wie A-013 beim Titel-PUT).
+  const detail = await putRes.text().catch(() => '');
+  console.warn(`[setInventoryItemQuantity] PUT inventory_item/${sku} fehlgeschlagen: ${putRes.status} ${detail.slice(0, 300)}`);
+  return false;
 }
 
 function sleep(ms: number): Promise<void> {
