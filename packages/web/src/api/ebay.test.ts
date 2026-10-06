@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent, extractMissingAspectName, updateInventoryItemTitle, sanitizeItemProductForPut, stripZeroWeight } from './ebay';
+import { parseGetStoreResponseXml, buildStoreCategoryBlock, parseGetCampaignsResponse, hasScope, getRequestedScopeList, deriveConstantVariantAttrs, mapSpecsToAspects, isAspectValueTrusted, buildAspects, findUnresolvedRequiredAspects, findColorInTitle, findColorInTitles, getAspectDefaultWithSource, resolveRequiredAspect, getRequiredAspects, checkVariantAxisCoverage, mapVariantGroupName, filterEditableAspectNames, getLastAspectFetchError, resolveVariantQuantity, parseMaxVariantQuantity, buildRegulatoryBlock, postOfferWithTypeFallback, isResponsiblePersonTypeError, updateOfferDescriptionBySku, updateOfferDescriptionInventory, reviseListingDescription, reviseListingContent, extractMissingAspectName, updateInventoryItemTitle, sanitizeItemProductForPut, stripZeroWeight, setInventoryItemQuantity } from './ebay';
 
 // P-82 (2026-09-14): XML-Struktur laut eBay-Doku recherchiert (developer.ebay.com,
 // GetStoreResponseType/StoreCustomCategoryType) — Store.CustomCategories.CustomCategory[], jede
@@ -1189,6 +1189,11 @@ describe('sanitizeItemProductForPut (A-013)', () => {
     expect(out.mpn).toBeUndefined();
     expect(out.aspects).toEqual(live87.aspects);
   });
+  test('A-048: brand ohne Merkmal Marke → Marke wird als Merkmal gesichert, brand fällt weg', () => {
+    const out = sanitizeItemProductForPut({ brand: 'Markenlos', aspects: { EAN: ['Nicht zutreffend'] } });
+    expect(out.brand).toBeUndefined();
+    expect((out.aspects as Record<string, string[]>)['Marke']).toEqual(['Markenlos']);
+  });
   test('A-043: brand + zulässiger mpn bleiben als Paar', () => {
     const out = sanitizeItemProductForPut({ brand: 'Acme', mpn: 'AB-12', aspects: {} });
     expect(out.brand).toBe('Acme');
@@ -1245,5 +1250,27 @@ describe('stripZeroWeight / Titel-PUT ohne Gewicht 0 (A-013b)', () => {
     const res = await updateInventoryItemTitle('stele-83', 'T', 'tok', fetchFn);
     expect(res.ok).toBe(true);
     expect((putBody as unknown as Record<string, unknown>).packageWeightAndSize).toBeUndefined();
+  });
+});
+
+
+// A-048 (Gegenprüfung A-047): Mengen-PUT bereinigt wie der Titel-PUT (sonst 25002 BrandMPN → ausverkaufte Variante bleibt stehen)
+describe('setInventoryItemQuantity (A-048)', () => {
+  test('PUT-Body: Menge gesetzt, brand ohne mpn weg, AliExpress-ID als MPN weg, Gewicht 0 weg, Marke-Merkmal bleibt', async () => {
+    let putBody: Record<string, unknown> | null = null;
+    const live = { ...LIVE_ITEM_83, packageWeightAndSize: { weight: { value: 0.0, unit: 'KILOGRAM' }, shippingIrregular: false } };
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      if (!init?.method) return new Response(JSON.stringify(live), { status: 200 });
+      putBody = JSON.parse(String(init.body));
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    const ok = await setInventoryItemQuantity('stele-83', 0, 'tok', fetchFn);
+    expect(ok).toBe(true);
+    const b = putBody as unknown as { product: Record<string, unknown>; availability: { shipToLocationAvailability: { quantity: number } }; packageWeightAndSize?: unknown };
+    expect(b.availability.shipToLocationAvailability.quantity).toBe(0);
+    expect(b.product.brand).toBeUndefined();
+    expect(b.product.mpn).toBeUndefined();
+    expect((b.product.aspects as Record<string, string[]>)['Marke']).toEqual(['Markenlos']);
+    expect(b.packageWeightAndSize).toBeUndefined();
   });
 });

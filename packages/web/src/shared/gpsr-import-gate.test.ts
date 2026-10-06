@@ -71,11 +71,15 @@ describe('A-040 Verdrahtung (Wächter)', () => {
     expect(iGate).toBeGreaterThan(0);
     expect(iGate).toBeLessThan(idx.indexOf('generateGermanTitle(rawTitle, specs)'));
     expect(iGate).toBeLessThan(idx.indexOf('db.insert(schema.products)'));
+    expect(idx.slice(iGate, iGate + 300)).toContain('if (!gpsrGate.ok) return c.json(');
     expect(idx.slice(iGate, iGate + 300)).toContain('422');
     expect(idx.slice(iGate - 200, iGate + 300)).not.toContain('complianceOverride');
   });
   test('Listen sperrt bei unvollständigem Hersteller (vor dem eBay-Aufruf)', () => {
-    expect(idx).toContain('gpsrCompleteGate(product)');
+    const iList = idx.indexOf('gpsrCompleteGate(product)');
+    expect(iList).toBeGreaterThan(0);
+    expect(idx.slice(iList, iList + 400)).toContain('if (!gpsrListGate.ok) {');
+    expect(idx.slice(iList, iList + 600)).toContain('}, 400);');
   });
   test('Import-Tab: Speichern-Knopf gesperrt + Rücksprung in handleSave auch mit Override', () => {
     expect(lief).toContain('complianceBlocked || gpsrBlocked}');
