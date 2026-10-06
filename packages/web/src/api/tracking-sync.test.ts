@@ -157,3 +157,28 @@ describe('Strikte Grenze: kein automatischer eBay-"verschickt"-Marker', () => {
     expect(writeFn.mock.calls[0]).toHaveLength(2);
   });
 });
+
+// A-038 (AH-02): Zusteller-Nummer gleich einer AliExpress-Bestellnummer wird nie geschrieben.
+describe('syncTrackingNumbers — AliExpress-Bestellnummer nie als Sendungsnummer (A-038)', () => {
+  const ORDERS: TrackingSyncOrder[] = [
+    { ebayOrderId: 'E-1', aliexpressOrderId: '3077135261597211', trackingNumber: null },
+    { ebayOrderId: 'E-2', aliexpressOrderId: '3075188992327211', trackingNumber: '00340434886283998797' }, // hat schon Nummer
+  ];
+  test('Treffer = eigene Bestellnummer → nicht geschrieben', async () => {
+    const writeFn = mock(async (_e: string, _t: string) => {});
+    const result = await syncTrackingNumbers({ orders: ORDERS, matches: [{ trackingNumber: '3077135261597211', aliexpressOrderId: '3077135261597211', emailDate: '' }], writeFn });
+    expect(writeFn).toHaveBeenCalledTimes(0);
+    expect(result.written).toBe(0);
+    expect(result.rows[0].trackingFound).toBe(false);
+  });
+  test('Treffer = Bestellnummer einer ANDEREN Bestellung (auch einer, die nicht mehr offen ist) → nicht geschrieben', async () => {
+    const writeFn = mock(async (_e: string, _t: string) => {});
+    await syncTrackingNumbers({ orders: ORDERS, matches: [{ trackingNumber: '3075188992327211', aliexpressOrderId: '3077135261597211', emailDate: '' }], writeFn });
+    expect(writeFn).toHaveBeenCalledTimes(0);
+  });
+  test('echte DHL-Nummer wird weiter geschrieben', async () => {
+    const writeFn = mock(async (_e: string, _t: string) => {});
+    await syncTrackingNumbers({ orders: ORDERS, matches: [{ trackingNumber: '00340434886289512140', aliexpressOrderId: '3077135261597211', emailDate: '' }], writeFn });
+    expect(writeFn.mock.calls).toEqual([['E-1', '00340434886289512140']]);
+  });
+});

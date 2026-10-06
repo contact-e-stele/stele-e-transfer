@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
+import { isAliOrderIdNotTracking, ALI_ORDER_ID_AS_TRACKING_ERROR } from '../shared/tracking-guard';
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
 import { sentPricesToPatch } from '../shared/sent-prices';
 import { earUmlageFor, evaluateElectricGate, suggestElectric, weeeLineForListing, parseElectricPatch, parseElectricSettingsBody } from '../shared/electric';
@@ -999,6 +1000,16 @@ const app = new Hono()
       });
       const existingNote = await db.select().from(schema.orderNotes).where(eq(schema.orderNotes.ebayOrderId, ebayOrderId)).get();
 
+      // A-038 (AH-02): eine AliExpress-Bestellnummer ist nie eine Sendungsnummer — weder speichern
+      // noch an eBay schicken. Verglichen wird mit der Nummer dieser Bestellung (neu oder gespeichert)
+      // UND mit jeder aliexpress_order_id in order_notes.
+      if (body.trackingNumber?.trim()) {
+        const allAliIds = (await db.select({ id: schema.orderNotes.aliexpressOrderId }).from(schema.orderNotes).all()).map(r => r.id);
+        if (isAliOrderIdNotTracking(body.trackingNumber, [...allAliIds, existingNote?.aliexpressOrderId, body.aliexpressOrderId])) {
+          return c.json({ error: ALI_ORDER_ID_AS_TRACKING_ERROR }, 400);
+        }
+      }
+
       const update: Partial<typeof schema.orderNotes.$inferInsert> = { updatedAt: new Date().toISOString() };
       if (body.aliexpressOrderId !== undefined) update.aliexpressOrderId = body.aliexpressOrderId || null;
       if (body.aliexpressInvoiceUrl !== undefined) update.aliexpressInvoiceUrl = body.aliexpressInvoiceUrl || null;
@@ -1888,9 +1899,11 @@ const app = new Hono()
       const notes = await db.select().from(schema.orderNotes).all();
       const trackingByOrderId = new Map(notes.map(n => [n.ebayOrderId, n.trackingNumber]));
       const openOrders = orders.filter(o => o.shippingAddress && !trackingByOrderId.get(o.orderId));
+      const knownAliIds = notes.map(n => n.aliexpressOrderId); // A-038: nie eine AliExpress-Bestellnummer vorschlagen
 
       const suggestions: Array<{ orderId: string; trackingNumber: string; carrier: string }> = [];
       for (const email of emails) {
+        if (isAliOrderIdNotTracking(email.trackingNumber, knownAliIds)) continue;
         let matches = openOrders.filter(o => addressMatchesEmail(o.shippingAddress!, email));
         // P-84-Nachbesserung: strikter Abgleich (inkl. Ort) liefert bei manchen Gemeinden 0
         // Treffer, weil AliExpress dort den Landkreis statt der Gemeinde meldet (siehe Kommentar
