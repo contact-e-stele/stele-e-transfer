@@ -85,6 +85,12 @@ export const products = sqliteTable('products', {
   deviceType: text('device_type'),                                     // Geräteart, nur aus den registrierten Gerätearten (Einstellungen)
   hasBattery: integer('has_battery').default(0),                       // 1 = enthält Batterie/Akku → nie gelistet (Batterie-Registrierung fest AUS)
   electricProofs: text('electric_proofs'),                             // JSON {ce|declaration|manual|weeeSymbol: {ok, note}} — Häkchen + Beleg, intern
+  // A-045 (Beschreibung v2, Schritt 1, 06.10.2026): Daten, die die Beschreibung v2 braucht. Alle additiv/nullable; Bestandsprodukte: NULL = nicht erfasst (Ampel R8 gelb).
+  material: text('material'),                                          // Material (Freitext)
+  usageNote: text('usage_note'),                                       // "einmalig oder mehrfach verwendbar"
+  usePurpose: text('use_purpose'),                                     // Einsatzzweck, z. B. "Frischhaltehaube, auch als Duschhaube nutzbar"
+  variantDetails: text('variant_details'),                             // JSON {"<skuId>": {displayNameDe, pieces, measure: {kind, values, text?, converted?, source, location}}}
+  materialSource: text('material_source'),                             // JSON {source: a-d, location}
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 });

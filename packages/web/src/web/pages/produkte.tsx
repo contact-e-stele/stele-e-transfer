@@ -17,6 +17,7 @@ import { productProfitRows, productTarget } from "../../shared/target-margin-bul
 import { matchesProductSearch } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
+import { ProductDataPanel } from "../components/product-data-panel";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
@@ -75,6 +76,12 @@ interface Product {
   deviceType?: string | null;
   hasBattery?: number | null;
   electricProofs?: string | null;
+  // A-045: Produktdaten für die Beschreibung v2
+  material?: string | null;
+  usageNote?: string | null;
+  usePurpose?: string | null;
+  materialSource?: string | null;
+  variantDetails?: string | null;
   ean: string | null;
   handlingTimeDays: number | null;
   gpsrName: string | null;
@@ -1861,6 +1868,8 @@ export default function Produkte() {
               {product.ebayStatus !== "listed" && (
                 <ElectricPanel key={product.id} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               )}
+              {/* A-045: Produktdaten für die Beschreibung v2 (Material, Verwendung, Maße je Variante) + Ampel R8 — nur Daten, die Beschreibung bleibt unverändert */}
+              <ProductDataPanel key={`pd-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               {/* EAN/GTIN manuell setzen — viele eBay-Kategorien verlangen einen Produkt-Identifier */}
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
                 <span style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap" }}>EAN/GTIN</span>

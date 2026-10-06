@@ -9,6 +9,7 @@ import { electricSalesCsv } from './electric-export';
 import { BATTERY_REGISTRATION_PRESENT, EAR_UMLAGE_EUR } from '../shared/constants';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { parseMfrPatch } from '../shared/gpsr-mfr-patch';
+import { parseProductDataPatch } from '../shared/product-data-patch';
 import { resolveEuImportFields, resolveMfrImportFields, resolveMfrUpdateFields, validateGpsrFlat, crossCheckParties, buildPartyOptions, type GpsrFlatFields } from '../shared/gpsr-import-fields';
 import { findForeignEmails } from '../shared/gpsr-description';
 import { gpsrCompleteGate, gpsrGateMessage, gpsrFinalFields, GPSR_IMPORT_BLOCKED_PREFIX, GPSR_LISTING_BLOCKED_PREFIX } from '../shared/gpsr-import-gate';
@@ -3255,6 +3256,10 @@ const app = new Hono()
       const mfrPatch = parseMfrPatch(body);
       if (!mfrPatch.ok) return c.json({ error: mfrPatch.error }, 400);
       Object.assign(allowed, mfrPatch.fields);
+      // A-045: Produktdaten für die Beschreibung v2 (Material, Verwendung, Einsatzzweck, Maße je Variante) — Validierung in shared/product-data-patch.ts.
+      const productDataPatch = parseProductDataPatch(body);
+      if (!productDataPatch.ok) return c.json({ error: productDataPatch.error }, 400);
+      Object.assign(allowed, productDataPatch.fields);
       if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
       if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
