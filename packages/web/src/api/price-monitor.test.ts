@@ -134,15 +134,26 @@ describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
     const rowsMargin2 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 2.00);
     const rowsMargin3 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00);
 
-    // A-014 (Formel v2): Ware 3,80 €, keine China-Herkunft → K = 3,80 + 1,99 Versand = 5,79 €; Rohpreis bei Ziel 2,00 € =
-    // 10,6916 €. 'floor95' rundet auf die ,95 UNTER dem Rohpreis → 9,95 € (Gewinn 1,4349 ≥ Boden 1,30). Die alte Regel
-    // 'nearest95' ergäbe 10,95 €, 'up95' ebenfalls 10,95 € — diese Fixture unterscheidet die Modi bewusst, damit ein
-    // Rückfall an dieser realen Aufrufstelle (nicht nur an der reinen Funktion in pricing-v2.test.ts) erkannt würde.
-    // Das Produktfeld shippingCost (hier 0) fließt nicht mehr in die Formel ein.
-    expect(rowsDefault[0].correctSellPrice).toBe(9.95);
-    expect(rowsMargin2[0].correctSellPrice).toBe(9.95);
-    expect(rowsMargin3[0].correctSellPrice).toBe(11.95); // Stufe D
+    // K-004 Lücke 2 (08.10.2026) — KORRIGIERTE ERWARTUNG (9,95 € → 14,95 €, 11,95 € → 15,95 €).
+    // shipsFrom ist hier null und die Variante hat kein "Ships From"-Attribut, die Herkunft ist also
+    // UNBEKANNT — nicht "EU", wie der alte Kommentar annahm. Unbekannt wird ab K-004 vorsichtig wie
+    // China gerechnet: K = 3,80 + 1,99 Versand + 3,57 Einfuhrabgaben = 9,36 €. Rohpreis bei Ziel
+    // 2,00 € = 15,3766 €; 'floor95' rundet auf die ,95 UNTER dem Rohpreis → 14,95 € (Gewinn 1,6749
+    // ≥ Boden 1,30). Das Produktfeld shippingCost (hier 0) fließt nicht in die Formel ein.
+    expect(rowsDefault[0].correctSellPrice).toBe(14.95);
+    expect(rowsMargin2[0].correctSellPrice).toBe(14.95);
+    expect(rowsMargin3[0].correctSellPrice).toBe(15.95); // Stufe D
     expect(rowsMargin3[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
+  });
+
+  // K-004 Lücke 2, Gegenprobe (Grundgesetz Regel 5): dieselbe Ware, aber die Variante nennt ihre
+  // Herkunft ausdrücklich — "Germany" → EU → K = 3,80 € (kein Versand, keine Einfuhrabgaben) →
+  // deutlich niedrigerer Preis. Damit unterscheidet die Fixture, ob das Attribut gelesen wird.
+  test('Herkunft aus dem Varianten-Attribut "Ships From": Germany ergibt einen klar niedrigeren Preis als unbekannt', () => {
+    const unbekannt = computeVariantPriceRows(JSON.stringify([{ skuId: 'v1', attrs: { Color: 'Red' }, price: 3.80 }]), 0, null, 5, 2.00);
+    const eu = computeVariantPriceRows(JSON.stringify([{ skuId: 'v1', attrs: { Color: 'Red', 'Ships From': 'Germany' }, price: 3.80 }]), 0, null, 5, 2.00);
+    expect(unbekannt[0].correctSellPrice).toBe(14.95);
+    expect(eu[0].correctSellPrice).toBe(7.95);
   });
 
   test('targetMarginEur=null (nicht gesetztes Produktfeld) fällt auf den globalen 2€-Default zurück, wie undefined', () => {

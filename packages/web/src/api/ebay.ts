@@ -2,7 +2,7 @@
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
 import { eq } from 'drizzle-orm';
-import { computeMinSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { computeMinSellPrice, isChinaOriginForPricing, resolveShipsFrom, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import type { ResolvedGpsr } from '../shared/gpsr-parser';
 import type { SentPrice } from '../shared/sent-prices';
 import { checkOutgoingListingText, formatComplianceViolations } from '../shared/description-compliance';
@@ -1802,7 +1802,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       (varPriceEntry.price != null && varPriceEntry.price > 0
         ? computeMinSellPrice({
             earUmlageEur: input.earUmlageEur,
-            buyPrice: varPriceEntry.price, isChinaOrigin: isChinaShipping(input.shipsFrom),
+            // K-004 Lücke 2: Herkunft dieser Variante ("Ships From" im Eintrag) vor dem Produktfeld,
+            // nichts bekannt → vorsichtig China (vorher: leeres Feld = EU = 0 € Einfuhrabgaben).
+            buyPrice: varPriceEntry.price, isChinaOrigin: isChinaOriginForPricing(resolveShipsFrom(input.shipsFrom, varPriceEntry.attrs)),
             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
             targetMarginEur: input.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,

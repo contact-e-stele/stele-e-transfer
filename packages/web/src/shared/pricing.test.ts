@@ -284,7 +284,7 @@ describe('planCappedPriceSteps — Teil 3: Varianten-Umstellung unter der 8-%-Br
 
 describe('computeOrderProfit — Bestellungs-Gewinn NACH eBay-Gebühren (PRIO-1-PAKET, Punkt "ERGEBNIS")', () => {
   test('Auftragsvorgabe: 17,95 € Verkauf, 11,56 € wahrer Einkauf ergibt 1,76 € (Toleranz 1 Cent)', () => {
-    const { profit } = computeOrderProfit(17.95, 11.56);
+    const { profit } = computeOrderProfit(17.95, 11.56, DEFAULT_PRICING_CONFIG.defaultAdRatePercent);
     expect(Math.abs(profit - 1.76)).toBeLessThanOrEqual(0.01);
   });
 
@@ -293,7 +293,7 @@ describe('computeOrderProfit — Bestellungs-Gewinn NACH eBay-Gebühren (PRIO-1-
   // beiden Verhalten also eindeutig.
   test('unterscheidet sich von der alten Rohdifferenz (ohne Gebührenabzug)', () => {
     const rohdifferenz = 17.95 - 11.56;
-    const { profit } = computeOrderProfit(17.95, 11.56);
+    const { profit } = computeOrderProfit(17.95, 11.56, DEFAULT_PRICING_CONFIG.defaultAdRatePercent);
     expect(profit).not.toBeCloseTo(rohdifferenz, 1);
   });
 
@@ -302,7 +302,7 @@ describe('computeOrderProfit — Bestellungs-Gewinn NACH eBay-Gebühren (PRIO-1-
     const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
     const erwarteterGewinn = Math.round((20 * (1 - totalFeeRateGross) - fixedFeeGross - 10) * 100) / 100;
     const erwarteteGebuehren = Math.round((20 * totalFeeRateGross + fixedFeeGross) * 100) / 100;
-    const { profit, feesDeducted } = computeOrderProfit(20, 10);
+    const { profit, feesDeducted } = computeOrderProfit(20, 10, DEFAULT_PRICING_CONFIG.defaultAdRatePercent);
     expect(profit).toBe(erwarteterGewinn);
     expect(feesDeducted).toBe(erwarteteGebuehren);
   });

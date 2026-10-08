@@ -10,7 +10,7 @@ import { eq, isNotNull, and } from 'drizzle-orm';
 import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForPricing, resolveShipsFrom, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { earUmlageFor } from '../shared/electric';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
@@ -18,7 +18,7 @@ import { Sentry } from '../instrument';
 // P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
 // ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
 // bestehende Importe (`from './price-monitor'`) im ganzen Backend unverändert weiterfunktionieren.
-export { isChinaShipping, computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
+export { isChinaShipping, isChinaOriginForPricing, resolveShipsFrom, computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED };
 
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8 Stunden (P-23)
 const ALERT_THRESHOLD = 0.50;    // Alert wenn Preisänderung > 0,50€
@@ -166,7 +166,9 @@ export function computeVariantPriceRows(
 ): VariantPriceRow[] {
   let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number; displayValues?: Record<string, string> }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
-  const isChina = isChinaShipping(shipsFrom);
+  // K-004 Lücke 2: Herkunft je Variante — Attribut "Ships From" des Eintrags vor dem Produktfeld,
+  // ist nichts bekannt, wird vorsichtig wie China gerechnet (vorher: leeres Feld = EU = 0 € Einfuhrabgaben).
+  const chinaFor = (attrs?: Record<string, string>) => isChinaOriginForPricing(resolveShipsFrom(shipsFrom, attrs));
   const rate = adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const margin = targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
   return raw
@@ -177,7 +179,7 @@ export function computeVariantPriceRows(
       buyPrice: v.price,
       displayValues: v.displayValues,
       correctSellPrice: computeMinSellPrice({
-        buyPrice: v.price, isChinaOrigin: isChina,
+        buyPrice: v.price, isChinaOrigin: chinaFor(v.attrs),
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
         targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
@@ -731,8 +733,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         return;
       }
 
-      // China-Versand: Zollgebühr +3€ addieren (ab 01.07.2026), NICHT überspringen
-      const isChina = isChinaShipping(data.shipsFrom);
+      // China-Versand: Einfuhrabgaben addieren (ab 01.07.2026), NICHT überspringen.
+      // K-004 Lücke 2: leere/unbekannte Herkunft wird vorsichtig wie China gerechnet.
+      const isChina = isChinaOriginForPricing(data.shipsFrom);
       const versand = product.shippingCost ?? 0;
       // P-27/P-28-Konsolidierung (2026-09-08): adRate-Default vereinheitlicht auf 5 (= DB-Default,
       // schema.ts `ad_rate.default(5)`, bereits von computeVariantPriceRows() genutzt) — vorher

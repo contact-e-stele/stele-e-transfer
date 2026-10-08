@@ -6,7 +6,10 @@
 // bedeutet, dass Bericht und App unterschiedliche Bestellungen demselben Produkt zuordnen — bei
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
-import { computeOrderProfit, computeAliCosts, isChinaShipping } from '../shared/pricing';
+import {
+  computeOrderProfit, computeAliCosts, isChinaOriginForPricing, resolveShipsFrom, DEFAULT_PRICING_CONFIG,
+} from '../shared/pricing';
+import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 
 export interface ProductForSkuMatch {
   id: number;
@@ -98,11 +101,24 @@ export async function getOrderChinaZollEur(): Promise<number> {
 // Funktion (Grundgesetz Regel 2): `findProduct` wird von der Aufrufstelle injiziert, damit hier
 // kein DB-Zugriff nötig ist und das Preis-Trockenlauf-Skript exakt dieselbe Logik nutzen kann statt
 // sie nachzubauen (Grundgesetz Regel 8).
+// K-004 (08.10.2026): das Produkt wird jetzt mit den Feldern durchgereicht, die für den
+// Varianten-EK (Lücke 1), die SKU-eigene Herkunft (Lücke 2) und den echten Anzeigentarif
+// (Lücke 4) gebraucht werden. Alle drei Felder sind optional — ein Aufrufer, der sie nicht liefert
+// (z.B. ein Alt-Test), verhält sich wie vorher auf Produkt-Ebene.
+export interface OrderProductForProfit {
+  id: number;
+  buyPrice: number | null;
+  shipsFrom: string | null;
+  adRate?: number | null;         // Anzeigentarif % des Produkts; 0 = nicht beworben, null = Altbestand → Default
+  variants?: string | null;       // JSON der Varianten-GRUPPEN (products.variants)
+  variantPrices?: string | null;  // JSON der variantPrices-Einträge (EK + attrs je SKU)
+}
+
 export interface OrderNettoInput {
   orderTotal: number;
   lineItems: Array<{ sku: string | null; quantity: number }>;
   manualBuyPrice: number | null | undefined;
-  findProduct: (sku: string | null) => { buyPrice: number | null; shipsFrom: string | null } | null;
+  findProduct: (sku: string | null) => OrderProductForProfit | null;
 }
 
 export interface OrderNettoResult {
@@ -110,34 +126,108 @@ export interface OrderNettoResult {
   nettoErgebnis: number | null;
   nettoGebuehren: number | null;
   nettoQuelle: 'manuell' | 'automatisch' | null;
+  // K-004: warum nicht gerechnet werden konnte (null, wenn gerechnet wurde). Grundgesetz Regel 4 —
+  // eine Lücke wird benannt, nicht mit dem nächstbesten Zahlenwert überdeckt.
+  nettoGrund: string | null;
+}
+
+// K-004 Lücke 1: EK der VERKAUFTEN Variante zu einer echten eBay-SKU.
+//
+// Vorher nahm dieser Zweig product.buyPrice — das ist bei einem Varianten-Produkt der Preis der
+// BILLIGSTEN Variante (so wird das Feld beim Import gesetzt). Belegt am Beispiel stele-119: die
+// SKU "stele-119-200PCS" kostet 4,79 € im Einkauf, products.buyPrice steht auf 3,15 € (100PCS) —
+// der angezeigte Gewinn war dadurch 1,64 € zu hoch (2,32 € statt 0,68 €).
+//
+// Aufgelöst wird über resolveVariantEntries() (shared/variant-resolver.ts), also über GENAU die
+// Zuordnung, mit der die SKU beim Listing überhaupt entstanden ist (Grundgesetz Regel 8 — keine
+// zweite, leicht abweichende Rekonstruktion). Lässt sich die SKU nicht EINDEUTIG auflösen, wird
+// der Einkauf als unbekannt gemeldet statt auf product.buyPrice zurückzufallen: ein stillschweigend
+// zu hoch angezeigter Gewinn ist schlechter als ein ehrliches "nicht berechenbar" (Regel 4).
+export interface VariantEkResult {
+  ware: number | null;
+  shipsFrom: string | null;
+  grund: string | null;
+}
+
+export function resolveVariantEk(product: OrderProductForProfit, sku: string | null | undefined): VariantEkResult {
+  let groups: VariantGroup[] = [];
+  let entries: VariantPriceEntry[] = [];
+  try { groups = product.variants ? JSON.parse(product.variants) : []; } catch { groups = []; }
+  try { entries = product.variantPrices ? JSON.parse(product.variantPrices) : []; } catch { entries = []; }
+
+  // Kein Varianten-Produkt → Produkt-EK ist der richtige Wert (hier gibt es nur eine Variante).
+  if (!Array.isArray(groups) || groups.length === 0 || !Array.isArray(entries) || entries.length === 0) {
+    return { ware: product.buyPrice, shipsFrom: resolveShipsFrom(product.shipsFrom, null), grund: null };
+  }
+
+  if (!sku) {
+    return { ware: null, shipsFrom: null, grund: UNMATCHED_REASON_TEXT.keine_sku_an_position };
+  }
+
+  const resolved = resolveVariantEntries(product.id, groups, entries);
+  const hit = resolved.filter(r => r.sku === sku);
+  if (hit.length !== 1) {
+    return {
+      ware: null, shipsFrom: null,
+      grund: `${UNMATCHED_REASON_TEXT.variante_nicht_zuordenbar} (SKU "${sku}", Produkt ${product.id}, ${hit.length} Treffer)`,
+    };
+  }
+  if (hit[0].entry == null) {
+    return { ware: null, shipsFrom: null, grund: hit[0].error ?? UNMATCHED_REASON_TEXT.variante_nicht_zuordenbar };
+  }
+  const ek = hit[0].entry.price;
+  if (ek == null) {
+    return { ware: null, shipsFrom: null, grund: `Kein Einkaufspreis an der Variante (SKU "${sku}", Produkt ${product.id})` };
+  }
+  return { ware: ek, shipsFrom: resolveShipsFrom(product.shipsFrom, hit[0].entry.attrs), grund: null };
+}
+
+// K-004 Lücke 4: Anzeigentarif der Bestellung aus den beteiligten Produkten statt fest 5 %.
+// Weichen mehrere Positionen ab, gilt der HÖCHSTE Satz (vorsichtige Richtung: mehr Gebühren →
+// niedriger ausgewiesener Gewinn). Kein Produkt zuordenbar → Default der Konfiguration.
+export function resolveOrderAdRatePercent(
+  lineItems: Array<{ sku: string | null }>,
+  findProduct: (sku: string | null) => OrderProductForProfit | null,
+): number {
+  const rates = lineItems
+    .map(li => findProduct(li.sku))
+    .filter((p): p is OrderProductForProfit => p != null)
+    .map(p => p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent);
+  return rates.length === 0 ? DEFAULT_PRICING_CONFIG.defaultAdRatePercent : Math.max(...rates);
 }
 
 export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoResult {
+  const adRatePercent = resolveOrderAdRatePercent(input.lineItems, input.findProduct);
+
   if (input.manualBuyPrice != null) {
-    const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, input.manualBuyPrice);
-    return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell' };
+    const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, input.manualBuyPrice, adRatePercent);
+    return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell', nettoGrund: null };
   }
 
-  let einkaufBekannt = true;
+  const gruende: string[] = [];
   let einkaufGesamt = 0;
   for (const li of input.lineItems) {
     const product = input.findProduct(li.sku);
-    if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
-    // Code-Review-Vorschlag (PRIO-1-PAKET): dieselbe China-Erkennung wie überall sonst im Projekt
-    // (isChinaShipping(), shared/pricing.ts) statt einer eigenen strikten `=== 'china'`-Prüfung —
-    // die vorherige Version dieses Zweigs (index.ts) prüfte strikt und hätte z.B. "China Mainland"
-    // verpasst (vgl. task.md, PR #82: ein uneindeutiger shipsFrom-Wert sprengte dort SKU-Matching).
+    if (!product) { gruende.push(`${UNMATCHED_REASON_TEXT.produkt_nicht_gefunden} (SKU "${li.sku ?? '—'}")`); continue; }
+
+    // K-004 Lücke 1: EK der verkauften Variante, nicht der Produkt-EK (= billigste Variante).
+    const variante = resolveVariantEk(product, li.sku);
+    if (variante.ware == null) { gruende.push(variante.grund ?? UNMATCHED_REASON_TEXT.variante_nicht_zuordenbar); continue; }
+
+    // K-004 Lücke 2: Herkunft aus dem Varianten-Attribut "Ships From", sonst Produktfeld, sonst
+    // vorsichtig China (isChinaOriginForPricing) — vorher ergab ein leeres Feld "EU" und damit
+    // 0 € Einfuhrabgaben. Die wörtliche Feld-Prüfung isChinaShipping() bleibt den Anzeige-Stellen.
     //
     // A-014 (Preisformel v2): Rückfall ohne manuellen Einkauf = Kosten K der Formel (computeAliCosts: Ware + Versand 1,99 €
-    // wenn Ware < 10 € + Einfuhrabgaben 3,57 € bei China) — je Position als EINE AliExpress-Bestellung gerechnet (Versand und
-    // Einfuhrabgaben fallen je Bestellung an, nicht je Stück). Der manuell erfasste Einkauf (manualBuyPrice = "Insgesamt"
-    // laut AliExpress-Rechnung) hat weiterhin Vorrang. Die frühere Einstellung "order_china_zoll_eur" (3,58 €) fließt hier
-    // nicht mehr ein (eine Quelle: ALI_EINFUHR_EUR in constants.ts).
-    einkaufGesamt += computeAliCosts(product.buyPrice * li.quantity, isChinaShipping(product.shipsFrom)).totalCost;
+    // nur bei China und Ware < 10 € + Einfuhrabgaben 3,57 € bei China) — je Position als EINE AliExpress-Bestellung gerechnet
+    // (Versand und Einfuhrabgaben fallen je Bestellung an, nicht je Stück). Der manuell erfasste Einkauf (manualBuyPrice =
+    // "Insgesamt" laut AliExpress-Rechnung) hat weiterhin Vorrang. Die frühere Einstellung "order_china_zoll_eur" (3,58 €)
+    // fließt hier nicht mehr ein (eine Quelle: ALI_EINFUHR_EUR in constants.ts).
+    einkaufGesamt += computeAliCosts(variante.ware * li.quantity, isChinaOriginForPricing(variante.shipsFrom)).totalCost;
   }
-  if (!einkaufBekannt) {
-    return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null };
+  if (gruende.length > 0) {
+    return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null, nettoGrund: gruende.join('; ') };
   }
-  const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, einkaufGesamt);
-  return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch' };
+  const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, einkaufGesamt, adRatePercent);
+  return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch', nettoGrund: null };
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Package, ExternalLink, RefreshCw, ShoppingCart, Clock, CheckCircle, XCircle, Loader, TrendingUp, AlertTriangle } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
-import { profitAtSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { profitAtSellPrice, isChinaOriginForPricing, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 
 interface Product {
   id: number;
@@ -139,7 +139,7 @@ export default function Dashboard() {
           const totalProfit = withProfit.reduce((sum, p) => {
             const adR = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
             const profit = profitAtSellPrice({
-              sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, isChinaOrigin: isChinaShipping(p.shipsFrom),
+              sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, isChinaOrigin: isChinaOriginForPricing(p.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adR,
             });
