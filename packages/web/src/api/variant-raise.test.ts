@@ -23,6 +23,8 @@ const product119 = (over: Partial<VariantRaiseProduct> = {}): VariantRaiseProduc
 });
 
 // Produkt 95 (Produktion): Varianten-GRUPPEN, aber nur EIN variantPrices-Eintrag, shipsFrom leer, VK 15,95 €, Ware 8,99 €.
+// Die Herkunft dieses Produkts steht NUR im Varianten-Attribut "Ships From" (= Germany), nicht im Produktfeld — genau der Fall,
+// für den K-004 Lücke 2 die Rangfolge "Varianten-Attribut vor Produktfeld, sonst vorsichtig China" festlegt.
 const product95 = (over: Partial<VariantRaiseProduct> = {}): VariantRaiseProduct => ({
   id: 95, variants: '[{"name":"Set","values":["6pcs set"]},{"name":"Stk.","values":["10ml x 6pcs"]}]', buyPrice: 8.99, sellPrice: 15.95, shipsFrom: null,
   adRate: 5, targetMarginEur: 2, variantSellPrices: null, ebayStatus: 'listed', ebayListingId: '198601103721',
@@ -89,15 +91,33 @@ describe('planVariantRaises — 119: nur 200pcs unter dem Boden', () => {
   });
 });
 
-describe('Produkt 95 (Teil 1): Varianten-Gruppen + 1 variantPrices-Eintrag = Varianten-Produkt → die Anhebung greift über den Varianten-Weg', () => {
-  test('95: VK 15,95 € bei Ware 8,99 € → Gewinn 0,8169 < Boden 1,30 → 16,95 € (Gewinn 1,5789)', () => {
-    const r = planVariantRaises(product95());
+// K-004 (08.10.2026) — KORRIGIERTE ERWARTUNG und ein echter Live-Befund: dieser Test fixierte
+// bisher, dass Produkt 95 von 15,95 € auf 16,95 € ANGEHOBEN wird, weil sein Gewinn mit 0,8169 €
+// unter dem Boden 1,30 € zu liegen schien. Beides war falsch gerechnet:
+//   * products.shipsFrom ist bei 95 leer — das wurde wie EU behandelt (0 € Einfuhrabgaben), obwohl
+//     "unbekannt" vorsichtig wie China zu rechnen wäre (Lücke 2);
+//   * gleichzeitig wurden 1,99 € AliExpress-Versand angesetzt, obwohl das Varianten-Attribut
+//     "Ships From" = Germany sagt und aus einem EU-Lager kein Versand anfällt (Lücke 3).
+// Mit der Herkunft aus dem Varianten-Attribut (Germany → EU) ist K = 8,99 € und der echte Gewinn
+// 2,8069 € — weit über dem Boden. Die Anhebung entfällt also: 95 wäre zu Unrecht teurer geworden.
+describe('Produkt 95 (K-004): Herkunft laut Varianten-Attribut = Germany → EU → keine Anhebung', () => {
+  test('95: VK 15,95 € bei Ware 8,99 € → echter Gewinn 2,8069 ≥ Boden 1,30 → keine Zeile', () => {
+    expect(planVariantRaises(product95())).toEqual([]);
+  });
+
+  // Regressions-Beweis (Grundgesetz Regel 5): dasselbe Produkt, aber Herkunft ausdrücklich China
+  // → K = 8,99 + 3,57 = 12,56 € (kein Versand, Ware ≥ 10 €? nein: 8,99 < 10 → + 1,99 = 14,55 €),
+  // Gewinn 15,95 × 0,762 − 0,357 − 14,55 < Boden → wird angehoben. Die Fixture unterscheidet also,
+  // ob die Herkunft überhaupt gelesen wird.
+  test('dieselbe Variante mit "Ships From" = China wird weiterhin angehoben', () => {
+    const china = product95({
+      variantPrices: JSON.stringify([{ skuId: '12000056840616727', attrs: { Color: '6pcs set', 'Net Contents': '10ml x 6pcs', 'Ships From': 'China' }, price: 8.99, stock: 17 }]),
+    });
+    const r = planVariantRaises(china);
     expect(r).toHaveLength(1);
     expect(r[0].skuId).toBe('12000056840616727');
     expect(r[0].oldSell).toBe(15.95);
-    expect(r[0].newSell).toBe(16.95);
-    expect(r[0].oldProfit).toBeCloseTo(0.8169, 4);
-    expect(r[0].newProfit).toBeCloseTo(1.5789, 4);
+    expect(r[0].newSell).toBeGreaterThan(15.95);
   });
 });
 

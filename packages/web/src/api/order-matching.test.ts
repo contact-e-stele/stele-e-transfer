@@ -44,31 +44,35 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
       orderTotal: 20,
       lineItems: [{ sku: 'a', quantity: 1 }],
       manualBuyPrice: null,
-      findProduct: () => ({ buyPrice: 5, shipsFrom: 'China' }),
+      findProduct: () => ({ id: 1, buyPrice: 5, shipsFrom: 'China' }),
     });
     expect(result.nettoQuelle).toBe('automatisch');
     expect(result.nettoEinkauf).toBeCloseTo(10.56, 10); // Ware + Versand + Einfuhrabgaben, keine Verdopplung
   });
 
-  test('keine Einfuhrabgaben bei nicht-China-Versand: Ware 5,00 € → 5,00 + 1,99 Versand = 6,99 €', () => {
+  // K-004 Lücke 3 (08.10.2026) — KORRIGIERTE ERWARTUNG: dieser Test fixierte bisher 6,99 € und
+  // damit genau den Fehler (1,99 € AliExpress-Versand auch bei EU-Lager). Belegt ist das Gegenteil
+  // (Bestellung 24.08. aus Polen, 3076175506687211, "Kostenloser Versand von Germany"): aus einem
+  // EU-Lager fallen weder Versand noch Einfuhrabgaben an. Neu erwartet: 5,00 €.
+  test('EU-Lager: weder Versand noch Einfuhrabgaben — Ware 5,00 € → 5,00 €', () => {
     const result = computeOrderNettoErgebnis({
       orderTotal: 20,
       lineItems: [{ sku: 'a', quantity: 1 }],
       manualBuyPrice: null,
-      findProduct: () => ({ buyPrice: 5, shipsFrom: 'DE' }),
+      findProduct: () => ({ id: 1, buyPrice: 5, shipsFrom: 'DE' }),
     });
-    expect(result.nettoEinkauf).toBeCloseTo(6.99, 10);
+    expect(result.nettoEinkauf).toBeCloseTo(5.00, 10);
   });
 
   test('Ware ab 10,00 € ohne Versand; Menge zählt zur Ware der Position (eine AliExpress-Bestellung je Position)', () => {
     const ab10 = computeOrderNettoErgebnis({
       orderTotal: 30, lineItems: [{ sku: 'a', quantity: 1 }], manualBuyPrice: null,
-      findProduct: () => ({ buyPrice: 10.29, shipsFrom: 'China' }),
+      findProduct: () => ({ id: 1, buyPrice: 10.29, shipsFrom: 'China' }),
     });
     expect(ab10.nettoEinkauf).toBeCloseTo(13.86, 10); // 10,29 + 0 + 3,57 (Beleg 27.08.: Ali Gesamt 13,86)
     const zwei = computeOrderNettoErgebnis({
       orderTotal: 30, lineItems: [{ sku: 'a', quantity: 2 }], manualBuyPrice: null,
-      findProduct: () => ({ buyPrice: 5, shipsFrom: 'China' }),
+      findProduct: () => ({ id: 1, buyPrice: 5, shipsFrom: 'China' }),
     });
     expect(zwei.nettoEinkauf).toBeCloseTo(13.57, 10); // Ware 2 × 5,00 = 10,00 → kein Versand, 10,00 + 3,57
   });
@@ -98,16 +102,16 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
 // Bestellungen, Order-IDs/Beträge/SKUs/buyPrice/shipsFrom 1:1 aus der Live-DB) — keine erfundenen
 // Werte (Grundgesetz Regel 4).
 describe('computeOrderNettoErgebnis — Regressionsbeweis mit echten Live-Bestelldaten (2026-09-24)', () => {
-  const buyPriceBySku: Record<string, { buyPrice: number | null; shipsFrom: string | null }> = {
-    'stele-123-50PCS-13-38CM': { buyPrice: 2.05, shipsFrom: 'China' },
-    'stele-119-100PCS': { buyPrice: 3.25, shipsFrom: 'China' },
-    'stele-119-200PCS': { buyPrice: 3.25, shipsFrom: 'China' },
-    'stele-98-WHITE-1PCS': { buyPrice: null, shipsFrom: null },
-    'stele-127-MULTICOLOUR-100PCS': { buyPrice: 2.49, shipsFrom: 'China' },
-    'stele-127-MULTICOLOUR-500PCS': { buyPrice: 2.49, shipsFrom: 'China' },
-    'stele-93-ESSENTIAL-OILS-SET-5ML-X-15PCS': { buyPrice: null, shipsFrom: null },
-    'stele-71-2PCS-33X40CM': { buyPrice: 1, shipsFrom: 'China' },
-    'stele-71-6PCS-50X40CM': { buyPrice: 1, shipsFrom: 'China' },
+  const buyPriceBySku: Record<string, { id: number; buyPrice: number | null; shipsFrom: string | null }> = {
+    'stele-123-50PCS-13-38CM': { id: 123, buyPrice: 2.05, shipsFrom: 'China' },
+    'stele-119-100PCS': { id: 119, buyPrice: 3.25, shipsFrom: 'China' },
+    'stele-119-200PCS': { id: 119, buyPrice: 3.25, shipsFrom: 'China' },
+    'stele-98-WHITE-1PCS': { id: 98, buyPrice: null, shipsFrom: null },
+    'stele-127-MULTICOLOUR-100PCS': { id: 127, buyPrice: 2.49, shipsFrom: 'China' },
+    'stele-127-MULTICOLOUR-500PCS': { id: 127, buyPrice: 2.49, shipsFrom: 'China' },
+    'stele-93-ESSENTIAL-OILS-SET-5ML-X-15PCS': { id: 93, buyPrice: null, shipsFrom: null },
+    'stele-71-2PCS-33X40CM': { id: 71, buyPrice: 1, shipsFrom: 'China' },
+    'stele-71-6PCS-50X40CM': { id: 71, buyPrice: 1, shipsFrom: 'China' },
   };
   const findProduct = (sku: string | null) => sku != null ? (buyPriceBySku[sku] ?? null) : null;
 

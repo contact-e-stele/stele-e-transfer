@@ -5,7 +5,7 @@
 import { MARGIN_TIERS } from './constants';
 import { isVariantProduct } from './variant-product';
 import {
-  profitAtSellPrice, evaluateTargetDisplay, isChinaShipping,
+  profitAtSellPrice, evaluateTargetDisplay, isChinaOriginForPricing, resolveShipsFrom,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
 } from './pricing';
 
@@ -31,10 +31,10 @@ export function productTarget(p: Pick<ProfitProduct, 'targetMarginEur'>): number
 // Gewinn beim heutigen VK je Variante (Varianten-Produkt: variant_sell_prices → alter ebayPrice → Produkt-VK) bzw. je
 // Einzelartikel. Formel v2 über profitAtSellPrice. Zeilen ohne VK oder ohne Einkaufspreis fehlen (nichts geraten).
 export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVariant: boolean } {
-  const china = isChinaShipping(p.shipsFrom);
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-  const profitAt = (sellPrice: number, buyPrice: number) => profitAtSellPrice({
-    sellPrice, buyPrice, isChinaOrigin: china,
+  // K-004 Lücke 2: Herkunft je Variante (Attribut "Ships From" vor Produktfeld, nichts bekannt → vorsichtig China).
+  const profitAt = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitAtSellPrice({
+    sellPrice, buyPrice, isChinaOrigin: isChinaOriginForPricing(resolveShipsFrom(p.shipsFrom, attrs)),
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
   });
@@ -50,7 +50,7 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
       const sell = resolveVariantSellPrice(v.skuId, stored, v).sellPrice ?? p.sellPrice;
       if (sell == null) continue;
       const label = Object.values(v.attrs ?? {}).join(' / ') || `…${v.skuId.slice(-6)}`;
-      rows.push({ label, profit: profitAt(sell, v.price), skuId: v.skuId, sellPrice: sell });
+      rows.push({ label, profit: profitAt(sell, v.price, v.attrs), skuId: v.skuId, sellPrice: sell });
     }
   } else if (p.sellPrice && p.buyPrice) {
     rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice), sellPrice: p.sellPrice });

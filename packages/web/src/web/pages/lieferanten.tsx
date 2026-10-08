@@ -11,7 +11,7 @@ import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fie
 import { ALI_EINFUHR_EUR, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
-import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, isChinaOriginForPricing, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
@@ -119,11 +119,9 @@ function isEUShipping(shipsFrom?: string): boolean {
   return EU_COUNTRIES.some(c => lower.includes(c));
 }
 
-// Zoll gilt ausschliesslich bei China-Versand (nicht bei "nicht EU" allgemein) — konsistent mit Backend-Logik
-function isChinaShipping(shipsFrom?: string): boolean {
-  if (!shipsFrom) return false;
-  return shipsFrom.toLowerCase().includes('china');
-}
+// K-004 (08.10.2026): die lokale Kopie dieser Prüfung ist entfernt (Grundgesetz Regel 8 — eine
+// Quelle). Stattdessen isChinaOriginForPricing() aus shared/pricing.ts: wörtliche China-Prüfung,
+// aber leere/unbekannte Herkunft wird vorsichtig wie China gerechnet (Lücke 2) statt wie EU.
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function decodeEntities(str: string): string {
@@ -470,7 +468,7 @@ export default function Lieferanten() {
   const ebayFee = verkauf * (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor
     + DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
   const gewinn = profitAtSellPrice({
-    sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)),
+    sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: isChinaOriginForPricing(shipsFromInfo?.country),
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
   });
@@ -1673,7 +1671,7 @@ export default function Lieferanten() {
                           // bleibt der laufenden automatischen Preisprüfung vorbehalten). Zentrale
                           // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A+2B, 2026-09-10).
                           const recommended = computeMinSellPrice({
-                            buyPrice: einkauf, isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)),
+                            buyPrice: einkauf, isChinaOrigin: isChinaOriginForPricing(shipsFromInfo?.country),
                             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                             targetMarginEur: minGewinn, safetyBufferEur: 0,
@@ -1876,7 +1874,7 @@ export default function Lieferanten() {
               // P-75: Gleiche Formel wie der Einzel-Varianten-Button unten (inkl. P-74 ,95-Rundung) —
               // hier einmal extrahiert, damit "Alle übernehmen" und Einzel-Button garantiert identisch rechnen.
               const recommendedFor = (v: VariantPrice): number => {
-                const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
+                const ausChinaV = variantHerkunft[v.skuId] ?? isChinaOriginForPricing(shipsFromInfo?.country);
                 // A-014: Versand/Einfuhrabgaben rechnet die zentrale Formel v2 (computeAliCosts) selbst.
                 // Kein Sicherheitspuffer (Teil 2C: global entfernt, safetyBufferEur immer 0)
                 return computeMinSellPrice({
@@ -1933,7 +1931,7 @@ export default function Lieferanten() {
                       const varEbay = parseFloat(varEbayRaw.replace(",", ".")) || 0;
                       // Herkunft/Zoll pro Variante — Default aus dem gescrapten Ships-From-Land.
                       // Versand ist zentral (P-69): fällt pro Bestellung an, nicht pro Variante.
-                      const ausChinaV = variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country);
+                      const ausChinaV = variantHerkunft[v.skuId] ?? isChinaOriginForPricing(shipsFromInfo?.country);
                       const versandV = parseFloat(shippingCost.replace(",", ".")) || 0;
                       const sendungswertV = v.price + versandV;
                       const ueberSchwelleV = ausChinaV && sendungswertV > 150;

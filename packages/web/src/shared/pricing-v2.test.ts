@@ -69,11 +69,30 @@ describe('computeAliCosts — K = Ware + Versand + Einfuhrabgaben', () => {
     expect(computeAliCosts(10.29, true).totalCost).toBeCloseTo(13.86, 10);
   });
 
-  test('nicht China: keine Einfuhrabgaben, Versandregel gilt weiter', () => {
+  // K-004 Lücke 3 (08.10.2026) — KORRIGIERTE ERWARTUNG: hier stand bisher shipping = 1,99 € und
+  // totalCost = 6,78 €, also der Fehler selbst (China-Versand auch bei EU-Lager). Belegt ist das
+  // Gegenteil: Bestellung 24.08. aus Polen (3076175506687211), Artikelseite "Kostenloser Versand
+  // von Germany" — aus einem EU-Lager fallen weder Versand noch Einfuhrabgaben an. Die 1,99 € sind
+  // der China-Versand unterhalb der Freigrenze ("Kostenloser Versand ab 10€").
+  test('EU-Lager: weder Einfuhrabgaben noch Versand — K ist die reine Ware', () => {
     const c = computeAliCosts(4.79, false);
     expect(c.customs).toBe(0);
-    expect(c.shipping).toBe(1.99);
-    expect(c.totalCost).toBeCloseTo(6.78, 10);
+    expect(c.shipping).toBe(0);
+    expect(c.totalCost).toBeCloseTo(4.79, 10);
+  });
+
+  // Pflichtfall aus dem K-004-Auftrag ("EU-Fall: Ware 8,99, EU → Kosten 8,99").
+  test('EU-Fall des Auftrags: Ware 8,99 € → Kosten 8,99 € (Produkt 95)', () => {
+    const c = computeAliCosts(8.99, false);
+    expect(c.totalCost).toBeCloseTo(8.99, 10);
+    // Regressions-Beweis (Regel 5): mit der alten Regel wären es 10,98 € gewesen.
+    expect(c.totalCost).not.toBeCloseTo(10.98, 2);
+  });
+
+  // Die Freigrenze gilt weiterhin — aber nur innerhalb von China.
+  test('China unter der Freigrenze: Versand 1,99 €; China ab 10 €: kein Versand', () => {
+    expect(computeAliCosts(4.79, true).shipping).toBe(1.99);
+    expect(computeAliCosts(10.29, true).shipping).toBe(0);
   });
 
   test('die Produktfelder shippingCost/CHINA_ZOLL_EUR fließen nicht mehr ein: computeMinSellPrice ignoriert fremde Felder und liefert K aus computeAliCosts', () => {

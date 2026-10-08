@@ -6,7 +6,7 @@
 // — als reine Vergleichsgröße, die App benutzt sie nicht mehr. "Gewinn heute (v2)" ist der echte Gewinn beim heutigen VK nach
 // Formel v2. "Gewinn neu (v2)" ist der Gewinn beim neuen VK.
 import {
-  computeMinSellPrice, profitAtSellPrice, profitFloorFor, evaluateTargetDisplay, isChinaShipping,
+  computeMinSellPrice, profitAtSellPrice, profitFloorFor, evaluateTargetDisplay, isChinaOriginForPricing, resolveShipsFrom,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
 } from './pricing';
 import { MARGIN_TIERS } from './constants';
@@ -67,7 +67,6 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
 
   for (const p of products) {
     if (p.ebayStatus !== 'listed') continue;
-    const china = isChinaShipping(p.shipsFrom);
     const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const target = p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
     const shippingCost = p.shippingCost ?? 0;
@@ -77,12 +76,14 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
     entries = entries.filter(e => typeof e.price === 'number' && e.price > 0);
     const isVariant = isVariantProduct(p.variants, p.variantPrices);
 
-    const lines: Array<{ label: string; ware: number; oldSell: number | null }> = [];
+    // K-004 Lücke 2: Herkunft je Variante (Attribut "Ships From" vor Produktfeld, nichts bekannt → vorsichtig China),
+    // deshalb wird `china` pro Zeile statt einmal pro Produkt bestimmt.
+    const lines: Array<{ label: string; ware: number; oldSell: number | null; attrs?: Record<string, string> }> = [];
     if (isVariant) {
       const stored = parseVariantSellPrices(p.variantSellPrices);
       for (const e of entries) {
         const label = Object.values(e.attrs ?? {}).join(' / ') || `…${e.skuId.slice(-6)}`;
-        lines.push({ label, ware: e.price, oldSell: resolveVariantSellPrice(e.skuId, stored, e).sellPrice ?? p.sellPrice });
+        lines.push({ label, ware: e.price, oldSell: resolveVariantSellPrice(e.skuId, stored, e).sellPrice ?? p.sellPrice, attrs: e.attrs });
       }
     } else if (p.buyPrice != null && p.buyPrice > 0) {
       lines.push({ label: '', ware: p.buyPrice, oldSell: p.sellPrice });
@@ -92,6 +93,7 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
     }
 
     for (const line of lines) {
+      const china = isChinaOriginForPricing(resolveShipsFrom(p.shipsFrom, line.attrs));
       const common = {
         isChinaOrigin: china, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
@@ -125,7 +127,7 @@ export function renderPriceReportMarkdown(
     '',
     `Lauf: ${generatedAt}`,
     '',
-    'Formel v2: K = Ware + Versand (1,99 € bei Ware < 10 €) + Einfuhrabgaben (3,57 € bei China); Gewinn = VK × (1 − (15 % + Anzeige) × 1,19) − 0,357 − K;',
+    'Formel v2: K = Ware + Versand (1,99 € nur bei China und Ware < 10 €) + Einfuhrabgaben (3,57 € bei China; leere Herkunft wird wie China gerechnet); Gewinn = VK × (1 − (15 % + Anzeige) × 1,19) − 0,357 − K;',
     'Rundung ,95 unter dem Rohpreis, bei Gewinn < Boden die nächste ,95 darüber. "neuer VK" ist der Formelpreis je Variante (Varianten-Regel 6c',
     'ist AUS — im Betrieb würde keine Variante allein über die Formel erhöht, außer sie liegt unter dem Boden). "Gewinn alt (v1)" = bis A-014 gültige',
     'Formel (Ware + shippingCost + 4,00 € Zoll bei China) beim heutigen VK; "Gewinn heute (v2)" = echter Gewinn beim heutigen VK nach v2.',

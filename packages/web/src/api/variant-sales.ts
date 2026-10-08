@@ -4,7 +4,7 @@
 // gesenkt werden, also müssen sie testbar sein. Das Berichtsskript reicht nur die Daten herein und
 // formatiert das Ergebnis.
 
-import { isChinaShipping, computeAliCosts, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { isChinaOriginForPricing, resolveShipsFrom, computeAliCosts, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { buildVariantSku } from './price-monitor';
 import { buildProductLookups, findProductForSku, type UnmatchedReason } from './order-matching';
 
@@ -79,11 +79,13 @@ export function aggregateVariantSales(input: {
 
   // Produkt-ID → echte eBay-SKU → skuId aus variantPrices. Nur Produkte mit MEHR als einer
   // Variante sind Gegenstand dieses Berichts.
-  const variantSkuIndex = new Map<number, Map<string, { skuId: string; buyPrice: number }>>();
+  // attrs wandern mit in den Index (K-004 Lücke 2): die Herkunft dieser Variante steht dort
+  // ("Ships From") und ist nicht Teil der SKU (NON_VARIATION_ASPECTS).
+  const variantSkuIndex = new Map<number, Map<string, { skuId: string; buyPrice: number; attrs?: Record<string, string> }>>();
   for (const p of products) {
     if (p.variants.length <= 1) continue;
-    const m = new Map<string, { skuId: string; buyPrice: number }>();
-    for (const v of p.variants) m.set(buildVariantSku(p.id, v.attrs), { skuId: v.skuId, buyPrice: v.buyPrice });
+    const m = new Map<string, { skuId: string; buyPrice: number; attrs?: Record<string, string> }>();
+    for (const v of p.variants) m.set(buildVariantSku(p.id, v.attrs), { skuId: v.skuId, buyPrice: v.buyPrice, attrs: v.attrs });
     variantSkuIndex.set(p.id, m);
   }
 
@@ -124,7 +126,9 @@ export function aggregateVariantSales(input: {
       // EK je Stück: ein manuell erfasster Einkaufspreis hat Vorrang (wie in der Bestellansicht der
       // App), gilt aber für die GESAMTE Bestellung — eindeutig zuordenbar nur bei genau einer
       // Position. Sonst Ware + Versand + Einfuhrabgaben nach Preisformel v2 (A-014, computeAliCosts).
-      const isChina = isChinaShipping(product.shipsFrom);
+      // K-004 Lücke 2: Herkunft dieser Variante ("Ships From" im Attribut) vor dem Produktfeld,
+      // nichts bekannt → vorsichtig China (vorher: leeres Feld = EU = 0 € Einfuhrabgaben).
+      const isChina = isChinaOriginForPricing(resolveShipsFrom(product.shipsFrom, variant.attrs));
       // Versand und Einfuhrabgaben fallen je Bestellposition EINMAL an (eine AliExpress-Bestellung), nicht je Stück — wie in order-matching.ts.
       const einkaufJeStueck = (warePositionGesamt: number) => computeAliCosts(warePositionGesamt, isChina).totalCost / qty;
       // WICHTIG: der EK DIESER Variante, nicht der Produkt-EK — die Varianten unterscheiden sich

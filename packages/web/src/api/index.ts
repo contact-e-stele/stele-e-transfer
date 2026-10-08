@@ -791,6 +791,11 @@ const app = new Hono()
         sourceUrl: schema.products.sourceUrl,
         ebayListingId: schema.products.ebayListingId,
         variantPrices: schema.products.variantPrices,
+        // K-004 (08.10.2026): variants für die Varianten-SKU-Auflösung (Lücke 1 — EK der
+        // VERKAUFTEN Variante statt products.buyPrice = billigste Variante), adRate für den
+        // echten Anzeigentarif (Lücke 4 — vorher fest 5 %, auch bei unbeworbenen Verkäufen).
+        variants: schema.products.variants,
+        adRate: schema.products.adRate,
       }).from(schema.products).all();
       // Teil 3B (2026-09-13): Matching-Regeln nach src/api/order-matching.ts ausgelagert (reiner
       // Extract, identische Logik), damit das Verkaufszahlen-Berichtsskript dieselbe Zuordnung nutzt.
@@ -849,7 +854,10 @@ const app = new Hono()
           manualBuyPrice: note?.manualBuyPrice,
           findProduct: (sku) => {
             const product = findProductForSku(sku);
-            return product ? { buyPrice: product.buyPrice, shipsFrom: product.shipsFrom } : null;
+            return product ? {
+              id: product.id, buyPrice: product.buyPrice, shipsFrom: product.shipsFrom,
+              adRate: product.adRate, variants: product.variants, variantPrices: product.variantPrices,
+            } : null;
           },
         });
         return {
@@ -859,6 +867,7 @@ const app = new Hono()
           nettoErgebnis: netto.nettoErgebnis,
           nettoGebuehren: netto.nettoGebuehren,
           nettoQuelle: netto.nettoQuelle,
+          nettoGrund: netto.nettoGrund,
           aliexpressUrl,
           ebayListingUrl,
         };
@@ -1267,7 +1276,7 @@ const app = new Hono()
   // eigener Zeile pro Variante (isVariant:true, variantBreakdown) — Anforderung 1 + 3.
   .get('/ebay/listings/recalculate-preview', async (c) => {
     try {
-      const { isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
+      const { isChinaOriginForPricing, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
       const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
@@ -1324,7 +1333,8 @@ const app = new Hono()
           // jetzt gleichermaßen hier wie in computeVariantPriceRows() und im Einzelartikel-Zweig
           // unten.
           const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-          const variantZoll = isChinaShipping(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
+          // K-004 Lücke 2: leere/unbekannte Herkunft wird vorsichtig wie China gerechnet.
+          const variantZoll = isChinaOriginForPricing(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
           const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
           const rawNewPrice = safeUniformVariantPrice(rows);
           if (rawNewPrice == null) continue;
@@ -1355,11 +1365,12 @@ const app = new Hono()
         if (product.buyPrice == null) continue;
         // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08).
         // adRateWasNull im debug-Feld zeigt weiterhin an, ob der Default hier gerade greift.
-        const zoll = isChinaShipping(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
+        // K-004 Lücke 2: leere/unbekannte Herkunft wird vorsichtig wie China gerechnet.
+        const zoll = isChinaOriginForPricing(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
         const rawNewPrice = computeMinSellPrice({
-          earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
+          earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaOriginForPricing(product.shipsFrom),
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
@@ -1407,7 +1418,7 @@ const app = new Hono()
       }
 
       const {
-        isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice,
+        isChinaOriginForPricing, computeVariantPriceRows, safeUniformVariantPrice,
         updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading,
         parseVariantGroupsJson,
       } = await import('./price-monitor');
@@ -1447,7 +1458,7 @@ const app = new Hono()
         } else {
           const rawNewPrice = product.buyPrice != null
             ? computeMinSellPrice({
-                earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
+                earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaOriginForPricing(product.shipsFrom),
                 ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
                 targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
@@ -2417,12 +2428,12 @@ const app = new Hono()
     // nach Delisting) — statt einen möglicherweise veralteten oder nie korrekt gesetzten
     // product.sellPrice ungeprüft zu übernehmen. Nur wenn kein buyPrice bekannt ist (z.B. manuell
     // angelegtes Produkt ohne AliExpress-Quelle), bleibt der gespeicherte sellPrice die Quelle.
-    const { isChinaShipping: isChinaShippingForListing } = await import('./price-monitor');
+    const { isChinaOriginForPricing: isChinaForListing } = await import('./price-monitor');
     const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
     const adRateForListing = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
       earUmlageEur: earUmlageFor(product), // A-029: nur Elektro = ja, sonst 0 → Formel unverändert
-      buyPrice, isChinaOrigin: isChinaShippingForListing(product.shipsFrom),
+      buyPrice, isChinaOrigin: isChinaForListing(product.shipsFrom),
       ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
       targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
@@ -2779,12 +2790,12 @@ const app = new Hono()
       // Bedeutung wie im automatischen Pfad, hier korrigiert nach demselben Muster
       // (evaluatePriceAlarm() in shared/pricing.ts). Dieser Endpunkt setzt weiterhin NIE
       // eigenständig einen neuen Verkaufspreis — nur die priceChanged-Bedeutung wird korrigiert.
-      const { isChinaShipping } = await import('./price-monitor');
+      const { isChinaOriginForPricing } = await import('./price-monitor');
       const { evaluatePriceAlarm, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
       const priceChanged = evaluatePriceAlarm({
         currentSellPrice: old.sellPrice,
         variants: [{ buyPrice: body.buyPrice }],
-        isChinaOrigin: isChinaShipping(old.shipsFrom),
+        isChinaOrigin: isChinaOriginForPricing(old.shipsFrom),
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: old.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
         targetMarginEur: old.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
@@ -3500,7 +3511,7 @@ const app = new Hono()
 
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
-        const { isChinaShipping } = await import('./price-monitor');
+        const { isChinaOriginForPricing } = await import('./price-monitor');
         const { computeMinSellPrice, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         for (const product of all) {
@@ -3535,7 +3546,7 @@ const app = new Hono()
             // Teil 2A: nur der Aufruf selbst ersetzt (strikte Vorgabe), sonst keine Änderung an
             // diesem Endpunkt.
             const rawNewSellPrice = computeMinSellPrice({
-              earUmlageEur: earUmlageFor(product), buyPrice: newPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
+              earUmlageEur: earUmlageFor(product), buyPrice: newPrice, isChinaOrigin: isChinaOriginForPricing(product.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
@@ -3550,7 +3561,7 @@ const app = new Hono()
             const alarm = evaluatePriceAlarm({
               currentSellPrice: product.sellPrice,
               variants: [{ buyPrice: newPrice }],
-              isChinaOrigin: isChinaShipping(product.shipsFrom),
+              isChinaOrigin: isChinaOriginForPricing(product.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,

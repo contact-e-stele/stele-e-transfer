@@ -48,6 +48,10 @@ export interface ResolvedVariantEntry {
   ebayPrice?: number;
   stock?: number;
   imageUrl?: string;
+  // K-004 Lücke 2 (08.10.2026): die rohen attrs des getroffenen Eintrags werden mitgegeben, damit
+  // die Kostenrechnung die SKU-eigene Herkunft ("Ships From") lesen kann — sie steht in
+  // NON_VARIATION_ASPECTS und ist deshalb nicht Teil der SKU selbst. Rein additiv.
+  attrs?: Record<string, string>;
 }
 
 export interface ResolvedVariant {
@@ -159,7 +163,7 @@ export function resolveVariantEntries(
     }
     results.push({
       displayValues: combo, sku,
-      entry: { skuId: m.skuId, price: m.price, ebayPrice: m.ebayPrice, stock: m.stock, imageUrl: m.imageUrl },
+      entry: { skuId: m.skuId, price: m.price, ebayPrice: m.ebayPrice, stock: m.stock, imageUrl: m.imageUrl, attrs: m.attrs },
       error: null,
     });
   }

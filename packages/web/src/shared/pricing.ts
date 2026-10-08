@@ -45,15 +45,62 @@ export function roundToNearest95(price: number): number {
 
 // Preisformel v2 (A-014, 04.10.2026): Kosten einer AliExpress-Bestellung K = Ware + Versand + Einfuhrabgaben.
 //   Ware = AliExpress-Preis der Variante OHNE Rabatte/Gutscheine/Münzen (die sind wechselnd → Bonus, nie einrechnen)
-//   Versand = ALI_VERSAND_EUR, wenn Ware < ALI_VERSAND_FREI_AB_EUR, sonst 0
+//   Versand = ALI_VERSAND_EUR, NUR bei China UND Ware < ALI_VERSAND_FREI_AB_EUR, sonst 0 (K-004 Lücke 3, s.u.)
 //   Einfuhrabgaben = ALI_EINFUHR_EUR je Bestellung, wenn shipsFrom = China, sonst 0
 // Ersetzt die alte Formel "Ware + Produktfeld shippingCost + CHINA_ZOLL_EUR (4,00)". Das Produktfeld
 // shippingCost bleibt in der DB, wird in der Formel aber nicht mehr gelesen.
+//
+// K-004 Lücke 3 (08.10.2026, Prüfauftrag Kalkulator): die Vorgänger-Version setzte ALI_VERSAND_EUR
+// (1,99 €) auch bei EU-Lager an, weil nur der Warenwert geprüft wurde, nicht die Herkunft. Belegt
+// ist das Gegenteil: AliExpress-Bestellung vom 24.08. aus Polen (3076175506687211), Artikelseite
+// "Kostenloser Versand von Germany" — aus einem EU-Lager fallen WEDER Versand NOCH Einfuhrabgaben
+// an. Die 1,99 € sind der China-Versand, und zwar nur unterhalb der Freigrenze, die dieselbe
+// Artikelseite mit "Kostenloser Versand ab 10€" ausweist. Wirkung: EU-Produkte rechnen ab hier mit
+// 1,99 € NIEDRIGEREN Kosten → ihr Mindestpreis sinkt entsprechend (s. PR-Beschreibung, Abschnitt
+// "Wirkung auf laufende Preise").
 export interface AliCosts { ware: number; shipping: number; customs: number; totalCost: number }
 export function computeAliCosts(ware: number, isChinaOrigin: boolean): AliCosts {
-  const shipping = ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
+  const shipping = isChinaOrigin && ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
   const customs = isChinaOrigin ? ALI_EINFUHR_EUR : 0;
   return { ware, shipping, customs, totalCost: ware + shipping + customs };
+}
+
+// ─── K-004 Lücke 2 (08.10.2026): Herkunft für die KOSTENRECHNUNG ──────────────────────────────
+//
+// isChinaShipping() (s.u.) beantwortet wörtlich "steht 'china' in diesem Feld?" — und gibt für ein
+// LEERES Feld false zurück. Für eine Anzeige ("Versand aus: —") ist das richtig, für die
+// Kostenrechnung war es der Fehler: eine unbekannte Herkunft wurde wie EU gerechnet, also mit
+// 0 € Einfuhrabgaben. Real liegt bei leerem Feld fast immer ein China-Lager vor (das Feld wird nur
+// beim AliExpress-Import gefüllt, Altbestand hat es nicht), und die EU-Annahme ist die
+// GEFÄHRLICHE Richtung: sie rechnet 3,57 € Kosten zu wenig und drückt damit den Mindestpreis.
+// Belegt an Produkt 95 (Live-Daten, s. api/variant-raise.test.ts): products.shipsFrom ist leer,
+// das Varianten-Attribut "Ships From" sagt aber "Germany".
+//
+// Vorgabe K-003, hier umgesetzt: Herkunft zuerst aus dem Varianten-Attribut "Ships From" (die
+// genauere, SKU-eigene Angabe — eine Anzeige kann Varianten aus verschiedenen Lagern enthalten),
+// dann aus dem Produktfeld; ist NICHTS bekannt → vorsichtig wie China rechnen.
+//
+// isChinaShipping() bleibt unverändert als wörtliche Feld-Prüfung bestehen (Anzeige-Stellen), die
+// Kalkulations-Aufrufstellen nutzen ab hier isChinaOriginForPricing().
+export const SHIPS_FROM_ASPECT_KEYS = ['Ships From', 'Versandort'] as const;
+
+// Herkunft einer Varianten-SKU: Varianten-Attribut vor Produktfeld, beides leer → null (unbekannt).
+export function resolveShipsFrom(
+  productShipsFrom: string | null | undefined,
+  variantAttrs?: Record<string, string> | null,
+): string | null {
+  for (const key of SHIPS_FROM_ASPECT_KEYS) {
+    const v = variantAttrs?.[key];
+    if (v != null && v.trim() !== '') return v;
+  }
+  if (productShipsFrom != null && productShipsFrom.trim() !== '') return productShipsFrom;
+  return null;
+}
+
+// China für die Kostenrechnung: leer/unbekannt → true (vorsichtig), sonst wörtliche Feld-Prüfung.
+export function isChinaOriginForPricing(shipsFrom?: string | null): boolean {
+  if (shipsFrom == null || shipsFrom.trim() === '') return true;
+  return isChinaShipping(shipsFrom);
 }
 
 // Boden (Mindest-Gewinn) zu einem Zielgewinn: Stufen A–D (MARGIN_TIERS) bzw. die ausgeblendete 4,50-Stufe für
@@ -620,8 +667,16 @@ export interface OrderProfitResult {
 // DEFAULT_PRICING_CONFIG (kein neuer Zahlenwert). `wahrerEinkauf` ist bereits der volle Einkauf
 // inkl. Zoll (kommt vorgerechnet von der Aufrufstelle) — keine weitere Aufschlüsselung nötig, da
 // eine abgeschlossene Bestellung keinen hypothetischen Mindestpreis mehr braucht.
-export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number): OrderProfitResult {
-  const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + DEFAULT_PRICING_CONFIG.defaultAdRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
+//
+// K-004 Lücke 4 (08.10.2026): der Anzeigentarif war hier fest DEFAULT_PRICING_CONFIG.
+// defaultAdRatePercent (5 %) — auch für einen Verkauf, der gar nicht beworben war. Belegt: eBay
+// zieht die Anzeigengebühr nur bei einem über Promoted Listings zustande gekommenen Verkauf ab;
+// bei adRate = 0 (nicht beworben) rechnete die App dadurch 5 % × 1,19 zu viel Gebühren und zeigte
+// den Gewinn zu niedrig (Beispiel VK 13,95 € / Ware 3,15 € China: 1,56 € statt real 2,39 €).
+// `adRatePercent` ist deshalb ein PFLICHT-Parameter — kein Default-Wert, damit keine Aufrufstelle
+// unbemerkt wieder auf 5 % zurückfällt (dieselbe Begründung wie bei PricingInput, s.o.).
+export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number, adRatePercent: number): OrderProfitResult {
+  const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
   const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
   const feesDeducted = verkaufspreis * totalFeeRateGross + fixedFeeGross;
   const profit = verkaufspreis * (1 - totalFeeRateGross) - fixedFeeGross - wahrerEinkauf;

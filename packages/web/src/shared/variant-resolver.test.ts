@@ -13,8 +13,8 @@ describe('resolveVariantEntries — Grundfälle (NACHWEIS)', () => {
     ];
     const result = resolveVariantEntries(1, variants, prices);
     expect(result).toEqual([
-      { displayValues: { Farbe: 'Rot' }, sku: 'stele-1-ROT', entry: { skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined }, error: null },
-      { displayValues: { Farbe: 'Blau' }, sku: 'stele-1-BLAU', entry: { skuId: 'B', price: 4, ebayPrice: undefined, stock: undefined, imageUrl: undefined }, error: null },
+      { displayValues: { Farbe: 'Rot' }, sku: 'stele-1-ROT', entry: { skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined, attrs: { Color: 'Rot' } }, error: null },
+      { displayValues: { Farbe: 'Blau' }, sku: 'stele-1-BLAU', entry: { skuId: 'B', price: 4, ebayPrice: undefined, stock: undefined, imageUrl: undefined, attrs: { Color: 'Blau' } }, error: null },
     ]);
   });
 
@@ -22,14 +22,15 @@ describe('resolveVariantEntries — Grundfälle (NACHWEIS)', () => {
     const variants: VariantGroup[] = [{ name: 'Farbe', values: ['rot'] }];
     const prices: VariantPriceEntry[] = [{ skuId: 'A', attrs: { Color: 'ROT' }, price: 3 }];
     const result = resolveVariantEntries(1, variants, prices);
-    expect(result[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined });
+    // K-004: entry trägt jetzt zusätzlich die rohen attrs (für die Herkunft "Ships From") — rein additiv.
+    expect(result[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined, attrs: { Color: 'ROT' } });
   });
 
   test('führende/nachgestellte Leerzeichen werden getrimmt', () => {
     const variants: VariantGroup[] = [{ name: 'Farbe', values: [' Rot '] }];
     const prices: VariantPriceEntry[] = [{ skuId: 'A', attrs: { Color: 'Rot' }, price: 3 }];
     const result = resolveVariantEntries(1, variants, prices);
-    expect(result[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined });
+    expect(result[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined, attrs: { Color: 'Rot' } });
   });
 
   test('Size-Blacklist (NON_VARIATION_ASPECTS): "ONE SIZE" in attrs darf kein Farb-Match verhindern', () => {
@@ -76,7 +77,7 @@ describe('resolveVariantEntries — Grundfälle (NACHWEIS)', () => {
       { skuId: 'A', attrs: { Color: '1PCS' }, price: 3, displayValues: { Farbe: 'Silber-Optik' } },
     ];
     const result = resolveVariantEntries(1, variants, prices);
-    expect(result[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined });
+    expect(result[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined, attrs: { Color: '1PCS' } });
   });
 
   test('displayValues verhindert ein falsches attrs-Fallback-Match für denselben Eintrag', () => {
@@ -170,7 +171,7 @@ describe('syncDisplayValuesOnRename', () => {
     const prices: VariantPriceEntry[] = [{ skuId: 'A', attrs: { Color: '1PCS' }, price: 3 }];
     const synced = syncDisplayValuesOnRename(70, oldVariants, newVariants, prices);
     const resolved = resolveVariantEntries(70, newVariants, synced);
-    expect(resolved[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined });
+    expect(resolved[0].entry).toEqual({ skuId: 'A', price: 3, ebayPrice: undefined, stock: undefined, imageUrl: undefined, attrs: { Color: '1PCS' } });
   });
 
   test('unterschiedliche Struktur (Wert hinzugefügt) → NICHTS wird geschrieben, kein Raten', () => {
