@@ -130,18 +130,23 @@ describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
     const variantPricesJson = JSON.stringify([
       { skuId: 'v1', attrs: { Color: 'Red' }, price: 3.80 },
     ]);
-    const rowsDefault = computeVariantPriceRows(variantPricesJson, 0, null, 5); // kein 5. Arg → globaler Default (2€)
-    const rowsMargin2 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 2.00);
-    const rowsMargin3 = computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00);
+    const rowsDefault = computeVariantPriceRows(variantPricesJson, 0, 'DE', 5); // kein 5. Arg → globaler Default (2€)
+    const rowsMargin2 = computeVariantPriceRows(variantPricesJson, 0, 'DE', 5, 2.00);
+    const rowsMargin3 = computeVariantPriceRows(variantPricesJson, 0, 'DE', 5, 3.00);
+    // K-004: Herkunft leer zählt jetzt als China — für diese Fixture daher ausdrücklich 'DE' (EU: K = Ware, kein Versand).
 
     // A-014 (Formel v2): Ware 3,80 €, keine China-Herkunft → K = 3,80 + 1,99 Versand = 5,79 €; Rohpreis bei Ziel 2,00 € =
     // 10,6916 €. 'floor95' rundet auf die ,95 UNTER dem Rohpreis → 9,95 € (Gewinn 1,4349 ≥ Boden 1,30). Die alte Regel
     // 'nearest95' ergäbe 10,95 €, 'up95' ebenfalls 10,95 € — diese Fixture unterscheidet die Modi bewusst, damit ein
     // Rückfall an dieser realen Aufrufstelle (nicht nur an der reinen Funktion in pricing-v2.test.ts) erkannt würde.
     // Das Produktfeld shippingCost (hier 0) fließt nicht mehr in die Formel ein.
-    expect(rowsDefault[0].correctSellPrice).toBe(9.95);
-    expect(rowsMargin2[0].correctSellPrice).toBe(9.95);
-    expect(rowsMargin3[0].correctSellPrice).toBe(11.95); // Stufe D
+    // K-004 (EU ohne Versand): K = 3,80 → Rohpreis Ziel 2,00 = 8,0801 → floor95 7,95 (Gewinn 1,8009 ≥ 1,30); Ziel 3,00 → 8,95.
+    expect(rowsDefault[0].correctSellPrice).toBe(7.95);
+    expect(rowsMargin2[0].correctSellPrice).toBe(7.95);
+    expect(rowsMargin3[0].correctSellPrice).toBe(8.95); // Stufe D
+    // Herkunft leer → wie China (K = 3,80 + 1,99 + 3,57 = 9,36): 14,95 bzw. 15,95.
+    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5)[0].correctSellPrice).toBe(14.95);
+    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00)[0].correctSellPrice).toBe(15.95);
     expect(rowsMargin3[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
   });
 

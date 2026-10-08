@@ -50,14 +50,14 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
     expect(result.nettoEinkauf).toBeCloseTo(10.56, 10); // Ware + Versand + Einfuhrabgaben, keine Verdopplung
   });
 
-  test('keine Einfuhrabgaben bei nicht-China-Versand: Ware 5,00 € → 5,00 + 1,99 Versand = 6,99 €', () => {
+  test('K-004: EU-Versand (DE): weder Einfuhr noch Versand — Ware 5,00 € → Einkauf 5,00 €', () => {
     const result = computeOrderNettoErgebnis({
       orderTotal: 20,
       lineItems: [{ sku: 'a', quantity: 1 }],
       manualBuyPrice: null,
       findProduct: () => ({ buyPrice: 5, shipsFrom: 'DE' }),
     });
-    expect(result.nettoEinkauf).toBeCloseTo(6.99, 10);
+    expect(result.nettoEinkauf).toBeCloseTo(5.00, 10);
   });
 
   test('Ware ab 10,00 € ohne Versand; Menge zählt zur Ware der Position (eine AliExpress-Bestellung je Position)', () => {
