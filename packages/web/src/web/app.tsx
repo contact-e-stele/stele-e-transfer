@@ -76,7 +76,7 @@ function TabNav() {
           <span>{activeTitle}</span>
         </button>
       </div>
-      <div className="stele-tab-version">v1.26</div>
+      <div className="stele-tab-version">v1.27</div>
 
       <div
         className={`stele-drawer-overlay${isDrawerOpen ? " open" : ""}`}
