@@ -17,7 +17,7 @@ const p95: ProfitProduct = {
   id: 95, variants: '[{"name":"Set","values":["6pcs set"]},{"name":"Stk.","values":["10ml x 6pcs"]}]', targetMarginEur: 2, shipsFrom: null, adRate: 5,
   sellPrice: 15.95, buyPrice: 8.99,
   variantPrices: JSON.stringify([{ skuId: '12000056840616727', attrs: { Color: '6pcs set', 'Net Contents': '10ml x 6pcs', 'Ships From': 'Germany' }, price: 8.99, stock: 17 }]),
-}; // Gewinn 0,8169 — unter jedem Boden
+}; // K-004: Variante "Ships From: Germany" = EU → K = 8,99 (kein Versand, keine Einfuhr) → Gewinn 2,8069 (vorher fälschlich 0,8169)
 const pGrenze = single(1, 13.55, 3.15, true);               // Gewinn 1,2581 — über Boden B (1,20), unter Boden C (1,30)
 const pYellow = single(2, 13.95, 3.15, true);               // Gewinn 1,5629
 const pOhneVk = single(3, null, null, true);                // nicht berechenbar
@@ -29,11 +29,11 @@ const p119: ProfitProduct = {
 const ALL = [p95, pGrenze, pYellow, p119, pOhneVk];
 
 describe('productProfitRows', () => {
-  test('Produkt 95 (Varianten-Gruppen, nur 1 variantPrices-Eintrag): Varianten-Produkt, Gewinn beim heutigen VK nach Formel v2 0,8169 €', () => {
+  test('Produkt 95 (Varianten-Gruppen, nur 1 variantPrices-Eintrag): Varianten-Produkt; K-004: Herkunft der Variante (Germany) → Gewinn 2,8069 €', () => {
     const r = productProfitRows(p95);
     expect(r.isVariant).toBe(true);
     expect(r.rows).toHaveLength(1);
-    expect(r.rows[0].profit).toBeCloseTo(0.8169, 4);
+    expect(r.rows[0].profit).toBeCloseTo(2.8069, 4);
   });
 
   test('Varianten-Produkt: je Variante mit ihrem VK aus variant_sell_prices (119: 0,0389 € und 0,6849 €)', () => {
@@ -53,26 +53,27 @@ describe('productProfitRows', () => {
 });
 
 describe('previewTierChange — "N Listings → Stufe X. Davon rot nach Wechsel: M"', () => {
-  test('Stufe A (1,00/1,00): rot sind 95 und 119 (Variante); Grenzfall-Produkt (1,2581) ist nicht rot', () => {
+  // K-004: 95 rechnet jetzt mit EU-Herkunft der Variante (Gewinn 2,8069) und ist in keiner Stufe mehr rot.
+  test('Stufe A (1,00/1,00): rot ist nur 119 (Variante); 95 (2,8069) und Grenzfall-Produkt (1,2581) nicht', () => {
     const p = previewTierChange(ALL, 1.0);
-    expect(p).toEqual({ total: 5, red: 2, redSingle: 0, redVariant: 2, yellow: 0, unknown: 1, redIds: [95, 119] });
+    expect(p).toEqual({ total: 5, red: 1, redSingle: 0, redVariant: 1, yellow: 0, unknown: 1, redIds: [119] });
   });
 
   test('Stufe B (1,50/1,20): Grenzfall (1,2581 ≥ 1,20) ist gelb statt rot', () => {
     const p = previewTierChange(ALL, 1.5);
-    expect(p.red).toBe(2);
+    expect(p.red).toBe(1);
     expect(p.yellow).toBe(1);
   });
 
   test('Stufe C (2,00/1,30): Grenzfall-Produkt (1,2581 < 1,30) wird rot — der Stufenwechsel verändert die Zahl M', () => {
     const p = previewTierChange(ALL, 2.0);
-    expect(p).toEqual({ total: 5, red: 3, redSingle: 1, redVariant: 2, yellow: 1, unknown: 1, redIds: [95, 1, 119] });
+    expect(p).toEqual({ total: 5, red: 2, redSingle: 1, redVariant: 1, yellow: 1, unknown: 1, redIds: [1, 119] });
   });
 
-  test('Stufe D (3,00/1,50): wie C (rot 3), 13,95-Produkt (1,5629 ≥ 1,50) bleibt gelb', () => {
+  test('Stufe D (3,00/1,50): rot 2 (Grenzfall, 119); 13,95-Produkt (1,5629) und 95 (2,8069 < 3,00) gelb', () => {
     const p = previewTierChange(ALL, 3.0);
-    expect(p.red).toBe(3);
-    expect(p.yellow).toBe(1);
+    expect(p.red).toBe(2);
+    expect(p.yellow).toBe(2);
   });
 
   test('Einzelartikel und Varianten-Produkte werden getrennt gezählt (nur Einzelartikel hebt die Automatik an)', () => {

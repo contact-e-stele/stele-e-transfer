@@ -90,14 +90,10 @@ describe('planVariantRaises — 119: nur 200pcs unter dem Boden', () => {
 });
 
 describe('Produkt 95 (Teil 1): Varianten-Gruppen + 1 variantPrices-Eintrag = Varianten-Produkt → die Anhebung greift über den Varianten-Weg', () => {
-  test('95: VK 15,95 € bei Ware 8,99 € → Gewinn 0,8169 < Boden 1,30 → 16,95 € (Gewinn 1,5789)', () => {
-    const r = planVariantRaises(product95());
-    expect(r).toHaveLength(1);
-    expect(r[0].skuId).toBe('12000056840616727');
-    expect(r[0].oldSell).toBe(15.95);
-    expect(r[0].newSell).toBe(16.95);
-    expect(r[0].oldProfit).toBeCloseTo(0.8169, 4);
-    expect(r[0].newProfit).toBeCloseTo(1.5789, 4);
+  // K-004: die Variante trägt "Ships From: Germany" → EU (K = 8,99, kein Versand, keine Einfuhr). Gewinn bei 15,95 = 2,8069 ≥ Boden 1,30
+  // → KEINE Anhebung. (Vorher rechnete die App 95 fälschlich mit Versand 1,99 und wollte auf 16,95 anheben.)
+  test('95: VK 15,95 € bei Ware 8,99 € (EU-Variante) → Gewinn 2,8069 ≥ Boden → keine Anhebung', () => {
+    expect(planVariantRaises(product95())).toEqual([]);
   });
 });
 

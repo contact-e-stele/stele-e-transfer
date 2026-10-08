@@ -10,7 +10,7 @@ import { eq, isNotNull, and } from 'drizzle-orm';
 import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { earUmlageFor } from '../shared/electric';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
@@ -166,7 +166,6 @@ export function computeVariantPriceRows(
 ): VariantPriceRow[] {
   let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number; displayValues?: Record<string, string> }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
-  const isChina = isChinaShipping(shipsFrom);
   const rate = adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const margin = targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
   return raw
@@ -177,7 +176,7 @@ export function computeVariantPriceRows(
       buyPrice: v.price,
       displayValues: v.displayValues,
       correctSellPrice: computeMinSellPrice({
-        buyPrice: v.price, isChinaOrigin: isChina,
+        buyPrice: v.price, isChinaOrigin: isChinaOriginForVariant(v.attrs, shipsFrom), // K-004: Herkunft je Variante ("Ships From")
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
         targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,

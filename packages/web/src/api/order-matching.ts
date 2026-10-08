@@ -6,7 +6,8 @@
 // bedeutet, dass Bericht und App unterschiedliche Bestellungen demselben Produkt zuordnen — bei
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
-import { computeOrderProfit, computeAliCosts, isChinaShipping } from '../shared/pricing';
+import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant } from '../shared/pricing';
+import { slugify, NON_VARIATION_ASPECTS } from '../shared/variant-resolver';
 
 export interface ProductForSkuMatch {
   id: number;
@@ -102,7 +103,36 @@ export interface OrderNettoInput {
   orderTotal: number;
   lineItems: Array<{ sku: string | null; quantity: number }>;
   manualBuyPrice: number | null | undefined;
-  findProduct: (sku: string | null) => { buyPrice: number | null; shipsFrom: string | null } | null;
+  findProduct: (sku: string | null) => OrderProductInfo | null;
+}
+
+/** K-004: was der Bestellungs-Gewinn je Position braucht. id/variants/adRate sind optional (ältere Aufrufer). */
+export interface OrderProductInfo {
+  buyPrice: number | null;
+  shipsFrom: string | null;
+  id?: number;
+  adRate?: number | null;
+  variants?: Array<{ skuId?: string; attrs?: Record<string, string>; price?: number }>;
+}
+
+/**
+ * K-004 Punkt 1: Ali-Preis + Herkunft der VERKAUFTEN Variante über die eBay-SKU (stele-{id}-{slugify(Werte)}, wie beim Listing).
+ * Passen mehrere Einträge auf dieselbe SKU (Dubletten wie stele-119 "100pcs"), zählt der HÖCHSTE Preis — der Gewinn wird damit nie
+ * zu hoch ausgewiesen. Keine Zuordnung → null (Aufrufer nimmt den Produkt-EK wie bisher).
+ */
+export function matchOrderVariant(sku: string | null, product: OrderProductInfo): { price: number; attrs: Record<string, string> } | null {
+  if (!sku || product.id == null || !product.variants?.length) return null;
+  const prefix = `stele-${product.id}-`;
+  if (!sku.toUpperCase().startsWith(prefix.toUpperCase())) return null;
+  const suffix = sku.slice(prefix.length).toUpperCase();
+  const hits = product.variants.filter(v => {
+    if (!(typeof v.price === 'number' && v.price > 0)) return false;
+    const vals = Object.entries(v.attrs ?? {}).filter(([k]) => !NON_VARIATION_ASPECTS.has(k)).map(([, val]) => slugify(val)).filter(Boolean);
+    return vals.join('-') === suffix;
+  });
+  if (hits.length === 0) return null;
+  const best = hits.reduce((a, b) => ((b.price as number) > (a.price as number) ? b : a));
+  return { price: best.price as number, attrs: best.attrs ?? {} };
 }
 
 export interface OrderNettoResult {
@@ -114,15 +144,22 @@ export interface OrderNettoResult {
 
 export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoResult {
   if (input.manualBuyPrice != null) {
-    const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, input.manualBuyPrice);
+    const adRate = input.lineItems.map(li => input.findProduct(li.sku)?.adRate).find(a => a != null);
+    const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, input.manualBuyPrice, adRate);
     return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell' };
   }
 
   let einkaufBekannt = true;
   let einkaufGesamt = 0;
+  let adRate: number | null | undefined;
   for (const li of input.lineItems) {
     const product = input.findProduct(li.sku);
-    if (!product || product.buyPrice === null) { einkaufBekannt = false; continue; }
+    if (!product) { einkaufBekannt = false; continue; }
+    if (adRate == null && product.adRate != null) adRate = product.adRate;
+    // K-004 Punkt 1: EK und Herkunft der verkauften Variante; sonst Produkt-EK (billigste Variante) wie bisher.
+    const variant = matchOrderVariant(li.sku, product);
+    const ware = variant ? variant.price : product.buyPrice;
+    if (ware === null) { einkaufBekannt = false; continue; }
     // Code-Review-Vorschlag (PRIO-1-PAKET): dieselbe China-Erkennung wie überall sonst im Projekt
     // (isChinaShipping(), shared/pricing.ts) statt einer eigenen strikten `=== 'china'`-Prüfung —
     // die vorherige Version dieses Zweigs (index.ts) prüfte strikt und hätte z.B. "China Mainland"
@@ -133,11 +170,11 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
     // Einfuhrabgaben fallen je Bestellung an, nicht je Stück). Der manuell erfasste Einkauf (manualBuyPrice = "Insgesamt"
     // laut AliExpress-Rechnung) hat weiterhin Vorrang. Die frühere Einstellung "order_china_zoll_eur" (3,58 €) fließt hier
     // nicht mehr ein (eine Quelle: ALI_EINFUHR_EUR in constants.ts).
-    einkaufGesamt += computeAliCosts(product.buyPrice * li.quantity, isChinaShipping(product.shipsFrom)).totalCost;
+    einkaufGesamt += computeAliCosts(ware * li.quantity, isChinaOriginForVariant(variant?.attrs, product.shipsFrom)).totalCost;
   }
   if (!einkaufBekannt) {
     return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null };
   }
-  const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, einkaufGesamt);
+  const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, einkaufGesamt, adRate);
   return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch' };
 }

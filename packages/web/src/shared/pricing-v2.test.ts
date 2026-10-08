@@ -69,11 +69,12 @@ describe('computeAliCosts — K = Ware + Versand + Einfuhrabgaben', () => {
     expect(computeAliCosts(10.29, true).totalCost).toBeCloseTo(13.86, 10);
   });
 
-  test('nicht China: keine Einfuhrabgaben, Versandregel gilt weiter', () => {
+  test('K-004: nicht China (EU-Lager): weder Einfuhrabgaben noch Versand — K = Ware', () => {
     const c = computeAliCosts(4.79, false);
     expect(c.customs).toBe(0);
-    expect(c.shipping).toBe(1.99);
-    expect(c.totalCost).toBeCloseTo(6.78, 10);
+    expect(c.shipping).toBe(0);
+    expect(c.totalCost).toBeCloseTo(4.79, 10);
+    expect(computeAliCosts(8.99, false).totalCost).toBeCloseTo(8.99, 10); // K-004-Pflichttest "EU: Ware 8,99 → Kosten 8,99"
   });
 
   test('die Produktfelder shippingCost/CHINA_ZOLL_EUR fließen nicht mehr ein: computeMinSellPrice ignoriert fremde Felder und liefert K aus computeAliCosts', () => {

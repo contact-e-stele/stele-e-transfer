@@ -6,7 +6,7 @@
 // — als reine Vergleichsgröße, die App benutzt sie nicht mehr. "Gewinn heute (v2)" ist der echte Gewinn beim heutigen VK nach
 // Formel v2. "Gewinn neu (v2)" ist der Gewinn beim neuen VK.
 import {
-  computeMinSellPrice, profitAtSellPrice, profitFloorFor, evaluateTargetDisplay, isChinaShipping,
+  computeMinSellPrice, profitAtSellPrice, profitFloorFor, evaluateTargetDisplay, isChinaOriginForVariant,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
 } from './pricing';
 import { MARGIN_TIERS } from './constants';
@@ -67,7 +67,6 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
 
   for (const p of products) {
     if (p.ebayStatus !== 'listed') continue;
-    const china = isChinaShipping(p.shipsFrom);
     const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const target = p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
     const shippingCost = p.shippingCost ?? 0;
@@ -77,12 +76,12 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
     entries = entries.filter(e => typeof e.price === 'number' && e.price > 0);
     const isVariant = isVariantProduct(p.variants, p.variantPrices);
 
-    const lines: Array<{ label: string; ware: number; oldSell: number | null }> = [];
+    const lines: Array<{ label: string; ware: number; oldSell: number | null; attrs?: Record<string, string> }> = [];
     if (isVariant) {
       const stored = parseVariantSellPrices(p.variantSellPrices);
       for (const e of entries) {
         const label = Object.values(e.attrs ?? {}).join(' / ') || `…${e.skuId.slice(-6)}`;
-        lines.push({ label, ware: e.price, oldSell: resolveVariantSellPrice(e.skuId, stored, e).sellPrice ?? p.sellPrice });
+        lines.push({ label, ware: e.price, oldSell: resolveVariantSellPrice(e.skuId, stored, e).sellPrice ?? p.sellPrice, attrs: e.attrs });
       }
     } else if (p.buyPrice != null && p.buyPrice > 0) {
       lines.push({ label: '', ware: p.buyPrice, oldSell: p.sellPrice });
@@ -92,6 +91,7 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
     }
 
     for (const line of lines) {
+      const china = isChinaOriginForVariant(line.attrs, p.shipsFrom); // K-004: Herkunft je Variante
       const common = {
         isChinaOrigin: china, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,

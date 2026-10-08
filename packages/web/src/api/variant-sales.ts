@@ -4,7 +4,7 @@
 // gesenkt werden, also müssen sie testbar sein. Das Berichtsskript reicht nur die Daten herein und
 // formatiert das Ergebnis.
 
-import { isChinaShipping, computeAliCosts, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { isChinaOriginForVariant, computeAliCosts, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { buildVariantSku } from './price-monitor';
 import { buildProductLookups, findProductForSku, type UnmatchedReason } from './order-matching';
 
@@ -79,11 +79,11 @@ export function aggregateVariantSales(input: {
 
   // Produkt-ID → echte eBay-SKU → skuId aus variantPrices. Nur Produkte mit MEHR als einer
   // Variante sind Gegenstand dieses Berichts.
-  const variantSkuIndex = new Map<number, Map<string, { skuId: string; buyPrice: number }>>();
+  const variantSkuIndex = new Map<number, Map<string, { skuId: string; buyPrice: number; attrs?: Record<string, string> }>>();
   for (const p of products) {
     if (p.variants.length <= 1) continue;
-    const m = new Map<string, { skuId: string; buyPrice: number }>();
-    for (const v of p.variants) m.set(buildVariantSku(p.id, v.attrs), { skuId: v.skuId, buyPrice: v.buyPrice });
+    const m = new Map<string, { skuId: string; buyPrice: number; attrs?: Record<string, string> }>();
+    for (const v of p.variants) m.set(buildVariantSku(p.id, v.attrs), { skuId: v.skuId, buyPrice: v.buyPrice, attrs: v.attrs });
     variantSkuIndex.set(p.id, m);
   }
 
@@ -124,7 +124,7 @@ export function aggregateVariantSales(input: {
       // EK je Stück: ein manuell erfasster Einkaufspreis hat Vorrang (wie in der Bestellansicht der
       // App), gilt aber für die GESAMTE Bestellung — eindeutig zuordenbar nur bei genau einer
       // Position. Sonst Ware + Versand + Einfuhrabgaben nach Preisformel v2 (A-014, computeAliCosts).
-      const isChina = isChinaShipping(product.shipsFrom);
+      const isChina = isChinaOriginForVariant(variant.attrs, product.shipsFrom); // K-004: Herkunft je Variante
       // Versand und Einfuhrabgaben fallen je Bestellposition EINMAL an (eine AliExpress-Bestellung), nicht je Stück — wie in order-matching.ts.
       const einkaufJeStueck = (warePositionGesamt: number) => computeAliCosts(warePositionGesamt, isChina).totalCost / qty;
       // WICHTIG: der EK DIESER Variante, nicht der Produkt-EK — die Varianten unterscheiden sich

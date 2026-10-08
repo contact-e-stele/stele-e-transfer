@@ -791,6 +791,7 @@ const app = new Hono()
         sourceUrl: schema.products.sourceUrl,
         ebayListingId: schema.products.ebayListingId,
         variantPrices: schema.products.variantPrices,
+        adRate: schema.products.adRate,
       }).from(schema.products).all();
       // Teil 3B (2026-09-13): Matching-Regeln nach src/api/order-matching.ts ausgelagert (reiner
       // Extract, identische Logik), damit das Verkaufszahlen-Berichtsskript dieselbe Zuordnung nutzt.
@@ -849,7 +850,11 @@ const app = new Hono()
           manualBuyPrice: note?.manualBuyPrice,
           findProduct: (sku) => {
             const product = findProductForSku(sku);
-            return product ? { buyPrice: product.buyPrice, shipsFrom: product.shipsFrom } : null;
+            if (!product) return null;
+            // K-004: Varianten (EK je Variante + "Ships From") und Anzeigensatz des Produkts für den Bestellungs-Gewinn.
+            let variants: Array<{ skuId?: string; attrs?: Record<string, string>; price?: number }> | undefined;
+            try { const v = JSON.parse(product.variantPrices ?? '[]'); if (Array.isArray(v)) variants = v; } catch { /* ignore */ }
+            return { id: product.id, buyPrice: product.buyPrice, shipsFrom: product.shipsFrom, adRate: product.adRate, variants };
           },
         });
         return {

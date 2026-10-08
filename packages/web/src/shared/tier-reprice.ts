@@ -11,7 +11,7 @@ import { collapseDuplicateEntries } from './variant-dedupe';
 import { earUmlageFor } from './electric';
 import type { VariantGroup } from './variant-resolver';
 import {
-  computeMinSellPrice, profitAtSellPrice, isChinaShipping, parseVariantSellPrices, resolveVariantSellPrice,
+  computeMinSellPrice, profitAtSellPrice, isChinaOriginForVariant, parseVariantSellPrices, resolveVariantSellPrice,
   serializeVariantSellPrices, DEFAULT_PRICING_CONFIG,
 } from './pricing';
 
@@ -54,18 +54,19 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // groups (A-023): Varianten-Gruppen des Produkts. Mit groups werden Dubletten (dieselbe Kombination mehrfach in variantPrices) zu EINER Zeile
 // mit dem höchsten EK zusammengelegt — sonst ist die Zuordnung beim Senden mehrdeutig (Live-Fund stele-119).
 export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?: VariantGroup[]): TierPlan {
-  const china = isChinaShipping(p.shipsFrom);
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-  const fees = {
-    isChinaOrigin: china, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+  // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China. feesFor(attrs) statt einer Herkunft fürs ganze Produkt.
+  const feesFor = (attrs?: Record<string, string>) => ({
+    isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom), ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     earUmlageEur: earUmlageFor(p.isElectric), // A-029: nur Elektro = ja
-  };
-  const newSellFor = (ware: number) => computeMinSellPrice({
+  });
+  const newSellFor = (ware: number, fees: ReturnType<typeof feesFor>) => computeMinSellPrice({
     ...fees, buyPrice: ware, targetMarginEur: newTargetEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95',
   }).minSellPrice;
   const mkRow = (base: Pick<TierPlanRow, 'skuId' | 'label' | 'attrs' | 'displayValues'>, ware: number, oldSell: number | null): TierPlanRow => {
-    const newSell = newSellFor(ware);
+    const fees = feesFor(base.attrs);
+    const newSell = newSellFor(ware, fees);
     return {
       ...base, ware, oldSell, newSell,
       oldProfit: oldSell != null ? profitAtSellPrice({ ...fees, sellPrice: oldSell, buyPrice: ware }) : null,

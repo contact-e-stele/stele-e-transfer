@@ -50,8 +50,10 @@ export function roundToNearest95(price: number): number {
 // Ersetzt die alte Formel "Ware + Produktfeld shippingCost + CHINA_ZOLL_EUR (4,00)". Das Produktfeld
 // shippingCost bleibt in der DB, wird in der Formel aber nicht mehr gelesen.
 export interface AliCosts { ware: number; shipping: number; customs: number; totalCost: number }
+// K-004 (Kalkulator, 08.10.2026): Versand 1,99 € fällt NUR bei China-Versand und Ware < 10 € an. EU-Lager: Versand 0, Einfuhr 0
+// (belegt im Kalkulator-Auftrag K-004; vorher wurde der Versand auch bei EU-Lager gerechnet).
 export function computeAliCosts(ware: number, isChinaOrigin: boolean): AliCosts {
-  const shipping = ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
+  const shipping = isChinaOrigin && ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
   const customs = isChinaOrigin ? ALI_EINFUHR_EUR : 0;
   return { ware, shipping, customs, totalCost: ware + shipping + customs };
 }
@@ -620,8 +622,10 @@ export interface OrderProfitResult {
 // DEFAULT_PRICING_CONFIG (kein neuer Zahlenwert). `wahrerEinkauf` ist bereits der volle Einkauf
 // inkl. Zoll (kommt vorgerechnet von der Aufrufstelle) — keine weitere Aufschlüsselung nötig, da
 // eine abgeschlossene Bestellung keinen hypothetischen Mindestpreis mehr braucht.
-export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number): OrderProfitResult {
-  const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + DEFAULT_PRICING_CONFIG.defaultAdRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
+// K-004 Punkt 4: Anzeigensatz des Produkts statt fest 5 % (0 = nicht beworben). Weggelassen/ungültig → DB-Default 5 %.
+export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number, adRatePercent?: number | null): OrderProfitResult {
+  const adRate = typeof adRatePercent === 'number' && Number.isFinite(adRatePercent) && adRatePercent >= 0 ? adRatePercent : DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+  const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
   const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
   const feesDeducted = verkaufspreis * totalFeeRateGross + fixedFeeGross;
   const profit = verkaufspreis * (1 - totalFeeRateGross) - fixedFeeGross - wahrerEinkauf;
@@ -631,9 +635,19 @@ export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number)
   };
 }
 
+// K-003/K-004 Punkt 2 (Kalkulator): Herkunft unbekannt (leer) → wie China rechnen (Versand + Einfuhr), nie still als EU.
+// Nur eine ausdrücklich andere Angabe (z. B. "Spain", "Germany") gilt als Nicht-China. "CN" zählt als China.
 export function isChinaShipping(shipsFrom?: string | null): boolean {
-  if (!shipsFrom) return false;
-  return shipsFrom.toLowerCase().includes('china');
+  const v = (shipsFrom ?? '').trim().toLowerCase();
+  if (!v) return true;
+  return v.includes('china') || /^cn$/.test(v);
+}
+
+// K-004 Punkt 2: Herkunft je Variante aus dem Varianten-Merkmal "Ships From"/"Versandort"; fehlt es, gilt die Produkt-Herkunft
+// (und ist auch die leer → China). Eine Stelle für alle Rechenwege (Grundgesetz 8).
+export function isChinaOriginForVariant(attrs: Record<string, string> | null | undefined, productShipsFrom?: string | null): boolean {
+  const own = attrs ? (attrs['Ships From'] ?? attrs['Versandort'] ?? attrs['ships from'] ?? null) : null;
+  return isChinaShipping(own && own.trim() ? own : productShipsFrom);
 }
 
 // Teil 2B (2026-09-10 — SICHERHEITSKRITISCH, historischer Grund für die ursprüngliche Sperre):
