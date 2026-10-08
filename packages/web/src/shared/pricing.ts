@@ -260,7 +260,7 @@ export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
 // bestehenden Preis, der "unter" irgendetwas liegen könnte.
 export interface PriceAlarmInput {
   currentSellPrice: number | null | undefined;
-  variants: Array<{ buyPrice: number }>;
+  variants: Array<{ buyPrice: number; isChinaOrigin?: boolean }>; // K-004: Herkunft je Variante (fehlt → isChinaOrigin unten)
   isChinaOrigin: boolean;
   ebayFeeRatePercent: number;
   ebayFixedFeeEur: number;
@@ -281,7 +281,7 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
   const profits = input.variants.map(v => profitAtSellPrice({
     sellPrice: input.currentSellPrice as number,
     buyPrice: v.buyPrice,
-    isChinaOrigin: input.isChinaOrigin,
+    isChinaOrigin: v.isChinaOrigin ?? input.isChinaOrigin,
     ebayFeeRatePercent: input.ebayFeeRatePercent,
     ebayFixedFeeEur: input.ebayFixedFeeEur,
     vatFactor: input.vatFactor,
@@ -639,14 +639,16 @@ export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number,
 // Nur eine ausdrücklich andere Angabe (z. B. "Spain", "Germany") gilt als Nicht-China. "CN" zählt als China.
 export function isChinaShipping(shipsFrom?: string | null): boolean {
   const v = (shipsFrom ?? '').trim().toLowerCase();
-  if (!v) return true;
+  if (!v || v === 'unknown' || v === 'unbekannt') return true; // HTML-Fallback des Scrapers liefert 'Unknown' (aliexpress.ts) = unbekannt
+
   return v.includes('china') || /^cn$/.test(v);
 }
 
 // K-004 Punkt 2: Herkunft je Variante aus dem Varianten-Merkmal "Ships From"/"Versandort"; fehlt es, gilt die Produkt-Herkunft
 // (und ist auch die leer → China). Eine Stelle für alle Rechenwege (Grundgesetz 8).
 export function isChinaOriginForVariant(attrs: Record<string, string> | null | undefined, productShipsFrom?: string | null): boolean {
-  const own = attrs ? (attrs['Ships From'] ?? attrs['Versandort'] ?? attrs['ships from'] ?? null) : null;
+  const SHIP_KEYS = ['Ships From', 'Ship From', 'ShipFrom', 'ship_from', 'ships from', 'Versandort']; // wie die Scraper-Liste in aliexpress.ts
+  const own = attrs ? (SHIP_KEYS.map(k => attrs[k]).find(v => typeof v === 'string' && v.trim()) ?? null) : null;
   return isChinaShipping(own && own.trim() ? own : productShipsFrom);
 }
 

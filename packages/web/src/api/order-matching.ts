@@ -7,7 +7,7 @@
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
 import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant } from '../shared/pricing';
-import { slugify, NON_VARIATION_ASPECTS } from '../shared/variant-resolver';
+import { slugify, NON_VARIATION_ASPECTS, resolveVariantEntries, type VariantGroup } from '../shared/variant-resolver';
 
 export interface ProductForSkuMatch {
   id: number;
@@ -112,7 +112,9 @@ export interface OrderProductInfo {
   shipsFrom: string | null;
   id?: number;
   adRate?: number | null;
-  variants?: Array<{ skuId?: string; attrs?: Record<string, string>; price?: number }>;
+  variants?: Array<{ skuId?: string; attrs?: Record<string, string>; price?: number; displayValues?: Record<string, string> }>;
+  /** Varianten-Gruppen (products.variants) — damit die SKU genau wie beim Listing aus den ANZEIGEwerten gebaut wird (Umbenennungen, Reihenfolge). */
+  groups?: VariantGroup[];
 }
 
 /**
@@ -122,6 +124,15 @@ export interface OrderProductInfo {
  */
 export function matchOrderVariant(sku: string | null, product: OrderProductInfo): { price: number; attrs: Record<string, string> } | null {
   if (!sku || product.id == null || !product.variants?.length) return null;
+  // 1. Weg wie beim Listing (variant-resolver.ts): SKU aus den Gruppen-/Anzeigewerten, exakte Zuordnung je Kombination.
+  if (product.groups?.length) {
+    const hit = resolveVariantEntries(product.id, product.groups, product.variants).find(r => r.sku.toUpperCase() === sku.toUpperCase());
+    if (hit?.entry && typeof hit.entry.price === 'number' && hit.entry.price > 0) {
+      const src = product.variants.find(v => v.skuId === hit.entry!.skuId);
+      return { price: hit.entry.price, attrs: src?.attrs ?? {} };
+    }
+  }
+  // 2. Rückfall: SKU aus den AliExpress-attrs (ältere Listings ohne Umbenennung); bei Dubletten der höchste EK.
   const prefix = `stele-${product.id}-`;
   if (!sku.toUpperCase().startsWith(prefix.toUpperCase())) return null;
   const suffix = sku.slice(prefix.length).toUpperCase();

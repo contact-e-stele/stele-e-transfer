@@ -42,6 +42,7 @@ export interface VariantPriceRow {
   // P-85 Schritt 2b: explizite Anzeigewert-Zuordnung (s. variant-resolver.ts) — überlebt eine
   // Umbenennung im Produkte-Tab, durchgereicht von den rohen variantPrices bis hierher.
   displayValues?: Record<string, string>;
+  isChinaOrigin?: boolean; // K-004: Herkunft dieser Variante (für Preisalarm je Variante)
 }
 
 // P-85 Schritt 2b: product.variants (JSON) → VariantGroup[] — kleine, an mehreren Stellen
@@ -175,6 +176,7 @@ export function computeVariantPriceRows(
       attrs: v.attrs ?? {},
       buyPrice: v.price,
       displayValues: v.displayValues,
+      isChinaOrigin: isChinaOriginForVariant(v.attrs, shipsFrom),
       correctSellPrice: computeMinSellPrice({
         buyPrice: v.price, isChinaOrigin: isChinaOriginForVariant(v.attrs, shipsFrom), // K-004: Herkunft je Variante ("Ships From")
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
@@ -731,7 +733,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
 
       // China-Versand: Zollgebühr +3€ addieren (ab 01.07.2026), NICHT überspringen
-      const isChina = isChinaShipping(data.shipsFrom);
+      // K-004 (Review-Blocker): liefert der Scrape kein Versandland (''), gilt das GESPEICHERTE (z. B. "Poland") — sonst würde der
+      // unbeaufsichtigte Lauf ein EU-Produkt wie China rechnen und per raise-only anheben (früherer "Polen"-Fehler). Erst wenn beides leer ist → China.
+      const shipsFromEff = data.shipsFrom || product.shipsFrom;
+      const isChina = isChinaShipping(shipsFromEff);
       const versand = product.shippingCost ?? 0;
       // P-27/P-28-Konsolidierung (2026-09-08): adRate-Default vereinheitlicht auf 5 (= DB-Default,
       // schema.ts `ad_rate.default(5)`, bereits von computeVariantPriceRows() genutzt) — vorher
@@ -822,7 +827,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           }
         }
 
-        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, data.shipsFrom ?? product.shipsFrom, adRate, product.targetMarginEur);
+        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, shipsFromEff, adRate, product.targetMarginEur);
         const safePrice = safeUniformVariantPrice(rows);
         // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): ob überhaupt ein Update lohnt
         // (Abweichung vom gespeicherten VK groß genug), bleibt unverändert an safePrice/
@@ -833,7 +838,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         const margin = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
         const alarm = evaluatePriceAlarm({
           currentSellPrice: product.sellPrice,
-          variants: rows.map(r => ({ buyPrice: r.buyPrice })),
+          variants: rows.map(r => ({ buyPrice: r.buyPrice, isChinaOrigin: r.isChinaOrigin })),
           isChinaOrigin: isChina,
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
@@ -874,7 +879,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         }
         // A-019 Teil 2: liegt der Gewinn EINER Variante unter dem Boden der Stufe → nur diese anheben (raise-only, GET→PUT je Variante, nach
         // Erfolg in variant_sell_prices speichern). Hinter AUTO_VARIANT_RAISE_ENABLED (Default AUS: nur Log "würde anheben"). Bricht den Cron nie ab.
-        await maybeRaiseVariants(product, freshVariantPricesJson, data.shipsFrom ?? product.shipsFrom);
+        await maybeRaiseVariants(product, freshVariantPricesJson, shipsFromEff);
         return;
       }
 

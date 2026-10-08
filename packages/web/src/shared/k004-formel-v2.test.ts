@@ -121,3 +121,49 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
     expect(computeOrderProfit(14.95, 10.35).profit).toBe(0.68); // weggelassen → Default 5 %
   });
 });
+
+// ─── Review-Nachbesserung (Gegenprüfung PR #167) ──────────────────────────────────────────────
+import { evaluatePriceAlarm } from './pricing';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
+describe('K-004 Nachbesserung: unbekannte Herkunft + Scraper-Schlüssel', () => {
+  test("'Unknown' (HTML-Fallback des Scrapers) zählt wie leer → China", () => {
+    expect(isChinaShipping('Unknown')).toBe(true);
+  });
+  test("Varianten-Merkmal 'Ship From' / 'ShipFrom' wird erkannt", () => {
+    expect(isChinaOriginForVariant({ 'Ship From': 'Poland' }, null)).toBe(false);
+    expect(isChinaOriginForVariant({ ShipFrom: 'Spain' }, 'China')).toBe(false);
+  });
+  test('price-monitor: leeres Scrape-Versandland fällt auf das GESPEICHERTE zurück (nie still China bei EU-Produkt)', () => {
+    const src = readFileSync(resolve(import.meta.dir, '..', 'api', 'price-monitor.ts'), 'utf-8');
+    expect(src).toContain('const shipsFromEff = data.shipsFrom || product.shipsFrom;');
+    expect(src).toContain('isChinaShipping(shipsFromEff)');
+    expect(src).toContain('computeVariantPriceRows(freshVariantPricesJson, versand, shipsFromEff,');
+    expect(src).not.toContain('data.shipsFrom ?? product.shipsFrom');
+  });
+  test('Preisalarm rechnet je Variante mit ihrer Herkunft (EU-Variante kein Fehlalarm durch China-Kosten)', () => {
+    const base = { currentSellPrice: 15.95, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.3, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2 };
+    // Ware 8,99: EU → Gewinn 2,8069 (kein Alarm); als China → 15,95×0,762−0,357−14,55 = −2,7531 (Alarm)
+    expect(evaluatePriceAlarm({ ...base, variants: [{ buyPrice: 8.99, isChinaOrigin: false }], isChinaOrigin: true }).isAlarm).toBe(false);
+    expect(evaluatePriceAlarm({ ...base, variants: [{ buyPrice: 8.99 }], isChinaOrigin: true }).isAlarm).toBe(true);
+  });
+});
+
+describe('K-004 Nachbesserung: Varianten-SKU wie beim Listing (Anzeigewerte, Gruppen-Reihenfolge)', () => {
+  const groups = [{ name: 'Color', values: ['Rot'] }, { name: 'Size', values: ['XL', 'L'] }];
+  const prod = {
+    id: 5, buyPrice: 2.0, shipsFrom: 'China', adRate: 5, groups,
+    variants: [
+      { skuId: 's1', attrs: { Size: 'XL', Color: 'Red' }, displayValues: { Color: 'Rot', Size: 'XL' }, price: 6.5 },
+      { skuId: 's2', attrs: { Size: 'L', Color: 'Red' }, displayValues: { Color: 'Rot', Size: 'L' }, price: 2.0 },
+    ],
+  };
+  test('umbenannte Variante "Red"→"Rot" und attrs-Reihenfolge {Size, Color}: echte SKU stele-5-ROT-XL wird gefunden (EK 6,50)', () => {
+    expect(matchOrderVariant('stele-5-ROT-XL', prod)?.price).toBe(6.5);
+  });
+  test('Bestellungs-Gewinn nutzt diesen Varianten-EK, nicht den billigsten Produkt-EK', () => {
+    const r = computeOrderNettoErgebnis({ orderTotal: 19.95, lineItems: [{ sku: 'stele-5-ROT-XL', quantity: 1 }], manualBuyPrice: null, findProduct: () => prod });
+    expect(r.nettoEinkauf).toBeCloseTo(6.5 + 1.99 + 3.57, 10);
+  });
+});

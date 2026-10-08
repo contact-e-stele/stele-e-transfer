@@ -791,6 +791,7 @@ const app = new Hono()
         sourceUrl: schema.products.sourceUrl,
         ebayListingId: schema.products.ebayListingId,
         variantPrices: schema.products.variantPrices,
+        variants: schema.products.variants,
         adRate: schema.products.adRate,
       }).from(schema.products).all();
       // Teil 3B (2026-09-13): Matching-Regeln nach src/api/order-matching.ts ausgelagert (reiner
@@ -854,7 +855,9 @@ const app = new Hono()
             // K-004: Varianten (EK je Variante + "Ships From") und Anzeigensatz des Produkts für den Bestellungs-Gewinn.
             let variants: Array<{ skuId?: string; attrs?: Record<string, string>; price?: number }> | undefined;
             try { const v = JSON.parse(product.variantPrices ?? '[]'); if (Array.isArray(v)) variants = v; } catch { /* ignore */ }
-            return { id: product.id, buyPrice: product.buyPrice, shipsFrom: product.shipsFrom, adRate: product.adRate, variants };
+            let groups: Array<{ name: string; values: string[] }> | undefined;
+            try { const g = JSON.parse(product.variants ?? '[]'); if (Array.isArray(g)) groups = g; } catch { /* ignore */ }
+            return { id: product.id, buyPrice: product.buyPrice, shipsFrom: product.shipsFrom, adRate: product.adRate, variants, groups };
           },
         });
         return {

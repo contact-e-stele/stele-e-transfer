@@ -466,7 +466,7 @@ export default function Lieferanten() {
   const ebayFee = verkauf * (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor
     + DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
   const gewinn = profitAtSellPrice({
-    sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)),
+    sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: isChinaShipping(shipsFromInfo?.country), // K-004: ohne Herkunft wie China
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
   });
@@ -1669,7 +1669,7 @@ export default function Lieferanten() {
                           // bleibt der laufenden automatischen Preisprüfung vorbehalten). Zentrale
                           // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A+2B, 2026-09-10).
                           const recommended = computeMinSellPrice({
-                            buyPrice: einkauf, isChinaOrigin: !!(shipsFromInfo && isChinaShipping(shipsFromInfo.country)),
+                            buyPrice: einkauf, isChinaOrigin: isChinaShipping(shipsFromInfo?.country), // K-004: ohne Herkunft wie China
                             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                             targetMarginEur: minGewinn, safetyBufferEur: 0,
