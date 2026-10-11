@@ -39,7 +39,7 @@ export interface TierRepriceResult {
 
 export const isLiveListed = (p: Pick<TierRepriceProductRow, 'ebayStatus' | 'ebayListingId'>): boolean => p.ebayStatus === 'listed' && !!p.ebayListingId;
 
-function parseGroups(json: string | null): Array<{ name: string; values: string[] }> {
+export function parseGroups(json: string | null): Array<{ name: string; values: string[] }> {
   try { const g = json ? JSON.parse(json) : []; return Array.isArray(g) ? g : []; } catch { return []; }
 }
 

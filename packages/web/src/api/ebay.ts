@@ -7,6 +7,7 @@ import type { ResolvedGpsr } from '../shared/gpsr-parser';
 import type { SentPrice } from '../shared/sent-prices';
 import { checkOutgoingListingText, formatComplianceViolations } from '../shared/description-compliance';
 import { safeMpn, isForbiddenMpn } from '../shared/mpn-guard';
+import { parseMarketingCampaigns, parseCampaignAds, promotionByListing, type MarketingCampaign, type MarketingAd, type ListingPromotion } from '../shared/promoted-status';
 import {
   NON_VARIATION_ASPECTS, slugify, resolveVariantEntries,
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
@@ -2847,6 +2848,39 @@ export async function getCampaigns(token: string): Promise<EbayCampaign[]> {
   }
   const data = await res.json();
   return parseGetCampaignsResponse(data);
+}
+
+// K-005 Punkt 2: tatsächliche Bewerbung je Angebot — NUR LESEN (GET ad_campaign, GET ad_campaign/{id}/ad). Keine Kampagne,
+// keine Anzeige wird angelegt oder geändert. Auswertung in shared/promoted-status.ts (reine Funktionen).
+export async function fetchPromotionStatus(): Promise<{ campaigns: MarketingCampaign[]; promo: Map<string, ListingPromotion> }> {
+  const token = await getMarketingAccessToken();
+  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const campaigns: MarketingCampaign[] = [];
+  let url: string | null = `${BASE_URL}/sell/marketing/v1/ad_campaign?limit=100`;
+  for (let guard = 0; url && guard < 20; guard++) {
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error(`getCampaigns failed: ${res.status} ${await res.text()}`);
+    const json = await res.json() as { next?: string };
+    campaigns.push(...parseMarketingCampaigns(json));
+    url = json.next ? (json.next.startsWith('http') ? json.next : `${BASE_URL}${json.next}`) : null;
+  }
+  if (url) throw new Error('getCampaigns: Seitenlimit erreicht — Abbruch statt unvollständiger Liste');
+  const adsByCampaign: Record<string, MarketingAd[]> = {};
+  for (const c of campaigns.filter(c => c.campaignStatus === 'RUNNING')) {
+    const ads: MarketingAd[] = [];
+    let adUrl: string | null = `${BASE_URL}/sell/marketing/v1/ad_campaign/${encodeURIComponent(c.campaignId)}/ad?limit=500`;
+    for (let guard = 0; adUrl && guard < 50; guard++) {
+      const res = await fetch(adUrl, { headers });
+      if (!res.ok) throw new Error(`getAds ${c.campaignId} failed: ${res.status} ${await res.text()}`);
+      const parsed = parseCampaignAds(await res.json());
+      ads.push(...parsed.ads);
+      adUrl = parsed.next ? (parsed.next.startsWith('http') ? parsed.next : `${BASE_URL}${parsed.next}`) : null;
+    }
+    // Unvollständige Anzeigenliste würde Angebote fälschlich als "nicht beworben" (adRate 0) werten → lieber abbrechen.
+    if (adUrl) throw new Error(`getAds ${c.campaignId}: Seitenlimit erreicht — Abbruch statt unvollständiger Liste`);
+    adsByCampaign[c.campaignId] = ads;
+  }
+  return { campaigns, promo: promotionByListing(campaigns, adsByCampaign) };
 }
 
 // ─── Bestellungen (Fulfillment API) ────────────────────────────────────────────

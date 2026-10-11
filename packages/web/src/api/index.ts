@@ -2744,6 +2744,7 @@ const app = new Hono()
           reviewCount: apiData.reviewCount ?? null,
           rating: apiData.rating ?? null,
           shippingCost: apiData.shippingCost ?? null,
+          skuPriceFields: apiData.skuPriceFields ?? [], // K-005: Rohpreisfelder je SKU (nur Diagnose, wird beim Speichern nicht übernommen)
           _source: 'ds-api',
         }, 200);
       }
@@ -3233,6 +3234,69 @@ const app = new Hono()
     } catch (e) {
       console.error('[tier-reprice]', e);
       return c.json({ error: 'Fehler beim Stufenwechsel: ' + String(e) }, 500);
+    }
+  })
+
+  // ─── K-005 Punkt 3: Senk-Kandidaten (NUR LESEN — nichts schreiben, nichts senden) ───────────────────────────
+  .get('/reports/senk-kandidaten', async (c) => {
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const p = schema.products;
+      const rows = await db.select({
+        id: p.id, generatedTitle: p.generatedTitle, title: p.title, buyPrice: p.buyPrice, sellPrice: p.sellPrice, shipsFrom: p.shipsFrom,
+        adRate: p.adRate, targetMarginEur: p.targetMarginEur, variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices,
+        variants: p.variants, ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId, isElectric: p.isElectric,
+      }).from(p).where(eq(p.ebayStatus, 'listed')).all();
+      const { buildSenkKandidaten, SENK_SCHWELLE_EUR, SENK_BREMSE_PROZENT } = await import('../shared/senk-kandidaten');
+      const { parseGroups } = await import('./tier-reprice');
+      const kandidaten = buildSenkKandidaten(rows.map(r => ({ ...r, title: r.generatedTitle ?? r.title, groups: parseGroups(r.variants) })));
+      return c.json({ schwelleEur: SENK_SCHWELLE_EUR, bremseProzent: SENK_BREMSE_PROZENT, geprueft: rows.length, anzahl: kandidaten.length, kandidaten }, 200);
+    } catch (e) {
+      console.error('[senk-kandidaten]', e);
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
+  // ─── K-005 Punkt 2: Bewerbung je Angebot von eBay lesen und mit products.adRate abgleichen ─────────────────
+  // GET = nur lesen. POST .../apply schreibt NUR products.adRate (eBay-Satz bzw. 0 = nicht beworben), nur mit confirm: true,
+  // nur für Zeilen mit Abweichung; CPC-Kampagnen werden nicht umgerechnet. An eBay wird nichts gesendet.
+  .get('/ebay/promoted-status', async (c) => {
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const p = schema.products;
+      const products = await db.select({ id: p.id, ebayListingId: p.ebayListingId, adRate: p.adRate }).from(p).where(eq(p.ebayStatus, 'listed')).all();
+      const { fetchPromotionStatus } = await import('./ebay');
+      const { compareAdRates } = await import('../shared/promoted-status');
+      const { campaigns, promo } = await fetchPromotionStatus();
+      const rows = compareAdRates(products, promo);
+      return c.json({ campaigns, geprueft: rows.length, abweichend: rows.filter(r => r.differs).length, rows }, 200);
+    } catch (e) {
+      console.error('[promoted-status]', e);
+      return c.json({ error: String(e) }, 502);
+    }
+  })
+
+  .post('/ebay/promoted-status/apply', async (c) => {
+    let body: { confirm?: unknown; productIds?: unknown };
+    try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+    if (body.confirm !== true) return c.json({ error: 'confirm: true fehlt — es wird nichts geschrieben' }, 400);
+    const only = Array.isArray(body.productIds) ? new Set(body.productIds.filter((x): x is number => Number.isInteger(x))) : null;
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const p = schema.products;
+      const products = await db.select({ id: p.id, ebayListingId: p.ebayListingId, adRate: p.adRate }).from(p).where(eq(p.ebayStatus, 'listed')).all();
+      const { fetchPromotionStatus } = await import('./ebay');
+      const { compareAdRates } = await import('../shared/promoted-status');
+      const { promo } = await fetchPromotionStatus();
+      const rows = compareAdRates(products, promo)
+        .filter(r => r.differs && r.ebayAdRate != null && (!only || only.has(r.productId)));
+      for (const r of rows) {
+        await db.update(p).set({ adRate: r.ebayAdRate as number, updatedAt: new Date().toISOString() }).where(eq(p.id, r.productId));
+      }
+      return c.json({ geschrieben: rows.length, rows }, 200);
+    } catch (e) {
+      console.error('[promoted-status/apply]', e);
+      return c.json({ error: String(e) }, 502);
     }
   })
 
