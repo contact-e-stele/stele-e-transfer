@@ -3247,10 +3247,10 @@ const app = new Hono()
         adRate: p.adRate, targetMarginEur: p.targetMarginEur, variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices,
         variants: p.variants, ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId, isElectric: p.isElectric,
       }).from(p).where(eq(p.ebayStatus, 'listed')).all();
-      const { buildSenkKandidaten, SENK_SCHWELLE_EUR, SENK_BREMSE_PROZENT } = await import('../shared/senk-kandidaten');
+      const { buildSenkBericht, SENK_SCHWELLE_EUR, SENK_BREMSE_PROZENT } = await import('../shared/senk-kandidaten');
       const { parseGroups } = await import('./tier-reprice');
-      const kandidaten = buildSenkKandidaten(rows.map(r => ({ ...r, title: r.generatedTitle ?? r.title, groups: parseGroups(r.variants) })));
-      return c.json({ schwelleEur: SENK_SCHWELLE_EUR, bremseProzent: SENK_BREMSE_PROZENT, geprueft: rows.length, anzahl: kandidaten.length, kandidaten }, 200);
+      const { kandidaten, ohneVariantenVk } = buildSenkBericht(rows.map(r => ({ ...r, title: r.generatedTitle ?? r.title, groups: parseGroups(r.variants) })));
+      return c.json({ schwelleEur: SENK_SCHWELLE_EUR, bremseProzent: SENK_BREMSE_PROZENT, geprueft: rows.length, anzahl: kandidaten.length, kandidaten, ohneVariantenVk }, 200);
     } catch (e) {
       console.error('[senk-kandidaten]', e);
       return c.json({ error: String(e) }, 500);

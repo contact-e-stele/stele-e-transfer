@@ -1,7 +1,7 @@
 // K-005 (Kalkulator, 11.10.2026): Pflicht-Tests + Bausteine. Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3).
 import { describe, expect, test } from 'bun:test';
 import { planTierReprice } from './tier-reprice';
-import { buildSenkKandidaten } from './senk-kandidaten';
+import { buildSenkKandidaten, buildSenkBericht } from './senk-kandidaten';
 import { parseMarketingCampaigns, parseCampaignAds, promotionByListing, compareAdRates } from './promoted-status';
 import { skuPriceDiagnostic, deriveProductShipsFrom } from './ali-sku-price';
 import { computeOrderNettoErgebnis } from '../api/order-matching';
@@ -117,5 +117,21 @@ describe('K-005 Punkt 3: Senk-Kandidaten (Erwartet > Ziel + 1,00)', () => {
   });
   test('ohne heutigen VK kein Kandidat (nichts geraten)', () => {
     expect(buildSenkKandidaten([{ ...p97, sellPrice: null, variantSellPrices: null }])).toEqual([]);
+  });
+});
+
+describe('K-005 Nachbesserung: Varianten ohne eigenen VK sind keine Senk-Kandidaten (Live-Fund stele-123)', () => {
+  // stele-123: 6 Varianten, kein variant_sell_prices, kein ebayPrice, Produkt-VK 36,95 (bei eBay ab 13,95)
+  const vp123 = JSON.stringify([
+    { skuId: 'a', attrs: { M: '10PCS' }, price: 2.05 }, { skuId: 'b', attrs: { M: '200PCS' }, price: 20.39 },
+  ]);
+  const p123 = { id: 123, variants: JSON.stringify([{ name: 'M', values: ['10PCS', '200PCS'] }]), buyPrice: 2.05, sellPrice: 36.95,
+    shipsFrom: 'China', adRate: 5, variantPrices: vp123, variantSellPrices: null, targetMarginEur: 1.5 };
+  test('Produkt-VK als Ersatz → kein Kandidat, gezählt als "VK je Variante unbekannt"', () => {
+    expect(buildSenkBericht([p123])).toEqual({ kandidaten: [], ohneVariantenVk: [{ productId: 123, varianten: 2 }] });
+  });
+  test('mit gespeichertem VK der Variante wird sie wieder bewertet (stele-97 unverändert 2 Kandidaten)', () => {
+    expect(buildSenkBericht([{ ...p97, groups: groups97 }]).kandidaten.length).toBe(2);
+    expect(buildSenkBericht([{ ...p97, groups: groups97 }]).ohneVariantenVk).toEqual([]);
   });
 });
