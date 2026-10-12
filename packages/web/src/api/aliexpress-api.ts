@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import type { VariantPrice, GpsrInfo } from './aliexpress';
 import { collectShopRelatedFields } from './aliexpress';
+import { skuPriceDiagnostic, deriveProductShipsFrom, type SkuPriceDiagnostic } from '../shared/ali-sku-price';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
 const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
@@ -34,6 +35,7 @@ export interface AliProductData {
   reviewCount?: number; // Anzahl Bewertungen (ae_item_base_info_dto.evaluation_count)
   rating?: number;      // Durchschnittliche Sternebewertung 0-5 (ae_item_base_info_dto.avg_evaluation_rating)
   shippingCost?: number; // Versandkosten laut AliExpress (aliexpress.ds.freight.query) — undefined wenn nicht ermittelbar
+  skuPriceFields?: SkuPriceDiagnostic[]; // K-005: Rohpreisfelder je SKU (nur Diagnose, wird nicht gespeichert)
 }
 
 // IOP MD5 Signing: secret + sorted(key+value pairs) + secret → MD5 → uppercase
@@ -286,8 +288,9 @@ interface RawSku {
   };
 }
 
-function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[]; variants: Array<{ name: string; values: string[] }> } {
+function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[]; variants: Array<{ name: string; values: string[] }>; skuPriceFields: SkuPriceDiagnostic[] } {
   const variantPrices: VariantPrice[] = [];
+  const skuPriceFields: SkuPriceDiagnostic[] = [];
   const variantGroups: Record<string, Set<string>> = {};
 
   // Verifikations-Log: zeigt einmalig die volle Roh-Struktur der ersten SKU,
@@ -302,6 +305,7 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
     // offer_sale_price = tatsächlicher Rabattpreis, sku_price = Originalpreis ohne Rabatt
     const priceStr = sku.offer_sale_price || sku.offer_bulk_sale_price || sku.sku_price || '0';
     const price = parseFloat(priceStr.replace(/[^\d.]/g, ''));
+    skuPriceFields.push(skuPriceDiagnostic(skuId, sku)); // K-005: Rohfelder sichtbar machen, Preiswahl unverändert
     if (!price || price <= 0) continue;
 
     // Parse Attribute — API gibt ae_sku_property_d_t_o oder ae_sku_property zurück
@@ -334,7 +338,7 @@ function parseVariantPrices(skuList: RawSku[]): { variantPrices: VariantPrice[];
   }));
 
   console.log(`[AliExpress API] ${variantPrices.length} Varianten gefunden, ${variants.length} Gruppen`);
-  return { variantPrices, variants };
+  return { variantPrices, variants, skuPriceFields };
 }
 
 // ── Bestellstatus / Sendungsnummer ("Sendungsnummer automatisch übernehmen", 2026-09-14) ──────
@@ -613,7 +617,8 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       []
     );
 
-    const { variantPrices, variants } = parseVariantPrices(rawSkuContainer);
+    const { variantPrices, variants, skuPriceFields } = parseVariantPrices(rawSkuContainer);
+    console.log('[AliExpress API] K-005 Preisfelder je SKU:', JSON.stringify(skuPriceFields));
 
     // ── Versandkosten ──────────────────────────────────────────────────────────
     // Eine repräsentative SKU reicht — der Versand fällt pro Bestellung an, nicht pro Variante.
@@ -637,9 +642,11 @@ export async function getAliProductByApi(productId: string, accessToken: string)
 
     // ── Versandland ────────────────────────────────────────────────────────────
     const logisticsList = result.logistics_info_list as { ae_logistics_info?: Array<{ ship_from_country?: string }> } | undefined;
-    const shipFrom = logisticsList?.ae_logistics_info?.[0]?.ship_from_country
-      || (result.ship_to_country as string)
-      || 'China';
+    // K-005: ohne logistics_info_list (und ohne ship_to_country) zählt das gemeinsame "Ships From" aller Varianten (stele-97: Poland)
+    const shipFrom = deriveProductShipsFrom(
+      logisticsList?.ae_logistics_info?.[0]?.ship_from_country || (result.ship_to_country as string),
+      variantPrices,
+    );
     const EU_COUNTRIES = ['germany', 'spain', 'france', 'italy', 'poland', 'netherlands', 'de', 'es', 'fr', 'it', 'pl', 'nl', 'czech', 'austria', 'belgium', 'luxembourg', 'sweden'];
     const shipsFromDE = EU_COUNTRIES.some(c => shipFrom.toLowerCase().includes(c));
 
@@ -674,6 +681,7 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       reviewCount,
       rating,
       shippingCost,
+      skuPriceFields,
     };
   } catch (e) {
     console.error('[AliExpress API] getAliProductByApi error:', e);
