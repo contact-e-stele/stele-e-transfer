@@ -301,13 +301,16 @@ export interface PriceAlarmInput {
 export interface PriceAlarmResult {
   isAlarm: boolean;             // true nur, wenn currentSellPrice gesetzt ist UND mindestens eine Variante unter den BODEN der Stufe fällt (A-014)
   worstProfit: number | null;   // niedrigster Gewinn aller Varianten beim aktuellen Preis (null ohne currentSellPrice)
+  // K-005 (Inhaber 14.10.2026): Warnhinweis, wenn der Gewinn OHNE Kassen-Faktor unter 0 läge (nur wenn ein Faktor < 1 angewendet wurde).
+  worstProfitWithoutFactor: number | null;
+  lossWithoutFactor: boolean;
 }
 
 export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
   if (input.currentSellPrice == null || input.variants.length === 0) {
-    return { isAlarm: false, worstProfit: null };
+    return { isAlarm: false, worstProfit: null, worstProfitWithoutFactor: null, lossWithoutFactor: false };
   }
-  const profits = input.variants.map(v => profitAtSellPrice({
+  const profitsFor = (checkoutFactor: number | null | undefined) => input.variants.map(v => profitAtSellPrice({
     sellPrice: input.currentSellPrice as number,
     buyPrice: v.buyPrice,
     isChinaOrigin: v.isChinaOrigin ?? input.isChinaOrigin,
@@ -315,12 +318,17 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
     ebayFixedFeeEur: input.ebayFixedFeeEur,
     vatFactor: input.vatFactor,
     adRatePercent: input.adRatePercent,
-    checkoutFactor: input.checkoutFactor,
+    checkoutFactor,
   }));
-  const worstProfit = Math.min(...profits);
+  const worstProfit = Math.min(...profitsFor(input.checkoutFactor));
+  const factorApplied = typeof input.checkoutFactor === 'number' && input.checkoutFactor > 0 && input.checkoutFactor < 1;
+  const worstProfitWithoutFactor = factorApplied ? Math.min(...profitsFor(null)) : worstProfit;
   // A-014: die ,95-Rundung unter dem Rohpreis liegt BEWUSST unter dem Zielgewinn ("Erwartet" < "Ziel" = gelb);
   // Alarm ist nur noch "Gewinn unter dem Boden" (= rot, darf nicht vorkommen → Preis anheben).
-  return { isAlarm: worstProfit < effectiveProfitFloor(profitFloorFor(input.targetMarginEur)) - 1e-9, worstProfit }; // K-006: Boden − 0,10, nie unter 1,00
+  return {
+    isAlarm: worstProfit < effectiveProfitFloor(profitFloorFor(input.targetMarginEur)) - 1e-9, worstProfit, // K-006: Boden − 0,10, nie unter 1,00
+    worstProfitWithoutFactor, lossWithoutFactor: factorApplied && worstProfitWithoutFactor < -1e-9,
+  };
 }
 
 export interface VariantSellPriceInput {
