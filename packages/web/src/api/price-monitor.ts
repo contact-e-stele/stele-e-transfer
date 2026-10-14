@@ -13,6 +13,8 @@ import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } fro
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { earUmlageFor } from '../shared/electric';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
+import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
+import { getPriceHolds, releasePriceHolds } from './price-holds';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -450,6 +452,7 @@ export async function maybeRaiseVariants(
   },
   freshVariantPricesJson: string | null,
   shipsFrom: string | null,
+  heldSkuIds?: ReadonlySet<string>, // K-008
 ): Promise<VariantRaiseOutcome | null> {
   try {
     const row = { ...product, shipsFrom, variantPrices: freshVariantPricesJson };
@@ -458,6 +461,7 @@ export async function maybeRaiseVariants(
     try { const p = freshVariantPricesJson ? JSON.parse(freshVariantPricesJson) : []; entries = Array.isArray(p) ? p : []; } catch { /* leer */ }
     return await runVariantRaise(row, {
       enabled: AUTO_VARIANT_RAISE_ENABLED,
+      heldSkuIds,
       send: async (raises) => {
         const token = await getAccessToken();
         return sendVariantRaises(product.id, groups, entries, raises, token);
@@ -702,6 +706,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
   console.log(`[PriceMonitor] ${products.length} Produkte zu prüfen`);
 
+  // K-008: "Preis halten" einmal je Lauf laden (app_settings). Fehler → ohne Halten weiter (Verhalten wie bisher).
+  let priceHolds: PriceHolds = {};
+  try { priceHolds = await getPriceHolds(); } catch (e) { console.warn('[K-008] Halten nicht lesbar — Lauf ohne Halten:', e); }
+
   // Hilfsfunktion: ein Produkt prüfen
   async function checkOne(product: typeof products[0]): Promise<void> {
     const url = product.sourceUrl;
@@ -860,9 +868,12 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // "aktueller VK liegt unter der Zielmarge", nicht mehr jede Abweichung nach oben ODER unten.
         const pricesChangedEnough = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
         const margin = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
+        // K-008: gehaltene Varianten (Gewinn ≥ 0,90 €) zählen nicht für den Alarm und werden nicht angehoben; < 0,90 € → Halten aufheben.
+        const hold = resolvePriceHolds({ ...product, shipsFrom: shipsFromEff, variantPrices: freshVariantPricesJson }, priceHolds[String(product.id)]);
+        if (hold.releaseKeys.length > 0) await releasePriceHolds(product.id, hold.rows.filter(r => r.state === 'release'));
         const alarmRes = evaluatePriceAlarm({
           currentSellPrice: product.sellPrice,
-          variants: rows.map(r => ({ buyPrice: r.buyPrice, isChinaOrigin: r.isChinaOrigin })),
+          variants: rows.filter(r => !hold.heldKeys.has(r.skuId)).map(r => ({ buyPrice: r.buyPrice, isChinaOrigin: r.isChinaOrigin })),
           isChinaOrigin: isChina,
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
@@ -905,7 +916,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         }
         // A-019 Teil 2: liegt der Gewinn EINER Variante unter dem Boden der Stufe → nur diese anheben (raise-only, GET→PUT je Variante, nach
         // Erfolg in variant_sell_prices speichern). Hinter AUTO_VARIANT_RAISE_ENABLED (Default AUS: nur Log "würde anheben"). Bricht den Cron nie ab.
-        await maybeRaiseVariants(product, freshVariantPricesJson, shipsFromEff);
+        await maybeRaiseVariants(product, freshVariantPricesJson, shipsFromEff, hold.heldKeys);
         return;
       }
 
@@ -926,6 +937,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // A-014 (Preisformel v2): sofort und ungedeckelt anheben NUR, wenn der Gewinn beim aktuellen Preis unter dem
       // Boden der Stufe liegt (evaluatePriceAlarm = Gewinn < Boden). Zwischen Boden und Ziel bleibt der Preis.
       const checkoutFactor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); // K-005
+      // K-008: Einzelartikel gehalten (Gewinn ≥ 0,90 €) → kein Alarm, kein Anheben; < 0,90 € → Halten aufheben, wie bisher.
+      const hold = resolvePriceHolds({ ...product, shipsFrom: shipsFromEff, buyPrice: newBuyPrice }, priceHolds[String(product.id)]);
+      if (hold.releaseKeys.length > 0) await releasePriceHolds(product.id, hold.rows.filter(r => r.state === 'release'));
       const alarmRes = evaluatePriceAlarm({
         currentSellPrice: product.sellPrice,
         variants: [{ buyPrice: newBuyPrice }],
@@ -936,7 +950,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         checkoutFactor,
       });
       if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
-      const alarm = alarmRes.isAlarm;
+      const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
       const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
       calculatedSellPrice = decision.price;
       const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
