@@ -18,7 +18,7 @@ const p95: ProfitProduct = {
   sellPrice: 15.95, buyPrice: 8.99,
   variantPrices: JSON.stringify([{ skuId: '12000056840616727', attrs: { Color: '6pcs set', 'Net Contents': '10ml x 6pcs', 'Ships From': 'Germany' }, price: 8.99, stock: 17 }]),
 }; // K-004: Variante "Ships From: Germany" = EU → K = 8,99 (kein Versand, keine Einfuhr) → Gewinn 2,8069 (vorher fälschlich 0,8169)
-const pGrenze = single(1, 13.55, 3.15, true);               // Gewinn 1,2581 — über Boden B (1,20), unter Boden C (1,30)
+const pGrenze = single(1, 13.45, 3.15, true);               // Gewinn 1,1819 (13,45×0,762−0,357−8,71) — K-006: über B−0,10 (1,10), unter C−0,10 (1,20)
 const pYellow = single(2, 13.95, 3.15, true);               // Gewinn 1,5629
 const pOhneVk = single(3, null, null, true);                // nicht berechenbar
 const p119: ProfitProduct = {
@@ -54,18 +54,18 @@ describe('productProfitRows', () => {
 
 describe('previewTierChange — "N Listings → Stufe X. Davon rot nach Wechsel: M"', () => {
   // K-004: 95 rechnet jetzt mit EU-Herkunft der Variante (Gewinn 2,8069) und ist in keiner Stufe mehr rot.
-  test('Stufe A (1,00/1,00): rot ist nur 119 (Variante); 95 (2,8069) und Grenzfall-Produkt (1,2581) nicht', () => {
+  test('Stufe A (1,00/1,00): rot ist nur 119 (Variante); 95 (2,8069) und Grenzfall-Produkt (1,1819) nicht', () => {
     const p = previewTierChange(ALL, 1.0);
     expect(p).toEqual({ total: 5, red: 1, redSingle: 0, redVariant: 1, yellow: 0, unknown: 1, redIds: [119] });
   });
 
-  test('Stufe B (1,50/1,20): Grenzfall (1,2581 ≥ 1,20) ist gelb statt rot', () => {
+  test('Stufe B (1,50/1,20, rot unter 1,10): Grenzfall (1,1819 ≥ 1,10) ist gelb statt rot', () => {
     const p = previewTierChange(ALL, 1.5);
     expect(p.red).toBe(1);
     expect(p.yellow).toBe(1);
   });
 
-  test('Stufe C (2,00/1,30): Grenzfall-Produkt (1,2581 < 1,30) wird rot — der Stufenwechsel verändert die Zahl M', () => {
+  test('Stufe C (2,00/1,30, rot unter 1,20): Grenzfall-Produkt (1,1819 < 1,20) wird rot — der Stufenwechsel verändert die Zahl M', () => {
     const p = previewTierChange(ALL, 2.0);
     expect(p).toEqual({ total: 5, red: 2, redSingle: 1, redVariant: 1, yellow: 1, unknown: 1, redIds: [1, 119] });
   });

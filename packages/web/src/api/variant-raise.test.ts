@@ -1,6 +1,9 @@
 // A-019 Teil 2: Preisprüfung hebt bei Varianten-Produkten NUR Varianten unter dem Boden an (raise-only), hinter AUTO_VARIANT_RAISE_ENABLED.
 // Fixture 119 nach Auftrag: EK 4,79 / 3,15 / 3,45, China, Stufe C (Ziel 2,00, Boden 1,30), alle Varianten ohne eigenen gespeicherten VK →
 // Produkt-VK 14,95 € (so steht es in der Produktion). Alle Zahlen frisch mit bun nachgerechnet.
+// K-006 (14.10.2026): Formelpreis mit Endungen ,45/,95 und Mindestgewinn max(Boden − 0,10, 1,00) — Stufe C, f = 0,762, Fix 0,357:
+//   EK 4,79 → K 10,35 → Roh 16,6759 → 16,45 (Gewinn 16,45 × 0,762 − 0,357 − 10,35 = 1,8279)
+//   EK 3,15 → K  8,71 → Roh 14,5236 → 14,45 (Gewinn 14,45 × 0,762 − 0,357 −  8,71 = 1,9439)
 import { describe, expect, test } from 'bun:test';
 import { planVariantRaises, runVariantRaise, type VariantRaiseDeps, type VariantRaiseProduct, type VariantSendResult } from './variant-raise';
 import { AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
@@ -46,14 +49,14 @@ function makeDeps(over: Partial<VariantRaiseDeps> = {}) {
 }
 
 describe('planVariantRaises — 119: nur 200pcs unter dem Boden', () => {
-  test('200pcs (EK 4,79): Gewinn 0,6849 € < Boden 1,30 → neuer VK 15,95 € (Gewinn 1,4469 €); 100pcs (EK 3,15 / 3,45) bleiben (Gewinn 2,3249 / 2,0249 ≥ Boden)', () => {
+  test('200pcs (EK 4,79): Gewinn 0,6849 € < Boden 1,30 → neuer VK 16,45 € (Gewinn 1,8279 €); 100pcs (EK 3,15 / 3,45) bleiben (Gewinn 2,3249 / 2,0249 ≥ Boden)', () => {
     const raises = planVariantRaises(product119());
     expect(raises).toHaveLength(1);
     expect(raises[0].skuId).toBe('v200');
     expect(raises[0].oldSell).toBe(14.95);
-    expect(raises[0].newSell).toBe(15.95);
+    expect(raises[0].newSell).toBe(16.45);
     expect(raises[0].oldProfit).toBeCloseTo(0.6849, 4);
-    expect(raises[0].newProfit).toBeCloseTo(1.4469, 4);
+    expect(raises[0].newProfit).toBeCloseTo(1.8279, 4);
   });
 
   test('Senken nie: eine Variante mit Gewinn ≥ Boden wird nicht angefasst, auch wenn der Formelpreis darunter läge (VK 19,95 € bei EK 3,15)', () => {
@@ -61,7 +64,7 @@ describe('planVariantRaises — 119: nur 200pcs unter dem Boden', () => {
     expect(planVariantRaises(p)).toEqual([]);
   });
 
-  // Stufe D (Ziel 3,00, Boden 1,50), EK 3,15 China: Formelpreis 14,95 €; VK 13,95 € liegt UNTER dem Ziel, aber über dem Boden (Gewinn 1,5629 ≥ 1,50).
+  // Stufe D (Ziel 3,00, Boden 1,50), EK 3,15 China: Formelpreis 15,45 € (K-006); VK 13,95 € liegt UNTER dem Ziel, aber über dem Boden (Gewinn 1,5629 ≥ 1,50).
   // Angehoben wird nur unter dem BODEN — nicht bis zum Ziel (das wäre der Preis-Zug nach Stufenwechsel, den nur der ausdrückliche Knopf auslöst).
   test('Gewinn zwischen Boden und Ziel → KEINE Anhebung, obwohl der Formelpreis höher wäre (Stufe D, EK 3,15, VK 13,95)', () => {
     const p = product119({
@@ -76,7 +79,7 @@ describe('planVariantRaises — 119: nur 200pcs unter dem Boden', () => {
     const p = product119({ variantSellPrices: JSON.stringify({ v100a: 11.95 }) }); // 11,95 bei EK 3,15 → Gewinn 0,0389
     const r = planVariantRaises(p);
     expect(r.map(x => x.skuId).sort()).toEqual(['v100a', 'v200']);
-    expect(r.find(x => x.skuId === 'v100a')!.newSell).toBe(13.95);
+    expect(r.find(x => x.skuId === 'v100a')!.newSell).toBe(14.45);
   });
 
   test('ohne bekannten alten VK keine Anhebung (nichts geraten)', () => {
@@ -110,25 +113,25 @@ describe('runVariantRaise — Schalter, Senden, Speichern, Log', () => {
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain('würde anheben');
     expect(logs[0]).toContain('v200');
-    expect(logs[0]).toContain('14.95 → 15.95');
+    expect(logs[0]).toContain('14.95 → 16.45');
     expect(logs[0]).toContain('EK 4.79');
-    expect(logs[0]).toContain('Gewinn 0.68 → 1.45');
+    expect(logs[0]).toContain('Gewinn 0.68 → 1.83');
   });
 
-  test('Schalter AN: nur 200pcs wird gesendet (15,95), danach in variant_sell_prices gespeichert, Pflicht-Log je Anhebung', async () => {
+  test('Schalter AN: nur 200pcs wird gesendet (16,45), danach in variant_sell_prices gespeichert, Pflicht-Log je Anhebung', async () => {
     const { deps, calls, logs, stored, sentRaises } = makeDeps();
     const o = await runVariantRaise(product119(), deps);
     expect(o.status).toBe('sent');
     expect(calls).toEqual({ send: 1, store: 1 });
-    expect(sentRaises[0]).toEqual([{ skuId: 'v200', newSell: 15.95 }]);
-    expect(stored[0]).toEqual({ v200: 15.95 });
-    expect(logs.some(l => l.includes('ANGEHOBEN') && l.includes('v200') && l.includes('14.95 → 15.95') && l.includes('EK 4.79'))).toBe(true);
+    expect(sentRaises[0]).toEqual([{ skuId: 'v200', newSell: 16.45 }]);
+    expect(stored[0]).toEqual({ v200: 16.45 });
+    expect(logs.some(l => l.includes('ANGEHOBEN') && l.includes('v200') && l.includes('14.95 → 16.45') && l.includes('EK 4.79'))).toBe(true);
   });
 
   test('store bekommt NUR die angehobenen Einträge — das Mergen gegen den frischen DB-Stand macht der Aufrufer (kein Überschreiben eines zwischenzeitlichen Stufenwechsels)', async () => {
     const { deps, stored } = makeDeps();
     await runVariantRaise(product119({ variantSellPrices: JSON.stringify({ v100a: 13.95 }) }), deps);
-    expect(stored[0]).toEqual({ v200: 15.95 });
+    expect(stored[0]).toEqual({ v200: 16.45 });
   });
 
   test('nicht live gelistet → nichts (0 Aufrufe)', async () => {
@@ -154,13 +157,13 @@ describe('runVariantRaise — Schalter, Senden, Speichern, Log', () => {
   });
 
   test('teilweise Erfolg: nur die tatsächlich gesendete Variante wird gespeichert; Fehler/übersprungene geloggt', async () => {
-    const p = product119({ variantSellPrices: JSON.stringify({ v100a: 11.95 }) }); // zwei Anhebungen: v100a (13,95) und v200 (15,95)
+    const p = product119({ variantSellPrices: JSON.stringify({ v100a: 11.95 }) }); // zwei Anhebungen: v100a (14,45) und v200 (16,45)
     const { deps, stored, logs } = makeDeps({
       send: async (raises): Promise<VariantSendResult> => ({ resolved: true, results: raises.map(r => r.skuId === 'v200' ? { skuId: r.skuId, ok: true } : { skuId: r.skuId, ok: true, skipped: 'Live-Preis 14.95 € ist schon ≥ neuer Preis (nie senken)' }) }),
     });
     const o = await runVariantRaise(p, deps);
     expect(o.status).toBe('partial');
-    expect(stored[0]).toEqual({ v200: 15.95 }); // v100a (übersprungen) wird NICHT gespeichert
+    expect(stored[0]).toEqual({ v200: 16.45 }); // v100a (übersprungen) wird NICHT gespeichert
     expect(logs.some(l => l.includes('NICHT angehoben') && l.includes('nie senken'))).toBe(true);
   });
 

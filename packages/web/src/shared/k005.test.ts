@@ -18,10 +18,12 @@ const p97 = {
 };
 
 describe('K-005 Pflicht-Tests', () => {
-  test('stele-97 Jasmine, Ware 12,59, EU (Ships From Poland), unbeworben, Stufe B → 17,95 / Gewinn 1,80', () => {
+  // K-006 (14.10.2026): Endungen ,45/,95. K = 12,59 (EU), f = 1 − 0,15 × 1,19 = 0,8215; Roh (1,50 + 0,357 + 12,59)/0,8215 = 17,5861
+  // → 17,45; Gewinn 17,45 × 0,8215 − 0,357 − 12,59 = 1,388175 ≥ 1,10 (Boden B − 0,10).
+  test('stele-97 Jasmine, Ware 12,59, EU (Ships From Poland), unbeworben, Stufe B → 17,45 / Gewinn 1,39', () => {
     const row = planTierReprice(p97, 1.5).rows.find(r => r.skuId === 'j')!;
-    expect(row.newSell).toBe(17.95);
-    expect(row.newProfit).toBeCloseTo(1.80, 2); // 1,798925
+    expect(row.newSell).toBe(17.45);
+    expect(row.newProfit).toBeCloseTo(1.39, 2); // 1,388175
   });
   test('Bestellung 20-15262-74118 (VK 19,95, Einkauf manuell 12,59), unbeworben → 3,44 (Auftrag 3,50 ± 0,10)', () => {
     const r = computeOrderNettoErgebnis({
@@ -105,10 +107,11 @@ describe('K-005 Punkt 2: Bewerbung je Angebot (Sell Marketing API, nur lesen)', 
 });
 
 describe('K-005 Punkt 3: Senk-Kandidaten (Erwartet > Ziel + 1,00)', () => {
-  test('stele-97 unbeworben: Jasmine 19,95 (Erwartet 3,44) → Vorschlag 17,95 / 1,80, erster Schritt mit 8-%-Bremse 18,95', () => {
+  // K-006: Jasmine-Vorschlag 17,45 / 1,39 (siehe oben); Vanilla Roh 15,1516 → 14,95 / 1,334425 (unverändert). Bremse: 19,95 × 0,92 = 18,354 → 18,95.
+  test('stele-97 unbeworben: Jasmine 19,95 (Erwartet 3,44) → Vorschlag 17,45 / 1,39, erster Schritt mit 8-%-Bremse 18,95', () => {
     const k = buildSenkKandidaten([{ ...p97, groups: groups97 }]);
     expect(k.map(r => [r.skuId, r.currentSell, r.expectedEur, r.overTargetEur, r.suggestedSell, r.suggestedProfit, r.firstStepSell, r.firstStepCapped])).toEqual([
-      ['j', 19.95, 3.44, 1.94, 17.95, 1.8, 18.95, true],
+      ['j', 19.95, 3.44, 1.94, 17.45, 1.39, 18.95, true],
       ['v', 16.95, 2.98, 1.48, 14.95, 1.33, 15.95, true],
     ]);
   });

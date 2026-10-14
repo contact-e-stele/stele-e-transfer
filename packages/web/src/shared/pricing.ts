@@ -24,8 +24,8 @@ import {
   MARGIN_TIERS, HIDDEN_MARGIN_TIER, MIN_PROFIT_FLOOR_EUR,
 } from './constants';
 
-// 'floor95' = Preisformel v2 (A-014): ,95-Marke UNTER dem Rohpreis; liegt der Gewinn dann unter dem Boden der
-// Margen-Stufe, die nächste ,95 darüber, bis Gewinn >= Boden (nur in computeMinSellPrice, braucht die Gewinnformel).
+// 'floor95' = Preisformel v2 (A-014, K-006): erlaubte Endung ,45/,95 UNTER dem Rohpreis; liegt der Gewinn dann unter dem Boden der
+// Margen-Stufe (− 0,10 Toleranz, nie unter 1,00), die nächste erlaubte Endung darüber (nur in computeMinSellPrice). Name bleibt aus Kompatibilität.
 export type RoundingMode = 'up95' | 'nearest95' | 'floor95' | 'cent' | 'none';
 
 // Rundet AUFWÄRTS zur nächsten ,95-Endung (P-11). Teil 2C (2026-09-10): keine produktive
@@ -65,13 +65,38 @@ export function profitFloorFor(targetMarginEur: number): number {
   return tier ? tier.floorEur : MIN_PROFIT_FLOOR_EUR;
 }
 
-// Preisformel v2, Rundung: erst die ,95-Marke UNTER dem Rohpreis (Kunde soll den günstigeren Preis sehen);
-// liegt der Gewinn dort unter dem Boden → nächste ,95 darüber, so lange bis Gewinn >= Boden. Ersetzt die
-// 0,10-€-Toleranzregel vom 21.09. 1e-9 nur gegen Gleitkomma-Rauschen (14,950000000000001 ist "auf der Marke").
+// K-006 (Kalkulator, 14.10.2026): erlaubte Preisendungen ,45 UND ,95 (vorher nur ,95) + Toleranz 0,10 € unter dem Boden.
+// Beleg stele-220 (eBay 15-15284-69835): 20,95 hätte 0,99 € ergeben (1 Cent unter Boden 1,00) → App sprang auf 21,95 (+0,82 €).
+export const PRICE_ENDINGS: readonly number[] = [0.45, 0.95];
+export const PROFIT_FLOOR_TOLERANCE_EUR = 0.10;
+// Beschluss Inhaber 14.10.2026 ("Mindestgewinn ist minimalste 1 €"): die Toleranz darf den Gewinn NIE unter 1,00 € drücken.
+// Grundgesetz 6: K-006 (Boden − 0,10) und dieser Beschluss widersprechen sich bei Stufe A (0,90 vs. 1,00) → die härtere Grenze gilt.
+export function effectiveProfitFloor(floorEur: number): number {
+  return Math.max(floorEur - PROFIT_FLOOR_TOLERANCE_EUR, MIN_PROFIT_FLOOR_EUR);
+}
+
+// Alle erlaubten Preise aufsteigend in Cent: n + Endung (n ganzzahlig). Liefert die größte erlaubte Marke <= Betrag.
+function floorToEnding(cents: number): number {
+  const ends = PRICE_ENDINGS.map(e => Math.round(e * 100)).sort((a, b) => b - a);
+  const base = Math.floor(cents / 100) * 100;
+  for (const e of ends) if (base + e <= cents) return base + e;
+  return base - 100 + ends[0];
+}
+function nextEnding(cents: number): number {
+  const ends = PRICE_ENDINGS.map(e => Math.round(e * 100)).sort((a, b) => a - b);
+  const base = Math.floor(cents / 100) * 100;
+  for (const e of ends) if (base + e > cents) return base + e;
+  return base + 100 + ends[0];
+}
+
+// Preisformel v2, Rundung (K-006): erst die größte erlaubte Endung (,45/,95) UNTER dem Rohpreis (Kunde sieht den günstigeren
+// Preis); liegt der Gewinn dort unter (Boden − 0,10, mindestens 1,00 €) → nächste erlaubte Endung darüber, bis erreicht.
+// 1e-9 nur gegen Gleitkomma-Rauschen. Einzige Rundungsstelle für Modus 'floor95' (Import, Preise neu berechnen, Varianten, Preisprüfung).
 export function roundToProfitFloor(rawPrice: number, profitAt: (sellPrice: number) => number, floorEur: number): number {
-  let price = Math.round((Math.floor(rawPrice - 0.95 + 1e-9) + 0.95) * 100) / 100;
-  for (let i = 0; i < 1000 && profitAt(price) < floorEur - 1e-9; i++) price = Math.round((price + 1) * 100) / 100;
-  return price;
+  const minProfit = effectiveProfitFloor(floorEur);
+  let cents = Math.max(floorToEnding(Math.floor(rawPrice * 100 + 1e-6)), 45); // abrunden: nie eine Endung ÜBER dem Rohpreis als Start; nie unter 0,45
+  for (let i = 0; i < 4000 && profitAt(cents / 100) < minProfit - 1e-9; i++) cents = nextEnding(cents);
+  return cents / 100;
 }
 
 function applyRounding(price: number, mode: Exclude<RoundingMode, 'floor95'>): number {
@@ -290,7 +315,7 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
   const worstProfit = Math.min(...profits);
   // A-014: die ,95-Rundung unter dem Rohpreis liegt BEWUSST unter dem Zielgewinn ("Erwartet" < "Ziel" = gelb);
   // Alarm ist nur noch "Gewinn unter dem Boden" (= rot, darf nicht vorkommen → Preis anheben).
-  return { isAlarm: worstProfit < profitFloorFor(input.targetMarginEur) - 1e-9, worstProfit };
+  return { isAlarm: worstProfit < effectiveProfitFloor(profitFloorFor(input.targetMarginEur)) - 1e-9, worstProfit }; // K-006: Boden − 0,10, nie unter 1,00
 }
 
 export interface VariantSellPriceInput {
@@ -539,7 +564,7 @@ export interface TargetDisplay { targetEur: number; expectedEur: number; floorEu
 export function evaluateTargetDisplay(targetMarginEur: number, expectedProfitEur: number): TargetDisplay {
   const floorEur = profitFloorFor(targetMarginEur);
   const expectedEur = Math.round(expectedProfitEur * 100) / 100;
-  const level = expectedEur < floorEur - 1e-9 ? 'red' : expectedEur < targetMarginEur - 1e-9 ? 'yellow' : 'ok';
+  const level = expectedEur < effectiveProfitFloor(floorEur) - 1e-9 ? 'red' : expectedEur < targetMarginEur - 1e-9 ? 'yellow' : 'ok';
   return { targetEur: targetMarginEur, expectedEur, floorEur, level };
 }
 
@@ -564,7 +589,7 @@ export interface VariantRule6cRow {
   newSellPrice: number | null; // bei 'raise' der Formelpreis, sonst der unveränderte aktuelle Preis
 }
 export function evaluateVariantRule6c(input: VariantRule6cInput): VariantRule6cRow[] {
-  const floor = profitFloorFor(input.targetMarginEur);
+  const floor = effectiveProfitFloor(profitFloorFor(input.targetMarginEur)); // K-006: dieselbe Grenze wie die Rundung
   return input.variants.map(v => {
     if (v.currentSellPrice == null) return { skuId: v.skuId, currentSellPrice: null, profitAtCurrent: null, action: 'keep' as const, newSellPrice: null };
     const common = {

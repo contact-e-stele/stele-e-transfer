@@ -33,17 +33,18 @@ const row6x8 = (plan: ReturnType<typeof planTierReprice>) => plan.rows.find(r =>
 
 describe('stele-218, Variante "200PCS / 6x8cm" (EK 2,99 €, China, Ware < 10 €): VK + Gewinn je Stufe nach Formel v2', () => {
   // K = 2,99 + 1,99 Versand + 3,57 Einfuhrabgaben = 8,55; f = 1 − 0,20 × 1,19 = 0,762; Fix = 0,357.
-  test('Stufe A (Ziel 1,00, Boden 1,00): Roh 13,00 → 12,95 hätte Gewinn 0,96 < Boden → 13,95, Gewinn 1,7229', () => {
+  // K-006 (14.10.2026): Endungen ,45/,95; Mindestgewinn = max(Boden − 0,10, 1,00).
+  test('Stufe A (Ziel 1,00, Boden 1,00): Roh 13,0013 → 12,95 hätte Gewinn 0,96 < 1,00 → 13,45, Gewinn 1,3419', () => {
     const r = row6x8(planTierReprice(stele218, 1.0));
-    expect(r.newSell).toBe(13.95);
-    expect(r.newProfit).toBeCloseTo(1.7229, 4);
-    expect(12.95 * 0.762 - 0.357 - 8.55).toBeCloseTo(0.9609, 4); // Beweis: 12,95 € würde den Boden 1,00 verletzen
+    expect(r.newSell).toBe(13.45);
+    expect(r.newProfit).toBeCloseTo(1.3419, 4); // 13,45 × 0,762 − 0,357 − 8,55
+    expect(12.95 * 0.762 - 0.357 - 8.55).toBeCloseTo(0.9609, 4); // Beweis: 12,95 € würde den Mindestgewinn 1,00 verletzen
   });
 
-  test('Stufe B (Ziel 1,50, Boden 1,20): 13,95 €, Gewinn 1,7229 ≥ 1,20', () => {
+  test('Stufe B (Ziel 1,50, Boden 1,20): Roh 13,6575 → 13,45 €, Gewinn 1,3419 ≥ 1,10 (Boden − 0,10)', () => {
     const r = row6x8(planTierReprice(stele218, 1.5));
-    expect(r.newSell).toBe(13.95);
-    expect(r.newProfit).toBeCloseTo(1.7229, 4);
+    expect(r.newSell).toBe(13.45);
+    expect(r.newProfit).toBeCloseTo(1.3419, 4);
     expect(r.newProfit).toBeGreaterThanOrEqual(profitFloorFor(1.5));
   });
 
@@ -54,10 +55,10 @@ describe('stele-218, Variante "200PCS / 6x8cm" (EK 2,99 €, China, Ware < 10 �
     expect(evaluateTargetDisplay(2.0, r.newProfit).level).toBe('yellow');
   });
 
-  test('Stufe D (Ziel 3,00, Boden 1,50): Roh 15,626 → 14,95 €, Gewinn 2,4849 (14,95 × 0,762 − 0,357 − 8,55)', () => {
+  test('Stufe D (Ziel 3,00, Boden 1,50): Roh 15,626 → 15,45 €, Gewinn 2,8659 (15,45 × 0,762 − 0,357 − 8,55)', () => {
     const r = row6x8(planTierReprice(stele218, 3.0));
-    expect(r.newSell).toBe(14.95);
-    expect(r.newProfit).toBeCloseTo(2.4849, 4);
+    expect(r.newSell).toBe(15.45);
+    expect(r.newProfit).toBeCloseTo(2.8659, 4);
   });
 
   test('alter VK 14,95 €: echter Gewinn nach Formel v2 = 2,4849 € (die alte Anzeige rechnete +8,22 € — 13 % statt 15 %, 0,45 statt 0,30, ohne Versand und Einfuhr)', () => {
@@ -78,10 +79,10 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
     expect(plan.changedCount).toBe(18);
   });
 
-  test('jeder neue VK endet auf ,95 und liegt mit dem Gewinn nie unter dem Boden der Stufe B (1,20 €)', () => {
+  test('jeder neue VK endet auf ,45 oder ,95 und liegt mit dem Gewinn nie unter max(Boden B − 0,10, 1,00) = 1,10 € (K-006)', () => {
     for (const r of plan.rows) {
-      expect(Math.round(r.newSell * 100) % 100).toBe(95);
-      expect(r.newProfit).toBeGreaterThanOrEqual(profitFloorFor(1.5) - 1e-9);
+      expect([45, 95]).toContain(Math.round(r.newSell * 100) % 100);
+      expect(r.newProfit).toBeGreaterThanOrEqual(Math.max(profitFloorFor(1.5) - 0.10, 1.0) - 1e-9);
     }
   });
 
@@ -89,7 +90,7 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
     const patch = storePatchForPlan(stele218, plan);
     expect(Object.keys(patch)).toEqual(['variantSellPrices']);
     expect(Object.keys(JSON.parse(patch.variantSellPrices!))).toHaveLength(18);
-    expect(JSON.parse(patch.variantSellPrices!)[SKU_6X8]).toBe(13.95);
+    expect(JSON.parse(patch.variantSellPrices!)[SKU_6X8]).toBe(13.45);
   });
 
   test('nach der Übernahme zeigt die Gewinn-Spalte (productProfitRows) exakt den Plan-Gewinn — dieselbe Funktion wie "Erwartet"', () => {
@@ -101,7 +102,7 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
       expect(r.profit).toBeCloseTo(plan.rows[i].newProfit, 9);
     });
     // variant_sell_prices hat Vorrang vor dem alten ebayPrice (Teil-3-Regel):
-    expect(rows.find(r => r.skuId === SKU_6X8)!.sellPrice).toBe(13.95);
+    expect(rows.find(r => r.skuId === SKU_6X8)!.sellPrice).toBe(13.45);
   });
 
   test('zweiter Plan über denselben Stand ändert nichts mehr (idempotent): changedCount 0', () => {
@@ -109,15 +110,15 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
     expect(planTierReprice(stored, 1.5).changedCount).toBe(0);
   });
 
-  test('Einzelartikel: ein Plan-Eintrag, Übernahme schreibt sellPrice (Ware 3,15 China, Stufe C → 13,95 €)', () => {
+  test('Einzelartikel: ein Plan-Eintrag, Übernahme schreibt sellPrice (Ware 3,15 China, Stufe C → 14,45 €)', () => {
     const single: RepriceProduct = { id: 5, variants: '[]', buyPrice: 3.15, sellPrice: 11.95, shipsFrom: 'China', adRate: 5, variantPrices: null };
     const p = planTierReprice(single, 2.0);
     expect(p.isVariant).toBe(false);
     expect(p.rows).toHaveLength(1);
-    expect(p.rows[0].newSell).toBe(13.95);
+    expect(p.rows[0].newSell).toBe(14.45); // Roh 14,5236 → 14,45; Gewinn 14,45 × 0,762 − 0,357 − 8,71 = 1,9439
     expect(p.rows[0].oldSell).toBe(11.95);
     expect(p.rows[0].oldProfit).toBeCloseTo(0.0389, 4);
-    expect(storePatchForPlan(single, p)).toEqual({ sellPrice: 13.95 });
+    expect(storePatchForPlan(single, p)).toEqual({ sellPrice: 14.45 });
   });
 
   test('Zeilen ohne Einkaufspreis fehlen im Plan (nichts geraten); ganz ohne EK → leerer Plan, leerer Patch', () => {
@@ -228,7 +229,7 @@ describe('expected-Preise (Plan darf sich seit der Vorschau nicht geändert habe
 });
 
 // A-023 (c): stele-119 (echte Daten, 04.10.2026): 100pcs doppelt in variantPrices (EK 3,15 / 3,45), Stufe B (1,50), China, Anzeige 5 %.
-// Handrechnung 100pcs bei EK 3,45: K = 3,45 + 1,99 + 3,57 = 9,01; f = 1 − 0,20 × 1,19 = 0,762; roh = (9,01 + 1,50 + 0,357)/0,762 = 14,26 → ,95 darunter 13,95,
+// Handrechnung 100pcs bei EK 3,45: K = 3,45 + 1,99 + 3,57 = 9,01; f = 1 − 0,20 × 1,19 = 0,762; roh = (9,01 + 1,50 + 0,357)/0,762 = 14,26 → erlaubte Endung (,45/,95) darunter 13,95,
 // Gewinn 13,95 × 0,762 − 0,357 − 9,01 = 1,26 ≥ Boden 1,20 → 13,95. 200pcs bei EK 4,79: K = 10,35, roh = 16,02 → 15,95, Gewinn 1,45 ≥ 1,20.
 describe('A-023: Dubletten im Stufenwechsel (stele-119)', () => {
   const g119 = [{ name: 'Varianten ', values: ['200pcs', '100pcs'] }];

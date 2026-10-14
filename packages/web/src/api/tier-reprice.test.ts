@@ -78,7 +78,8 @@ describe('apply bei live gelisteten Produkten: nur mit ausdrücklichem sendToEba
       order.push('send'); calls.sendVariants++;
       expect(id).toBe(218);
       expect(groups).toHaveLength(2);
-      expect(rows.map(r => [r.skuId, r.correctSellPrice])).toEqual([['a', 13.95], ['b', 14.95]]);
+      // K-006, Stufe B: a K 8,55 → Roh 13,6575 → 13,45 (Gewinn 1,3419); b K 9,55 → Roh 14,9698 → 14,95 (Gewinn 1,4849)
+      expect(rows.map(r => [r.skuId, r.correctSellPrice])).toEqual([['a', 13.45], ['b', 14.95]]);
       return { ok: true, updatedCount: 2, errors: [] };
     };
     deps.store = async (id, patch) => { order.push('store'); calls.store++; storeArgs.push([id, patch]); };
@@ -88,7 +89,7 @@ describe('apply bei live gelisteten Produkten: nur mit ausdrücklichem sendToEba
     expect(order).toEqual(['send', 'store']);
     expect(storeArgs[0][0]).toBe(218);
     expect(storeArgs[0][1].targetMarginEur).toBe(1.5);
-    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 13.95, b: 14.95 });
+    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 13.45, b: 14.95 });
   });
 
   test('Senden schlägt (teilweise) fehl → App-Preise werden NICHT gespeichert (App nie weiter als eBay), Status send_failed', async () => {
@@ -106,13 +107,14 @@ describe('apply bei live gelisteten Produkten: nur mit ausdrücklichem sendToEba
     expect(calls.store).toBe(0);
   });
 
-  test('Einzelartikel live: sendSingle mit neuem Preis 13,95 (Ware 3,15, Stufe B), danach sellPrice speichern; Fehler → nichts gespeichert', async () => {
+  // K-006: Ware 3,15 China (K 8,71), Stufe B → Roh 13,8675 → 13,45; Gewinn 13,45 × 0,762 − 0,357 − 8,71 = 1,1819 ≥ 1,10
+  test('Einzelartikel live: sendSingle mit neuem Preis 13,45 (Ware 3,15, Stufe B), danach sellPrice speichern; Fehler → nichts gespeichert', async () => {
     let sent = null as [number, string, number] | null;
     deps.sendSingle = async (id, listingId, price) => { calls.sendSingle++; sent = [id, listingId, price]; return { ok: true }; };
     const [r] = await runTierReprice(new Map([[5, single()]]), input('apply', { ids: [5], confirm: true, sendToEbay: true }), deps);
     expect(r.status).toBe('sent');
-    expect(sent).toEqual([5, '198600000001', 13.95]);
-    expect(storeArgs[0][1]).toEqual({ targetMarginEur: 1.5, sellPrice: 13.95 });
+    expect(sent).toEqual([5, '198600000001', 13.45]);
+    expect(storeArgs[0][1]).toEqual({ targetMarginEur: 1.5, sellPrice: 13.45 });
 
     calls.store = 0; storeArgs = [];
     deps.sendSingle = async () => ({ ok: false, error: 'HTTP 400' });
@@ -139,7 +141,7 @@ describe('nicht live gelistet (z. B. stele-218): Preise nur in der App speichern
     expect(r.isLive).toBe(false);
     expect(calls.sendVariants + calls.sendSingle).toBe(0);
     expect(calls.store).toBe(1);
-    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 13.95, b: 14.95 });
+    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 13.45, b: 14.95 });
     expect(fetchCount).toBe(0);
   });
 
