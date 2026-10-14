@@ -27,24 +27,35 @@ describe('K-004 Stufen floor95', () => {
     ...fees, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, targetMarginEur: target, safetyBufferEur: 0, rounding: 'floor95',
   }).minSellPrice;
 
-  test('Ware 3,15 Stufe B → 13,95 / Gewinn 1,56', () => {
-    expect(minSell(3.15, 1.5)).toBe(13.95);
-    expect(profitChina5(13.95, 3.15)).toBeCloseTo(1.56, 2);
+  // K-006 (14.10.2026): Endungen ,45/,95; Mindestgewinn max(Boden − 0,10, 1,00). 13,45 × 0,762 − 0,357 − 8,71 = 1,1819 ≥ 1,10.
+  test('Ware 3,15 Stufe B → 13,45 / Gewinn 1,18', () => {
+    expect(minSell(3.15, 1.5)).toBe(13.45);
+    expect(profitChina5(13.45, 3.15)).toBeCloseTo(1.18, 2);
   });
 
-  // Erwartet ≥ Boden und ≤ Ziel + 0,76 (Auftrag: A 1,00–1,76 · B 1,20–1,96 · C 1,30–2,06 · D 2,25–3,00)
-  const ranges: Record<string, [number, number]> = { A: [1.00, 1.76], B: [1.20, 1.96], C: [1.30, 2.06], D: [2.25, 3.00] };
+  // K-006: Schritt zwischen zwei erlaubten Endungen = 0,50 € VK = 0,50 × 0,762 = 0,381 € Gewinn (vorher 1 € = 0,762).
+  // Bewiesene Grenzen (mit bun über Ware 1,00–60,00 in 1-Cent-Schritten, China/EU, Anzeige 0/5 % geprüft):
+  //   untere: max(Mindestgewinn, Ziel − 0,381) — Endung unter dem Rohpreis kostet < 0,381; Schleife hebt bis Mindestgewinn
+  //   obere:  max(Ziel, Mindestgewinn + 0,381) — Stufe A (Ziel = Mindestgewinn 1,00) springt höchstens einen Schritt darüber
+  //   + 0,0038 Puffer: roundToProfitFloor rundet den Rohpreis zuerst auf ganze Cent (Math.round) — liegt der Rohpreis bis zu
+  //     0,5 Cent UNTER einer Endung (z. B. Roh 12,9488 → 12,95), wird diese genommen: + 0,005 × 0,762 = 0,0038 € über dem Ziel.
+  //   (Die Auftrags-Obergrenze "Ziel + 0,45" hält damit ebenfalls: höchster Wert ist Stufe A mit 1,3799 ≤ 1,45.)
+  // Ergebnis Ware 1,00–15,00 (0,05er): A 1,0009–1,3799 · B 1,1229–1,5009 · C 1,6229–2,0019 · D 2,6229–3,0019.
+  const STEP_PROFIT = 0.5 * 0.762;
+  const CENT_ROUNDING_BUFFER = 0.005 * 0.762;
+  const ranges: Record<string, [number, number]> = { A: [1.00, 1.381], B: [1.119, 1.50], C: [1.619, 2.00], D: [2.619, 3.00] };
   for (const tier of MARGIN_TIERS) {
-    test(`Stufe ${tier.label}: Ware 1,00–15,00 (0,05er) → Gewinn in ${ranges[tier.label].join('–')} und ≥ Boden ${tier.floorEur}`, () => {
+    test(`Stufe ${tier.label}: Ware 1,00–15,00 (0,05er) → Gewinn in ${ranges[tier.label].join('–')} und ≥ max(Boden − 0,10, 1,00)`, () => {
       const [lo, hi] = ranges[tier.label];
+      const minProfit = Math.max(tier.floorEur - 0.10, 1.00);
       for (let c = 100; c <= 1500; c += 5) {
         const ware = c / 100;
         const g = profitChina5(minSell(ware, tier.targetEur), ware);
-        expect(g).toBeGreaterThanOrEqual(tier.floorEur - 1e-9);
-        expect(g).toBeGreaterThanOrEqual(lo - 0.005);
-        expect(g).toBeLessThanOrEqual(hi + 0.005);
-        // ,95-Schritt = 1 € VK = 0,762 € Gewinn → Obergrenze Ziel + 0,762 (Auftrag nennt gerundet 0,76; Stufe A erreicht 1,7609).
-        expect(g).toBeLessThanOrEqual(tier.targetEur + 0.762 + 1e-9);
+        expect(g).toBeGreaterThanOrEqual(minProfit - 1e-9);
+        expect(g).toBeGreaterThanOrEqual(lo - 1e-9);
+        expect(g).toBeLessThanOrEqual(hi + CENT_ROUNDING_BUFFER + 1e-9);
+        expect(g).toBeLessThanOrEqual(Math.max(tier.targetEur, minProfit + STEP_PROFIT) + CENT_ROUNDING_BUFFER + 1e-9);
+        expect(g).toBeLessThanOrEqual(tier.targetEur + 0.45 + 1e-9);
       }
     });
   }

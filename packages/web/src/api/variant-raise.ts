@@ -5,7 +5,7 @@
 //
 // Bewusst ohne direkte DB-/eBay-Importe: Senden/Speichern/Log kommen als `deps` (Grundgesetz Regel 2 — mit Mocks testbar).
 import { planTierReprice, type RepriceProduct, type TierPlanRow } from '../shared/tier-reprice';
-import { profitFloorFor, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { profitFloorFor, effectiveProfitFloor, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 
 export interface VariantRaiseProduct extends RepriceProduct {
   targetMarginEur: number | null;
@@ -18,7 +18,7 @@ export type VariantRaise = TierPlanRow & { skuId: string; oldSell: number; oldPr
 // Nur Zeilen mit bekanntem alten VK, Gewinn < Boden und höherem Formelpreis — nie senken, nie raten (kein alter VK → keine Zeile).
 export function planVariantRaises(product: VariantRaiseProduct): VariantRaise[] {
   const target = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
-  const floor = profitFloorFor(target);
+  const floor = effectiveProfitFloor(profitFloorFor(target)); // K-006: dieselbe Grenze wie die Rundung (Boden − 0,10, nie unter 1,00)
   const plan = planTierReprice(product, target);
   if (!plan.isVariant) return [];
   return plan.rows.filter((r): r is VariantRaise =>

@@ -2,7 +2,8 @@
 //
 // Fixture stele-119: Wares 3,15 € (100pcs) und 4,79 € (200pcs), heutige VK 11,95 € / 14,95 €, China, Anzeige 5 %, shippingCost 0 —
 // Werte aus der Kalkulator-Übergabe (P1b-Nachprüfung, 04.10.2026). Unabhängige Gegenprobe aus diesem Dokument: "Nach Formel v2:
-// 100pcs 13,95, 200pcs 15,95" und "App glaubt 1,36–1,60 bzw. ≈2,24" (= Formel v1) — beides wird hier bestätigt.
+// 100pcs 13,95, 200pcs 15,95" und "App glaubt 1,36–1,60 bzw. ≈2,24" (= Formel v1). Seit K-006 (14.10.2026, Endungen ,45/,95,
+// Mindestgewinn max(Boden − 0,10, 1,00)) ergibt Formel v2 14,45 / 16,45 — die v1-Werte werden weiterhin bestätigt.
 // Die Produkte 200–202 sind ERFUNDENE Test-Fixtures (nur für die Randfälle), keine Live-Daten.
 import { describe, expect, test } from 'bun:test';
 import { buildPriceReportRows, renderPriceReportMarkdown, profitOldFormulaV1, tierLabelFor, type ReportProduct } from './price-report-v2';
@@ -23,9 +24,10 @@ const nichtGelistet: ReportProduct = { ...einzelAlt450, id: 202, title: 'nicht g
 describe('buildPriceReportRows — stele-119 gegen die Zahlen der Kalkulator-Übergabe', () => {
   const { rows } = buildPriceReportRows([stele119]);
 
-  test('neuer VK nach Formel v2: 100pcs 13,95 €, 200pcs 15,95 € (wie in der Übergabe)', () => {
-    expect(rows.map(r => [r.variantLabel, r.newSell])).toEqual([['100PCS', 13.95], ['200PCS', 15.95]]);
-    expect(rows.map(r => r.deltaSell)).toEqual([2, 1]);
+  // Stufe C: 100pcs K 8,71 → Roh 14,5236 → 14,45; 200pcs K 10,35 → Roh 16,6759 → 16,45 (Übergabe vor K-006: 13,95 / 15,95).
+  test('neuer VK nach Formel v2 (K-006): 100pcs 14,45 €, 200pcs 16,45 €', () => {
+    expect(rows.map(r => [r.variantLabel, r.newSell])).toEqual([['100PCS', 14.45], ['200PCS', 16.45]]);
+    expect(rows.map(r => r.deltaSell)).toEqual([2.5, 1.5]);
   });
 
   test('Gewinn alt (v1) = was die App bisher zeigte: 1,5989 € (Übergabe: "bis 1,60") und 2,2449 € (Übergabe: "≈ 2,24")', () => {
@@ -33,12 +35,12 @@ describe('buildPriceReportRows — stele-119 gegen die Zahlen der Kalkulator-Üb
     expect(rows[1].oldProfitV1).toBeCloseTo(2.2449, 4);
   });
 
-  test('Gewinn heute (v2): 0,0389 € und 0,6849 € — beide unter dem Boden 1,30 € → rot; neu 1,5629 € und 1,4469 €', () => {
+  test('Gewinn heute (v2): 0,0389 € und 0,6849 € — beide unter dem Boden 1,30 € → rot; neu 1,9439 € und 1,8279 €', () => {
     expect(rows[0].profitNowV2).toBeCloseTo(0.0389, 4);
     expect(rows[1].profitNowV2).toBeCloseTo(0.6849, 4);
     expect(rows.map(r => r.level)).toEqual(['red', 'red']);
-    expect(rows[0].newProfitV2).toBeCloseTo(1.5629, 4);
-    expect(rows[1].newProfitV2).toBeCloseTo(1.4469, 4);
+    expect(rows[0].newProfitV2).toBeCloseTo(1.9439, 4); // 14,45 × 0,762 − 0,357 − 8,71
+    expect(rows[1].newProfitV2).toBeCloseTo(1.8279, 4); // 16,45 × 0,762 − 0,357 − 10,35
     expect(rows.every(r => r.newProfitV2 >= r.floorEur)).toBe(true);
   });
 });
@@ -51,11 +53,12 @@ describe('buildPriceReportRows — Randfälle', () => {
     expect(skipped).toEqual([{ productId: 201, reason: 'kein Einkaufspreis' }]);
   });
 
-  test('Bestandsprodukt mit Zielgewinn 4,50: Boden 2,00 €, Stufe "4,50 (alt)", Formelpreis 25,95 €, nicht umgestellt', () => {
+  // K 15,57 → Roh (4,50 + 0,357 + 15,57)/0,762 = 26,8071 → 26,45; Gewinn 26,45 × 0,762 − 0,357 − 15,57 = 4,2279.
+  test('Bestandsprodukt mit Zielgewinn 4,50: Boden 2,00 €, Stufe "4,50 (alt)", Formelpreis 26,45 €, nicht umgestellt', () => {
     expect(rows[0].tierLabel).toBe('4,50 (alt)');
     expect(rows[0].floorEur).toBe(2);
-    expect(rows[0].newSell).toBe(25.95);
-    expect(rows[0].newProfitV2).toBeCloseTo(3.8469, 4);
+    expect(rows[0].newSell).toBe(26.45);
+    expect(rows[0].newProfitV2).toBeCloseTo(4.2279, 4);
     expect(rows[0].targetEur).toBe(4.5); // der gespeicherte Zielgewinn bleibt, der Bericht stellt nichts um
   });
 
@@ -75,7 +78,7 @@ describe('renderPriceReportMarkdown', () => {
 
   test('enthält Kopf, Tabellenzeilen mit alt/neu, Zusammenfassung, 4,50-Liste und nicht berechenbare Produkte', () => {
     expect(md).toContain('keine Preisänderung');
-    expect(md).toContain('| 119 Backpapier | 100PCS | 3,15 | ja | C (2,00/1,30) | 11,95 | 13,95 | +2,00 | 1,60 | 0,04 | 1,56 | ROT (unter Boden) |');
+    expect(md).toContain('| 119 Backpapier | 100PCS | 3,15 | ja | C (2,00/1,30) | 11,95 | 14,45 | +2,50 | 1,60 | 0,04 | 1,94 | ROT (unter Boden) |');
     expect(md).toContain('Zeilen: 3 (Produkte/Varianten); davon mit heutigem VK: 3.');
     expect(md).toContain('Anzeige beim heutigen VK: 3 rot (Gewinn unter Boden), 0 gelb (unter Ziel, über Boden), 0 ok.');
     expect(md).toContain('- 200 Einzel');

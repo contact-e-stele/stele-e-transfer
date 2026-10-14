@@ -140,13 +140,16 @@ describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
     // 'nearest95' ergäbe 10,95 €, 'up95' ebenfalls 10,95 € — diese Fixture unterscheidet die Modi bewusst, damit ein
     // Rückfall an dieser realen Aufrufstelle (nicht nur an der reinen Funktion in pricing-v2.test.ts) erkannt würde.
     // Das Produktfeld shippingCost (hier 0) fließt nicht mehr in die Formel ein.
-    // K-004 (EU ohne Versand): K = 3,80 → Rohpreis Ziel 2,00 = 8,0801 → floor95 7,95 (Gewinn 1,8009 ≥ 1,30); Ziel 3,00 → 8,95.
+    // K-004 (EU ohne Versand): K = 3,80 → Rohpreis Ziel 2,00 = 8,0801 → floor95 7,95 (Gewinn 7,95 × 0,762 − 0,357 − 3,80 = 1,9009 ≥ 1,30;
+    // der frühere Kommentarwert 1,8009 war falsch, nachgerechnet 14.10.2026); Ziel 3,00 → Roh 9,3924 → 8,95 (Gewinn 2,6629).
+    // K-006 (Endungen ,45/,95): an diesen vier Stellen liegt keine ,45 zwischen ,95-Marke und Rohpreis — außer China Ziel 3,00 (s. u.).
     expect(rowsDefault[0].correctSellPrice).toBe(7.95);
     expect(rowsMargin2[0].correctSellPrice).toBe(7.95);
     expect(rowsMargin3[0].correctSellPrice).toBe(8.95); // Stufe D
-    // Herkunft leer → wie China (K = 3,80 + 1,99 + 3,57 = 9,36): 14,95 bzw. 15,95.
+    // Herkunft leer → wie China (K = 3,80 + 1,99 + 3,57 = 9,36): Ziel 2,00 Roh 15,3766 → 14,95 (Gewinn 1,6749);
+    // Ziel 3,00 Roh 16,6890 → 16,45 (K-006, vorher 15,95; Gewinn 16,45 × 0,762 − 0,357 − 9,36 = 2,8179).
     expect(computeVariantPriceRows(variantPricesJson, 0, null, 5)[0].correctSellPrice).toBe(14.95);
-    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00)[0].correctSellPrice).toBe(15.95);
+    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00)[0].correctSellPrice).toBe(16.45);
     expect(rowsMargin3[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
   });
 

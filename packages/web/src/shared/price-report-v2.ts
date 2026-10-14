@@ -126,7 +126,7 @@ export function renderPriceReportMarkdown(
     `Lauf: ${generatedAt}`,
     '',
     'Formel v2: K = Ware + Versand (1,99 € bei Ware < 10 €) + Einfuhrabgaben (3,57 € bei China); Gewinn = VK × (1 − (15 % + Anzeige) × 1,19) − 0,357 − K;',
-    'Rundung ,95 unter dem Rohpreis, bei Gewinn < Boden die nächste ,95 darüber. "neuer VK" ist der Formelpreis je Variante (Varianten-Regel 6c',
+    'Rundung auf ,45/,95 unter dem Rohpreis, bei Gewinn < Boden − 0,10 (nie unter 1,00 €) die nächste Endung darüber. "neuer VK" ist der Formelpreis je Variante (Varianten-Regel 6c',
     'ist AUS — im Betrieb würde keine Variante allein über die Formel erhöht, außer sie liegt unter dem Boden). "Gewinn alt (v1)" = bis A-014 gültige',
     'Formel (Ware + shippingCost + 4,00 € Zoll bei China) beim heutigen VK; "Gewinn heute (v2)" = echter Gewinn beim heutigen VK nach v2.',
     '"alter VK" = in der DB gespeicherter VK der Variante (variant_sell_prices, sonst alter ebayPrice), sonst der Produkt-VK (sellPrice). Ist je Variante',

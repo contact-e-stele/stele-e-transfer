@@ -1,4 +1,5 @@
-// A-014 (04.10.2026): Preisformel v2 — Kosten K = Ware + Versand + Einfuhrabgaben, Rundung ,95 unter dem Rohpreis mit Boden,
+// A-014 (04.10.2026): Preisformel v2 — Kosten K = Ware + Versand + Einfuhrabgaben, Rundung ,95 unter dem Rohpreis mit Boden
+// (seit K-006, 14.10.2026: Endungen ,45/,95, Mindestgewinn max(Boden − 0,10, 1,00 €)),
 // Margen-Stufen A–D. Quellen: Drive PREIS-KALKULATOR "Übergabe Preisformel v2", "P1b Nachprüfung", "Nachtrag 1 Margen-Stufen".
 //
 // Grundgesetz Regel 3: JEDE Zahl in dieser Datei wurde frisch mit bun nachgerechnet (scripts/tmp/calc*.ts während der
@@ -100,11 +101,12 @@ describe('profitFloorFor — Boden je Stufe', () => {
 });
 
 describe('computeMinSellPrice mit Rundung "floor95" — Beispiele der Übergabe, frisch nachgerechnet (Anzeige 5 %)', () => {
-  test('Ware 3,15 · Stufe B (1,50/1,20): Roh 13,8675 → 13,95 → Gewinn 1,5629', () => {
+  // K-006 (14.10.2026): erlaubte Endungen ,45 UND ,95; Mindestgewinn = max(Boden − 0,10, 1,00) (Stufe B → 1,10).
+  test('Ware 3,15 · Stufe B (1,50/1,20): Roh 13,8675 → 13,45 → Gewinn 1,1819 (≥ 1,10 = Boden − 0,10)', () => {
     const r = v2Price(3.15, 1.5);
     expect(r.raw).toBeCloseTo(13.8675, 4);
-    expect(r.price).toBe(13.95);
-    expect(r.profit).toBeCloseTo(1.5629, 4);
+    expect(r.price).toBe(13.45);
+    expect(r.profit).toBeCloseTo(1.1819, 4);
   });
 
   test('Ware 3,39 · Stufe B: Roh 14,1824 → 13,95 → Gewinn 1,3229 (≥ Boden 1,20)', () => {
@@ -121,13 +123,22 @@ describe('computeMinSellPrice mit Rundung "floor95" — Beispiele der Übergabe,
     expect(r.profit).toBeCloseTo(1.4469, 4);
   });
 
-  test('Ware 5,89 · Stufe B: Roh 17,4633 → 16,95 wäre nur 1,1089 < Boden 1,20 → 17,95 → Gewinn 1,8709', () => {
+  test('Ware 5,89 · Stufe B: Roh 17,4633 → 17,45 (,45-Endung unter dem Rohpreis) → Gewinn 1,4899', () => {
     const r = v2Price(5.89, 1.5);
     expect(r.raw).toBeCloseTo(17.4633, 4);
-    expect(r.price).toBe(17.95);
-    expect(r.profit).toBeCloseTo(1.8709, 4);
-    // Beweis, dass die 16,95 den Boden tatsächlich verletzt hätten (sonst prüft der Test die Boden-Schleife nicht):
-    expect(profitAtSellPrice({ sellPrice: 16.95, buyPrice: 5.89, isChinaOrigin: true, ...FEES, adRatePercent: 5 })).toBeCloseTo(1.1089, 4);
+    expect(r.price).toBe(17.45);
+    expect(r.profit).toBeCloseTo(1.4899, 4);
+  });
+
+  // Seit K-006 greift die Boden-Schleife bei Stufe B–D nie: der Abschlag zur Endung darunter ist < 0,50 € VK, also
+  // < 0,50 × 0,762 = 0,381 € Gewinn → Gewinn > Ziel − 0,381 (B: > 1,119 ≥ 1,10). Nur Stufe A (Ziel = Mindestgewinn 1,00) löst sie aus.
+  test('Boden-Schleife (Stufe A): Ware 3,15 · Roh 13,2113 → 12,95 wäre nur 0,8009 < 1,00 → 13,45 → Gewinn 1,1819', () => {
+    const r = v2Price(3.15, 1.0);
+    expect(r.raw).toBeCloseTo(13.2113, 4);
+    expect(r.price).toBe(13.45);
+    expect(r.profit).toBeCloseTo(1.1819, 4);
+    // Beweis, dass die 12,95 den Mindestgewinn tatsächlich verletzt hätten (sonst prüft der Test die Boden-Schleife nicht):
+    expect(profitAtSellPrice({ sellPrice: 12.95, buyPrice: 3.15, isChinaOrigin: true, ...FEES, adRatePercent: 5 })).toBeCloseTo(0.8009, 4);
   });
 
   test('Ware 4,79 · Stufe D (3,00/1,50): Roh 17,9882 → 17,95 → Gewinn 2,9709', () => {
@@ -138,48 +149,48 @@ describe('computeMinSellPrice mit Rundung "floor95" — Beispiele der Übergabe,
   });
 
   // Nachtrag 1, Abschnitt 4 — Stufe C (2,00/1,30). Dieser Fall unterscheidet die neue Rundung von der alten
-  // ("nearest95" ergäbe hier 14,95): Roh 14,5236 liegt ÜBER 14,5, die ,95 UNTER dem Rohpreis ist 13,95.
-  test('Ware 3,15 · Stufe C: Roh 14,5236 → 13,95 (nicht 14,95) → Gewinn 1,5629 ≥ Boden 1,30 → "Ziel 2,00 · Erwartet 1,56"', () => {
+  // ("nearest95" ergäbe hier 14,95): Roh 14,5236 liegt ÜBER 14,5; seit K-006 ist die erlaubte Endung UNTER dem Rohpreis 14,45.
+  test('Ware 3,15 · Stufe C: Roh 14,5236 → 14,45 (nicht 14,95) → Gewinn 1,9439 ≥ 1,20 → "Ziel 2,00 · Erwartet 1,94"', () => {
     const r = v2Price(3.15, 2.0);
     expect(r.raw).toBeCloseTo(14.5236, 4);
-    expect(r.price).toBe(13.95);
-    expect(r.profit).toBeCloseTo(1.5629, 4);
+    expect(r.price).toBe(14.45);
+    expect(r.profit).toBeCloseTo(1.9439, 4);
     const alt = computeMinSellPrice({
       buyPrice: 3.15, isChinaOrigin: true, ...FEES, adRatePercent: 5, targetMarginEur: 2, safetyBufferEur: 0, rounding: 'nearest95',
     }).minSellPrice;
     expect(alt).toBe(14.95); // Gegenprobe: so rundete die alte Regel
     const display = evaluateTargetDisplay(2.0, r.profit);
-    expect(display.expectedEur).toBe(1.56);
+    expect(display.expectedEur).toBe(1.94);
     expect(display.level).toBe('yellow');
   });
 
-  test('Stufen A–D bei Ware 3,15: 13,95 / 13,95 / 13,95 / 14,95; ausgeblendete 4,50 → 16,95; unbekannt 5,00 → 17,95', () => {
-    expect([1.0, 1.5, 2.0, 3.0, 4.5, 5.0].map(t => v2Price(3.15, t).price)).toEqual([13.95, 13.95, 13.95, 14.95, 16.95, 17.95]);
+  test('Stufen A–D bei Ware 3,15: 13,45 / 13,45 / 14,45 / 15,45; ausgeblendete 4,50 → 17,45; unbekannt 5,00 → 18,45', () => {
+    expect([1.0, 1.5, 2.0, 3.0, 4.5, 5.0].map(t => v2Price(3.15, t).price)).toEqual([13.45, 13.45, 14.45, 15.45, 17.45, 18.45]);
   });
 
-  test('Anzeige nur wenn beworben: Ware 3,15 · Stufe C ohne Anzeige (0 %) → 12,95 (Roh 13,4717), mit 5 % → 13,95', () => {
+  test('Anzeige nur wenn beworben: Ware 3,15 · Stufe C ohne Anzeige (0 %) → 13,45 (Roh 13,4717), mit 5 % → 14,45', () => {
     const ohne = v2Price(3.15, 2.0, { ad: 0 });
     expect(ohne.raw).toBeCloseTo(13.4717, 4);
-    expect(ohne.price).toBe(12.95);
-    expect(ohne.profit).toBeCloseTo(1.5714, 4);
-    expect(v2Price(3.15, 2.0, { ad: 5 }).price).toBe(13.95);
+    expect(ohne.price).toBe(13.45);
+    expect(ohne.profit).toBeCloseTo(1.9822, 4);
+    expect(v2Price(3.15, 2.0, { ad: 5 }).price).toBe(14.45);
   });
 
-  test('Ware 12,00 (≥ 10, kein Versand): China 22,95 (K 15,57) · EU 17,95 (K 12,00)', () => {
-    expect(v2Price(12, 2.0, { china: true }).price).toBe(22.95);
+  test('Ware 12,00 (≥ 10, kein Versand): China 23,45 (K 15,57) · EU 18,45 (K 12,00)', () => {
+    expect(v2Price(12, 2.0, { china: true }).price).toBe(23.45);
     expect(v2Price(12, 2.0, { china: true }).totalCost).toBeCloseTo(15.57, 10);
-    expect(v2Price(12, 2.0, { china: false }).price).toBe(17.95);
+    expect(v2Price(12, 2.0, { china: false }).price).toBe(18.45);
     expect(v2Price(12, 2.0, { china: false }).totalCost).toBeCloseTo(12.0, 10);
   });
 
   // Folge der Annahme "Versand frei ab 10,00 €" (1 Beleg): die Preiskurve macht an der Schwelle einen Sprung nach UNTEN.
   // Dokumentiert, nicht korrigiert — offene Inhaber-Entscheidung (siehe PR-Beschreibung).
-  test('Schwelle 10,00: Ware 9,99 → 22,95 €, Ware 10,00 → 19,95 € (Sprung nach unten wegen entfallendem Versand)', () => {
-    expect(v2Price(9.99, 1.0).price).toBe(22.95);
+  test('Schwelle 10,00: Ware 9,99 → 22,45 €, Ware 10,00 → 19,95 € (Sprung nach unten wegen entfallendem Versand)', () => {
+    expect(v2Price(9.99, 1.0).price).toBe(22.45);
     expect(v2Price(10, 1.0).price).toBe(19.95);
   });
 
-  test('Eigenschaft über Ware 1,00–60,00 € (1-Cent-Schritte) und alle Stufen inkl. 4,50: Preis endet auf ,95, Gewinn nie unter Boden, nie unter 1,00 €', () => {
+  test('Eigenschaft über Ware 1,00–60,00 € (1-Cent-Schritte) und alle Stufen inkl. 4,50: Preis endet auf ,45 oder ,95, Gewinn nie unter max(Boden − 0,10, 1,00 €)', () => {
     const floors: Record<number, number> = { 1: 1.0, 1.5: 1.2, 2: 1.3, 3: 1.5, 4.5: 2.0 };
     let violations = 0;
     let minHeadroom = Infinity;
@@ -187,8 +198,9 @@ describe('computeMinSellPrice mit Rundung "floor95" — Beispiele der Übergabe,
       const ware = cents / 100;
       for (const t of [1, 1.5, 2, 3, 4.5]) {
         const r = v2Price(ware, t);
-        const floor = floors[t];
-        if (Math.round(r.price * 100) % 100 !== 95) violations++;
+        const floor = Math.max(floors[t] - 0.10, 1.0); // K-006: Toleranz 0,10 unter dem Boden, nie unter 1,00 €
+        const ending = Math.round(r.price * 100) % 100;
+        if (ending !== 45 && ending !== 95) violations++;
         if (r.profit < floor - 1e-9) violations++;
         if (r.profit < 1.0 - 1e-9) violations++;
         minHeadroom = Math.min(minHeadroom, r.profit - floor);
@@ -198,11 +210,11 @@ describe('computeMinSellPrice mit Rundung "floor95" — Beispiele der Übergabe,
     expect(minHeadroom).toBeGreaterThanOrEqual(0);
   });
 
-  test('roundToProfitFloor: ,95 unter dem Rohpreis; exakt auf der Marke bleibt sie (kein Gleitkomma-Rauschen); Boden hebt in ganzen Euro an', () => {
-    expect(roundToProfitFloor(13.8675, p => p * 0.762 - 0.357 - 8.71, 1.2)).toBe(13.95);
+  test('roundToProfitFloor: ,45/,95 unter dem Rohpreis; exakt auf der Marke bleibt sie (kein Gleitkomma-Rauschen); Boden hebt in 0,50-€-Schritten an', () => {
+    expect(roundToProfitFloor(13.8675, p => p * 0.762 - 0.357 - 8.71, 1.2)).toBe(13.45);
     expect(roundToProfitFloor(14.95, () => 10, 1)).toBe(14.95);
     expect(roundToProfitFloor(14.950000000000001, () => 10, 1)).toBe(14.95);
-    expect(roundToProfitFloor(14.5, p => (p === 13.95 ? 0.5 : 5), 1)).toBe(14.95);
+    expect(roundToProfitFloor(14.5, p => (p === 14.45 ? 0.5 : 5), 1)).toBe(14.95);
   });
 });
 
@@ -299,11 +311,13 @@ describe('evaluatePriceAlarm — Alarm nur bei Gewinn UNTER DEM BODEN der Stufe 
 });
 
 describe('evaluateTargetDisplay — "Ziel <Stufe> · Erwartet <echter Gewinn>"', () => {
-  test('grün: Erwartet ≥ Ziel; gelb: Erwartet < Ziel; rot: Erwartet < Boden', () => {
+  test('grün: Erwartet ≥ Ziel; gelb: Erwartet < Ziel; rot: Erwartet < Boden − 0,10 (K-006, nie unter 1,00)', () => {
     expect(evaluateTargetDisplay(2, 2.0).level).toBe('ok');
     expect(evaluateTargetDisplay(1.5, 1.87).level).toBe('ok');
     expect(evaluateTargetDisplay(2, 1.56).level).toBe('yellow');
-    expect(evaluateTargetDisplay(2, 1.29).level).toBe('red');
+    expect(evaluateTargetDisplay(2, 1.29).level).toBe('yellow'); // Stufe C: 1,29 ≥ 1,30 − 0,10 = 1,20 → Toleranz
+    expect(evaluateTargetDisplay(2, 1.19).level).toBe('red');
+    expect(evaluateTargetDisplay(1, 0.99).level).toBe('red');   // Stufe A: 1,00 − 0,10 = 0,90, aber nie unter 1,00 (Beschluss 14.10.)
   });
 
   test('genau auf dem Boden ist gelb, nicht rot; 1,2999 zählt auf Cent gerundet als 1,30 (kein Rauschen-Alarm)', () => {
@@ -343,9 +357,9 @@ describe('computeVariantSellPrices unter Formel v2 (Anker = teuerste Variante, G
     variants, anchorSellPrice, isChinaOrigin, ...FEES, adRatePercent: 5, targetMarginEur,
   });
 
-  test('stele-110 (China, Anker 19,95): 19,95 / 16,95 / 15,95 / 13,95 / 12,95 / 12,95 — der Ankergewinn 1,5949 liegt unter dem Ziel 2,00, also gilt das Ziel', () => {
+  test('stele-110 (China, Anker 19,95): 19,95 / 16,45 / 15,45 / 14,45 / 13,45 / 12,95 — der Ankergewinn 1,5949 liegt unter dem Ziel 2,00, also gilt das Ziel', () => {
     const p = plan(true);
-    expect(p.rows.map(r => r.sellPrice)).toEqual([19.95, 16.95, 15.95, 13.95, 12.95, 12.95]);
+    expect(p.rows.map(r => r.sellPrice)).toEqual([19.95, 16.45, 15.45, 14.45, 13.45, 12.95]);
     expect(p.anchorSkuId).toBe('stele-110-v1');
     expect(p.anchorProfit).toBeCloseTo(1.5949, 4);
     expect(p.targetProfitSource).toBe('targetMargin');
@@ -362,8 +376,8 @@ describe('computeVariantSellPrices unter Formel v2 (Anker = teuerste Variante, G
     for (const row of plan(false).rows) expect(row.profit).toBeGreaterThanOrEqual(1.30 - 1e-9);
   });
 
-  test('Herkunft EU (keine Einfuhrabgaben) ergibt andere Preise: 19,95 / 15,95 / 14,95 / 13,95 / 12,95 / 11,95', () => {
-    expect(plan(false).rows.map(r => r.sellPrice)).toEqual([19.95, 15.95, 14.95, 13.95, 12.95, 11.95]);
+  test('Herkunft EU (keine Einfuhrabgaben) ergibt andere Preise: 19,95 / 15,95 / 14,95 / 13,95 / 12,95 / 12,45', () => {
+    expect(plan(false).rows.map(r => r.sellPrice)).toEqual([19.95, 15.95, 14.95, 13.95, 12.95, 12.45]);
   });
 
   test('Anker behält EXAKT den heutigen Preis (20,00, keine Nachrundung); die billigere Variante 12,95', () => {
@@ -414,10 +428,10 @@ describe('Varianten-Regel 6c (nur vorbereitet, im Betrieb AUS)', () => {
     isChinaOrigin: true, ...FEES, adRatePercent: 5, targetMarginEur: 2,
   });
 
-  test('Variante unter dem Boden (Gewinn 0,0389 < 1,30) wird auf den Formelpreis 13,95 angehoben', () => {
+  test('Variante unter dem Boden (Gewinn 0,0389 < 1,30) wird auf den Formelpreis 14,45 angehoben', () => {
     expect(rows[0].action).toBe('raise');
     expect(rows[0].profitAtCurrent).toBeCloseTo(0.0389, 4);
-    expect(rows[0].newSellPrice).toBe(13.95);
+    expect(rows[0].newSellPrice).toBe(14.45);
   });
 
   test('Variante über dem Boden (Gewinn 4,4949) behält ihren Preis — keine Erhöhung über die Formel', () => {
