@@ -2804,7 +2804,11 @@ const app = new Hono()
       // eigenständig einen neuen Verkaufspreis — nur die priceChanged-Bedeutung wird korrigiert.
       const { isChinaShipping } = await import('./price-monitor');
       const { evaluatePriceAlarm, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
-      const priceChanged = evaluatePriceAlarm({
+      // K-008: gehaltener Preis (Gewinn ≥ 0,90 €) löst keinen Alarm aus (gleiche Regel wie die Preisprüfung).
+      const { getPriceHolds } = await import('./price-holds');
+      const { resolvePriceHolds } = await import('../shared/price-hold');
+      const holdHere = resolvePriceHolds({ ...old, buyPrice: body.buyPrice }, (await getPriceHolds().catch((): Awaited<ReturnType<typeof getPriceHolds>> => ({})))[String(id)]);
+      const priceChanged = !holdHere.allHeld && evaluatePriceAlarm({
         currentSellPrice: old.sellPrice,
         variants: [{ buyPrice: body.buyPrice }],
         isChinaOrigin: isChinaShipping(old.shipsFrom),
@@ -3592,6 +3596,10 @@ const app = new Hono()
         const { isChinaShipping } = await import('./price-monitor');
         const { computeMinSellPrice, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
+        // K-008: "Preis halten" (app_settings) einmal je Lauf laden; Fehler → ohne Halten (Verhalten wie bisher).
+        const { getPriceHolds, releasePriceHolds } = await import('./price-holds');
+        const { resolvePriceHolds } = await import('../shared/price-hold');
+        const priceHolds = await getPriceHolds().catch((): Awaited<ReturnType<typeof getPriceHolds>> => ({}));
         for (const product of all) {
           const url = product.sourceUrl || product.amazonUrl;
           if (!url || url === 'manual' || !url.includes('aliexpress')) {
@@ -3636,15 +3644,21 @@ const app = new Hono()
             // applyRaiseOnly() ist das alleinige Gate: computedMinPrice <= aktueller Preis →
             // 'none', kein Schreibvorgang, kein eBay-Call.
             // A-014 (Preisformel v2): nur anheben, wenn der Gewinn beim aktuellen Preis unter dem Boden liegt.
-            const alarm = evaluatePriceAlarm({
+            const checkoutFactor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); // K-005
+            // K-008: alles gehalten (Gewinn ≥ 0,90 €) → kein Alarm, kein Anheben; < 0,90 € → Halten aufheben (Hinweis), wie bisher.
+            const hold = resolvePriceHolds({ ...product, buyPrice: newPrice }, priceHolds[String(product.id)]);
+            if (hold.releaseKeys.length > 0) await releasePriceHolds(product.id, hold.rows.filter(r => r.state === 'release'));
+            const alarmRes = evaluatePriceAlarm({
               currentSellPrice: product.sellPrice,
               variants: [{ buyPrice: newPrice }],
               isChinaOrigin: isChinaShipping(product.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
-              checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
-            }).isAlarm;
+              checkoutFactor,
+            });
+            if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
+            const alarm = !hold.allHeld && alarmRes.isAlarm;
             const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
             const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
             // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): vorher hier eine reine
@@ -4128,6 +4142,52 @@ app.post('/products/checkout-factor/sync', async (c) => {
     return c.json(await syncCheckoutFactors(), 200);
   } catch (e) {
     console.error('[checkout-factor/sync]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// K-008: "Preis halten" je Variante — lesen und an/aus schalten. Schreibt NUR app_settings 'price_holds' (keine Migration),
+// sendet nichts an eBay, ändert keinen Preis. Gehalten wird der HEUTIGE VK der Variante (aus derselben Rechnung wie "Erwartet").
+// Außerhalb der Hono-Kette registriert (TS2589, siehe checkout-factor/sync); liegt hinter derselben Login-Middleware.
+app.get('/price-holds', async (c) => {
+  try {
+    const { getPriceHolds, getPriceHoldNotices } = await import('./price-holds');
+    return c.json({ holds: await getPriceHolds(), notices: await getPriceHoldNotices() }, 200);
+  } catch (e) {
+    console.error('[price-holds GET]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+app.post('/price-holds', async (c) => {
+  let body: { productId?: unknown; skuId?: unknown; hold?: unknown; note?: unknown };
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+  const productId = typeof body.productId === 'number' && Number.isInteger(body.productId) ? body.productId : null;
+  if (productId == null) return c.json({ error: 'productId fehlt' }, 400);
+  if (typeof body.hold !== 'boolean') return c.json({ error: 'hold (true/false) fehlt' }, 400);
+  const skuId = typeof body.skuId === 'string' && body.skuId.trim() !== '' ? body.skuId.trim() : null;
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, productId)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const { productProfitRows } = await import('../shared/target-margin-bulk');
+    const { SINGLE_ITEM_HOLD_KEY } = await import('../shared/price-hold');
+    const { setPriceHold } = await import('./price-holds');
+    const { rows, isVariant } = productProfitRows(product);
+    const key = isVariant ? skuId : SINGLE_ITEM_HOLD_KEY;
+    if (!key) return c.json({ error: 'skuId fehlt (Varianten-Produkt)' }, 400);
+    if (!body.hold) return c.json({ ok: true, holds: (await setPriceHold(productId, key, null))[String(productId)] ?? {} }, 200);
+    const row = isVariant ? rows.find(r => r.skuId === key) : rows[0];
+    if (!row) return c.json({ error: 'Kein heutiger Verkaufspreis für diese Variante bekannt — nichts gehalten (nichts geraten)' }, 422);
+    const { PRICE_HOLD_MIN_PROFIT_EUR } = await import('../shared/price-hold');
+    if (row.profit < PRICE_HOLD_MIN_PROFIT_EUR - 1e-9) {
+      return c.json({ error: `Gewinn bei ${row.sellPrice.toFixed(2)} € ist nur ${row.profit.toFixed(2)} € (< ${PRICE_HOLD_MIN_PROFIT_EUR.toFixed(2)} €) — Halten würde sofort wieder aufgehoben, nichts gesetzt` }, 422);
+    }
+    const note = typeof body.note === 'string' ? body.note.slice(0, 200) : null;
+    const holds = await setPriceHold(productId, key, { sellPrice: row.sellPrice, at: new Date().toISOString(), note });
+    console.log(`[K-008] stele-${productId} ${row.label || key}: Preis halten AN bei ${row.sellPrice.toFixed(2)} € (Gewinn ${row.profit.toFixed(2)} €)`);
+    return c.json({ ok: true, holds: holds[String(productId)] ?? {} }, 200);
+  } catch (e) {
+    console.error('[price-holds POST]', e);
     return c.json({ error: String(e) }, 500);
   }
 });

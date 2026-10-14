@@ -8,16 +8,16 @@ import { ALI_EINFUHR_EUR, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR } from './con
 
 export const CHECKOUT_FACTOR_MAX_AGE_DAYS = 14;
 export const CHECKOUT_FACTOR_MAX = 1.0;
-// Plausibilitätsgrenze: ein Faktor unter 0,50 (Kasse weniger als halb so teuer wie die API) ist eher ein Eingabefehler
-// (falsche Bestellung/Menge/Rabattaktion) als ein echter Preisunterschied → wird nicht übernommen, sondern gemeldet.
-export const CHECKOUT_FACTOR_MIN_PLAUSIBLE = 0.5;
+// Plausibilitätsgrenze (Inhaber 14.10.2026, 20:50: "Grenze 0,85: ja"): ein Faktor unter 0,85 ist eher Eingabefehler/Rabattaktion als ein
+// echter Dauer-Preisunterschied → wird nicht übernommen (Abgleich) UND nie angewendet (activeCheckoutFactor → ohne Faktor rechnen).
+export const CHECKOUT_FACTOR_MIN_PLAUSIBLE = 0.85;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
 
-/** Gültiger Faktor oder null: 0 < f ≤ 1 und Rechnungsdatum nicht älter als 14 Tage (und nicht in der Zukunft). */
+/** Gültiger Faktor oder null: 0,85 ≤ f ≤ 1 und Rechnungsdatum nicht älter als 14 Tage (und nicht in der Zukunft). */
 export function activeCheckoutFactor(factor: number | null | undefined, at: string | null | undefined, now: Date = new Date()): number | null {
-  if (typeof factor !== 'number' || !Number.isFinite(factor) || factor <= 0 || factor > CHECKOUT_FACTOR_MAX + 1e-9) return null;
+  if (typeof factor !== 'number' || !Number.isFinite(factor) || factor < CHECKOUT_FACTOR_MIN_PLAUSIBLE - 1e-9 || factor > CHECKOUT_FACTOR_MAX + 1e-9) return null;
   if (!at) return null;
   const t = Date.parse(at);
   if (!Number.isFinite(t)) return null;

@@ -13,6 +13,7 @@ import { DescriptionRefreshPanel } from "../components/description-refresh-panel
 import { TargetBadge, postTierReprice, type RepriceResult, type TierPatch } from "../components/target-badge";
 import { TIER_REPRICE_MAX_PRODUCTS, expectedFromPlan } from "../../shared/tier-reprice";
 import { MARGIN_TIERS } from "../../shared/constants";
+import { usePriceHolds } from "../lib/price-holds-store";
 import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
 
 interface EbayListing {
@@ -605,6 +606,7 @@ export default function Listings() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F8FAFC", fontFamily: "'Poppins', sans-serif", padding: "24px 16px" }}>
+      <PriceHoldNotices />
       {/* Bearbeiten-Modal — Titel + Bullets, sofort live auf eBay */}
       {editListing && (() => {
         const bullets = editBullets.split("\n").map(s => s.trim()).filter(Boolean);
@@ -1711,6 +1713,22 @@ export default function Listings() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// K-008: Hinweis an den Inhaber — die Preisprüfung hat ein "Preis halten" aufgehoben (Gewinn < 0,90 €). Zeigt die letzten 7 Tage.
+function PriceHoldNotices() {
+  const { notices } = usePriceHolds();
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const recent = notices.filter(n => Date.parse(n.at) >= since).slice(0, 5);
+  if (recent.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 12, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "8px 12px", fontSize: 12, color: "#92400E" }}>
+      <div style={{ fontWeight: 700, marginBottom: 2 }}>⚠ "Preis halten" automatisch aufgehoben</div>
+      {recent.map((n, i) => (
+        <div key={i}>{new Date(n.at).toLocaleString("de-DE")}: {n.text}</div>
+      ))}
     </div>
   );
 }

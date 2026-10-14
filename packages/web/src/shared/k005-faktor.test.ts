@@ -2,7 +2,8 @@
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3), nicht geschätzt.
 import { describe, expect, test } from 'bun:test';
 import { activeCheckoutFactor, applyCheckoutFactor, checkoutWareFromInvoiceTotal, deriveCheckoutFactors, type FactorMatch, type FactorOrder } from './checkout-factor';
-import { computeMinSellPrice, profitAtSellPrice, evaluatePriceAlarm, type PricingInput } from './pricing';
+import { computeMinSellPrice, profitAtSellPrice, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, type PricingInput } from './pricing';
+import { productProfitRows } from './target-margin-bulk';
 import { computeOrderNettoErgebnis } from '../api/order-matching';
 import { planCheckoutFactorSync, type FactorSyncProduct } from '../api/checkout-factor-sync';
 
@@ -183,7 +184,7 @@ describe('Faktor-Abgleich (planCheckoutFactorSync): nur schreiben, wenn die Best
     expect(r.writes).toEqual([]);
     expect(r.clears).toEqual([220]);
   });
-  test('B1: Betrag jetzt unplausibel (5,00 → Faktor < 0,5) → Faktor auf null', () => {
+  test('B1: Betrag jetzt unplausibel (5,00 → Faktor < 0,85) → Faktor auf null', () => {
     const r = planCheckoutFactorSync([{ ebayOrderId: '15-15284-69835', manualBuyPrice: 5 }], orders, [same(0.9409, '2026-10-12T10:00:00.000Z')]);
     expect(r.clears).toEqual([220]);
   });
@@ -194,5 +195,42 @@ describe('Faktor-Abgleich (planCheckoutFactorSync): nur schreiben, wenn die Best
   });
   test('älterer gespeicherter Stand → schreiben', () => {
     expect(planCheckoutFactorSync(notes, orders, [prod('2026-10-01T10:00:00.000Z')]).writes).toHaveLength(1);
+  });
+});
+
+// Inhaber 14.10.2026, 20:50: "Grenze 0,85: ja. Faktor auch für Alarm: ja – aber nur, wenn er jünger als 14 Tage und mindestens 0,85 ist,
+// sonst ohne Faktor rechnen. Zusätzlich Warnhinweis, wenn der Gewinn ohne Faktor unter 0 läge." Alle Werte mit bun nachgerechnet.
+describe('K-005 Grenze 0,85 + Warnhinweis ohne Faktor', () => {
+  const today = new Date().toISOString();
+  test('activeCheckoutFactor: 0,84 → null (ohne Faktor), 0,85 → gilt', () => {
+    expect(activeCheckoutFactor(0.84, today)).toBeNull();
+    expect(activeCheckoutFactor(0.85, today)).toBe(0.85);
+  });
+  test('Abgleich: stele-220 Rechnung 13,57 → Ware 10,00, Faktor 0,8203 < 0,85 → nicht übernommen', () => {
+    const r = planCheckoutFactorSync([{ ebayOrderId: 'X', manualBuyPrice: 13.57 }],
+      [{ orderId: 'X', orderDate: '2026-10-12T10:00:00.000Z', lineItems: [{ sku: 'stele-220', quantity: 1 }] }],
+      [{ id: 220, asin: null, buyPrice: 12.19, shipsFrom: 'China', adRate: 5, variantPrices: null, variants: null, aliCheckoutFactorAt: null }]);
+    expect(r.writes).toEqual([]);
+    expect(r.übersprungen.some(s => s.reason.includes('0.8203'))).toBe(true);
+  });
+  const base = { variants: [{ buyPrice: 12.19 }], isChinaOrigin: true, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+    ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5, targetMarginEur: 1 };
+  test('stele-220 VK 20,95, Faktor 0,9409: mit Faktor +0,5669, ohne −0,1531 → Warnhinweis', () => {
+    const a = evaluatePriceAlarm({ ...base, currentSellPrice: 20.95, checkoutFactor: 0.9409 });
+    expect(a.worstProfit).toBeCloseTo(0.5669, 4);
+    expect(a.worstProfitWithoutFactor).toBeCloseTo(-0.1531, 4);
+    expect(a.lossWithoutFactor).toBe(true);
+  });
+  test('VK 21,45: ohne Faktor +0,2279 → kein Warnhinweis; ohne Faktor gerechnet → nie Warnhinweis', () => {
+    expect(evaluatePriceAlarm({ ...base, currentSellPrice: 21.45, checkoutFactor: 0.9409 }).lossWithoutFactor).toBe(false);
+    const n = evaluatePriceAlarm({ ...base, currentSellPrice: 20.95, checkoutFactor: null });
+    expect(n.lossWithoutFactor).toBe(false);
+    expect(n.worstProfitWithoutFactor).toBeCloseTo(-0.1531, 4);
+  });
+  test('Listings/Produkte-Anzeige: profitWithoutFactor je Zeile', () => {
+    const { rows } = productProfitRows({ id: 220, variants: null, adRate: 5, shipsFrom: 'China', sellPrice: 20.95, buyPrice: 12.19,
+      variantPrices: null, aliCheckoutFactor: 0.9409, aliCheckoutFactorAt: today });
+    expect(rows[0].profit).toBeCloseTo(0.5669, 4);
+    expect(rows[0].profitWithoutFactor).toBeCloseTo(-0.1531, 4);
   });
 });

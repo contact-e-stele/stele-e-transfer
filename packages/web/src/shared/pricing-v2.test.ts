@@ -306,7 +306,7 @@ describe('evaluatePriceAlarm — Alarm nur bei Gewinn UNTER DEM BODEN der Stufe 
   test('VK 11,95 bei Ware 3,39: Verlust (−0,2011) → Alarm; kein VK → kein Alarm', () => {
     expect(alarm(11.95, 3.39, 2).worstProfit).toBeCloseTo(-0.2011, 4);
     expect(alarm(11.95, 3.39, 2).isAlarm).toBe(true);
-    expect(alarm(null, 3.15, 2)).toEqual({ isAlarm: false, worstProfit: null });
+    expect(alarm(null, 3.15, 2)).toEqual({ isAlarm: false, worstProfit: null, worstProfitWithoutFactor: null, lossWithoutFactor: false });
   });
 });
 
