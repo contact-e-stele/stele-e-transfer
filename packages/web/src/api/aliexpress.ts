@@ -1278,6 +1278,20 @@ async function scrapeWithPlaywrightInner(
 // wir hier per leichtem HTML-Fetch nach (kein Playwright/Browser nötig) und matchen
 // über den sichtbaren Variantenwert (z.B. "Rot"), da SKU-IDs zwischen DS-API und
 // Live-Seite nicht übereinstimmen.
+// K-005 Punkt 1 (Diagnose, 14.10.2026): Preise je SKU so, wie die öffentliche Produktseite sie zeigt (skuPriceList/actSkuCalPrice),
+// zum Vergleich mit dem DS-API-Preis. Nur lesen, wird nicht gespeichert und ändert keine Preiswahl. null = Seite nicht ladbar.
+export async function fetchPageVariantPrices(url: string): Promise<{ source: 'page'; variants: Array<{ skuId: string; attrs: Record<string, string>; price: number; originalPrice?: number }> } | null> {
+  try {
+    const html = await fetchWithFallbacks(url);
+    if (!html) return null;
+    const { variantPrices } = extractSteleData(html);
+    return { source: 'page', variants: variantPrices.map(v => ({ skuId: v.skuId, attrs: v.attrs, price: v.price, originalPrice: v.originalPrice })) };
+  } catch (e) {
+    console.log('[AliExpress] Seitenpreis-Diagnose fehlgeschlagen:', e);
+    return null;
+  }
+}
+
 export async function backfillVariantImages(url: string, variantPrices: VariantPrice[]): Promise<VariantPrice[]> {
   if (variantPrices.length === 0 || variantPrices.every(v => v.imageUrl)) return variantPrices;
   try {
