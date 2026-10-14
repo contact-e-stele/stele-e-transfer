@@ -148,3 +148,18 @@ describe('aggregateVariantSales — Abgleich: keine Position verschwindet stills
     expect(r.lineItemsMatched).toBe(0);
   });
 });
+
+// K-005 Gegenprüfung B2 (14.10.2026): Kassen-Faktor wirkt hier wie im Bestellungs-Gewinn (order-matching.ts).
+// Rot: Ware 7,69 × 0,9 = 6,921 → 6,92 (beide < 10 € → Versand 1,99 bleibt). Gewinn steigt um 7,69 − 6,92 = 0,77 (mit bun nachgerechnet).
+describe('aggregateVariantSales — K-005 Kassen-Faktor', () => {
+  const order = [{ orderId: 'f1', orderDate: tageHer(5), lineItems: [{ sku: skuRot, title: 'Rot', quantity: 1, lineItemCost: 19.95 }] }];
+  const ohne = aggregateVariantSales({ orders: order, products: [produkt110], manualBuyPriceByOrderId: new Map(), now: NOW });
+  test('Faktor 0,9 von heute → Gewinn je Verkauf +0,77', () => {
+    const mit = aggregateVariantSales({ orders: order, products: [{ ...produkt110, aliCheckoutFactor: 0.9, aliCheckoutFactorAt: new Date().toISOString() }], manualBuyPriceByOrderId: new Map(), now: NOW });
+    expect(mit.salesBySku.get('110::v1')!.profitPerSale[0] - ohne.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(0.77, 9);
+  });
+  test('Faktor älter als 14 Tage → wie ohne Faktor', () => {
+    const alt = aggregateVariantSales({ orders: order, products: [{ ...produkt110, aliCheckoutFactor: 0.9, aliCheckoutFactorAt: new Date(Date.now() - 15 * 86400000).toISOString() }], manualBuyPriceByOrderId: new Map(), now: NOW });
+    expect(alt.salesBySku.get('110::v1')!.profitPerSale[0]).toBe(ohne.salesBySku.get('110::v1')!.profitPerSale[0]);
+  });
+});

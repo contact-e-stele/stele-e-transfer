@@ -23,6 +23,7 @@ import {
   MIN_GEWINN_EUR, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, ALI_EINFUHR_EUR,
   MARGIN_TIERS, HIDDEN_MARGIN_TIER, MIN_PROFIT_FLOOR_EUR,
 } from './constants';
+import { applyCheckoutFactor } from './checkout-factor';
 
 // 'floor95' = Preisformel v2 (A-014, K-006): erlaubte Endung ,45/,95 UNTER dem Rohpreis; liegt der Gewinn dann unter dem Boden der
 // Margen-Stufe (− 0,10 Toleranz, nie unter 1,00), die nächste erlaubte Endung darüber (nur in computeMinSellPrice). Name bleibt aus Kompatibilität.
@@ -128,6 +129,7 @@ export interface PricingInput {
   rounding: RoundingMode;     // Rundungsmodus für minSellPrice
   profitFloorEur?: number;    // nur Modus 'floor95': Boden explizit setzen (sonst profitFloorFor(targetMarginEur))
   earUmlageEur?: number;      // A-029: EAR-Umlage je Stück, wird bei Elektro = ja zu K addiert (weggelassen/0 = Formel unverändert, siehe earUmlageFor())
+  checkoutFactor?: number | null; // K-005: Kassen-Faktor des Produkts (activeCheckoutFactor); Ware = buyPrice × Faktor. Weggelassen/null = unverändert
 }
 
 export interface PricingResult {
@@ -149,7 +151,7 @@ export interface PricingResult {
 // Produkte-Tab-Badge), dieselben Gebühren-Konstanten wiederverwenden können, statt sie ein
 // zweites Mal selbst zu berechnen.
 export function computeMinSellPrice(input: PricingInput): PricingResult {
-  const ali = computeAliCosts(input.buyPrice, input.isChinaOrigin);
+  const ali = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin); // K-005: Ware × Kassen-Faktor
   const { shipping, customs } = ali;
   const totalCost = ali.totalCost + (input.earUmlageEur ?? 0); // A-029: K + EAR-Umlage (nur bei Elektro = ja, sonst 0)
   const baseFeeRateGross = (input.ebayFeeRatePercent / 100) * input.vatFactor;
@@ -248,13 +250,14 @@ export interface ProfitAtSellPriceInput {
   vatFactor: number;
   adRatePercent: number;
   earUmlageEur?: number;     // A-029: EAR-Umlage je Stück (Elektro = ja), 0/weggelassen = unverändert
+  checkoutFactor?: number | null; // K-005: Kassen-Faktor (activeCheckoutFactor), weggelassen/null = unverändert
 }
 
 // Gewinn bei einem GEGEBENEN Verkaufspreis — die Umkehrung von computeMinSellPrice(), Formel v2 (A-014):
 //   Gewinn = Preis × f − Fix − K,  f = 1 − (15% + adRate) × 1,19,  Fix = 0,30 × 1,19,
 //   K = Ware + Versand + Einfuhrabgaben (computeAliCosts)
 export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
-  const totalCost = computeAliCosts(input.buyPrice, input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0);
+  const totalCost = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0); // K-005
   const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);
@@ -292,6 +295,7 @@ export interface PriceAlarmInput {
   vatFactor: number;
   adRatePercent: number;
   targetMarginEur: number;
+  checkoutFactor?: number | null; // K-005: Kassen-Faktor des Produkts (activeCheckoutFactor), weggelassen/null = unverändert
 }
 
 export interface PriceAlarmResult {
@@ -311,6 +315,7 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
     ebayFixedFeeEur: input.ebayFixedFeeEur,
     vatFactor: input.vatFactor,
     adRatePercent: input.adRatePercent,
+    checkoutFactor: input.checkoutFactor,
   }));
   const worstProfit = Math.min(...profits);
   // A-014: die ,95-Rundung unter dem Rohpreis liegt BEWUSST unter dem Zielgewinn ("Erwartet" < "Ziel" = gelb);

@@ -76,6 +76,7 @@ const { salesBySku, lineItemsTotal, lineItemsMatched, unmatched } = aggregateVar
   products: multiVariant.map(({ product, variants }) => ({
     id: product.id, asin: product.asin, buyPrice: product.buyPrice, shippingCost: product.shippingCost,
     shipsFrom: product.shipsFrom, adRate: product.adRate,
+    aliCheckoutFactor: product.aliCheckoutFactor, aliCheckoutFactorAt: product.aliCheckoutFactorAt,
     variants: variants.map(v => ({ skuId: v.skuId, attrs: v.attrs, buyPrice: v.price })),
   })),
   manualBuyPriceByOrderId: new Map(allNotes.map(n => [n.ebayOrderId, n.manualBuyPrice])),

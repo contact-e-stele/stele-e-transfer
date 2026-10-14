@@ -347,6 +347,7 @@ export interface EbayListingInput {
   shortDescription?: string; // Plain-Text – geht in inventory_item description, max 4000 Zeichen
   price: number; // EUR
   earUmlageEur?: number; // A-029: EAR-Umlage je Stück (nur Elektro = ja, sonst 0/weggelassen) — nur für den Fallback-Preis einer Variante ohne ebayPrice
+  checkoutFactor?: number | null; // K-005: Kassen-Faktor des Produkts (activeCheckoutFactor) — nur für denselben Fallback-Preis; weggelassen = ohne Faktor
   // A-021: OUT-Parameter. listOnEbay/listOnEbayWithVariants hängen hier jeden Offer-Preis an, sobald das Offer bei eBay angelegt ist. Der Aufrufer
   // darf ihn erst auswerten (= in der App speichern), NACHDEM listOnEbay erfolgreich zurückgekehrt ist (Publish erfolgreich) — bei einem Fehler
   // wirft listOnEbay, und nichts davon wird gespeichert.
@@ -1807,7 +1808,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
             ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
             targetMarginEur: input.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-            rounding: 'floor95',
+            rounding: 'floor95', checkoutFactor: input.checkoutFactor, // K-005
           }).minSellPrice
         : undefined);
     if (varPrice == null) {

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Package, ExternalLink, RefreshCw, ShoppingCart, Clock, CheckCircle, XCircle, Loader, TrendingUp, AlertTriangle } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { profitAtSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { activeCheckoutFactor } from "../../shared/checkout-factor";
 
 interface Product {
   id: number;
@@ -20,6 +21,8 @@ interface Product {
   adRate: number | null;
   shippingCost: number | null;
   shipsFrom: string | null;
+  aliCheckoutFactor?: number | null;   // K-005 (GET /api/products liefert alle Spalten)
+  aliCheckoutFactorAt?: string | null;
   priceChanged: boolean;
   lastPriceCheck: string | null;
   createdAt: string;
@@ -142,6 +145,7 @@ export default function Dashboard() {
               sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, isChinaOrigin: isChinaShipping(p.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adR,
+              checkoutFactor: activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt), // K-005
             });
             return sum + profit;
           }, 0);

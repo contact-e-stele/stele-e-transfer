@@ -31,7 +31,8 @@ import { isVariantProduct } from '../shared/variant-product';
 import { runTierReprice, type TierRepriceProductRow } from './tier-reprice';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
 import { evaluateVariantGate } from '../shared/variant-gate';
-import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
+import { activeCheckoutFactor } from '../shared/checkout-factor';
+import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, orderProductInfoFromRow, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
 import { Sentry } from '../instrument';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
@@ -642,6 +643,8 @@ const app = new Hono()
         variantPrices: schema.products.variantPrices,
         variants: schema.products.variants,
         variantSellPrices: schema.products.variantSellPrices,
+        aliCheckoutFactor: schema.products.aliCheckoutFactor,     // K-005: "Erwartet" im Listings-Tab mit Kassen-Faktor
+        aliCheckoutFactorAt: schema.products.aliCheckoutFactorAt, // K-005
         htmlDescription: schema.products.htmlDescription,
       }).from(schema.products).all();
 
@@ -793,6 +796,8 @@ const app = new Hono()
         variantPrices: schema.products.variantPrices,
         variants: schema.products.variants,
         adRate: schema.products.adRate,
+        aliCheckoutFactor: schema.products.aliCheckoutFactor,     // K-005
+        aliCheckoutFactorAt: schema.products.aliCheckoutFactorAt, // K-005
       }).from(schema.products).all();
       // Teil 3B (2026-09-13): Matching-Regeln nach src/api/order-matching.ts ausgelagert (reiner
       // Extract, identische Logik), damit das Verkaufszahlen-Berichtsskript dieselbe Zuordnung nutzt.
@@ -851,13 +856,8 @@ const app = new Hono()
           manualBuyPrice: note?.manualBuyPrice,
           findProduct: (sku) => {
             const product = findProductForSku(sku);
-            if (!product) return null;
-            // K-004: Varianten (EK je Variante + "Ships From") und Anzeigensatz des Produkts für den Bestellungs-Gewinn.
-            let variants: Array<{ skuId?: string; attrs?: Record<string, string>; price?: number }> | undefined;
-            try { const v = JSON.parse(product.variantPrices ?? '[]'); if (Array.isArray(v)) variants = v; } catch { /* ignore */ }
-            let groups: Array<{ name: string; values: string[] }> | undefined;
-            try { const g = JSON.parse(product.variants ?? '[]'); if (Array.isArray(g)) groups = g; } catch { /* ignore */ }
-            return { id: product.id, buyPrice: product.buyPrice, shipsFrom: product.shipsFrom, adRate: product.adRate, variants, groups };
+            // K-004 Varianten/Anzeigensatz, K-005 Kassen-Faktor — Umwandlung an EINER Stelle (order-matching.ts).
+            return product ? orderProductInfoFromRow(product) : null;
           },
         });
         return {
@@ -1050,6 +1050,15 @@ const app = new Hono()
 
       await db.insert(schema.orderNotes).values({ ebayOrderId, ...update })
         .onConflictDoUpdate({ target: schema.orderNotes.ebayOrderId, set: update });
+
+      // K-005: neuer Rechnungsbetrag → Kassen-Faktoren nachjustieren. Im Hintergrund (eBay-Bestellabruf dauert), Fehler nur loggen —
+      // die Antwort dieses Endpunkts bleibt unverändert.
+      if (body.manualBuyPrice != null) {
+        void import('./checkout-factor-sync')
+          .then(m => m.syncCheckoutFactors())
+          .then(r => console.log(`[K-005] Faktor-Abgleich nach Rechnung ${ebayOrderId}: ${r.geschrieben} geschrieben, ${r.übersprungen.length} übersprungen`))
+          .catch(e => console.warn(`[K-005] Faktor-Abgleich nach Rechnung ${ebayOrderId} fehlgeschlagen:`, e));
+      }
 
       // eBay-Übermittlung NUR bei explizitem gemeinsamem Speichern von Sendungsnummer + Carrier
       // durch den Nutzer — kein Auto-Trigger. Lokal ist zu diesem Zeitpunkt bereits gespeichert,
@@ -1296,6 +1305,8 @@ const app = new Hono()
         generatedTitle: schema.products.generatedTitle,
         variantPrices: schema.products.variantPrices,
         variants: schema.products.variants,
+        aliCheckoutFactor: schema.products.aliCheckoutFactor,     // K-005
+        aliCheckoutFactorAt: schema.products.aliCheckoutFactorAt, // K-005
       }).from(schema.products).all();
       const dbByListingId = new Map(dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
 
@@ -1333,7 +1344,7 @@ const app = new Hono()
           // unten.
           const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
           const variantZoll = isChinaShipping(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
-          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
+          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt)); // K-005
           const rawNewPrice = safeUniformVariantPrice(rows);
           if (rawNewPrice == null) continue;
           const oldPrice = listing.currentPrice;
@@ -1371,7 +1382,7 @@ const app = new Hono()
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-          rounding: 'floor95',
+          rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
         }).minSellPrice;
         const oldPrice = listing.currentPrice;
         // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
@@ -1442,7 +1453,7 @@ const app = new Hono()
         let newPrice: number | null;
         let variantRows: ReturnType<typeof computeVariantPriceRows> = [];
         if (isVariant) {
-          variantRows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
+          variantRows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt)); // K-005
           // newPrice bleibt informativ das Maximum (für DB-Speicherung/UI) — der tatsächliche
           // eBay-Schreibvorgang unten nutzt für jede Variante ihren EIGENEN Preis (P-27/P-28-Fix,
           // Live-Fund stele-138: vorher schrieb dieser Zweig denselben Einheitspreis auf jede SKU).
@@ -1459,7 +1470,7 @@ const app = new Hono()
                 ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
                 targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-                rounding: 'floor95',
+                rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
               }).minSellPrice
             : null;
           // Teil 2D ("Senkungsbremse"): dies ist der tatsächliche eBay-Schreibvorgang (unten,
@@ -2434,7 +2445,7 @@ const app = new Hono()
       ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
       targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-      rounding: 'floor95',
+      rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
     }).minSellPrice;
 
     let effectiveSellPrice: number | null = product.buyPrice != null
@@ -2627,6 +2638,7 @@ const app = new Hono()
         description: fullDescription,
         price: effectiveSellPrice,
         earUmlageEur: earUmlageFor(product), // A-029
+        checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005: Fallback-Preis einer Variante ohne ebayPrice
         sentPrices,
         quantity: 3,
         condition: 'NEW',
@@ -2799,6 +2811,7 @@ const app = new Hono()
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: old.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
         targetMarginEur: old.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+        checkoutFactor: activeCheckoutFactor(old.aliCheckoutFactor, old.aliCheckoutFactorAt), // K-005
       }).isAlarm;
 
       // Preis-Historie speichern
@@ -3218,6 +3231,7 @@ const app = new Hono()
         id: p.id, generatedTitle: p.generatedTitle, buyPrice: p.buyPrice, sellPrice: p.sellPrice, shipsFrom: p.shipsFrom, adRate: p.adRate,
         variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices, variants: p.variants,
         ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId, isElectric: p.isElectric,
+        aliCheckoutFactor: p.aliCheckoutFactor, aliCheckoutFactorAt: p.aliCheckoutFactorAt, // K-005: Kassen-Faktor in planTierReprice
       }).from(p).where(inArray(p.id, parsed.productIds)).all();
       const byId = new Map<number, TierRepriceProductRow>(rows.map(r => [r.id, { ...r, ebayStatus: r.ebayStatus ?? 'none' }]));
       const { updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
@@ -3248,6 +3262,7 @@ const app = new Hono()
         id: p.id, generatedTitle: p.generatedTitle, title: p.title, buyPrice: p.buyPrice, sellPrice: p.sellPrice, shipsFrom: p.shipsFrom,
         adRate: p.adRate, targetMarginEur: p.targetMarginEur, variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices,
         variants: p.variants, ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId, isElectric: p.isElectric,
+        aliCheckoutFactor: p.aliCheckoutFactor, aliCheckoutFactorAt: p.aliCheckoutFactorAt, // K-005: Kassen-Faktor in planTierReprice
       }).from(p).where(eq(p.ebayStatus, 'listed')).all();
       const { buildSenkBericht, SENK_SCHWELLE_EUR, SENK_BREMSE_PROZENT } = await import('../shared/senk-kandidaten');
       const { parseGroups } = await import('./tier-reprice');
@@ -3613,7 +3628,7 @@ const app = new Hono()
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-              rounding: 'floor95',
+              rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
             }).minSellPrice;
             // Teil 4/5 (2026-09-13): dieser Job ist komplett unbeaufsichtigt und darf
             // AUSSCHLIESSLICH anheben, nie senken — applyDecreaseCap() (Senkungsbremse) wird hier
@@ -3628,6 +3643,7 @@ const app = new Hono()
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+              checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
             }).isAlarm;
             const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
             const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
@@ -4097,6 +4113,21 @@ app.get('/products/check-duplicate', async (c) => {
     if (existing.length === 0) return c.json({ exists: false, productId });
     return c.json({ exists: true, productId, product: existing[0] });
   } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ─── K-005: Kassen-Faktoren aus erfassten AliExpress-Rechnungen nachjustieren (manuell) ─────────────────────
+// Liest order_notes + eBay-Bestellungen (nur Lesen) + Produkte; schreibt NUR products.ali_checkout_factor/_at/_order.
+// Kein eBay-Schreibaufruf, keine Preisänderung. Logik: api/checkout-factor-sync.ts.
+// Bewusst AUSSERHALB der Hono-Kette registriert: eine weitere verkettete Route sprengt die RPC-Typtiefe von AppType
+// (tsconfig.app.json: TS2589 "Type instantiation is excessively deep" in web/lib/api.ts) — Laufzeitverhalten identisch.
+app.post('/products/checkout-factor/sync', async (c) => {
+  try {
+    const { syncCheckoutFactors } = await import('./checkout-factor-sync');
+    return c.json(await syncCheckoutFactors(), 200);
+  } catch (e) {
+    console.error('[checkout-factor/sync]', e);
     return c.json({ error: String(e) }, 500);
   }
 });

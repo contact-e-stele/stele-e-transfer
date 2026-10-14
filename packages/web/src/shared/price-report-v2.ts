@@ -11,6 +11,7 @@ import {
 } from './pricing';
 import { MARGIN_TIERS } from './constants';
 import { isVariantProduct } from './variant-product';
+import { activeCheckoutFactor } from './checkout-factor';
 
 export interface ReportProduct {
   id: number;
@@ -25,6 +26,8 @@ export interface ReportProduct {
   shipsFrom: string | null;
   adRate: number | null;
   targetMarginEur: number | null;
+  aliCheckoutFactor?: number | null;  // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt)
+  aliCheckoutFactorAt?: string | null;
 }
 
 export interface PriceReportRow {
@@ -70,6 +73,7 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
     const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const target = p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
     const shippingCost = p.shippingCost ?? 0;
+    const checkoutFactor = activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt); // K-005: nur Formel v2, nicht die Vergleichsformel v1
 
     let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; ebayPrice?: number }> = [];
     try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
@@ -95,6 +99,7 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
       const common = {
         isChinaOrigin: china, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+        checkoutFactor,
       };
       const newSell = computeMinSellPrice({
         ...common, buyPrice: line.ware, targetMarginEur: target, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95',

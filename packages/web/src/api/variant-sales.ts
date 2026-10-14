@@ -6,6 +6,7 @@
 
 import { isChinaOriginForVariant, computeAliCosts, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { buildVariantSku } from './price-monitor';
+import { activeCheckoutFactor, applyCheckoutFactor } from '../shared/checkout-factor';
 import { buildProductLookups, findProductForSku, type UnmatchedReason } from './order-matching';
 
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
@@ -32,6 +33,9 @@ export interface SalesProduct {
   adRate: number | null;
   /** buyPrice = EK DIESER Variante (variantPrices[].price), nicht der Produkt-EK */
   variants: Array<{ skuId: string; attrs?: Record<string, string>; buyPrice: number }>;
+  /** K-005: Kassen-Faktor (products.ali_checkout_factor/_at), wie im Bestellungs-Gewinn (order-matching.ts) — gilt nur ≤ 14 Tage alt. */
+  aliCheckoutFactor?: number | null;
+  aliCheckoutFactorAt?: string | null;
 }
 
 export interface VariantSalesAgg {
@@ -126,7 +130,8 @@ export function aggregateVariantSales(input: {
       // Position. Sonst Ware + Versand + Einfuhrabgaben nach Preisformel v2 (A-014, computeAliCosts).
       const isChina = isChinaOriginForVariant(variant.attrs, product.shipsFrom); // K-004: Herkunft je Variante
       // Versand und Einfuhrabgaben fallen je Bestellposition EINMAL an (eine AliExpress-Bestellung), nicht je Stück — wie in order-matching.ts.
-      const einkaufJeStueck = (warePositionGesamt: number) => computeAliCosts(warePositionGesamt, isChina).totalCost / qty;
+      const faktor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); // K-005 Gegenprüfung B2: wie order-matching.ts
+      const einkaufJeStueck = (warePositionGesamt: number) => computeAliCosts(applyCheckoutFactor(warePositionGesamt, faktor), isChina).totalCost / qty;
       // WICHTIG: der EK DIESER Variante, nicht der Produkt-EK — die Varianten unterscheiden sich
       // im Einkauf teils um ein Mehrfaches (stele-110: 2,15 bis 7,69 EUR). Der Produkt-EK dient nur
       // als Rueckfall, wenn die Variante keinen eigenen hat.

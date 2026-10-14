@@ -70,6 +70,9 @@ interface Product {
   targetMarginEur?: number | null; // A-014: Zielgewinn = Margen-Stufe A–D (null → Standard 2,00)
   shipsFrom?: string | null;
   variantSellPrices?: string | null; // JSON {skuId: VK}
+  aliCheckoutFactor?: number | null;   // K-005: Kassen-Faktor (Kasse ÷ App-Preis), kommt über GET /api/products mit
+  aliCheckoutFactorAt?: string | null; // K-005: Datum der Quell-Rechnung; älter als 14 Tage = ohne Faktor
+  aliCheckoutFactorOrder?: string | null; // K-005: eBay-Bestellnummer der Quelle
   // A-029 (P-E01): Elektro Kat. 5
   isElectric?: number | null;
   electricSuggested?: number | null;
