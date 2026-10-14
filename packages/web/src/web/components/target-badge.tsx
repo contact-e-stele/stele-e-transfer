@@ -11,6 +11,8 @@ import { MARGIN_TIERS } from "../../shared/constants";
 import { evaluateTargetDisplay } from "../../shared/pricing";
 import { productProfitRows, productTarget, type ProfitProduct } from "../../shared/target-margin-bulk";
 import { expectedFromPlan, type TierPlan } from "../../shared/tier-reprice";
+import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, PRICE_HOLD_MIN_PROFIT_EUR, type HoldRow } from "../../shared/price-hold";
+import { usePriceHolds, togglePriceHold } from "../lib/price-holds-store";
 
 export const TARGET_LEVEL_STYLE = {
   ok: { bg: "#F0FDF4", color: "#16A34A" },
@@ -60,6 +62,33 @@ export function TargetBadge({ product, isLive, onChange }: {
   // K-005 (Inhaber 14.10.2026): Warnhinweis, wenn der Gewinn OHNE Kassen-Faktor unter 0 läge.
   const worstRaw = rows.length > 0 ? Math.min(...rows.map(r => r.profitWithoutFactor ?? r.profit)) : null;
   const lossWithoutFactor = worstRaw != null && worstRaw < -1e-9 && worst != null && worst > worstRaw + 1e-9;
+  // K-008: "Preis halten" je Variante (nur Feld schreiben, nichts an eBay senden).
+  const { holds } = usePriceHolds();
+  const holdRes = resolvePriceHolds(product, holds[String(product.id)]);
+  const holdByKey = new Map<string, HoldRow>(holdRes.rows.map(r => [r.key, r]));
+  const toggleHold = async (key: string, on: boolean) => {
+    if (busy) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await togglePriceHold(product.id, key === SINGLE_ITEM_HOLD_KEY ? null : key, on);
+      setMsg(r.ok ? { ok: true, text: on ? "Preis wird gehalten (nichts an eBay gesendet)." : "Halten aufgehoben." } : { ok: false, text: r.error ?? "Fehler" });
+    } finally { setBusy(false); }
+  };
+  const holdLabel = (h: HoldRow | undefined) => !h ? null
+    : h.state === "held" ? `gehalten – Gewinn ${fmt(h.profit ?? 0)} €`
+    : h.state === "stale" ? `Halten veraltet (gehalten ${fmt(h.heldPrice)} €, heute ${h.currentSell != null ? fmt(h.currentSell) : "–"} €)`
+    : `Halten wird aufgehoben (Gewinn ${fmt(h.profit ?? 0)} € < ${fmt(PRICE_HOLD_MIN_PROFIT_EUR)} €)`;
+  const holdBtn = (key: string) => {
+    const h = holdByKey.get(key);
+    return (
+      <button type="button" disabled={busy} onClick={() => toggleHold(key, !h)}
+        title={h ? "Preis halten aufheben (sendet nichts an eBay)" : `Heutigen Preis halten: die Preisprüfung hebt nicht an, solange der Gewinn ≥ ${fmt(PRICE_HOLD_MIN_PROFIT_EUR)} € bleibt (sendet nichts an eBay)`}
+        style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 5, cursor: busy ? "wait" : "pointer", fontFamily: "inherit",
+          border: h ? "1px solid #7C3AED" : "1px solid #E2E8F0", background: h ? "#F5F3FF" : "#fff", color: h ? "#7C3AED" : "#64748B" }}>
+        {h ? "Halten aus" : "Preis halten"}
+      </button>
+    );
+  };
   const knownTier = MARGIN_TIERS.some(t => Math.abs(t.targetEur - target) < 0.005);
 
   const setTargetOnly = async (t: number) => {
@@ -142,6 +171,13 @@ export function TargetBadge({ product, isLive, onChange }: {
             ⚠ ohne Kassen-Faktor {fmt(worstRaw)} €
           </span>
         )}
+        {!isVariant && rows.length > 0 && holdBtn(SINGLE_ITEM_HOLD_KEY)}
+        {!isVariant && holdByKey.get(SINGLE_ITEM_HOLD_KEY) && (
+          <span style={{ fontSize: 10, color: "#7C3AED", fontWeight: 700 }}>{holdLabel(holdByKey.get(SINGLE_ITEM_HOLD_KEY))}</span>
+        )}
+        {isVariant && holdRes.heldKeys.size > 0 && (
+          <span style={{ fontSize: 10, color: "#7C3AED", fontWeight: 700 }}>{holdRes.heldKeys.size} Variante(n) gehalten</span>
+        )}
         {MARGIN_TIERS.map(t => (
           <button
             key={t.label}
@@ -215,9 +251,12 @@ export function TargetBadge({ product, isLive, onChange }: {
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 2 }}>
             {rows.map((r, i) => {
               const d = evaluateTargetDisplay(target, r.profit);
+              const h = r.skuId ? holdByKey.get(r.skuId) : undefined;
               return (
-                <span key={i} style={{ fontSize: 10, color: TARGET_LEVEL_STYLE[d.level].color }}>
-                  {r.label}: Ziel {fmt(d.targetEur)} · Erwartet {fmt(d.expectedEur)} €
+                <span key={i} style={{ fontSize: 10, color: TARGET_LEVEL_STYLE[d.level].color, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span>{r.label}: VK {fmt(r.sellPrice)} · Ziel {fmt(d.targetEur)} · Erwartet {fmt(d.expectedEur)} €</span>
+                  {r.skuId && holdBtn(r.skuId)}
+                  {h && <span style={{ color: "#7C3AED", fontWeight: 700 }}>{holdLabel(h)}</span>}
                 </span>
               );
             })}

@@ -16,13 +16,15 @@ export interface VariantRaiseProduct extends RepriceProduct {
 export type VariantRaise = TierPlanRow & { skuId: string; oldSell: number; oldProfit: number }; // skuId, alter VK und alter Gewinn sind bekannt (Pflicht)
 
 // Nur Zeilen mit bekanntem alten VK, Gewinn < Boden und höherem Formelpreis — nie senken, nie raten (kein alter VK → keine Zeile).
-export function planVariantRaises(product: VariantRaiseProduct): VariantRaise[] {
+// K-008: heldSkuIds = gehaltene Varianten (Gewinn ≥ 0,90 €) — werden nicht angehoben.
+export function planVariantRaises(product: VariantRaiseProduct, heldSkuIds?: ReadonlySet<string>): VariantRaise[] {
   const target = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
   const floor = effectiveProfitFloor(profitFloorFor(target)); // K-006: dieselbe Grenze wie die Rundung (Boden − 0,10, nie unter 1,00)
   const plan = planTierReprice(product, target);
   if (!plan.isVariant) return [];
   return plan.rows.filter((r): r is VariantRaise =>
     r.skuId != null && r.oldSell != null && r.oldProfit != null
+    && !(heldSkuIds?.has(r.skuId))
     && r.oldProfit < floor - 1e-9
     && r.newSell > r.oldSell + 0.004);
 }
@@ -40,6 +42,7 @@ export interface VariantRaiseDeps {
   // Snapshot vom Lauf-Anfang), damit z. B. ein zwischenzeitlicher Stufenwechsel nicht überschrieben wird.
   store: (updates: Record<string, number>) => Promise<void>;
   log: (msg: string) => void;
+  heldSkuIds?: ReadonlySet<string>; // K-008: "Preis halten" (nur Varianten mit Gewinn ≥ 0,90 €)
 }
 
 export type VariantRaiseStatus = 'disabled' | 'not_live' | 'nothing' | 'ambiguous' | 'sent' | 'partial' | 'failed' | 'error';
@@ -50,7 +53,8 @@ const fmt = (n: number) => n.toFixed(2);
 export async function runVariantRaise(product: VariantRaiseProduct, deps: VariantRaiseDeps): Promise<VariantRaiseOutcome> {
   const live = product.ebayStatus === 'listed' && !!product.ebayListingId;
   if (!live) return { status: 'not_live', raises: [], sentSkuIds: [] };
-  const raises = planVariantRaises(product);
+  const raises = planVariantRaises(product, deps.heldSkuIds);
+  for (const k of deps.heldSkuIds ?? []) deps.log(`[K-008] stele-${product.id} Variante ${k}: Preis gehalten — nicht angehoben`);
   if (raises.length === 0) return { status: 'nothing', raises, sentSkuIds: [] };
 
   const describe = (r: VariantRaise) => `${r.label || r.skuId} (skuId ${r.skuId}): ${fmt(r.oldSell)} → ${fmt(r.newSell)} € (EK ${fmt(r.ware)}, Gewinn ${fmt(r.oldProfit)} → ${fmt(r.newProfit)} €)`;
