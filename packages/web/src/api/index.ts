@@ -15,7 +15,7 @@ import { findForeignEmails } from '../shared/gpsr-description';
 import { gpsrCompleteGate, gpsrGateMessage, gpsrFinalFields, GPSR_IMPORT_BLOCKED_PREFIX, GPSR_LISTING_BLOCKED_PREFIX } from '../shared/gpsr-import-gate';
 import { findDescriptionComplianceViolations, checkOutgoingListingText, formatComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { resolveListingDescription } from './ebay-description-builder';
-import { scrapeAliExpressUrl, backfillVariantImages } from './aliexpress';
+import { scrapeAliExpressUrl, backfillVariantImages, fetchPageVariantPrices } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
 import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTrackingEmails, searchRecentDeliveryEmails, addressMatchesEmail, addressMatchesEmailByStreetOnly } from './gmail';
@@ -2745,6 +2745,8 @@ const app = new Hono()
           rating: apiData.rating ?? null,
           shippingCost: apiData.shippingCost ?? null,
           skuPriceFields: apiData.skuPriceFields ?? [], // K-005: Rohpreisfelder je SKU (nur Diagnose, wird beim Speichern nicht übernommen)
+          // K-005: Seitenpreise je SKU nur auf Wunsch (?seitenpreise=1), da ein zusätzlicher Seitenabruf nötig ist — reine Diagnose
+          pageVariantPrices: c.req.query('seitenpreise') === '1' ? await fetchPageVariantPrices(url) : undefined,
           _source: 'ds-api',
         }, 200);
       }
