@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-06 abends, aktuelle Version: v1.27):**
+**Aktueller Zählerstand (Stand 2026-10-14, aktuelle Version: v1.28):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -223,6 +223,12 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | 2 | #163 | A-043: Titel-PUT ohne brand, wenn kein mpn (eBay 25002 BrandMPN) |
 | 3 | #164 | A-048: Mengen-PUT bereinigt (BrandMPN/Gewicht 0), Marke sichern, Ampel-Text |
 | 4 | #165 | A-045: Beschreibung v2 Schritt 1 — Produktdaten + Ampel R8 (Migration) → **Bump v1.26 → v1.27 bei #165** |
+| — | #166 | *(zählt nicht — Versions-Nachtrag v1.27, Housekeeping)* |
+| 1 | #167 | K-004: Formel v2 Lücken (Varianten-EK Bestellung, Herkunft je Variante, EU ohne Versand, Anzeigensatz) |
+| — | #168 | *(nicht gemergt — Dublette zu #167, geschlossen)* |
+| 2 | #169 | K-005: Ali-Preisfelder-Diagnose, Versandland aus Varianten, Bewerbung je Angebot, Senk-Kandidaten |
+| 3 | #170 | Fix: Senk-Kandidaten nur mit echtem Varianten-VK |
+| 4 | #171 | K-006: Preisendungen ,45/,95 + Toleranz 0,10 €, nie unter 1,00 € → **Bump v1.27 → v1.28 bei #171** |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -233,7 +239,7 @@ main). **Grenzfälle, die wörtlich zählen:** #93 (neues Modul `gpsr-parser.ts`
 *Strengere Lesart (nur Änderungen am App-Verhalten zählen, also #93/#131 NICHT): 41 statt 43 gezählte PRs seit #90 → v1.21, "3 von 4".
 Die Entscheidung liegt beim Inhaber; hier gilt die wörtliche Lesart.* Gezählt: 43 PRs ab #90 plus Startwert 2 (#88, #89) = 45 = 11 × 4 + 1.
 
-**→ Zähler: 0 von 4 seit v1.27** (Bump bei #165).
+**→ Zähler: 0 von 4 seit v1.28** (Bump bei #171).
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -259,6 +265,7 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.24 → v1.25: PR #148, #152, #153, #154 (siehe Tabelle oben)
 - v1.25 → v1.26: PR #156, #157, #158, #160 (siehe Tabelle oben)
 - v1.26 → v1.27: PR #161, #163, #164, #165 (siehe Tabelle oben)
+- v1.27 → v1.28: PR #167, #169, #170, #171 (siehe Tabelle oben)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
