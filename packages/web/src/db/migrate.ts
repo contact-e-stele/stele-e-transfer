@@ -153,6 +153,10 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN use_purpose TEXT`,
   `ALTER TABLE products ADD COLUMN variant_details TEXT`,
   `ALTER TABLE products ADD COLUMN material_source TEXT`,
+  // K-005 Punkt 1 Weg b (Inhaber 14.10.2026): Kassen-Faktor je Produkt — additiv, nullable, keine bestehende Spalte verändert
+  `ALTER TABLE products ADD COLUMN ali_checkout_factor REAL`,
+  `ALTER TABLE products ADD COLUMN ali_checkout_factor_at TEXT`,
+  `ALTER TABLE products ADD COLUMN ali_checkout_factor_order TEXT`,
 ];
 
 export async function runMigrations() {

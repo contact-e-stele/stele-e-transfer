@@ -7,6 +7,7 @@
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
 import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant } from '../shared/pricing';
+import { activeCheckoutFactor, applyCheckoutFactor } from '../shared/checkout-factor';
 import { slugify, NON_VARIATION_ASPECTS, resolveVariantEntries, type VariantGroup } from '../shared/variant-resolver';
 
 export interface ProductForSkuMatch {
@@ -115,6 +116,27 @@ export interface OrderProductInfo {
   variants?: Array<{ skuId?: string; attrs?: Record<string, string>; price?: number; displayValues?: Record<string, string> }>;
   /** Varianten-Gruppen (products.variants) — damit die SKU genau wie beim Listing aus den ANZEIGEwerten gebaut wird (Umbenennungen, Reihenfolge). */
   groups?: VariantGroup[];
+  /** K-005: Kassen-Faktor des Produkts (products.ali_checkout_factor/_at); gilt nur, wenn ≤ 14 Tage alt (activeCheckoutFactor). */
+  aliCheckoutFactor?: number | null;
+  aliCheckoutFactorAt?: string | null;
+}
+
+/** Eine DB-Produktzeile (products) → OrderProductInfo. EINE Stelle für /ebay/orders und den K-005-Faktor-Abgleich (Grundgesetz 8). */
+export interface OrderProductRow {
+  id: number; buyPrice: number | null; shipsFrom: string | null; adRate: number | null;
+  variantPrices: string | null; variants: string | null;
+  aliCheckoutFactor?: number | null; aliCheckoutFactorAt?: string | null;
+}
+export function orderProductInfoFromRow(product: OrderProductRow): OrderProductInfo {
+  // K-004: Varianten (EK je Variante + "Ships From") und Anzeigensatz des Produkts für den Bestellungs-Gewinn.
+  let variants: OrderProductInfo['variants'];
+  try { const v = JSON.parse(product.variantPrices ?? '[]'); if (Array.isArray(v)) variants = v; } catch { /* ignore */ }
+  let groups: VariantGroup[] | undefined;
+  try { const g = JSON.parse(product.variants ?? '[]'); if (Array.isArray(g)) groups = g; } catch { /* ignore */ }
+  return {
+    id: product.id, buyPrice: product.buyPrice, shipsFrom: product.shipsFrom, adRate: product.adRate, variants, groups,
+    aliCheckoutFactor: product.aliCheckoutFactor ?? null, aliCheckoutFactorAt: product.aliCheckoutFactorAt ?? null,
+  };
 }
 
 /**
@@ -169,8 +191,10 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
     if (adRate == null && product.adRate != null) adRate = product.adRate;
     // K-004 Punkt 1: EK und Herkunft der verkauften Variante; sonst Produkt-EK (billigste Variante) wie bisher.
     const variant = matchOrderVariant(li.sku, product);
-    const ware = variant ? variant.price : product.buyPrice;
-    if (ware === null) { einkaufBekannt = false; continue; }
+    const appWare = variant ? variant.price : product.buyPrice;
+    if (appWare === null) { einkaufBekannt = false; continue; }
+    // K-005: App-Ware × Kassen-Faktor des Produkts (je Stück, wie in der Formel), ohne gültigen Faktor unverändert.
+    const ware = applyCheckoutFactor(appWare, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt));
     // Code-Review-Vorschlag (PRIO-1-PAKET): dieselbe China-Erkennung wie überall sonst im Projekt
     // (isChinaShipping(), shared/pricing.ts) statt einer eigenen strikten `=== 'china'`-Prüfung —
     // die vorherige Version dieses Zweigs (index.ts) prüfte strikt und hätte z.B. "China Mainland"

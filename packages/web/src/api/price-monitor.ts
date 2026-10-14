@@ -12,6 +12,7 @@ import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { earUmlageFor } from '../shared/electric';
+import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -163,7 +164,8 @@ export function computeVariantPriceRows(
   _shippingCost: number | null, // seit A-014 (Preisformel v2) ungenutzt — Signatur bleibt für die Aufrufer stabil
   shipsFrom: string | null,
   adRate: number | null,
-  targetMarginEur?: number | null // Teil 2C: product.targetMarginEur — null/undefined → globaler Fallback
+  targetMarginEur?: number | null, // Teil 2C: product.targetMarginEur — null/undefined → globaler Fallback
+  checkoutFactor?: number | null,  // K-005: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); weggelassen = ohne Faktor
 ): VariantPriceRow[] {
   let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number; displayValues?: Record<string, string> }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
@@ -182,7 +184,7 @@ export function computeVariantPriceRows(
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
         targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-        rounding: 'floor95',
+        rounding: 'floor95', checkoutFactor,
       }).minSellPrice,
     }));
 }
@@ -293,10 +295,10 @@ export async function updateEbayVariantPricesIndividually(
 // Einkaufspreis nie in der normalen Vorschau auftauchen würden. `updateFn` als DI-Parameter,
 // damit dieser Aufruf in Tests ohne echten eBay-Zugriff geprüft werden kann.
 export async function repairVariantPricesForProduct(
-  product: { id: number; variants: string | null; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null; targetMarginEur?: number | null },
+  product: { id: number; variants: string | null; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null; targetMarginEur?: number | null; aliCheckoutFactor?: number | null; aliCheckoutFactorAt?: string | null },
   updateFn: typeof updateEbayVariantPricesIndividually = updateEbayVariantPricesIndividually
 ): Promise<{ ok: boolean; updatedSkuCount: number; error?: string }> {
-  const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur);
+  const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt));
   if (rows.length === 0) return { ok: false, updatedSkuCount: 0, error: 'Keine Varianten-Einkaufspreise vorhanden' };
   const variants = parseVariantGroupsJson(product.variants);
   const { ok, updatedCount, errors } = await updateFn(product.id, variants, rows);
@@ -444,6 +446,7 @@ export async function maybeRaiseVariants(
   product: {
     id: number; variants: string | null; variantSellPrices: string | null; sellPrice: number | null; buyPrice: number | null;
     adRate: number | null; targetMarginEur: number | null; ebayStatus: string | null; ebayListingId: string | null;
+    aliCheckoutFactor?: number | null; aliCheckoutFactorAt?: string | null; // K-005: über planTierReprice in die Formel
   },
   freshVariantPricesJson: string | null,
   shipsFrom: string | null,
@@ -665,10 +668,30 @@ export function startAvailabilityCheckCron() {
   console.log('[AvailabilityCheck] Scheduler aktiv — täglich, erster Check in 5 Min');
 }
 
+// K-005: Zeitpunkt des letzten Faktor-Abgleichs (Prozess-Speicher; nach einem Neustart läuft er beim ersten Preis-Lauf wieder).
+const CHECKOUT_FACTOR_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let lastCheckoutFactorSync = 0;
+export async function maybeDailyCheckoutFactorSync(now = Date.now()): Promise<void> {
+  if (now - lastCheckoutFactorSync < CHECKOUT_FACTOR_SYNC_INTERVAL_MS) return;
+  lastCheckoutFactorSync = now;
+  try {
+    const { syncCheckoutFactors } = await import('./checkout-factor-sync'); // dynamisch: kein Import-Zyklus price-monitor ↔ order-matching/ebay
+    const r = await syncCheckoutFactors();
+    console.log(`[PriceMonitor] K-005 Kassen-Faktor-Abgleich: ${r.geschrieben} geschrieben, ${r.gelöscht} gelöscht, ${r.faktoren.length} Faktor(en), ${r.übersprungen.length} übersprungen`);
+  } catch (e) {
+    lastCheckoutFactorSync = 0; // Gegenprüfung: bei Fehler beim nächsten Preis-Lauf erneut versuchen, nicht erst in 24 h
+    console.warn('[PriceMonitor] K-005 Kassen-Faktor-Abgleich fehlgeschlagen (Preisprüfung läuft weiter):', e);
+  }
+}
+
 export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number; stockUpdated: number }> {
   console.log('[PriceMonitor] Starte Preisüberwachung...');
 
   let checked = 0, updated = 0, ebayUpdated = 0, errors = 0, stockUpdated = 0;
+
+  // K-005: einmal täglich VOR der Preisprüfung die Kassen-Faktoren aus den erfassten AliExpress-Rechnungen nachjustieren
+  // (schreibt nur die drei Faktor-Spalten, nichts an eBay). Fehler nur loggen — die Preisprüfung läuft immer weiter.
+  await maybeDailyCheckoutFactorSync();
 
   // Alle Produkte mit AliExpress-URL und buyPrice holen
   const products = await db.select().from(schema.products)
@@ -827,7 +850,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           }
         }
 
-        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, shipsFromEff, adRate, product.targetMarginEur);
+        const checkoutFactor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); // K-005
+        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, shipsFromEff, adRate, product.targetMarginEur, checkoutFactor);
         const safePrice = safeUniformVariantPrice(rows);
         // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): ob überhaupt ein Update lohnt
         // (Abweichung vom gespeicherten VK groß genug), bleibt unverändert an safePrice/
@@ -842,7 +866,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           isChinaOrigin: isChina,
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
-          targetMarginEur: margin,
+          targetMarginEur: margin, checkoutFactor,
         }).isAlarm
           // A-015: eine mehrdeutige neue SKU (nichts geraten, nicht angehängt) heißt, dass frische Preise dieser Variante NICHT übernommen wurden —
           // das darf nicht still bleiben: Preisalarm, bis die Dublette im Produkte-Tab bereinigt ist.
@@ -890,6 +914,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'floor95',
+        checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
       }).minSellPrice;
       // Teil 4/5 (2026-09-13): dieser Pfad ist komplett unbeaufsichtigt (8h-Cron) und darf
       // AUSSCHLIESSLICH anheben, nie senken — auch nicht gedeckelt über applyDecreaseCap() (die
@@ -905,6 +930,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+        checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
       }).isAlarm;
       const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
       calculatedSellPrice = decision.price;

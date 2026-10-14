@@ -44,6 +44,8 @@ interface EbayListing {
     variantPrices: string | null;
     variants: string | null;           // A-019: Varianten-Gruppen — gleiche Varianten-Erkennung wie die Preisprüfung (isVariantProduct)
     variantSellPrices?: string | null;
+    aliCheckoutFactor?: number | null;   // K-005: Kassen-Faktor (productProfitRows rechnet ihn ein, wenn ≤ 14 Tage alt)
+    aliCheckoutFactorAt?: string | null;
     // Paket 4: true, wenn die gespeicherte Beschreibung heute einen fremden Kontakt (E-Mail-Adresse
     // eines Lieferanten/Herstellers) enthält — reine Anzeige, kein Knopf lädt hier etwas hoch.
     hasForeignContact?: boolean;

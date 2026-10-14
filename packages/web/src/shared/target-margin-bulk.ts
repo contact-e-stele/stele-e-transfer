@@ -4,6 +4,7 @@
 // Nichts hier schreibt an eBay oder in die DB.
 import { MARGIN_TIERS } from './constants';
 import { isVariantProduct } from './variant-product';
+import { activeCheckoutFactor } from './checkout-factor';
 import {
   profitAtSellPrice, evaluateTargetDisplay, isChinaOriginForVariant,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
@@ -19,6 +20,8 @@ export interface ProfitProduct {
   buyPrice: number | null;
   variantPrices: string | null;       // JSON [{skuId, attrs, price, ebayPrice?}]
   variantSellPrices?: string | null;  // JSON {skuId: VK}
+  aliCheckoutFactor?: number | null;  // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt)
+  aliCheckoutFactorAt?: string | null;
 }
 
 // skuId/sellPrice nur bei Varianten-Zeilen bzw. immer der VK, mit dem gerechnet wurde (A-017: Gewinn-Spalte der Varianten-Tabelle)
@@ -32,11 +35,12 @@ export function productTarget(p: Pick<ProfitProduct, 'targetMarginEur'>): number
 // Einzelartikel. Formel v2 über profitAtSellPrice. Zeilen ohne VK oder ohne Einkaufspreis fehlen (nichts geraten).
 export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVariant: boolean } {
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+  const checkoutFactor = activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt); // K-005
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China.
   const profitAt = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitAtSellPrice({
     sellPrice, buyPrice, isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom),
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, checkoutFactor,
   });
 
   let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; ebayPrice?: number }> = [];

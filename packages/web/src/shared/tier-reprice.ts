@@ -10,6 +10,7 @@ import { isVariantProduct } from './variant-product';
 import { collapseDuplicateEntries } from './variant-dedupe';
 import { earUmlageFor } from './electric';
 import type { VariantGroup } from './variant-resolver';
+import { activeCheckoutFactor } from './checkout-factor';
 import {
   computeMinSellPrice, profitAtSellPrice, isChinaOriginForVariant, parseVariantSellPrices, resolveVariantSellPrice,
   serializeVariantSellPrices, DEFAULT_PRICING_CONFIG,
@@ -25,6 +26,8 @@ export interface RepriceProduct {
   variantPrices: string | null;       // JSON [{skuId, attrs, price, ebayPrice?, displayValues?}]
   variantSellPrices?: string | null;  // JSON {skuId: VK}
   isElectric?: number | boolean | null; // A-029: Elektro = ja → EAR-Umlage in K (nicht gesetzt = 0)
+  aliCheckoutFactor?: number | null;    // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt, s. activeCheckoutFactor)
+  aliCheckoutFactorAt?: string | null;
 }
 
 export interface TierPlanRow {
@@ -55,11 +58,13 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // mit dem höchsten EK zusammengelegt — sonst ist die Zuordnung beim Senden mehrdeutig (Live-Fund stele-119).
 export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?: VariantGroup[]): TierPlan {
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+  const checkoutFactor = activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt); // K-005: Ware × Kassen-Faktor (in der Formel)
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China. feesFor(attrs) statt einer Herkunft fürs ganze Produkt.
   const feesFor = (attrs?: Record<string, string>) => ({
     isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom), ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     earUmlageEur: earUmlageFor(p.isElectric), // A-029: nur Elektro = ja
+    checkoutFactor,
   });
   const newSellFor = (ware: number, fees: ReturnType<typeof feesFor>) => computeMinSellPrice({
     ...fees, buyPrice: ware, targetMarginEur: newTargetEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95',
