@@ -57,6 +57,9 @@ export function TargetBadge({ product, isLive, onChange }: {
   const worst = rows.length > 0 ? Math.min(...rows.map(r => r.profit)) : null;
   const display = worst != null ? evaluateTargetDisplay(target, worst) : null;
   const style = display ? TARGET_LEVEL_STYLE[display.level] : null;
+  // K-005 (Inhaber 14.10.2026): Warnhinweis, wenn der Gewinn OHNE Kassen-Faktor unter 0 läge.
+  const worstRaw = rows.length > 0 ? Math.min(...rows.map(r => r.profitWithoutFactor ?? r.profit)) : null;
+  const lossWithoutFactor = worstRaw != null && worstRaw < -1e-9 && worst != null && worst > worstRaw + 1e-9;
   const knownTier = MARGIN_TIERS.some(t => Math.abs(t.targetEur - target) < 0.005);
 
   const setTargetOnly = async (t: number) => {
@@ -129,6 +132,14 @@ export function TargetBadge({ product, isLive, onChange }: {
             style={{ fontSize: 11, background: style.bg, color: style.color, padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}
           >
             Ziel {fmt(display.targetEur)} € · Erwartet {fmt(display.expectedEur)} €{isVariant ? " (schlechteste Variante)" : ""}
+          </span>
+        )}
+        {lossWithoutFactor && worstRaw != null && (
+          <span
+            title="Gerechnet mit dem Kassen-Faktor aus der letzten AliExpress-Rechnung. Ohne Faktor (App-Preis der Schnittstelle) läge der Gewinn unter 0 — Kassenpreis vor dem nächsten Einkauf prüfen."
+            style={{ fontSize: 11, background: "#FEF2F2", color: "#B91C1C", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}
+          >
+            ⚠ ohne Kassen-Faktor {fmt(worstRaw)} €
           </span>
         )}
         {MARGIN_TIERS.map(t => (

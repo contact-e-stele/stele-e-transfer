@@ -3636,15 +3636,18 @@ const app = new Hono()
             // applyRaiseOnly() ist das alleinige Gate: computedMinPrice <= aktueller Preis →
             // 'none', kein Schreibvorgang, kein eBay-Call.
             // A-014 (Preisformel v2): nur anheben, wenn der Gewinn beim aktuellen Preis unter dem Boden liegt.
-            const alarm = evaluatePriceAlarm({
+            const checkoutFactor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); // K-005
+            const alarmRes = evaluatePriceAlarm({
               currentSellPrice: product.sellPrice,
               variants: [{ buyPrice: newPrice }],
               isChinaOrigin: isChinaShipping(product.shipsFrom),
               ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
-              checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
-            }).isAlarm;
+              checkoutFactor,
+            });
+            if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
+            const alarm = alarmRes.isAlarm;
             const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
             const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
             // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): vorher hier eine reine

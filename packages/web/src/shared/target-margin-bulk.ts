@@ -25,7 +25,8 @@ export interface ProfitProduct {
 }
 
 // skuId/sellPrice nur bei Varianten-Zeilen bzw. immer der VK, mit dem gerechnet wurde (A-017: Gewinn-Spalte der Varianten-Tabelle)
-export interface ProfitRow { label: string; profit: number; skuId?: string; sellPrice: number }
+// profitWithoutFactor: K-005 — Gewinn ohne Kassen-Faktor (gleich profit, wenn kein Faktor angewendet wurde); < 0 → Warnhinweis
+export interface ProfitRow { label: string; profit: number; skuId?: string; sellPrice: number; profitWithoutFactor?: number }
 
 export function productTarget(p: Pick<ProfitProduct, 'targetMarginEur'>): number {
   return p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
@@ -37,11 +38,13 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const checkoutFactor = activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt); // K-005
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China.
-  const profitAt = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitAtSellPrice({
+  const profitWith = (f: number | null, sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitAtSellPrice({
     sellPrice, buyPrice, isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom),
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, checkoutFactor,
+    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, checkoutFactor: f,
   });
+  const profitAt = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitWith(checkoutFactor, sellPrice, buyPrice, attrs);
+  const profitRaw = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitWith(null, sellPrice, buyPrice, attrs);
 
   let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; ebayPrice?: number }> = [];
   try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
@@ -54,10 +57,10 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
       const sell = resolveVariantSellPrice(v.skuId, stored, v).sellPrice ?? p.sellPrice;
       if (sell == null) continue;
       const label = Object.values(v.attrs ?? {}).join(' / ') || `…${v.skuId.slice(-6)}`;
-      rows.push({ label, profit: profitAt(sell, v.price, v.attrs), skuId: v.skuId, sellPrice: sell });
+      rows.push({ label, profit: profitAt(sell, v.price, v.attrs), skuId: v.skuId, sellPrice: sell, profitWithoutFactor: profitRaw(sell, v.price, v.attrs) });
     }
   } else if (p.sellPrice && p.buyPrice) {
-    rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice), sellPrice: p.sellPrice });
+    rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice), sellPrice: p.sellPrice, profitWithoutFactor: profitRaw(p.sellPrice, p.buyPrice) });
   }
   return { rows, isVariant };
 }

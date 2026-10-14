@@ -860,14 +860,16 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // "aktueller VK liegt unter der Zielmarge", nicht mehr jede Abweichung nach oben ODER unten.
         const pricesChangedEnough = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
         const margin = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
-        const alarm = evaluatePriceAlarm({
+        const alarmRes = evaluatePriceAlarm({
           currentSellPrice: product.sellPrice,
           variants: rows.map(r => ({ buyPrice: r.buyPrice, isChinaOrigin: r.isChinaOrigin })),
           isChinaOrigin: isChina,
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: margin, checkoutFactor,
-        }).isAlarm
+        });
+        if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
+        const alarm = alarmRes.isAlarm
           // A-015: eine mehrdeutige neue SKU (nichts geraten, nicht angehängt) heißt, dass frische Preise dieser Variante NICHT übernommen wurden —
           // das darf nicht still bleiben: Preisalarm, bis die Dublette im Produkte-Tab bereinigt ist.
           || merge.ambiguous.length > 0;
@@ -923,15 +925,18 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // Preis → 'none', kein Schreibvorgang, kein eBay-Call.
       // A-014 (Preisformel v2): sofort und ungedeckelt anheben NUR, wenn der Gewinn beim aktuellen Preis unter dem
       // Boden der Stufe liegt (evaluatePriceAlarm = Gewinn < Boden). Zwischen Boden und Ziel bleibt der Preis.
-      const alarm = evaluatePriceAlarm({
+      const checkoutFactor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); // K-005
+      const alarmRes = evaluatePriceAlarm({
         currentSellPrice: product.sellPrice,
         variants: [{ buyPrice: newBuyPrice }],
         isChinaOrigin: isChina,
         ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
-        checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
-      }).isAlarm;
+        checkoutFactor,
+      });
+      if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
+      const alarm = alarmRes.isAlarm;
       const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
       calculatedSellPrice = decision.price;
       const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
