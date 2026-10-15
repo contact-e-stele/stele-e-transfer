@@ -1649,6 +1649,16 @@ const app = new Hono()
         return { db: m.db, schema: s };
       });
       const results: Array<{ itemId: string; ok: boolean; error?: string }> = [];
+      // K-009 Rest (Kalkulator 15.10.2026): "0 % (aus)" in der Sammel-Auswahl setzt NUR den App-Wert (für die Gewinnrechnung unbeworbener
+      // Angebote). An eBay geht dabei nichts — was BidPercentage 0 über ReviseFixedPriceItem bei eBay bewirkt, ist nicht geprüft; eine
+      // Kampagne beendet der Inhaber im Seller Hub.
+      if (body.ratePercent === 0) {
+        for (const itemId of body.itemIds) {
+          await db.update(schema.products).set({ adRate: 0, updatedAt: new Date().toISOString() }).where(eq(schema.products.ebayListingId, itemId));
+          results.push({ itemId, ok: true });
+        }
+        return c.json({ results, appOnly: true }, 200);
+      }
       for (const itemId of body.itemIds) {
         const r = await setAdRate(itemId, body.ratePercent);
         if (r.ok) {

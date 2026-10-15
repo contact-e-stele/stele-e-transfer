@@ -48,3 +48,18 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
     expect(planVariantRaises(p220(5)).map(r => [r.skuId, r.newSell])).toEqual([['g', 21.95], ['b', 22.95], ['k', 21.95]]);
   });
 });
+
+describe('K-009 Rest: Sammel-Auswahl', () => {
+  test('Sammel-Auswahl nutzt dieselben Optionen inkl. 0 (aus)', async () => {
+    const src = await Bun.file(new URL('../web/pages/listings.tsx', import.meta.url)).text();
+    expect(src).toContain('AD_RATE_OPTIONS.map(r => <option');
+    expect(src).not.toContain('[2, 3, 5, 8, 10].map');
+  });
+  test('Route bulk/adrate: 0 % setzt nur die App, kein setAdRate-Aufruf an eBay', async () => {
+    const src = await Bun.file(new URL('../api/index.ts', import.meta.url)).text();
+    const i = src.indexOf("'/ebay/listings/bulk/adrate'");
+    const block = src.slice(i, src.indexOf('const r = await setAdRate', i));
+    expect(block).toContain('if (body.ratePercent === 0)');
+    expect(block).toContain('return c.json({ results, appOnly: true }, 200);');
+  });
+});
