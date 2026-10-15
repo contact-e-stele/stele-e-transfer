@@ -18,6 +18,7 @@ import { getPriceHolds, releasePriceHolds } from './price-holds';
 import { isProductPriceLocked } from './price-locks';
 import { productIdFromSku, parseGetItemBuyerPrices } from '../shared/ebay-buyer-price';
 import { applyOfferQuantity } from '../shared/offer-quantity';
+import { withTimeLimit, fetchWithTimeout } from '../shared/with-time-limit';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -708,6 +709,10 @@ export async function maybeDailyCheckoutFactorSync(now = Date.now()): Promise<vo
   }
 }
 
+// Zeitlimits (15.10.2026): Produkt höchstens 5 Min (längste reguläre Kette: Scraper-Ausweichwege bis ~200 s), eBay-Aufruf höchstens 30 s.
+export const PRODUCT_TIME_LIMIT_MS = 5 * 60 * 1000;
+export const EBAY_CALL_TIME_LIMIT_MS = 30 * 1000;
+
 export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number; stockUpdated: number }> {
   console.log('[PriceMonitor] Starte Preisüberwachung...');
 
@@ -857,7 +862,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
             try {
               const token = await getAccessToken();
               const groupSku = `stele-${product.id}-GROUP`;
-              const realSkus = await getInventoryItemGroupSkus(groupSku, token);
+              // Zeitlimit (15.10.2026, Lauf hing bei stele-107): jeder eBay-Aufruf im Mengen-Lauf höchstens 30 s.
+              const ebayFetch = fetchWithTimeout(EBAY_CALL_TIME_LIMIT_MS);
+              const realSkus = await getInventoryItemGroupSkus(groupSku, token, ebayFetch);
               const maxVariantQuantity = await getMaxVariantQuantity();
               // Mengen-Fix (Kalkulator #183): Käuferpreise EINMAL je Angebot und Lauf lesen — ohne Käuferpreis kein Offer-PUT.
               const buyerPriceBySku = new Map<string, number>();
@@ -870,7 +877,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
                 const candidateSku = `stele-${product.id}-${suffix}`;
                 if (!realSkus.includes(candidateSku)) continue; // kein eindeutiger Match — nichts unternehmen
                 const targetQuantity = resolveVariantQuantity(v.stock, 0, maxVariantQuantity);
-                const ok = await setInventoryItemQuantity(candidateSku, targetQuantity, token, fetch, buyerPriceBySku.get(candidateSku) ?? null);
+                const ok = await setInventoryItemQuantity(candidateSku, targetQuantity, token, ebayFetch, buyerPriceBySku.get(candidateSku) ?? null);
                 if (ok) {
                   stockUpdated++;
                   console.log(`[PriceMonitor] ${product.id}: Variante ${candidateSku} (echter Bestand ${v.stock}) — eBay-Menge auf ${targetQuantity} gesetzt`);
@@ -1048,7 +1055,14 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
   const CONCURRENCY = 3;
   for (let i = 0; i < products.length; i += CONCURRENCY) {
     const batch = products.slice(i, i + CONCURRENCY);
-    await Promise.all(batch.map(p => checkOne(p)));
+    // Zeitlimit je Produkt: ein hängendes Produkt hält nicht mehr den ganzen Lauf auf (die Arbeit läuft im Hintergrund aus).
+    await Promise.all(batch.map(async p => {
+      const r = await withTimeLimit(checkOne(p), PRODUCT_TIME_LIMIT_MS);
+      if (r.timedOut) {
+        errors++;
+        console.warn(`[PriceMonitor] ⚠️ ${p.id}: nach ${PRODUCT_TIME_LIMIT_MS / 60000} Min ohne Abschluss — Lauf geht mit dem nächsten Produkt weiter`);
+      }
+    }));
   }
 
   console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, eBay-Updates: ${ebayUpdated}, Fehler: ${errors}, Varianten auf Menge 0 gesetzt: ${stockUpdated}`);
