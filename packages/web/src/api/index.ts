@@ -3708,6 +3708,8 @@ const app = new Hono()
 
                 if (invOk) {
                   ebayUpdated = true;
+                } else if (await (await import('./price-locks')).isProductPriceLocked(product.id)) {
+                  console.warn(`[check-all-prices] stele-${product.id}: K-011 Sperre — Trading-Fallback nicht gesendet`);
                 } else {
                   // 2. Fallback: Trading API (alte Listings)
                   const reviseXml = `<?xml version="1.0" encoding="utf-8"?><ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${ebayToken}</eBayAuthToken></RequesterCredentials><InventoryStatus><ItemID>${product.ebayListingId}</ItemID><StartPrice>${decision.price.toFixed(2)}</StartPrice></InventoryStatus></ReviseInventoryStatusRequest>`;
@@ -4163,7 +4165,9 @@ app.post('/products/:id/sell-prices-from-ebay', async (c) => {
     if (product.ebayStatus !== 'listed' || !product.ebayListingId) return c.json({ error: 'Produkt ist nicht live bei eBay gelistet' }, 422);
     const { readEbaySellPrices, applyEbayPrices } = await import('./ebay-price-readback');
     const { parseVariantGroupsJson } = await import('./price-monitor');
-    const { getAccessToken, getInventoryItemGroupSkus } = await import('./ebay');
+    const { getAccessToken, getInventoryItemGroupSkus, getItemBuyerPricesXml } = await import('./ebay');
+    const { parseGetItemBuyerPrices, priceMismatches } = await import('../shared/ebay-buyer-price');
+    const { setPriceLock } = await import('./price-locks');
     const { isVariantProduct } = await import('../shared/variant-product');
     const { parseVariantSellPrices, serializeVariantSellPrices } = await import('../shared/pricing');
     let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
@@ -4174,8 +4178,21 @@ app.post('/products/:id/sell-prices-from-ebay', async (c) => {
       productId: id, groups: parseVariantGroupsJson(product.variants), entries: entries as never,
       isVariant: isVariantProduct(product.variants, product.variantPrices), appSellPrices, appSellPrice: product.sellPrice,
       token, getGroupSkus: (g) => getInventoryItemGroupSkus(g, token),
+      getBuyerPrices: async () => {
+        const r = await getItemBuyerPricesXml(product.ebayListingId as string);
+        if (r.httpStatus !== 200) return { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` };
+        return parseGetItemBuyerPrices(r.xml);
+      },
     });
-    if (!apply) return c.json({ mode: 'preview', ...rb }, 200);
+    // K-011: Abweichung Käuferpreis ↔ Angebotsdaten → Sperre setzen; keine Abweichung (alles gelesen) → Sperre aufheben.
+    const mism = priceMismatches(rb.rows.map(r => ({ ...r, buyerPrice: r.ebayPrice, offerPrice: r.offerPrice ?? null })));
+    if (mism.length > 0) {
+      await setPriceLock(id, { at: new Date().toISOString(), rows: mism.map(m => ({ sku: m.sku, label: m.label, buyerPrice: m.buyerPrice as number, offerPrice: m.offerPrice as number })) });
+    } else if (rb.ok && rb.rows.every(r => r.offerPrice != null)) {
+      await setPriceLock(id, null);
+    }
+    const lock = { locked: mism.length > 0, mismatches: mism.map(m => ({ sku: m.sku, label: m.label, buyerPrice: m.buyerPrice, offerPrice: m.offerPrice })) };
+    if (!apply) return c.json({ mode: 'preview', ...rb, ...lock }, 200);
     if (!rb.ok) return c.json({ mode: 'apply', written: false, error: rb.reason ?? 'eBay-Preise nicht vollständig lesbar — nichts geschrieben', ...rb }, 422);
     if (rb.isVariant) {
       const next = applyEbayPrices(appSellPrices, rb.rows);
@@ -4184,14 +4201,71 @@ app.post('/products/:id/sell-prices-from-ebay', async (c) => {
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, id));
       console.log(`[App-Preise←eBay] stele-${id}: ${next.changed.map(x => `${x.skuId} ${x.from ?? '–'}→${x.to}`).join(', ') || 'keine Änderung'}`);
-      return c.json({ mode: 'apply', written: true, changed: next.changed, rows: rb.rows }, 200);
+      return c.json({ mode: 'apply', written: true, changed: next.changed, rows: rb.rows, ...lock }, 200);
     }
     const price = rb.rows[0].ebayPrice as number;
     await db.update(schema.products).set({ sellPrice: price, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
     console.log(`[App-Preise←eBay] stele-${id}: sellPrice ${product.sellPrice ?? '–'}→${price}`);
-    return c.json({ mode: 'apply', written: true, changed: [{ skuId: null, from: product.sellPrice, to: price }], rows: rb.rows }, 200);
+    return c.json({ mode: 'apply', written: true, changed: [{ skuId: null, from: product.sellPrice, to: price }], rows: rb.rows, ...lock }, 200);
   } catch (e) {
     console.error('[sell-prices-from-ebay]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// K-011: Sperren lesen (für die Warnung "eBay-Preise uneinheitlich" in Listings/Produkte).
+app.get('/ebay-price-locks', async (c) => {
+  try { const { getPriceLocks } = await import('./price-locks'); return c.json({ locks: await getPriceLocks() }, 200); }
+  catch (e) { console.error('[ebay-price-locks]', e); return c.json({ error: String(e) }, 500); }
+});
+
+// K-011 Punkt 4: "Angebotsdaten an Käuferpreis angleichen" — NUR auf Inhaber-Klick ({confirm:true}). Schreibt je abweichender Variante den
+// gelesenen KÄUFERPREIS in die Inventory-Angebotsdaten (updateOfferPriceBySku: GET → Preis ersetzen → PUT volles Offer). Für Käufer ändert
+// sich nichts (gleicher Preis). Danach zurücklesen: beide gleich → Sperre aufgehoben. Ohne confirm: nur Vorschau.
+app.post('/products/:id/align-offers-to-buyer-price', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: { confirm?: unknown } = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (product.ebayStatus !== 'listed' || !product.ebayListingId) return c.json({ error: 'Produkt ist nicht live bei eBay gelistet' }, 422);
+    const { getAccessToken, getItemBuyerPricesXml } = await import('./ebay');
+    const { parseGetItemBuyerPrices, PRICE_MISMATCH_TOLERANCE_EUR } = await import('../shared/ebay-buyer-price');
+    const { readOfferPrice } = await import('./ebay-price-readback');
+    const { updateOfferPriceBySku } = await import('./price-monitor');
+    const { setPriceLock } = await import('./price-locks');
+    const token = await getAccessToken();
+    const readAll = async () => {
+      const g = await getItemBuyerPricesXml(product.ebayListingId as string);
+      const buyer = parseGetItemBuyerPrices(g.xml);
+      if (g.httpStatus !== 200 || buyer.error) throw new Error(`Käuferpreis nicht lesbar: ${buyer.error ?? 'HTTP ' + g.httpStatus}`);
+      const rows: Array<{ sku: string; buyerPrice: number; offerPrice: number | null; error?: string }> = [];
+      for (const b of buyer.rows) {
+        const sku = b.sku || `stele-${id}`;
+        const o = await readOfferPrice(sku, token);
+        rows.push({ sku, buyerPrice: b.price, offerPrice: o.price, error: o.error });
+      }
+      return rows;
+    };
+    const before = await readAll();
+    const todo = before.filter(r => r.offerPrice != null && Math.abs(r.buyerPrice - r.offerPrice) > PRICE_MISMATCH_TOLERANCE_EUR + 1e-9);
+    if (body.confirm !== true) return c.json({ mode: 'preview', rows: before, willAlign: todo }, 200);
+    const results: Array<{ sku: string; to: number; ok: boolean; error?: string }> = [];
+    for (const r of todo) {
+      const res = await updateOfferPriceBySku(r.sku, r.buyerPrice, token, fetch, false, { bypassPriceLock: true });
+      results.push({ sku: r.sku, to: r.buyerPrice, ok: res.ok, error: res.error });
+      console.log(`[K-011] stele-${id} ${r.sku}: Angebotsdaten ${r.offerPrice} → ${r.buyerPrice} (Käuferpreis) ${res.ok ? 'OK' : 'FEHLER ' + (res.error ?? '')}`);
+    }
+    const after = await readAll();
+    const still = after.filter(r => r.offerPrice == null || Math.abs(r.buyerPrice - r.offerPrice) > PRICE_MISMATCH_TOLERANCE_EUR + 1e-9);
+    if (still.length === 0) await setPriceLock(id, null);
+    else await setPriceLock(id, { at: new Date().toISOString(), rows: still.filter(r => r.offerPrice != null).map(r => ({ sku: r.sku, label: r.sku, buyerPrice: r.buyerPrice, offerPrice: r.offerPrice as number })) });
+    return c.json({ mode: 'apply', results, after, locked: still.length > 0 }, 200);
+  } catch (e) {
+    console.error('[align-offers-to-buyer-price]', e);
     return c.json({ error: String(e) }, 500);
   }
 });

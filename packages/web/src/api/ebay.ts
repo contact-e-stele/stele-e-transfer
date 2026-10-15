@@ -6,6 +6,27 @@ import { computeMinSellPrice, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } 
 import type { ResolvedGpsr } from '../shared/gpsr-parser';
 import type { SentPrice } from '../shared/sent-prices';
 import { checkOutgoingListingText, formatComplianceViolations } from '../shared/description-compliance';
+import { productIdFromSku } from '../shared/ebay-buyer-price';
+
+// K-011b (Kalkulator-Prüfung #179): Ist ein Produkt gesperrt (eBay-Käuferpreis ≠ Inventory-Angebotsdaten), darf KEIN Schreibaufruf auf
+// Offer-, Inventory-Item- oder Gruppen-Ebene raus — ein PUT/publish überarbeitet das Live-Angebot aus den (alten) Angebotsdaten, der
+// Käuferpreis spränge still zurück (stele-220: +1,00 €). Ausnahme: Angleichen (price-monitor updateOfferPriceBySku mit bypassPriceLock).
+// Ohne konfigurierte Datenbank (reine Unit-Tests ohne DB) gibt es keinen Sperr-Speicher → keine Sperre (wie isProductPriceLocked bei Lesefehler).
+const defaultPriceLockCheck = async (pid: number): Promise<boolean> =>
+  process.env.TURSO_DATABASE_URL ? (await import('./price-locks')).isProductPriceLocked(pid) : false;
+let priceLockCheck: (productId: number) => Promise<boolean> = defaultPriceLockCheck;
+/** Nur für Tests: Sperr-Prüfung ersetzen. */
+export function __setPriceLockCheckForTests(fn: ((productId: number) => Promise<boolean>) | null): void {
+  priceLockCheck = fn ?? defaultPriceLockCheck;
+}
+/** Fehlermeldung, wenn das Produkt der SKU gesperrt ist, sonst null. */
+export async function priceLockError(sku: string, what: string): Promise<string | null> {
+  const pid = productIdFromSku(sku);
+  if (pid == null || !(await priceLockCheck(pid))) return null;
+  const msg = `K-011 Sperre – erst angleichen (stele-${pid}: ${what} nicht gesendet, eBay-Käuferpreis ≠ Angebotsdaten)`;
+  console.warn(`[eBay] ${sku}: ${msg}`);
+  return msg;
+}
 import { safeMpn, isForbiddenMpn } from '../shared/mpn-guard';
 import { parseMarketingCampaigns, parseCampaignAds, promotionByListing, type MarketingCampaign, type MarketingAd, type ListingPromotion } from '../shared/promoted-status';
 import {
@@ -1114,6 +1135,8 @@ export async function findUnresolvedRequiredAspects(
 }
 
 export async function createOrUpdateInventoryItem(input: EbayListingInput): Promise<void> {
+  const locked = await priceLockError(input.sku, 'Inventory Item'); // K-011b
+  if (locked) throw new Error(locked);
   const token = await getAccessToken();
 
   // Inventory Item: nur Plain-Text, max 4000 Zeichen
@@ -1234,6 +1257,8 @@ export async function deleteExistingOffers(sku: string): Promise<void> {
 }
 
 export async function createOffer(input: EbayListingInput): Promise<string> {
+  const locked = await priceLockError(input.sku, 'Offer anlegen/überschreiben'); // K-011b
+  if (locked) throw new Error(locked);
   const token = await getAccessToken();
   const policies = await getBusinessPolicies();
   // Wenn handlingTimeDays explizit gesetzt → eigene Policy verwenden
@@ -1338,6 +1363,8 @@ export async function publishOffer(offerId: string): Promise<string> {
 // Pflicht für Variation Listings — publishOffer(einzeln) veröffentlicht nur 1 Variante
 
 export async function publishOfferByInventoryItemGroup(inventoryItemGroupKey: string, marketplaceId = 'EBAY_DE'): Promise<string> {
+  const locked = await priceLockError(inventoryItemGroupKey, 'Gruppe veröffentlichen'); // K-011b
+  if (locked) throw new Error(locked);
   const token = await getAccessToken();
 
   const res = await fetch(`${BASE_URL}/sell/inventory/v1/offer/publish_by_inventory_item_group`, {
@@ -1578,6 +1605,7 @@ export async function getInventoryItemGroupSkus(groupKey: string, token: string,
 // erst das bestehende Item holen und nur das quantity-Feld darin ändern, bevor es komplett
 // zurückgeschrieben wird.
 export async function setInventoryItemQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+  { const locked = await priceLockError(sku, 'Menge (PUT Inventory Item)'); if (locked) return false; } // K-011b
   const getRes = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
     { headers: { 'Authorization': `Bearer ${token}` } }
@@ -1641,6 +1669,8 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delayMs = 2000): 
 }
 
 export async function listOnEbayWithVariants(input: EbayListingInput): Promise<string> {
+  const locked = await priceLockError(input.sku, 'Varianten-Angebot listen'); // K-011b
+  if (locked) throw new Error(locked);
   const token = await getAccessToken();
   const maxVariantQuantity = await getMaxVariantQuantity();
   const groups = input.variantGroups ?? [];
@@ -1941,6 +1971,8 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 // ─── Alles in einem ───────────────────────────────────────────────────────────
 
 export async function listOnEbay(input: EbayListingInput): Promise<string> {
+  const locked = await priceLockError(input.sku, 'Angebot listen'); // K-011b
+  if (locked) throw new Error(locked);
   const blocked = outgoingTextBlockError(input.title, input.description);
   if (blocked) throw new Error(blocked);
   // Merchant Location sicherstellen (wird nur einmal pro Server-Start ausgeführt)
@@ -2111,6 +2143,7 @@ export async function updateOfferDescriptionBySku(
   fetchFn: typeof fetch = fetch,
   regulatory?: ReturnType<typeof buildRegulatoryBlock>,
 ): Promise<{ ok: boolean; error?: string }> {
+  { const locked = await priceLockError(sku, 'Beschreibung/GPSR (PUT volles Offer)'); if (locked) return { ok: false, error: locked }; } // K-011b
   const res = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
     { headers: { 'Authorization': `Bearer ${token}` } },
@@ -2167,6 +2200,7 @@ export async function updateInventoryItemTitle(
   token: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<{ ok: boolean; error?: string }> {
+  { const locked = await priceLockError(sku, 'Titel (PUT Inventory Item)'); if (locked) return { ok: false, error: locked }; } // K-011b
   const getRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
     headers: { 'Authorization': `Bearer ${token}` },
   });
@@ -2224,6 +2258,7 @@ export async function updateInventoryItemGroupTitle(
   token: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<{ ok: boolean; error?: string }> {
+  { const locked = await priceLockError(groupSku, 'Gruppen-Titel (PUT Gruppe)'); if (locked) return { ok: false, error: locked }; } // K-011b
   const getRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`, {
     headers: { 'Authorization': `Bearer ${token}` },
   });
@@ -2253,6 +2288,7 @@ export async function updateInventoryItemGroupContent(
   token: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<{ ok: boolean; error?: string }> {
+  { const locked = await priceLockError(groupSku, 'Gruppen-Beschreibung (PUT Gruppe)'); if (locked) return { ok: false, error: locked }; } // K-011b
   const url = `${BASE_URL}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupSku)}`;
   const getRes = await fetchFn(url, { headers: { 'Authorization': `Bearer ${token}` } });
   if (!getRes.ok) return { ok: false, error: `GET inventory_item_group/${groupSku} fehlgeschlagen: ${getRes.status}` };
@@ -2301,6 +2337,7 @@ export async function updateOfferDescriptionInventory(
   getTokenFn: () => Promise<string> = getAccessToken,
   regulatory?: ReturnType<typeof buildRegulatoryBlock>,
 ): Promise<{ ok: boolean; error?: string; partial?: boolean }> {
+  { const locked = await priceLockError(`stele-${productId}`, 'Beschreibung nachziehen'); if (locked) return { ok: false, error: locked }; } // K-011b
   const blocked = outgoingTextBlockError(title, html);
   if (blocked) return { ok: false, error: blocked };
   const token = await getTokenFn();
@@ -2483,6 +2520,31 @@ export async function getItemStatusXml(itemId: string): Promise<{ httpStatus: nu
     },
     body: xml,
     signal: AbortSignal.timeout(30000), // ein hängender Aufruf darf das Abgleich-Skript nicht blockieren
+  });
+  return { httpStatus: res.status, xml: await res.text() };
+}
+
+// K-011: NUR LESEN — Roh-XML von GetItem mit Varianten (Käuferpreis je Variation/StartPrice). Ausgewertet in
+// shared/ebay-buyer-price.ts (parseGetItemBuyerPrices, rein/getestet). Keine Änderung bei eBay.
+export async function getItemBuyerPricesXml(itemId: string): Promise<{ httpStatus: number; xml: string }> {
+  const token = await getAccessToken();
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <ItemID>${itemId}</ItemID>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetItemRequest>`;
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'GetItem',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+    signal: AbortSignal.timeout(30000),
   });
   return { httpStatus: res.status, xml: await res.text() };
 }
