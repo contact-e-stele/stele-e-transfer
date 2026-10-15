@@ -4151,6 +4151,30 @@ app.post('/products/checkout-factor/sync', async (c) => {
 // App-Preise aus eBay übernehmen (Inhaber 15.10.2026 "Ja App-Preise 220 = eBay"): eBay je Variante NUR LESEN (GET offer?sku=),
 // Vorschau ohne Schreiben; mit {apply:true, confirm:true} werden NUR variant_sell_prices (Varianten) bzw. sellPrice (Einzelartikel) der
 // App gesetzt. Kein eBay-Schreibaufruf. Logik: api/ebay-price-readback.ts. Außerhalb der Hono-Kette (TS2589), hinter der Login-Middleware.
+// Mengen-Lese-Prüfung (Inhaber 15.10.2026): je Variante Lager / Offer-Menge / Käuferseite / AliExpress-Lager. eBay NUR LESEN, schreibt nichts.
+app.get('/products/:id/quantity-check', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (!product.ebayListingId) return c.json({ error: 'Kein eBay-Angebot' }, 422);
+    const { getAccessToken, getItemBuyerPricesXml, getMaxVariantQuantity, slugify } = await import('./ebay');
+    const { runQuantityCheck } = await import('./quantity-check');
+    let entries: Array<{ attrs?: Record<string, string>; stock?: number }> = [];
+    try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+    const token = await getAccessToken();
+    const maxQty = await getMaxVariantQuantity();
+    const r = await runQuantityCheck({ productId: id, ebayListingId: product.ebayListingId, variantEntries: entries, slug: slugify, maxQty, token,
+      getItemXml: () => getItemBuyerPricesXml(product.ebayListingId as string) });
+    return c.json({ productId: id, maxQty, ...r }, 200);
+  } catch (e) {
+    console.error('[quantity-check]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.post('/products/:id/sell-prices-from-ebay', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
