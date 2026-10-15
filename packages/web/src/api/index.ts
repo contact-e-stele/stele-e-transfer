@@ -4181,10 +4181,14 @@ app.post('/products/:id/sync-quantities', async (c) => {
       getItemXml: () => getItemBuyerPricesXml(product.ebayListingId as string) });
     const before = await check();
     if (body.confirm !== true) return c.json({ mode: 'preview', maxQty, ...before }, 200);
+    // Kalkulator #183: Käuferpreise einmal lesen — ohne Käuferpreis bzw. bei Abweichung kein Offer-PUT (Sperre statt stillem Preis-Rücksprung).
+    const { parseGetItemBuyerPrices } = await import('../shared/ebay-buyer-price');
+    const g = await getItemBuyerPricesXml(product.ebayListingId as string);
+    const buyerPriceBySku = new Map<string, number>(g.httpStatus === 200 ? parseGetItemBuyerPrices(g.xml).rows.map(b => [b.sku, b.price] as [string, number]) : []);
     const results: Array<{ sku: string; to: number; ok: boolean }> = [];
     for (const r of before.rows) {
       if (r.targetQty == null) continue; // AliExpress-Lager unbekannt → nichts setzen (nichts geraten)
-      const ok = await setInventoryItemQuantity(r.sku, r.targetQty, token);
+      const ok = await setInventoryItemQuantity(r.sku, r.targetQty, token, fetch, buyerPriceBySku.get(r.sku) ?? null);
       results.push({ sku: r.sku, to: r.targetQty, ok });
       console.log(`[Mengen] stele-${id} ${r.sku}: Ziel ${r.targetQty} (Lager vorher ${r.inventoryQty}, Offer vorher ${r.offerQty}) ${ok ? 'OK' : 'FEHLER'}`);
     }

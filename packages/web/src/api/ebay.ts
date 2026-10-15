@@ -20,6 +20,15 @@ let priceLockCheck: (productId: number) => Promise<boolean> = defaultPriceLockCh
 export function __setPriceLockCheckForTests(fn: ((productId: number) => Promise<boolean>) | null): void {
   priceLockCheck = fn ?? defaultPriceLockCheck;
 }
+// Mengen-Fix (Kalkulator-Prüfung #183): Weicht vor einem Offer-PUT der Offer-Preis vom Käuferpreis ab, wird das Produkt gesperrt (K-011).
+const defaultPriceLockSetter = async (pid: number, lock: { at: string; rows: Array<{ sku: string; label: string; buyerPrice: number; offerPrice: number }> }): Promise<void> => {
+  if (!process.env.TURSO_DATABASE_URL) return;
+  try { await (await import('./price-locks')).setPriceLock(pid, lock); } catch (e) { console.warn(`[K-011] Sperre für stele-${pid} nicht speicherbar:`, e); }
+};
+let priceLockSetter = defaultPriceLockSetter;
+/** Nur für Tests: Sperre-Setzen ersetzen. */
+export function __setPriceLockSetterForTests(fn: typeof defaultPriceLockSetter | null): void { priceLockSetter = fn ?? defaultPriceLockSetter; }
+
 /** Fehlermeldung, wenn das Produkt der SKU gesperrt ist, sonst null. */
 export async function priceLockError(sku: string, what: string): Promise<string | null> {
   const pid = productIdFromSku(sku);
@@ -1618,8 +1627,12 @@ export async function getInventoryItemQuantity(sku: string, token: string, fetch
 
 // Mengen-Fix A: Offer-Menge (availableQuantity) jeder Offer der SKU auf `quantity` setzen — GET voll → nur availableQuantity → PUT voll
 // (wie updateOfferPriceBySku). Nur PUT, wenn der Wert abweicht. Sperre (K-011b) gilt.
-export async function setOfferAvailableQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch): Promise<{ ok: boolean; changed: number; error?: string }> {
+// buyerPrice = Käuferpreis dieser SKU (GetItem). PFLICHT: ohne bekannten Käuferpreis KEIN Offer-PUT — ein voller Offer-PUT schreibt auch
+// pricingSummary zurück; weicht der Offer-Preis vom Käuferpreis ab (Preis im Seller Hub geändert), spränge der Käuferpreis still zurück.
+// Abweichung → Sperre setzen (K-011), kein PUT, Meldung "eBay-Preise uneinheitlich – erst angleichen".
+export async function setOfferAvailableQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch, buyerPrice?: number | null): Promise<{ ok: boolean; changed: number; error?: string }> {
   { const locked = await priceLockError(sku, 'Offer-Menge (PUT Offer)'); if (locked) return { ok: false, changed: 0, error: locked }; }
+  if (typeof buyerPrice !== 'number' || !Number.isFinite(buyerPrice)) return { ok: false, changed: 0, error: `Käuferpreis für ${sku} unbekannt — Offer-Menge nicht gesetzt (kein Offer-PUT ohne Preisvergleich)` };
   const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`, { headers: { 'Authorization': `Bearer ${token}` } });
   if (!res.ok) return { ok: false, changed: 0, error: `GET offer?sku=${sku}: ${res.status}` };
   const offers = ((await res.json()) as { offers?: Array<{ offerId: string }> }).offers ?? [];
@@ -1630,6 +1643,14 @@ export async function setOfferAvailableQuantity(sku: string, quantity: number, t
     const full = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${o.offerId}`, { headers: { 'Authorization': `Bearer ${token}` } });
     if (!full.ok) { errors.push(`GET offer/${o.offerId}: ${full.status}`); continue; }
     const offerData = await full.json() as Record<string, unknown>;
+    const offerPrice = parseFloat(String((offerData.pricingSummary as { price?: { value?: string } } | undefined)?.price?.value ?? ''));
+    if (!Number.isFinite(offerPrice) || Math.abs(offerPrice - buyerPrice) > 0.01 + 1e-9) {
+      const pid = productIdFromSku(sku);
+      if (pid != null && Number.isFinite(offerPrice)) await priceLockSetter(pid, { at: new Date().toISOString(), rows: [{ sku, label: sku, buyerPrice, offerPrice }] });
+      const msg = `eBay-Preise uneinheitlich – erst angleichen (${sku}: Käufer ${buyerPrice.toFixed(2)} ≠ Angebotsdaten ${Number.isFinite(offerPrice) ? offerPrice.toFixed(2) : '–'}) — Offer-Menge NICHT gesetzt, Sperre gesetzt`;
+      console.warn(`[eBay] ${msg}`);
+      return { ok: false, changed, error: msg };
+    }
     const q = applyOfferQuantity(offerData, quantity);
     if (!q.changed) continue;
     const put = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${o.offerId}`, {
@@ -1643,7 +1664,7 @@ export async function setOfferAvailableQuantity(sku: string, quantity: number, t
   return errors.length > 0 ? { ok: false, changed, error: errors.join('; ') } : { ok: true, changed };
 }
 
-export async function setInventoryItemQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+export async function setInventoryItemQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch, buyerPrice?: number | null): Promise<boolean> {
   { const locked = await priceLockError(sku, 'Menge (PUT Inventory Item)'); if (locked) return false; } // K-011b
   const getRes = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
@@ -1672,7 +1693,7 @@ export async function setInventoryItemQuantity(sku: string, quantity: number, to
   if (putRes.ok || putRes.status === 204) {
     // Mengen-Fix A: Offer-Menge mitziehen — sonst deckelt eine alte Offer-Menge (z. B. 0) das Angebot (eBay: die kleinere gilt).
     // Rückgabe bleibt "Lager gesetzt"; scheitert die Offer-Menge, steht das laut im Log.
-    const off = await setOfferAvailableQuantity(sku, quantity, token, fetchFn).catch(e => ({ ok: false, changed: 0, error: String(e) }));
+    const off = await setOfferAvailableQuantity(sku, quantity, token, fetchFn, buyerPrice).catch(e => ({ ok: false, changed: 0, error: String(e) }));
     if (!off.ok) console.warn(`[setInventoryItemQuantity] ⚠️ ${sku}: Lager ${quantity} gesetzt, Offer-Menge NICHT: ${off.error}`);
     return true;
   }
