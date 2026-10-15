@@ -4146,6 +4146,56 @@ app.post('/products/checkout-factor/sync', async (c) => {
   }
 });
 
+// App-Preise aus eBay übernehmen (Inhaber 15.10.2026 "Ja App-Preise 220 = eBay"): eBay je Variante NUR LESEN (GET offer?sku=),
+// Vorschau ohne Schreiben; mit {apply:true, confirm:true} werden NUR variant_sell_prices (Varianten) bzw. sellPrice (Einzelartikel) der
+// App gesetzt. Kein eBay-Schreibaufruf. Logik: api/ebay-price-readback.ts. Außerhalb der Hono-Kette (TS2589), hinter der Login-Middleware.
+app.post('/products/:id/sell-prices-from-ebay', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: { apply?: unknown; confirm?: unknown } = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  const apply = body.apply === true;
+  if (apply && body.confirm !== true) return c.json({ error: 'confirm: true fehlt — es wird nichts geschrieben' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (product.ebayStatus !== 'listed' || !product.ebayListingId) return c.json({ error: 'Produkt ist nicht live bei eBay gelistet' }, 422);
+    const { readEbaySellPrices, applyEbayPrices } = await import('./ebay-price-readback');
+    const { parseVariantGroupsJson } = await import('./price-monitor');
+    const { getAccessToken, getInventoryItemGroupSkus } = await import('./ebay');
+    const { isVariantProduct } = await import('../shared/variant-product');
+    const { parseVariantSellPrices, serializeVariantSellPrices } = await import('../shared/pricing');
+    let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
+    try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+    const appSellPrices = parseVariantSellPrices(product.variantSellPrices);
+    const token = await getAccessToken();
+    const rb = await readEbaySellPrices({
+      productId: id, groups: parseVariantGroupsJson(product.variants), entries: entries as never,
+      isVariant: isVariantProduct(product.variants, product.variantPrices), appSellPrices, appSellPrice: product.sellPrice,
+      token, getGroupSkus: (g) => getInventoryItemGroupSkus(g, token),
+    });
+    if (!apply) return c.json({ mode: 'preview', ...rb }, 200);
+    if (!rb.ok) return c.json({ mode: 'apply', written: false, error: rb.reason ?? 'eBay-Preise nicht vollständig lesbar — nichts geschrieben', ...rb }, 422);
+    if (rb.isVariant) {
+      const next = applyEbayPrices(appSellPrices, rb.rows);
+      await db.update(schema.products).set({
+        variantSellPrices: serializeVariantSellPrices(Object.entries(next.variantSellPrices).map(([skuId, sellPrice]) => ({ skuId, sellPrice }))),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.products.id, id));
+      console.log(`[App-Preise←eBay] stele-${id}: ${next.changed.map(x => `${x.skuId} ${x.from ?? '–'}→${x.to}`).join(', ') || 'keine Änderung'}`);
+      return c.json({ mode: 'apply', written: true, changed: next.changed, rows: rb.rows }, 200);
+    }
+    const price = rb.rows[0].ebayPrice as number;
+    await db.update(schema.products).set({ sellPrice: price, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
+    console.log(`[App-Preise←eBay] stele-${id}: sellPrice ${product.sellPrice ?? '–'}→${price}`);
+    return c.json({ mode: 'apply', written: true, changed: [{ skuId: null, from: product.sellPrice, to: price }], rows: rb.rows }, 200);
+  } catch (e) {
+    console.error('[sell-prices-from-ebay]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // K-008: "Preis halten" je Variante — lesen und an/aus schalten. Schreibt NUR app_settings 'price_holds' (keine Migration),
 // sendet nichts an eBay, ändert keinen Preis. Gehalten wird der HEUTIGE VK der Variante (aus derselben Rechnung wie "Erwartet").
 // Außerhalb der Hono-Kette registriert (TS2589, siehe checkout-factor/sync); liegt hinter derselben Login-Middleware.
