@@ -5,7 +5,7 @@ import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
-import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, getInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
+import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, getInventoryItemQuantity, getItemBuyerPricesXml, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { isVariantProduct } from '../shared/variant-product';
@@ -16,7 +16,7 @@ import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
 import { getPriceHolds, releasePriceHolds } from './price-holds';
 import { isProductPriceLocked } from './price-locks';
-import { productIdFromSku } from '../shared/ebay-buyer-price';
+import { productIdFromSku, parseGetItemBuyerPrices } from '../shared/ebay-buyer-price';
 import { applyOfferQuantity } from '../shared/offer-quantity';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
@@ -859,12 +859,18 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
               const groupSku = `stele-${product.id}-GROUP`;
               const realSkus = await getInventoryItemGroupSkus(groupSku, token);
               const maxVariantQuantity = await getMaxVariantQuantity();
+              // Mengen-Fix (Kalkulator #183): Käuferpreise EINMAL je Angebot und Lauf lesen — ohne Käuferpreis kein Offer-PUT.
+              const buyerPriceBySku = new Map<string, number>();
+              try {
+                const g = await getItemBuyerPricesXml(product.ebayListingId);
+                if (g.httpStatus === 200) for (const b of parseGetItemBuyerPrices(g.xml).rows) buyerPriceBySku.set(b.sku, b.price);
+              } catch (e) { console.warn(`[PriceMonitor] ${product.id}: Käuferpreise nicht lesbar — Offer-Mengen werden nicht gesetzt:`, e); }
               for (const v of knownStock) {
                 const suffix = Object.values(v.attrs ?? {}).map(slugify).filter(Boolean).join('-');
                 const candidateSku = `stele-${product.id}-${suffix}`;
                 if (!realSkus.includes(candidateSku)) continue; // kein eindeutiger Match — nichts unternehmen
                 const targetQuantity = resolveVariantQuantity(v.stock, 0, maxVariantQuantity);
-                const ok = await setInventoryItemQuantity(candidateSku, targetQuantity, token);
+                const ok = await setInventoryItemQuantity(candidateSku, targetQuantity, token, fetch, buyerPriceBySku.get(candidateSku) ?? null);
                 if (ok) {
                   stockUpdated++;
                   console.log(`[PriceMonitor] ${product.id}: Variante ${candidateSku} (echter Bestand ${v.stock}) — eBay-Menge auf ${targetQuantity} gesetzt`);
