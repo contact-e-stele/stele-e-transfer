@@ -4158,6 +4158,44 @@ app.post('/products/checkout-factor/sync', async (c) => {
   }
 });
 
+// Mengen-Fix (Inhaber 15.10.2026 "Ja Mengen-Fix A+B"): Mengen je Variante JETZT auf das App-Ziel setzen (MIN(AliExpress-Lager, Obergrenze)),
+// im Lager UND in der Offer-Menge (setInventoryItemQuantity zieht die Offer-Menge mit). Ohne confirm: nur Vorschau (quantity-check).
+// Mit {confirm:true}: NUR auf Inhaber-Klick. Danach zurücklesen. Sperre (K-011b) gilt.
+app.post('/products/:id/sync-quantities', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: { confirm?: unknown } = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (product.ebayStatus !== 'listed' || !product.ebayListingId) return c.json({ error: 'Produkt ist nicht live bei eBay gelistet' }, 422);
+    const { getAccessToken, getItemBuyerPricesXml, getMaxVariantQuantity, slugify, setInventoryItemQuantity } = await import('./ebay');
+    const { runQuantityCheck } = await import('./quantity-check');
+    let entries: Array<{ attrs?: Record<string, string>; stock?: number }> = [];
+    try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+    const token = await getAccessToken();
+    const maxQty = await getMaxVariantQuantity();
+    const check = () => runQuantityCheck({ productId: id, ebayListingId: product.ebayListingId as string, variantEntries: entries, slug: slugify, maxQty, token,
+      getItemXml: () => getItemBuyerPricesXml(product.ebayListingId as string) });
+    const before = await check();
+    if (body.confirm !== true) return c.json({ mode: 'preview', maxQty, ...before }, 200);
+    const results: Array<{ sku: string; to: number; ok: boolean }> = [];
+    for (const r of before.rows) {
+      if (r.targetQty == null) continue; // AliExpress-Lager unbekannt → nichts setzen (nichts geraten)
+      const ok = await setInventoryItemQuantity(r.sku, r.targetQty, token);
+      results.push({ sku: r.sku, to: r.targetQty, ok });
+      console.log(`[Mengen] stele-${id} ${r.sku}: Ziel ${r.targetQty} (Lager vorher ${r.inventoryQty}, Offer vorher ${r.offerQty}) ${ok ? 'OK' : 'FEHLER'}`);
+    }
+    const after = await check();
+    return c.json({ mode: 'apply', maxQty, results, after: after.rows, error: after.error }, 200);
+  } catch (e) {
+    console.error('[sync-quantities]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // K-010 Schritt 1 (Kalkulator 15.10.2026): NUR LESEN — Beträge einer AliExpress-Bestellung roh (aliexpress.trade.ds.order.get),
 // um zu klären, welches Feld dem Beleg-"Insgesamt" entspricht. Schreibt nichts, sendet nichts.
 app.get('/aliexpress/orders/:aliOrderId/amounts', async (c) => {

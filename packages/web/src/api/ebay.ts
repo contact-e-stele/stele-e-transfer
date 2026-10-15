@@ -7,6 +7,7 @@ import type { ResolvedGpsr } from '../shared/gpsr-parser';
 import type { SentPrice } from '../shared/sent-prices';
 import { checkOutgoingListingText, formatComplianceViolations } from '../shared/description-compliance';
 import { productIdFromSku } from '../shared/ebay-buyer-price';
+import { applyOfferQuantity } from '../shared/offer-quantity';
 
 // K-011b (Kalkulator-Prüfung #179): Ist ein Produkt gesperrt (eBay-Käuferpreis ≠ Inventory-Angebotsdaten), darf KEIN Schreibaufruf auf
 // Offer-, Inventory-Item- oder Gruppen-Ebene raus — ein PUT/publish überarbeitet das Live-Angebot aus den (alten) Angebotsdaten, der
@@ -1604,6 +1605,44 @@ export async function getInventoryItemGroupSkus(groupKey: string, token: string,
 // Item — ein PUT mit nur { availability: ... } würde Titel/Bilder/Aspekte löschen. Deshalb
 // erst das bestehende Item holen und nur das quantity-Feld darin ändern, bevor es komplett
 // zurückgeschrieben wird.
+// Mengen-Fix: Lagermenge eines Inventory Items lesen (nur GET). null = nicht lesbar.
+export async function getInventoryItemQuantity(sku: string, token: string, fetchFn: typeof fetch = fetch): Promise<number | null> {
+  try {
+    const r = await fetchFn(`${BASE_URL}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!r.ok) return null;
+    const d = await r.json().catch(() => null) as { availability?: { shipToLocationAvailability?: { quantity?: number } } } | null;
+    const q = d?.availability?.shipToLocationAvailability?.quantity;
+    return typeof q === 'number' ? q : null;
+  } catch { return null; } // nicht lesbar → Offer-Menge bleibt unverändert (nichts geraten)
+}
+
+// Mengen-Fix A: Offer-Menge (availableQuantity) jeder Offer der SKU auf `quantity` setzen — GET voll → nur availableQuantity → PUT voll
+// (wie updateOfferPriceBySku). Nur PUT, wenn der Wert abweicht. Sperre (K-011b) gilt.
+export async function setOfferAvailableQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch): Promise<{ ok: boolean; changed: number; error?: string }> {
+  { const locked = await priceLockError(sku, 'Offer-Menge (PUT Offer)'); if (locked) return { ok: false, changed: 0, error: locked }; }
+  const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!res.ok) return { ok: false, changed: 0, error: `GET offer?sku=${sku}: ${res.status}` };
+  const offers = ((await res.json()) as { offers?: Array<{ offerId: string }> }).offers ?? [];
+  if (offers.length === 0) return { ok: false, changed: 0, error: `Kein Offer für SKU ${sku}` };
+  let changed = 0;
+  const errors: string[] = [];
+  for (const o of offers) {
+    const full = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${o.offerId}`, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!full.ok) { errors.push(`GET offer/${o.offerId}: ${full.status}`); continue; }
+    const offerData = await full.json() as Record<string, unknown>;
+    const q = applyOfferQuantity(offerData, quantity);
+    if (!q.changed) continue;
+    const put = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${o.offerId}`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+      body: JSON.stringify(offerData),
+    });
+    if (put.ok || put.status === 204) { changed++; console.log(`[eBay] ${sku}: Offer-Menge ${String(q.from)} → ${q.to}`); }
+    else errors.push(`PUT offer/${o.offerId}: ${put.status} ${(await put.text().catch(() => '')).slice(0, 300)}`);
+  }
+  return errors.length > 0 ? { ok: false, changed, error: errors.join('; ') } : { ok: true, changed };
+}
+
 export async function setInventoryItemQuantity(sku: string, quantity: number, token: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
   { const locked = await priceLockError(sku, 'Menge (PUT Inventory Item)'); if (locked) return false; } // K-011b
   const getRes = await fetchFn(
@@ -1630,7 +1669,13 @@ export async function setInventoryItemQuantity(sku: string, quantity: number, to
       body: JSON.stringify(item),
     }
   );
-  if (putRes.ok || putRes.status === 204) return true;
+  if (putRes.ok || putRes.status === 204) {
+    // Mengen-Fix A: Offer-Menge mitziehen — sonst deckelt eine alte Offer-Menge (z. B. 0) das Angebot (eBay: die kleinere gilt).
+    // Rückgabe bleibt "Lager gesetzt"; scheitert die Offer-Menge, steht das laut im Log.
+    const off = await setOfferAvailableQuantity(sku, quantity, token, fetchFn).catch(e => ({ ok: false, changed: 0, error: String(e) }));
+    if (!off.ok) console.warn(`[setInventoryItemQuantity] ⚠️ ${sku}: Lager ${quantity} gesetzt, Offer-Menge NICHT: ${off.error}`);
+    return true;
+  }
   // A-048 (Review): eBays Antworttext loggen, sonst ist ein 25xxx-Fehler hier wieder nicht ermittelbar (wie A-013 beim Titel-PUT).
   const detail = await putRes.text().catch(() => '');
   console.warn(`[setInventoryItemQuantity] PUT inventory_item/${sku} fehlgeschlagen: ${putRes.status} ${detail.slice(0, 300)}`);
@@ -2161,6 +2206,7 @@ export async function updateOfferDescriptionBySku(
     });
     if (!fullRes.ok) { errors.push(`GET offer/${offer.offerId}: ${fullRes.status}`); continue; }
     const offerData = await fullRes.json() as Record<string, unknown>;
+    applyOfferQuantity(offerData, await getInventoryItemQuantity(sku, token, fetchFn)); // Mengen-Fix B: keine alte Offer-Menge zurückschreiben
     offerData.listingDescription = html;
     if (regulatory) offerData.regulatory = regulatory; // P71-C Teil 2: im selben PUT, vorhandenes regulatory wird ersetzt
     const put = (body: unknown) => fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${offer.offerId}`, {
