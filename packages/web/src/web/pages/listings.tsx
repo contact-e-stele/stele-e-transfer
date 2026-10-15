@@ -14,6 +14,7 @@ import { TargetBadge, postTierReprice, type RepriceResult, type TierPatch } from
 import { TIER_REPRICE_MAX_PRODUCTS, expectedFromPlan } from "../../shared/tier-reprice";
 import { MARGIN_TIERS } from "../../shared/constants";
 import { usePriceHolds } from "../lib/price-holds-store";
+import { adRateOptions, adRateLabel } from "../../shared/ad-rate-options";
 import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
 
 interface EbayListing {
@@ -1556,16 +1557,19 @@ export default function Listings() {
                     {/* adRate Badge — nur wenn verknüpft */}
                     {isLinked && (() => {
                       const prodId = listing.appProduct!.id;
-                      const currentRate = adRateValues[prodId] ?? listing.appProduct!.adRate ?? 5;
+                      // K-009: null wird NICHT mehr als 5 % angezeigt, sondern als "—" (nicht gesetzt; die Formel rechnet dann mit dem Standard 5 %).
+                      const currentRate: number | null = adRateValues[prodId] ?? listing.appProduct!.adRate ?? null;
+                      const rateOptions = adRateOptions(currentRate);
                       const saving = adRateSaving === prodId;
                       const res = adRateResult[prodId];
                       return (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                           <span style={{ fontSize: 10, color: "#64748B", fontWeight: 600 }}>Anzeige:</span>
                           <select
-                            value={currentRate}
+                            value={currentRate == null ? "" : String(currentRate)}
                             disabled={saving}
-                            onChange={e => handleAdRateChange(prodId, parseFloat(e.target.value))}
+                            title={currentRate == null ? "Nicht gesetzt — gerechnet wird mit 5 %" : currentRate === 0 ? "Keine Anzeige (Angebot nicht beworben)" : `Anzeigensatz ${currentRate} %`}
+                            onChange={e => { if (e.target.value !== "") handleAdRateChange(prodId, parseFloat(e.target.value)); }}
                             style={{
                               fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6,
                               border: "1.5px solid " + (res?.ok ? "#22C55E" : res?.err ? "#DC2626" : "#FFD700"),
@@ -1574,8 +1578,9 @@ export default function Listings() {
                               fontFamily: "inherit", outline: "none",
                             }}
                           >
-                            {[2, 3, 5, 8, 10].map(r => (
-                              <option key={r} value={r}>{r}%</option>
+                            {currentRate == null && <option value="" disabled>—</option>}
+                            {rateOptions.map(r => (
+                              <option key={r} value={String(r)}>{adRateLabel(r)}</option>
                             ))}
                           </select>
                           {saving && <Loader size={9} style={{ animation: "spin 1s linear infinite" }} color="#F59E0B" />}
