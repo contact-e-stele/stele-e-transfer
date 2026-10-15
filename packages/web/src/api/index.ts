@@ -4158,6 +4158,29 @@ app.post('/products/checkout-factor/sync', async (c) => {
   }
 });
 
+// K-010 Schritt 1 (Kalkulator 15.10.2026): NUR LESEN — Beträge einer AliExpress-Bestellung roh (aliexpress.trade.ds.order.get),
+// um zu klären, welches Feld dem Beleg-"Insgesamt" entspricht. Schreibt nichts, sendet nichts.
+app.get('/aliexpress/orders/:aliOrderId/amounts', async (c) => {
+  const aliOrderId = c.req.param('aliOrderId');
+  if (!/^\d{10,20}$/.test(aliOrderId)) return c.json({ error: 'Ungültige AliExpress-Bestellnummer' }, 400);
+  try {
+    const { ensureFreshAliToken, getAliAccessToken, getAliOrderRaw } = await import('./aliexpress-api');
+    await ensureFreshAliToken();
+    const token = await getAliAccessToken();
+    if (!token) return c.json({ error: 'AliExpress nicht verbunden' }, 503);
+    const raw = await getAliOrderRaw(aliOrderId, token);
+    if (!raw) return c.json({ error: 'AliExpress lieferte keine Bestellung' }, 502);
+    const pick = (k: string) => (raw as Record<string, unknown>)[k] ?? null;
+    return c.json({
+      aliOrderId, order_amount: pick('order_amount'), user_order_amount: pick('user_order_amount'), order_status: pick('order_status'),
+      child_order_list: pick('child_order_list'), keys: Object.keys(raw),
+    }, 200);
+  } catch (e) {
+    console.error('[aliexpress/orders/amounts]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // App-Preise aus eBay übernehmen (Inhaber 15.10.2026 "Ja App-Preise 220 = eBay"): eBay je Variante NUR LESEN (GET offer?sku=),
 // Vorschau ohne Schreiben; mit {apply:true, confirm:true} werden NUR variant_sell_prices (Varianten) bzw. sellPrice (Einzelartikel) der
 // App gesetzt. Kein eBay-Schreibaufruf. Logik: api/ebay-price-readback.ts. Außerhalb der Hono-Kette (TS2589), hinter der Login-Middleware.
