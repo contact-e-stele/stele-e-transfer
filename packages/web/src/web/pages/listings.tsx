@@ -14,7 +14,7 @@ import { TargetBadge, postTierReprice, type RepriceResult, type TierPatch } from
 import { TIER_REPRICE_MAX_PRODUCTS, expectedFromPlan } from "../../shared/tier-reprice";
 import { MARGIN_TIERS } from "../../shared/constants";
 import { usePriceHolds } from "../lib/price-holds-store";
-import { adRateOptions, adRateLabel } from "../../shared/ad-rate-options";
+import { adRateOptions, adRateLabel, AD_RATE_OPTIONS } from "../../shared/ad-rate-options";
 import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
 
 interface EbayListing {
@@ -1317,7 +1317,7 @@ export default function Listings() {
                 <select value={bulkAdRate} onChange={e => setBulkAdRate(parseFloat(e.target.value))} style={{
                   padding: "7px 10px", fontSize: 12, border: "1.5px solid #C7D2FE", borderRadius: 8, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0F172A",
                 }}>
-                  {[2, 3, 5, 8, 10].map(r => <option key={r} value={r}>{r}%</option>)}
+                  {AD_RATE_OPTIONS.map(r => <option key={r} value={r}>{r === 0 ? "0 % (aus) – nur App, nichts an eBay" : `${r}%`}</option>)}
                 </select>
                 <button onClick={handleBulkAdRate} disabled={bulkRunning} style={{
                   padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366F1", color: "#fff",
