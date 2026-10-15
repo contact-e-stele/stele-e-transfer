@@ -1076,7 +1076,9 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
     const calledUrls: string[] = [];
     const fetchFn = (async (url: unknown, init?: RequestInit) => {
       const u = String(url);
-      calledUrls.push(u);
+      // Mengen-Fix B (15.10.2026): ein LESENDER GET auf inventory_item ist jetzt erlaubt (Offer-Menge folgt der Lagermenge) —
+      // geprüft wird weiterhin, dass inventory_item/-group NICHT geschrieben werden.
+      calledUrls.push(`${init?.method ?? 'GET'} ${u}`);
       if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'OFF-1' }] }), { status: 200 });
       if (u.includes('/offer/OFF-1')) {
         if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
@@ -1087,7 +1089,7 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
 
     const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
     expect(result.ok).toBe(true);
-    expect(calledUrls.some(u => u.includes('/inventory_item/'))).toBe(false);
+    expect(calledUrls.some(u => !u.startsWith('GET ') && u.includes('/inventory_item'))).toBe(false);
   });
 });
 

@@ -5,7 +5,7 @@ import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
-import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
+import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, getInventoryItemQuantity, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { isVariantProduct } from '../shared/variant-product';
@@ -17,6 +17,7 @@ import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../sha
 import { getPriceHolds, releasePriceHolds } from './price-holds';
 import { isProductPriceLocked } from './price-locks';
 import { productIdFromSku } from '../shared/ebay-buyer-price';
+import { applyOfferQuantity } from '../shared/offer-quantity';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -395,6 +396,8 @@ export async function updateOfferPriceBySku(
       ...(offerData.pricingSummary as Record<string, unknown> | undefined ?? {}),
       price: { value: newPrice.toFixed(2), currency: 'EUR' },
     };
+    // Mengen-Fix B: die Offer-Menge folgt der Lagermenge — nie die alte (evtl. 0) Offer-Menge zurückschreiben.
+    applyOfferQuantity(offerData, await getInventoryItemQuantity(sku, token, fetchFn));
     const patchRes = await fetchFn(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offerId}`, {
       method: 'PUT',
       headers: {

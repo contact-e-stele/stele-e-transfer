@@ -29,6 +29,8 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
   const [rows, setRows] = useState<Row[] | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [alignPreview, setAlignPreview] = useState<Array<{ sku: string; buyerPrice: number; offerPrice: number | null }> | null>(null);
+  // Mengen-Fix: Lager / Offer-Menge / frei bei eBay / Ziel der App je Variante, "Mengen jetzt setzen" nur auf Klick.
+  const [qty, setQty] = useState<Array<{ sku: string; label: string; inventoryQty: number | null; offerQty: number | null; buyerAvailable: number | null; targetQty: number | null; note: string }> | null>(null);
 
   const call = async (url: string, body: unknown) => {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -61,6 +63,24 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
       await loadLocks(true);
     } finally { setBusy(false); }
   };
+  const checkQty = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const { ok, data } = await call(`/api/products/${productId}/sync-quantities`, {});
+      if (!ok) { setMsg({ ok: false, text: String(data.error ?? "Mengen-Prüfung fehlgeschlagen") }); return; }
+      setQty((data.rows as typeof qty) ?? []);
+    } finally { setBusy(false); }
+  };
+  const syncQty = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const { ok, data } = await call(`/api/products/${productId}/sync-quantities`, { confirm: true });
+      if (!ok) { setMsg({ ok: false, text: String(data.error ?? "Mengen setzen fehlgeschlagen") }); return; }
+      setQty((data.after as typeof qty) ?? []);
+      const res = (data.results as Array<{ ok: boolean }> | undefined) ?? [];
+      setMsg({ ok: res.every(r => r.ok), text: `${res.filter(r => r.ok).length} von ${res.length} Variante(n) gesetzt (Lager + Offer-Menge) — neu gelesen` });
+    } finally { setBusy(false); }
+  };
   const takeOver = async () => {
     setBusy(true); setMsg(null);
     try {
@@ -82,6 +102,7 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
         )}
         <button type="button" disabled={busy} onClick={check} style={btn("#fff", "#64748B")} title="Liest bei eBay Käuferpreis und Angebotsdaten je Variante (nur lesen)">eBay-Preise prüfen</button>
         {lock && <button type="button" disabled={busy} onClick={previewAlign} style={btn("#FFFBEB", "#92400E")}>Angleichen (Vorschau)</button>}
+        <button type="button" disabled={busy} onClick={checkQty} style={btn("#fff", "#64748B")} title="Liest Lager, Offer-Menge und freie Menge bei eBay je Variante (nur lesen)">Mengen prüfen</button>
         {rows && <button type="button" disabled={busy} onClick={takeOver} style={btn("#F0FDF4", "#16A34A")} title="Setzt nur die App-Preise auf den eBay-Käuferpreis — sendet nichts an eBay">App-Preise übernehmen</button>}
       </div>
       {msg && <div style={{ fontSize: 11, fontWeight: 600, color: msg.ok ? "#16A34A" : "#DC2626", marginTop: 2 }}>{msg.text}</div>}
@@ -94,6 +115,20 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
               <td style={{ textAlign: "left", paddingRight: 6 }}>{r.label || r.sku}</td><td>{f(r.ebayPrice)}</td><td>{f(r.offerPrice)}</td><td>{f(r.appPrice)}</td></tr>;
           })}</tbody>
         </table>
+      )}
+      {qty && qty.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <table style={{ fontSize: 10, borderCollapse: "collapse" }}>
+            <thead><tr style={{ color: "#64748B", textAlign: "right" }}><th style={{ textAlign: "left" }}>Variante</th><th>Lager</th><th>Offer</th><th>frei</th><th>Ziel</th><th style={{ textAlign: "left", paddingLeft: 6 }}>Hinweis</th></tr></thead>
+            <tbody>{qty.map((r, i) => (
+              <tr key={i} style={{ textAlign: "right", color: r.buyerAvailable === 0 ? "#B91C1C" : "#0F172A" }}>
+                <td style={{ textAlign: "left", paddingRight: 6 }}>{r.label || r.sku}</td><td>{r.inventoryQty ?? "–"}</td><td>{r.offerQty ?? "–"}</td>
+                <td>{r.buyerAvailable ?? "–"}</td><td>{r.targetQty ?? "–"}</td><td style={{ textAlign: "left", paddingLeft: 6 }}>{r.note}</td>
+              </tr>))}</tbody>
+          </table>
+          <button type="button" disabled={busy} onClick={syncQty} style={{ ...btn("#16A34A", "#fff"), marginTop: 4, border: "none" }}
+            title="Setzt je Variante Lager UND Offer-Menge bei eBay auf das Ziel (MIN(AliExpress-Lager, Obergrenze))">Mengen jetzt auf Ziel setzen</button>
+        </div>
       )}
       {alignPreview && (
         <div style={{ marginTop: 4, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: "6px 8px", fontSize: 11 }}>

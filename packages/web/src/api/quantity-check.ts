@@ -1,17 +1,11 @@
 // Mengen-Lese-Prüfung je Variante — eBay NUR LESEN (GET inventory_item, GET offer?sku, Trading GetItem). Logik: shared/quantity-check.ts.
 import { evaluateQuantityRow, type QuantityRow, type QuantityVerdict } from '../shared/quantity-check';
 import { parseGetItemBuyerPrices } from '../shared/ebay-buyer-price';
-import { resolveVariantQuantity } from './ebay';
+import { resolveVariantQuantity, getInventoryItemQuantity } from './ebay';
 
 const BASE = 'https://api.ebay.com';
 
-export async function readInventoryQty(sku: string, token: string, f: typeof fetch = fetch): Promise<number | null> {
-  const r = await f(`${BASE}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok) return null;
-  const d = await r.json() as { availability?: { shipToLocationAvailability?: { quantity?: number } } };
-  const q = d.availability?.shipToLocationAvailability?.quantity;
-  return typeof q === 'number' ? q : null;
-}
+export const readInventoryQty = getInventoryItemQuantity; // eine Stelle (Grundgesetz 8)
 
 export async function readOfferQty(sku: string, token: string, f: typeof fetch = fetch): Promise<{ qty: number | null; offers: number }> {
   const r = await f(`${BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`, { headers: { Authorization: `Bearer ${token}` } });
