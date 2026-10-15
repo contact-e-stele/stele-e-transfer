@@ -2487,6 +2487,31 @@ export async function getItemStatusXml(itemId: string): Promise<{ httpStatus: nu
   return { httpStatus: res.status, xml: await res.text() };
 }
 
+// K-011: NUR LESEN — Roh-XML von GetItem mit Varianten (Käuferpreis je Variation/StartPrice). Ausgewertet in
+// shared/ebay-buyer-price.ts (parseGetItemBuyerPrices, rein/getestet). Keine Änderung bei eBay.
+export async function getItemBuyerPricesXml(itemId: string): Promise<{ httpStatus: number; xml: string }> {
+  const token = await getAccessToken();
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
+  <ItemID>${itemId}</ItemID>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetItemRequest>`;
+  const res = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'GetItem',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: xml,
+    signal: AbortSignal.timeout(30000),
+  });
+  return { httpStatus: res.status, xml: await res.text() };
+}
+
 export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   const token = await getAccessToken();
   const results: EbaySellerListing[] = [];

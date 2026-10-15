@@ -15,6 +15,8 @@ import { earUmlageFor } from '../shared/electric';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
 import { getPriceHolds, releasePriceHolds } from './price-holds';
+import { isProductPriceLocked } from './price-locks';
+import { productIdFromSku } from '../shared/ebay-buyer-price';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
 
@@ -351,7 +353,15 @@ export async function updateOfferPriceBySku(
   token: string,
   fetchFn: typeof fetch = fetch,
   raiseOnly = false,
+  // K-011: Preis-Sperre (Käuferpreis ≠ Angebotsdaten). bypassPriceLock NUR für "Angebotsdaten an Käuferpreis angleichen".
+  opts: { bypassPriceLock?: boolean; isLocked?: (productId: number) => Promise<boolean> } = {},
 ): Promise<{ ok: boolean; error?: string; skipped?: string }> {
+  const lockPid = productIdFromSku(sku);
+  if (lockPid != null && !opts.bypassPriceLock && await (opts.isLocked ?? isProductPriceLocked)(lockPid)) {
+    const msg = `K-011 Sperre: eBay-Käuferpreis und Angebotsdaten von stele-${lockPid} weichen ab — kein Preis gesendet (erst angleichen)`;
+    console.warn(`[PriceMonitor] ${sku}: ${msg}`);
+    return { ok: false, error: msg };
+  }
   const res = await fetchFn(
     `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
     { headers: { 'Authorization': `Bearer ${token}` } }
@@ -524,6 +534,13 @@ export async function updateEbayPriceInventory(productId: number, newPrice: numb
 // eBay Listing-Preis über Trading API aktualisieren (Fallback für ältere Listings)
 export async function updateEbayPriceTrading(itemId: string, newPrice: number): Promise<{ ok: boolean; error?: string }> {
   try {
+    // K-011: Sperre auch für den Trading-Weg (Produkt über die eBay-Artikelnummer).
+    const [locked] = await db.select({ id: schema.products.id }).from(schema.products).where(eq(schema.products.ebayListingId, itemId)).limit(1);
+    if (locked && await isProductPriceLocked(locked.id)) {
+      const msg = `K-011 Sperre: eBay-Käuferpreis und Angebotsdaten von stele-${locked.id} weichen ab — kein Preis gesendet (erst angleichen)`;
+      console.warn(`[PriceMonitor] ${itemId}: ${msg}`);
+      return { ok: false, error: msg };
+    }
     // P-14: ReviseInventoryStatus kennt nur Item-Level-Preise und schlägt bei
     // Variations-Listings garantiert fehl — vorher per GetItem prüfen und den
     // aussichtslosen Request gar nicht erst versuchen.
