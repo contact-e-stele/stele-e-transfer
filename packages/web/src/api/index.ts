@@ -4200,6 +4200,43 @@ app.post('/products/:id/sync-quantities', async (c) => {
   }
 });
 
+// Plan F (Inhaber 15.10.2026): Restmenge bei eBay je verkaufter Variante für den Bestellungen-Tab. NUR LESEN (Trading GetItem).
+// Ein GetItem je Angebot, 10 Min zwischengespeichert; höchstens 40 Angebote je Aufruf. Unbekannt bleibt null (nichts geraten).
+const REMAINING_CACHE_MS = 10 * 60 * 1000;
+const remainingCache = new Map<string, { at: number; bySku: Map<string, number | null> }>();
+app.get('/ebay/remaining-qty', async (c) => {
+  try {
+    const skus = [...new Set((c.req.query('skus') ?? '').split(',').map(s => s.trim()).filter(s => /^stele-\d+/.test(s)))].slice(0, 200);
+    const { productIdFromSku } = await import('../shared/ebay-buyer-price');
+    const { remainingBySkuFromGetItem } = await import('../shared/remaining-qty');
+    const { getItemBuyerPricesXml } = await import('./ebay');
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const pids = [...new Set(skus.map(productIdFromSku).filter((n): n is number => n != null))].slice(0, 40);
+    const rows = pids.length === 0 ? [] : await db.select({ id: schema.products.id, ebayListingId: schema.products.ebayListingId }).from(schema.products);
+    const listingByPid = new Map(rows.filter(r => pids.includes(r.id) && r.ebayListingId).map(r => [r.id, r.ebayListingId as string]));
+    const remaining: Record<string, number | null> = {};
+    const errors: string[] = [];
+    for (const pid of pids) {
+      const listing = listingByPid.get(pid);
+      if (!listing) continue;
+      let hit = remainingCache.get(listing);
+      if (!hit || Date.now() - hit.at > REMAINING_CACHE_MS) {
+        try {
+          const g = await getItemBuyerPricesXml(listing);
+          if (g.httpStatus !== 200) { errors.push(`stele-${pid}: GetItem HTTP ${g.httpStatus}`); continue; }
+          hit = { at: Date.now(), bySku: remainingBySkuFromGetItem(g.xml, pid) };
+          remainingCache.set(listing, hit);
+        } catch (e) { errors.push(`stele-${pid}: ${String(e).slice(0, 120)}`); continue; }
+      }
+      for (const s of skus) if (productIdFromSku(s) === pid && hit.bySku.has(s)) remaining[s] = hit.bySku.get(s) ?? null;
+    }
+    return c.json({ remaining, errors }, 200);
+  } catch (e) {
+    console.error('[remaining-qty]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // K-010 Schritt 1 (Kalkulator 15.10.2026): NUR LESEN — Beträge einer AliExpress-Bestellung roh (aliexpress.trade.ds.order.get),
 // um zu klären, welches Feld dem Beleg-"Insgesamt" entspricht. Schreibt nichts, sendet nichts.
 app.get('/aliexpress/orders/:aliOrderId/amounts', async (c) => {
