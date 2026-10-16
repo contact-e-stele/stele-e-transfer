@@ -12,7 +12,7 @@
 // A-023 (verallgemeinert auf beliebige Produkte): gibt es in einer Kombination GAR KEINEN ursprünglichen Eintrag (alle Dubletten stammen aus
 // Scrapes, z. B. stele-119 "100pcs"), bleibt der FRISCHESTE Eintrag als Träger (skuId/Lager), der Preis ist wieder das Maximum über alle
 // Dubletten der Kombination — EK = höchster, damit kein Minus entsteht.
-import { buildCombinations, entryMatchesCombo, type VariantGroup } from './variant-resolver';
+import { buildCombinations, entryMatchesCombo, resolveVariantEntries, type VariantGroup } from './variant-resolver';
 
 export interface DedupeEntry {
   skuId: string;
@@ -149,3 +149,12 @@ export function staleSellPriceNotes(changes: DedupeChange[], storedSellPrices: R
   }
   return notes;
 }
+
+// Sicherheitsnetz vor dem Schreiben (Skript UND App-Knopf, Grundgesetz 8 — eine Stelle): nach der Bereinigung darf der ECHTE Resolver
+// (wie beim Listing) keine "Mehrdeutig"-Fehler mehr melden. Rückgabe: Fehlertexte (leer = sicher).
+export function dedupeStillAmbiguous(productId: number, groups: VariantGroup[], plan: DedupePlan): string[] {
+  return resolveVariantEntries(productId, groups, plan.newEntries as never).filter(r => r.error?.startsWith('Mehrdeutig')).map(r => r.error as string);
+}
+
+// Produkte, die die Bereinigung nie anfasst (Inhaber: stele-214 ruht).
+export const DEDUPE_RESTING_PRODUCT_IDS: ReadonlySet<number> = new Set([214]);

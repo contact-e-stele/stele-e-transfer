@@ -4250,6 +4250,72 @@ app.get('/products/:id/quantity-check', async (c) => {
   }
 });
 
+// Dubletten-Bereinigung als Knopf (Inhaber 16.10.2026 "Ja 189 bereinigen"): dieselbe Logik wie scripts/variant-dedupe.ts
+// (shared/variant-dedupe.ts, Grundgesetz 8). GET = Vorschau, schreibt nichts. POST {confirm:true} = schreibt NUR products.variantPrices,
+// mit Sicherheitsnetz (Resolver darf danach nichts "Mehrdeutig" melden) und optimistischer Sperre (variantPrices seit dem Lesen unverändert).
+// Kein eBay-Aufruf. stele-214 ruht.
+async function variantDedupePlan(id: number) {
+  const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+  const [row] = await db.select({ id: schema.products.id, variants: schema.products.variants, variantPrices: schema.products.variantPrices, variantSellPrices: schema.products.variantSellPrices })
+    .from(schema.products).where(eq(schema.products.id, id)).limit(1);
+  if (!row) return null;
+  const { planVariantDedupe, staleSellPriceNotes, dedupeStillAmbiguous } = await import('../shared/variant-dedupe');
+  const { parseVariantGroupsJson } = await import('./price-monitor');
+  const { parseVariantSellPrices } = await import('../shared/pricing');
+  const groups = parseVariantGroupsJson(row.variants);
+  let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; stock?: number }> = [];
+  try { const pv = row.variantPrices ? JSON.parse(row.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+  const plan = planVariantDedupe(groups, entries);
+  return {
+    db, schema, row, plan, before: entries.length,
+    staleNotes: staleSellPriceNotes(plan.changes, parseVariantSellPrices(row.variantSellPrices)),
+    stillAmbiguous: dedupeStillAmbiguous(id, groups, plan),
+  };
+}
+app.get('/products/:id/variant-dedupe', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const { DEDUPE_RESTING_PRODUCT_IDS } = await import('../shared/variant-dedupe');
+    if (DEDUPE_RESTING_PRODUCT_IDS.has(id)) return c.json({ error: `stele-${id} ruht (Inhaber) — nicht angefasst` }, 422);
+    const r = await variantDedupePlan(id);
+    if (!r) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    return c.json({ mode: 'preview', productId: id, before: r.before, after: r.plan.newEntries.length, changes: r.plan.changes,
+      unchangedCombos: r.plan.unchangedCombos, orphans: r.plan.orphans, ambiguous: r.plan.ambiguous, staleNotes: r.staleNotes, stillAmbiguous: r.stillAmbiguous }, 200);
+  } catch (e) {
+    console.error('[variant-dedupe]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+app.post('/products/:id/variant-dedupe', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: { confirm?: unknown } = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  if (body.confirm !== true) return c.json({ error: 'confirm: true fehlt — es wird nichts geschrieben' }, 400);
+  try {
+    const { DEDUPE_RESTING_PRODUCT_IDS } = await import('../shared/variant-dedupe');
+    if (DEDUPE_RESTING_PRODUCT_IDS.has(id)) return c.json({ error: `stele-${id} ruht (Inhaber) — nicht angefasst` }, 422);
+    const r = await variantDedupePlan(id);
+    if (!r) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (r.plan.changes.length === 0) return c.json({ mode: 'apply', written: false, reason: 'Nichts zu bereinigen' }, 200);
+    if (r.stillAmbiguous.length > 0) return c.json({ mode: 'apply', written: false, error: `Nach der Bereinigung wären noch ${r.stillAmbiguous.length} Kombination(en) mehrdeutig — nichts geschrieben`, stillAmbiguous: r.stillAmbiguous }, 422);
+    const { and } = await import('drizzle-orm');
+    const res = await r.db.update(r.schema.products)
+      .set({ variantPrices: JSON.stringify(r.plan.newEntries), updatedAt: new Date().toISOString() })
+      .where(and(eq(r.schema.products.id, id), eq(r.schema.products.variantPrices, r.row.variantPrices ?? '')));
+    if ((res as { rowsAffected?: number }).rowsAffected !== 1) {
+      return c.json({ mode: 'apply', written: false, error: 'variantPrices hat sich seit dem Lesen geändert (Preisprüfung lief parallel) — nichts geschrieben, bitte erneut prüfen' }, 409);
+    }
+    console.log(`[Dubletten] stele-${id}: ${r.before} → ${r.plan.newEntries.length} Einträge; ${r.plan.changes.map(ch => `${ch.label}: ${ch.keeperOldSkuId}→${ch.keeperNewSkuId} EK ${ch.oldPrice}→${ch.newPrice}, entfernt ${ch.removedSkuIds.join('/')}`).join(' | ')}`);
+    const after = await variantDedupePlan(id);
+    return c.json({ mode: 'apply', written: true, before: r.before, after: r.plan.newEntries.length, changes: r.plan.changes, recheckChanges: after?.plan.changes.length ?? null, staleNotes: r.staleNotes }, 200);
+  } catch (e) {
+    console.error('[variant-dedupe apply]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.post('/products/:id/sell-prices-from-ebay', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
