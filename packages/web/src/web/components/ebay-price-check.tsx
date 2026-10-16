@@ -32,6 +32,10 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
   // Mengen-Fix: Lager / Offer-Menge / frei bei eBay / Ziel der App je Variante, "Mengen jetzt setzen" nur auf Klick.
   const [qty, setQty] = useState<Array<{ sku: string; label: string; inventoryQty: number | null; offerQty: number | null; buyerAvailable: number | null; targetQty: number | null; note: string }> | null>(null);
 
+  // Dubletten-Bereinigung (16.10.2026): Vorschau (GET, schreibt nichts) und "jetzt bereinigen" (nur App-Datenbank, kein eBay).
+  type Dedupe = { before: number; after: number; changes: Array<{ label: string; keeperOldSkuId: string; keeperNewSkuId: string; oldPrice: number; newPrice: number; oldStock?: number; newStock?: number; removedSkuIds: string[]; priceNote: string | null }>; ambiguous: Array<{ label: string; reason: string }>; orphans: unknown[]; staleNotes: string[]; stillAmbiguous: string[] };
+  const [dedupe, setDedupe] = useState<Dedupe | null>(null);
+
   const call = async (url: string, body: unknown) => {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     return { ok: r.ok, data: await r.json().catch(() => ({})) as Record<string, unknown> };
@@ -81,6 +85,25 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
       setMsg({ ok: res.every(r => r.ok), text: `${res.filter(r => r.ok).length} von ${res.length} Variante(n) gesetzt (Lager + Offer-Menge) — neu gelesen` });
     } finally { setBusy(false); }
   };
+  const checkDedupe = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch(`/api/products/${productId}/variant-dedupe`);
+      const data = await r.json().catch(() => ({})) as Record<string, unknown>;
+      if (!r.ok) { setMsg({ ok: false, text: String(data.error ?? "Dubletten-Prüfung fehlgeschlagen") }); return; }
+      setDedupe(data as unknown as Dedupe);
+    } finally { setBusy(false); }
+  };
+  const doDedupe = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const { ok, data } = await call(`/api/products/${productId}/variant-dedupe`, { confirm: true });
+      setDedupe(null);
+      setMsg(ok && data.written ? { ok: true, text: `Dubletten bereinigt: ${data.before} → ${data.after} Einträge (nur App, nichts an eBay gesendet)` }
+        : { ok: false, text: String(data.error ?? data.reason ?? "Nichts geschrieben") });
+      if (ok && data.written) onAppPricesChanged?.();
+    } finally { setBusy(false); }
+  };
   const takeOver = async () => {
     setBusy(true); setMsg(null);
     try {
@@ -103,6 +126,7 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
         <button type="button" disabled={busy} onClick={check} style={btn("#fff", "#64748B")} title="Liest bei eBay Käuferpreis und Angebotsdaten je Variante (nur lesen)">eBay-Preise prüfen</button>
         {lock && <button type="button" disabled={busy} onClick={previewAlign} style={btn("#FFFBEB", "#92400E")}>Angleichen (Vorschau)</button>}
         <button type="button" disabled={busy} onClick={checkQty} style={btn("#fff", "#64748B")} title="Liest Lager, Offer-Menge und freie Menge bei eBay je Variante (nur lesen)">Mengen prüfen</button>
+        <button type="button" disabled={busy} onClick={checkDedupe} style={btn("#fff", "#64748B")} title="Zeigt doppelte Varianten-Einträge (gleiche Kombination mehrfach) — nur lesen">Dubletten prüfen</button>
         {rows && <button type="button" disabled={busy} onClick={takeOver} style={btn("#F0FDF4", "#16A34A")} title="Setzt nur die App-Preise auf den eBay-Käuferpreis — sendet nichts an eBay">App-Preise übernehmen</button>}
       </div>
       {msg && <div style={{ fontSize: 11, fontWeight: 600, color: msg.ok ? "#16A34A" : "#DC2626", marginTop: 2 }}>{msg.text}</div>}
@@ -128,6 +152,26 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
           </table>
           <button type="button" disabled={busy} onClick={syncQty} style={{ ...btn("#16A34A", "#fff"), marginTop: 4, border: "none" }}
             title="Setzt je Variante Lager UND Offer-Menge bei eBay auf das Ziel (MIN(AliExpress-Lager, Obergrenze))">Mengen jetzt auf Ziel setzen</button>
+        </div>
+      )}
+      {dedupe && (
+        <div style={{ marginTop: 4, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "6px 8px", fontSize: 11 }}>
+          {dedupe.changes.length === 0 ? <div>Keine Dubletten zu bereinigen ({dedupe.before} Einträge).</div> : <>
+            <div style={{ fontWeight: 700 }}>Einträge {dedupe.before} → {dedupe.after} · {dedupe.changes.length} Kombination(en)</div>
+            <table style={{ fontSize: 10, borderCollapse: "collapse", marginTop: 2 }}>
+              <thead><tr style={{ color: "#64748B", textAlign: "right" }}><th style={{ textAlign: "left" }}>Kombination</th><th>EK alt → neu</th><th>Lager alt → neu</th><th>entfernt</th></tr></thead>
+              <tbody>{dedupe.changes.map((c, i) => (
+                <tr key={i} style={{ textAlign: "right" }}><td style={{ textAlign: "left", paddingRight: 6 }}>{c.label}</td>
+                  <td>{f(c.oldPrice)} → {f(c.newPrice)}</td><td>{c.oldStock ?? "–"} → {c.newStock ?? "–"}</td><td>{c.removedSkuIds.length}</td></tr>))}</tbody>
+            </table>
+            {dedupe.staleNotes.map((n, i) => <div key={i} style={{ color: "#92400E" }}>⚠ {n}</div>)}
+            {dedupe.stillAmbiguous.length > 0
+              ? <div style={{ color: "#B91C1C", fontWeight: 700 }}>Danach noch mehrdeutig — Bereinigen gesperrt: {dedupe.stillAmbiguous.join("; ")}</div>
+              : <button type="button" disabled={busy} onClick={doDedupe} style={{ ...btn("#16A34A", "#fff"), marginTop: 4, border: "none" }}
+                  title="Schreibt nur products.variantPrices der App — kein eBay-Aufruf">Dubletten jetzt bereinigen</button>}
+          </>}
+          {dedupe.ambiguous.length > 0 && <div style={{ color: "#92400E" }}>Nicht lösbar (bleibt): {dedupe.ambiguous.map(a => `${a.label}: ${a.reason}`).join("; ")}</div>}
+          <button type="button" disabled={busy} onClick={() => setDedupe(null)} style={{ ...btn("#fff", "#64748B"), marginLeft: 6, marginTop: 4 }}>Schließen</button>
         </div>
       )}
       {alignPreview && (

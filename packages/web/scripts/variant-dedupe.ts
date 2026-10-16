@@ -9,13 +9,13 @@
 import { db } from '../src/db/index';
 import * as schema from '../src/db/schema';
 import { and, eq } from 'drizzle-orm';
-import { planVariantDedupe, renderDedupeMarkdown, staleSellPriceNotes, type DedupeEntry } from '../src/shared/variant-dedupe';
-import { resolveVariantEntries, type VariantGroup } from '../src/shared/variant-resolver';
+import { planVariantDedupe, renderDedupeMarkdown, staleSellPriceNotes, dedupeStillAmbiguous, DEDUPE_RESTING_PRODUCT_IDS, type DedupeEntry } from '../src/shared/variant-dedupe';
+import { type VariantGroup } from '../src/shared/variant-resolver';
 import { parseVariantSellPrices } from '../src/shared/pricing';
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 
-const RUHT = new Set([214]);
+const RUHT = DEDUPE_RESTING_PRODUCT_IDS;
 const apply = process.argv.includes('--apply');
 const idsArg = process.argv.find((a, i) => process.argv[i - 1] === '--ids') ?? '';
 const ids = [...new Set(idsArg.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0))];
@@ -44,9 +44,9 @@ for (const id of ids) {
   if (!apply) continue;
   if (plan.changes.length === 0) { console.log(`stele-${id}: Nichts zu bereinigen — nichts geschrieben.`); continue; }
   // Sicherheitsnetz: nach der Bereinigung darf der ECHTE Resolver (wie beim Listing) keine "Mehrdeutig"-Fehler mehr melden — sonst abbrechen.
-  const stillAmbiguous = resolveVariantEntries(id, groups, plan.newEntries as never).filter(r => r.error?.startsWith('Mehrdeutig'));
+  const stillAmbiguous = dedupeStillAmbiguous(id, groups, plan);
   if (stillAmbiguous.length > 0) {
-    console.error(`ABBRUCH stele-${id}: nach der Bereinigung wären noch ${stillAmbiguous.length} Kombinationen mehrdeutig — nichts geschrieben.\n` + stillAmbiguous.map(r => r.error).join('\n'));
+    console.error(`ABBRUCH stele-${id}: nach der Bereinigung wären noch ${stillAmbiguous.length} Kombinationen mehrdeutig — nichts geschrieben.\n` + stillAmbiguous.join('\n'));
     failed = true; continue;
   }
   // Optimistische Sperre: nur schreiben, wenn variantPrices seit dem Lesen unverändert ist (die Preisprüfung läuft parallel im 8-h-Cron).
