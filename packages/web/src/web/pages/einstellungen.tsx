@@ -142,6 +142,30 @@ export default function Einstellungen() {
     }
   };
 
+  // OFFEN 006: Import-Regeln — Sterne-Sperre und höchstens Varianten.
+  const [minRating, setMinRating] = useState("4.2");
+  const [maxVariants, setMaxVariants] = useState("5");
+  const [rulesMsg, setRulesMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/settings/import-rules", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { const v = (d as { value?: { minRating: number; maxVariants: number } }).value; if (v) { setMinRating(String(v.minRating)); setMaxVariants(String(v.maxVariants)); } })
+      .catch(() => setRulesMsg({ ok: false, text: "Laden fehlgeschlagen — Netzwerkfehler" }));
+  }, []);
+  const saveRules = async () => {
+    setRulesMsg(null);
+    try {
+      const r = await fetch("/api/settings/import-rules", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ value: { minRating: Number(minRating.replace(",", ".")), maxVariants: Number(maxVariants) } }),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      setRulesMsg(d.ok ? { ok: true, text: "Gespeichert ✓ (gilt für neue Importe)" } : { ok: false, text: d.error || "Speichern fehlgeschlagen" });
+    } catch {
+      setRulesMsg({ ok: false, text: "Netzwerkfehler beim Speichern" });
+    }
+  };
+
   // Multi-Rabatt (Inhaber 18.10.2026): Euro-Regel — 2 Stück / 3 Stück so viel billiger (höchstens 3 Stück).
   const [multiEur2, setMultiEur2] = useState("3");
   const [multiEur3, setMultiEur3] = useState("5");
@@ -691,6 +715,25 @@ export default function Einstellungen() {
             style={{ width: 90, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} />
           <button onClick={saveMaxQty} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
           {maxQtyMsg && <span style={{ fontSize: 12, fontWeight: 600, color: maxQtyMsg.ok ? "#16A34A" : "#DC2626" }}>{maxQtyMsg.text}</span>}
+        </div>
+      </div>
+
+      {/* OFFEN 006: Import-Regeln */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>⭐</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Import-Regeln — Sterne und Varianten</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
+          Import nur ab dieser Artikelbewertung (Sterne auf AliExpress). Höchstens so viele Varianten je Angebot — beim Import wählt die App die besten automatisch (Lager ≥ 5, Gewinn ≥ 1,00 €). Gilt nur für neue Importe, gelistete Angebote bleiben unberührt.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <label style={{ fontSize: 13 }}>ab <input type="text" inputMode="decimal" value={minRating} onChange={e => setMinRating(e.target.value)}
+            style={{ width: 60, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} /> Sterne</label>
+          <label style={{ fontSize: 13 }}>höchstens <input type="number" min={1} step={1} value={maxVariants} onChange={e => setMaxVariants(e.target.value)}
+            style={{ width: 60, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} /> Varianten</label>
+          <button onClick={saveRules} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
+          {rulesMsg && <span style={{ fontSize: 12, fontWeight: 600, color: rulesMsg.ok ? "#16A34A" : "#DC2626" }}>{rulesMsg.text}</span>}
         </div>
       </div>
 

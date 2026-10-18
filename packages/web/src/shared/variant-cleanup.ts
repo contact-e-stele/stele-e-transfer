@@ -7,6 +7,11 @@
 import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPriceEntry } from './variant-resolver';
 
 export const MAX_VARIANT_COMBINATIONS = 5;
+/** app_settings "max_variant_combinations" lesen (OFFEN 006: einstellbar); ungültig/leer → 5. */
+export function parseMaxVariantCombinations(v: string | null | undefined): number {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 50 ? n : MAX_VARIANT_COMBINATIONS;
+}
 
 const usable = (groups: VariantGroup[]) => groups.filter(g => Array.isArray(g.values) && g.values.length > 0);
 
