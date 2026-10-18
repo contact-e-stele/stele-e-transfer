@@ -32,7 +32,9 @@ export function parseGetItemBuyerPrices(xml: string): { ack: string | null; isVa
   const itemBlock = xml.replace(/<Variations>[\s\S]*<\/Variations>/, '');
   const price = num(tag(itemBlock, 'StartPrice'));
   if (price == null) return { ack, isVariation: false, rows: [], error: 'Kein StartPrice im GetItem' };
-  return { ack, isVariation: false, rows: [{ sku: tag(itemBlock, 'SKU') ?? '', price, quantity: num(tag(itemBlock, 'Quantity')), quantitySold: null }] };
+  // Plan F (16.10.2026): auch beim Einzelartikel die verkaufte Menge lesen (Item/SellingStatus/QuantitySold), sonst wäre "noch frei" geraten.
+  const soldItem = itemBlock.match(/<SellingStatus>[\s\S]*?<QuantitySold>(\d+)<\/QuantitySold>/)?.[1];
+  return { ack, isVariation: false, rows: [{ sku: tag(itemBlock, 'SKU') ?? '', price, quantity: num(tag(itemBlock, 'Quantity')), quantitySold: soldItem != null ? Number(soldItem) : null }] };
 }
 
 export interface PriceCompareRow { skuId: string | null; sku: string; label: string; buyerPrice: number | null; offerPrice: number | null; appPrice: number | null; error?: string }

@@ -9,6 +9,7 @@ import {
   FileText, Download, User, MapPin, CreditCard, ExternalLink, Clipboard,
 } from "lucide-react";
 import { DEFAULT_WORKFLOW_TEMPLATE, renderWorkflowTemplate } from "../../shared/workflow-template";
+import { remainingLevel, remainingText } from "../../shared/remaining-qty";
 
 interface OrderLineItem {
   lineItemId: string;
@@ -166,6 +167,8 @@ function effectiveStatusLabel(order: Order): { label: string; color: string; bg:
 
 export default function Bestellungen() {
   const [orders, setOrders] = useState<Order[]>([]);
+  // Plan F: Restmenge bei eBay je verkaufter Variante (nur lesen, GET /api/ebay/remaining-qty). Kein automatisches Nachfüllen.
+  const [remaining, setRemaining] = useState<Record<string, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -346,6 +349,13 @@ export default function Bestellungen() {
       }
       const data = await res.json() as { orders: Order[]; total: number };
       setOrders(data.orders);
+      const skus = [...new Set(data.orders.flatMap(o => o.lineItems.map(li => li.sku)).filter((x): x is string => !!x && x.startsWith("stele-")))];
+      if (skus.length > 0) {
+        fetch(`/api/ebay/remaining-qty?skus=${encodeURIComponent(skus.join(","))}`)
+          .then(r => (r.ok ? r.json() : null))
+          .then((d: { remaining?: Record<string, number | null> } | null) => { if (d?.remaining) setRemaining(d.remaining); })
+          .catch(() => { /* Rest bleibt unbekannt */ });
+      }
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") {
         setError("Timeout — eBay braucht zu lange, bitte nochmal versuchen");
@@ -596,6 +606,13 @@ export default function Bestellungen() {
                     {li.title}
                     {li.sku && <span style={{ color: "#94A3B8", fontWeight: 500 }}> ({li.sku})</span>}
                     <span style={{ color: "#94A3B8", fontWeight: 500 }}> · {li.quantity}×</span>
+                    {li.sku && li.sku in remaining && (() => {
+                      const n = remaining[li.sku as string];
+                      const lvl = remainingLevel(n);
+                      const st = lvl === "out" ? { bg: "#FEF2F2", c: "#B91C1C" } : lvl === "last" ? { bg: "#FFFBEB", c: "#92400E" } : { bg: "#F1F5F9", c: "#475569" };
+                      return <span title="Käuferseite bei eBay (Stückzahl − verkauft), bis 10 Min alt — die App füllt nicht automatisch nach"
+                        style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: st.bg, color: st.c }}>{remainingText(n)}</span>;
+                    })()}
                   </div>
                 </div>
               ))}
