@@ -992,6 +992,47 @@ const app = new Hono()
   })
 
   // ─── Bestellungs-Zusatzinfos speichern (AliExpress-Bestellnummer, Rechnung-URL, manuell versendet) ──
+  // Sendungsnummer bei eBay prüfen (18.10.2026): liest bei eBay (NUR LESEN), ob die App-Nummer dort schon hinterlegt ist.
+  // Treffer → tracking_ebay_submitted = true (gelber Hinweis verschwindet). Kein Treffer → Hinweis bleibt, mit Grund.
+  // Ohne orderIds: alle Bestellungen mit Sendungsnummer, die noch nicht als übermittelt gelten (höchstens 40 je Aufruf).
+  .post('/order-notes/verify-tracking', async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { orderIds?: unknown };
+      const ids = Array.isArray(body.orderIds) ? body.orderIds.filter((x): x is string => typeof x === 'string' && /^[\w-]+$/.test(x)) : null;
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const { getShippingFulfillments } = await import('./ebay');
+      const { compareTracking } = await import('../shared/tracking-verify');
+      const notes = (await db.select().from(schema.orderNotes).all())
+        .filter(n => n.trackingNumber?.trim() && n.trackingEbaySubmitted !== true && (!ids || ids.includes(n.ebayOrderId)))
+        .slice(0, 40);
+      const results: Array<{ orderId: string; result: string; onEbay?: string[]; error?: string }> = [];
+      for (const n of notes) {
+        try {
+          const onEbay = await getShippingFulfillments(n.ebayOrderId);
+          const result = compareTracking(n.trackingNumber!, onEbay);
+          const now = new Date().toISOString();
+          const day = now.slice(0, 10);
+          if (result === 'match') {
+            await db.update(schema.orderNotes).set({ trackingEbaySubmitted: true, trackingEbaySubmittedError: null, updatedAt: now })
+              .where(eq(schema.orderNotes.ebayOrderId, n.ebayOrderId));
+          } else {
+            const msg = result === 'missing'
+              ? `Geprüft ${day}: eBay hat für diese Bestellung noch KEINE Sendungsnummer.`
+              : `Geprüft ${day}: eBay hat eine ANDERE Sendungsnummer: ${onEbay.map(f => f.trackingNumber).join(', ')}`;
+            await db.update(schema.orderNotes).set({ trackingEbaySubmittedError: msg, updatedAt: now })
+              .where(eq(schema.orderNotes.ebayOrderId, n.ebayOrderId));
+          }
+          results.push({ orderId: n.ebayOrderId, result, onEbay: onEbay.map(f => f.trackingNumber) });
+        } catch (e) {
+          results.push({ orderId: n.ebayOrderId, result: 'error', error: String(e).slice(0, 300) });
+        }
+      }
+      console.log(`[Sendung prüfen] ${results.length} geprüft: ${results.filter(r => r.result === 'match').length} bei eBay vorhanden, ${results.filter(r => r.result === 'missing').length} fehlen, ${results.filter(r => r.result === 'different').length} abweichend, ${results.filter(r => r.result === 'error').length} Fehler`);
+      return c.json({ ok: true, results }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   .patch('/order-notes/:ebayOrderId', async (c) => {
     const ebayOrderId = c.req.param('ebayOrderId');
     try {
