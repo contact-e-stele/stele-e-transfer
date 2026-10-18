@@ -26,7 +26,8 @@ export interface ProfitProduct {
 
 // skuId/sellPrice nur bei Varianten-Zeilen bzw. immer der VK, mit dem gerechnet wurde (A-017: Gewinn-Spalte der Varianten-Tabelle)
 // profitWithoutFactor: K-005 — Gewinn ohne Kassen-Faktor (gleich profit, wenn kein Faktor angewendet wurde); < 0 → Warnhinweis
-export interface ProfitRow { label: string; profit: number; skuId?: string; sellPrice: number; profitWithoutFactor?: number }
+// buyPrice/isChinaOrigin (Multi-Rabatt 18.10.2026): EK und Herkunft, mit denen gerechnet wurde — für die Mehrstück-Rechnung in volume-discount.ts
+export interface ProfitRow { label: string; profit: number; skuId?: string; sellPrice: number; profitWithoutFactor?: number; buyPrice?: number; isChinaOrigin?: boolean }
 
 export function productTarget(p: Pick<ProfitProduct, 'targetMarginEur'>): number {
   return p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
@@ -57,10 +58,10 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
       const sell = resolveVariantSellPrice(v.skuId, stored, v).sellPrice ?? p.sellPrice;
       if (sell == null) continue;
       const label = Object.values(v.attrs ?? {}).join(' / ') || `…${v.skuId.slice(-6)}`;
-      rows.push({ label, profit: profitAt(sell, v.price, v.attrs), skuId: v.skuId, sellPrice: sell, profitWithoutFactor: profitRaw(sell, v.price, v.attrs) });
+      rows.push({ label, profit: profitAt(sell, v.price, v.attrs), skuId: v.skuId, sellPrice: sell, profitWithoutFactor: profitRaw(sell, v.price, v.attrs), buyPrice: v.price, isChinaOrigin: isChinaOriginForVariant(v.attrs, p.shipsFrom) });
     }
   } else if (p.sellPrice && p.buyPrice) {
-    rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice), sellPrice: p.sellPrice, profitWithoutFactor: profitRaw(p.sellPrice, p.buyPrice) });
+    rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice), sellPrice: p.sellPrice, profitWithoutFactor: profitRaw(p.sellPrice, p.buyPrice), buyPrice: p.buyPrice, isChinaOrigin: isChinaOriginForVariant(undefined, p.shipsFrom) });
   }
   return { rows, isVariant };
 }

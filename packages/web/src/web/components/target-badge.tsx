@@ -14,6 +14,7 @@ import { expectedFromPlan, type TierPlan } from "../../shared/tier-reprice";
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, PRICE_HOLD_MIN_PROFIT_EUR, type HoldRow } from "../../shared/price-hold";
 import { usePriceHolds, togglePriceHold } from "../lib/price-holds-store";
 import { EbayPriceCheck } from "./ebay-price-check";
+import { MultiRabattPanel } from "./multi-rabatt";
 
 export const TARGET_LEVEL_STYLE = {
   ok: { bg: "#F0FDF4", color: "#16A34A" },
@@ -247,6 +248,7 @@ export function TargetBadge({ product, isLive, onChange }: {
       )}
 
       {isLive && <EbayPriceCheck productId={product.id} />}
+      <MultiRabattPanel productId={product.id} isLive={!!isLive} />
 
       {isVariant && rows.length > 0 && (
         <details style={{ marginTop: 4 }}>

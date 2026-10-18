@@ -142,6 +142,31 @@ export default function Einstellungen() {
     }
   };
 
+  // Multi-Rabatt (Inhaber 18.10.2026): Euro-Regel — 2 Stück / 3 Stück so viel billiger (höchstens 3 Stück).
+  const [multiEur2, setMultiEur2] = useState("3");
+  const [multiEur3, setMultiEur3] = useState("5");
+  const [multiMsg, setMultiMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/settings/multi-rabatt", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { const v = (d as { value?: { eur2: number; eur3: number } }).value; if (v) { setMultiEur2(String(v.eur2)); setMultiEur3(String(v.eur3)); } })
+      .catch(() => setMultiMsg({ ok: false, text: "Laden fehlgeschlagen — Netzwerkfehler" }));
+  }, []);
+  const saveMulti = async () => {
+    const eur2 = Number(multiEur2.replace(",", ".")), eur3 = Number(multiEur3.replace(",", "."));
+    setMultiMsg(null);
+    try {
+      const r = await fetch("/api/settings/multi-rabatt", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ value: { eur2, eur3 } }),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      setMultiMsg(d.ok ? { ok: true, text: "Gespeichert ✓ (gilt für neue Vorschauen; an eBay erst per Knopf im Listings-Tab)" } : { ok: false, text: d.error || "Speichern fehlgeschlagen" });
+    } catch {
+      setMultiMsg({ ok: false, text: "Netzwerkfehler beim Speichern" });
+    }
+  };
+
   // PRIO-1-PAKET (2026-09-24) / Punkt "ZOLL": Zollpauschale für den Bestellungs-Gewinn im
   // Bestellungen-Tab — gleiches Muster wie die Mengen-Obergrenze oben.
   const [orderZoll, setOrderZoll] = useState("3.58");
@@ -666,6 +691,25 @@ export default function Einstellungen() {
             style={{ width: 90, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} />
           <button onClick={saveMaxQty} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
           {maxQtyMsg && <span style={{ fontSize: 12, fontWeight: 600, color: maxQtyMsg.ok ? "#16A34A" : "#DC2626" }}>{maxQtyMsg.text}</span>}
+        </div>
+      </div>
+
+      {/* Multi-Rabatt (Inhaber 18.10.2026) */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>🏷️</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Multi-Rabatt — Mengenrabatt in Euro</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
+          So viel ist die ganze Bestellung billiger. Höchstens 3 Stück. eBay rechnet nur ganze Prozent — die App rechnet je Angebot um und prüft den Gewinn je Variante.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <label style={{ fontSize: 13 }}>2 Stück − <input type="text" inputMode="decimal" value={multiEur2} onChange={e => setMultiEur2(e.target.value)}
+            style={{ width: 60, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} /> €</label>
+          <label style={{ fontSize: 13 }}>3 Stück − <input type="text" inputMode="decimal" value={multiEur3} onChange={e => setMultiEur3(e.target.value)}
+            style={{ width: 60, padding: "8px 10px", fontSize: 14, border: "2px solid #E2E8F0", borderRadius: 8, fontFamily: "inherit" }} /> €</label>
+          <button onClick={saveMulti} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
+          {multiMsg && <span style={{ fontSize: 12, fontWeight: 600, color: multiMsg.ok ? "#16A34A" : "#DC2626" }}>{multiMsg.text}</span>}
         </div>
       </div>
 
