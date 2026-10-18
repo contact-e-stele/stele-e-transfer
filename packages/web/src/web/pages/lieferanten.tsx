@@ -11,8 +11,10 @@ import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fie
 import { ALI_EINFUHR_EUR, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
-import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, DEFAULT_PRICING_CONFIG, isChinaShipping } from "../../shared/pricing";
+import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
+import { planVolumeDiscount } from "../../shared/volume-discount";
+import { MultiRabattTable, useMultiRabattRule } from "../components/multi-rabatt";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -271,6 +273,8 @@ export default function Lieferanten() {
     // A-014: nur noch Margen-Stufen A–D (1,00 / 1,50 / 2,00 / 3,00); ein älterer gespeicherter Wert (z. B. 4) fällt auf den Standard zurück.
     return MARGIN_TIERS.some(t => t.targetEur === savedNum) ? savedNum : MIN_GEWINN_EUR;
   });
+  // Multi-Rabatt (18.10.2026): Euro-Regel aus den Einstellungen für den Kasten unter der Varianten-Preistabelle.
+  const multiRule = useMultiRabattRule();
   const [, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
@@ -2085,6 +2089,28 @@ export default function Lieferanten() {
                       );
                     })}
                   </div>
+                </div>
+              );
+            })()}
+
+            {/* Multi-Rabatt (Inhaber 18.10.2026): Vorschau aus den eingegebenen eBay-Preisen — gesendet wird erst im Listings-Tab. */}
+            {product && multiRule && (() => {
+              const vp = product.variantPrices ?? [];
+              const variants = vp.length > 0
+                ? vp.map(v => ({
+                    label: Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([, val]) => val).join(" / ") || `…${v.skuId.slice(-6)}`,
+                    sellPrice: parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || 0,
+                    buyPrice: v.price,
+                    isChinaOrigin: variantHerkunft[v.skuId] ?? isChinaShipping(shipsFromInfo?.country),
+                  })).filter(v => v.sellPrice > 0)
+                : (verkauf > 0 && einkauf > 0 ? [{ label: "", sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: isChinaShipping(shipsFromInfo?.country) }] : []);
+              if (variants.length === 0) return null;
+              const plan = planVolumeDiscount({ rule: multiRule, variants, adRatePercent: adRate, floorEur: profitFloorFor(minGewinn) });
+              return (
+                <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, border: "1.5px solid #E2E8F0", background: "#F8FAFC" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>Multi-Rabatt (Vorschau)</div>
+                  <MultiRabattTable plan={plan} rule={multiRule} />
+                  <div style={{ fontSize: 10, color: "#64748B", marginTop: 4 }}>An eBay gesendet wird erst nach dem Listen, im Listings-Tab per Knopf.</div>
                 </div>
               );
             })()}

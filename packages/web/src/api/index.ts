@@ -1889,6 +1889,55 @@ const app = new Hono()
   // Seit 01.07.2026 gilt eine Pauschale je Warenposition, real gemessen 3,58€ inkl.
   // Einfuhrumsatzsteuer darauf (Standard). Betrifft NUR den Bestellungs-Gewinn (Bestellungen-Tab),
   // NICHT die Verkaufspreis-Formel (CHINA_ZOLL_EUR/DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur).
+  // Multi-Rabatt (Inhaber 18.10.2026): Euro-Regel (app_settings "multi_rabatt_regel"), Vorschau je Produkt, Senden NUR per Knopf.
+  .get('/settings/multi-rabatt', async (c) => {
+    try {
+      const { getVolumeDiscountRule } = await import('./multi-rabatt');
+      const { DEFAULT_VOLUME_DISCOUNT_RULE } = await import('../shared/volume-discount');
+      return c.json({ value: await getVolumeDiscountRule(), default: DEFAULT_VOLUME_DISCOUNT_RULE }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/multi-rabatt', async (c) => {
+    try {
+      const { validateVolumeDiscountRule } = await import('../shared/volume-discount');
+      const v = validateVolumeDiscountRule((await c.req.json().catch(() => null) as { value?: unknown } | null)?.value);
+      if (!v.ok) return c.json({ ok: false, error: v.error }, 400);
+      const { setVolumeDiscountRule } = await import('./multi-rabatt');
+      await setVolumeDiscountRule(v.rule);
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
+  .get('/products/:id/multi-rabatt', async (c) => {
+    try {
+      const id = Number(c.req.param('id'));
+      if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ungültige Produkt-ID' }, 400);
+      const { previewMultiRabatt } = await import('./multi-rabatt');
+      const r = await previewMultiRabatt(id);
+      return r ? c.json(r, 200) : c.json({ error: 'Produkt nicht gefunden' }, 404);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .post('/products/:id/multi-rabatt/send', async (c) => {
+    try {
+      const id = Number(c.req.param('id'));
+      const body = await c.req.json().catch(() => null) as { percents?: { 2?: unknown; 3?: unknown } } | null;
+      const p2 = body?.percents?.[2], p3 = body?.percents?.[3];
+      if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(p2) || !Number.isInteger(p3)) {
+        return c.json({ ok: false, error: 'Produkt-ID und die Prozent aus der Vorschau (percents) sind Pflicht' }, 400);
+      }
+      const { sendMultiRabatt } = await import('./multi-rabatt');
+      const r = await sendMultiRabatt(id, { 2: p2 as number, 3: p3 as number });
+      console.log(`[Multi-Rabatt] stele-${id}: ${r.ok ? `gesendet ${r.percents[2]} %/${r.percents[3]} %, Aktion ${r.promotionId}, geprüft=${r.verified}` : `nicht gesendet: ${r.error}`}`);
+      return c.json(r, r.status as 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   .get('/settings/order-china-zoll', async (c) => {
     try {
       return c.json({ value: await getOrderChinaZollEur(), default: DEFAULT_ORDER_CHINA_ZOLL_EUR }, 200);

@@ -57,6 +57,8 @@ const EBAY_SANDBOX = process.env.EBAY_SANDBOX === 'true';
 const BASE_URL = EBAY_SANDBOX
   ? 'https://api.sandbox.ebay.com'
   : 'https://api.ebay.com';
+// Multi-Rabatt (api/multi-rabatt.ts) nutzt dieselbe Basis-URL statt eine eigene zu pflegen (Grundgesetz 8).
+export const EBAY_API_BASE_URL = BASE_URL;
 
 const AUTH_URL = EBAY_SANDBOX
   ? 'https://auth.sandbox.ebay.com'
