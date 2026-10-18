@@ -106,3 +106,25 @@ export async function sendMultiRabatt(productId: number, expected: { 2: number; 
   await writeSetting(PROMO_KEY, JSON.stringify(all));
   return { ok: true as const, status: 200, promotionId, verified, promotionStatus: checkJson?.promotionStatus ?? null, percents: prev.plan.percents };
 }
+
+/**
+ * Inhaber 18.10.2026 22:48 ("Multi-Rabatt muss bei neuen Angeboten automatisch rein, als Gesetz überall"): nach dem ERSTEN
+ * erfolgreichen Listen den Multi-Rabatt mit der aktuellen Vorschau senden. Fehler brechen das Listen nie ab — Ergebnis nur
+ * zurückgeben/loggen; der Knopf im Listings-Tab bleibt der Nachhol-Weg.
+ */
+export async function sendMultiRabattForNewListing(productId: number) {
+  try {
+    const prev = await previewMultiRabatt(productId);
+    if (!prev?.plan.ok || !prev.plan.percents) {
+      const r = { ok: false as const, status: 400, error: prev?.plan.error ?? 'Vorschau nicht möglich' };
+      console.warn(`[Multi-Rabatt] stele-${productId}: nach dem Listen NICHT gesendet — ${r.error}`);
+      return r;
+    }
+    const r = await sendMultiRabatt(productId, prev.plan.percents);
+    console.log(`[Multi-Rabatt] stele-${productId}: nach dem Listen ${r.ok ? `gesendet ${r.percents[2]} %/${r.percents[3]} %, geprüft=${r.verified}` : `NICHT gesendet: ${r.error}`}`);
+    return r;
+  } catch (e) {
+    console.warn(`[Multi-Rabatt] stele-${productId}: nach dem Listen Fehler: ${String(e)}`);
+    return { ok: false as const, status: 500, error: String(e) };
+  }
+}
