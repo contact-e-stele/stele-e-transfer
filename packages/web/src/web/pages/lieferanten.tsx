@@ -11,11 +11,13 @@ import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fie
 import { ALI_EINFUHR_EUR, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
-import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping } from "../../shared/pricing";
+import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
 import { planVolumeDiscount } from "../../shared/volume-discount";
 import { MultiRabattTable, useMultiRabattRule } from "../components/multi-rabatt";
 import { pruneRemovedVariantEntries, maxVariantsError, countVariantCombinations, MAX_VARIANT_COMBINATIONS } from "../../shared/variant-cleanup";
+import { ratingGate, DEFAULT_MIN_RATING } from "../../shared/rating-gate";
+import { preselectVariants, type PreselectResult } from "../../shared/variant-preselect";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -276,6 +278,12 @@ export default function Lieferanten() {
   });
   // Multi-Rabatt (18.10.2026): Euro-Regel aus den Einstellungen für den Kasten unter der Varianten-Preistabelle.
   const multiRule = useMultiRabattRule();
+  // OFFEN 006: Import-Regeln (Sterne-Sperre, höchstens Varianten) aus den Einstellungen; bis geladen gelten die Standardwerte.
+  const [importRules, setImportRules] = useState<{ minRating: number; maxVariants: number }>({ minRating: DEFAULT_MIN_RATING, maxVariants: MAX_VARIANT_COMBINATIONS });
+  useEffect(() => {
+    fetch("/api/settings/import-rules").then(r => (r.ok ? r.json() : null)).then(d => { if (d?.value) setImportRules(d.value); }).catch(() => { /* Standardwerte */ });
+  }, []);
+  const [preselect, setPreselect] = useState<PreselectResult | null>(null);
   const [, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
@@ -500,7 +508,10 @@ export default function Lieferanten() {
   const groupsNow = editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name));
   const prunedVariants = pruneRemovedVariantEntries(groupsOrig, groupsNow, product?.variantPrices ?? []);
   const variantCount = countVariantCombinations(groupsNow);
-  const variantLimitError = product ? maxVariantsError(groupsNow) : null;
+  const variantLimitError = product ? maxVariantsError(groupsNow, importRules.maxVariants) : null;
+  // R1 Sterne-Sperre (OFFEN 006): Speichern erst ab importRules.minRating Sternen; fehlt die Bewertung → gesperrt.
+  const ratingCheck = product ? ratingGate(product.rating, product.reviewCount, importRules.minRating) : { ok: true, reason: null };
+  const ratingBlocked = !ratingCheck.ok;
   // A-029 (P-E01): Elektro beim Import nur VORSCHLAGEN (gelb "Elektro?"); gespeichert wird nur der Vorschlag, bestätigt (ja/nein) wird im Produkte-Tab.
   const electricHint = product ? suggestElectric([product.title, editableTitle, product.description, ...Object.entries(product.specs ?? {}).map(([k, v]) => `${k} ${v}`)]) : null;
 
@@ -602,7 +613,18 @@ export default function Lieferanten() {
         initVariants[g.name] = [...g.values];
       }
       setSelectedVariants(initVariants);
-      setEditedVariants(namedVariants.filter(g => !isSkipVariantGroup(g.name)).map(g => ({ name: g.name, values: [...g.values] })));
+      // R2 (OFFEN 006): bei mehr als importRules.maxVariants automatisch die besten wählen — Lager ≥ 5, Gewinn ≥ 1,00 € beim
+      // vorgeschlagenen Preis (Formel v2, Stufe minGewinn), davon die mit dem besten Gewinn. Haken in der Auswahl-Liste ändern das.
+      const startGroups = namedVariants.filter(g => !isSkipVariantGroup(g.name)).map(g => ({ name: g.name, values: [...g.values] }));
+      const pre = preselectVariants(startGroups, data.variantPrices ?? [], importRules.maxVariants, (e) => {
+        if (typeof e.price !== "number" || e.price <= 0) return null;
+        const isChina = isChinaOriginForVariant(e.attrs, data.shipsFrom);
+        const cfg = { ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate };
+        const sell = computeMinSellPrice({ ...cfg, buyPrice: e.price, isChinaOrigin: isChina, targetMarginEur: minGewinn, safetyBufferEur: 0, rounding: "floor95" }).minSellPrice;
+        return profitAtSellPrice({ ...cfg, sellPrice: sell, buyPrice: e.price, isChinaOrigin: isChina });
+      });
+      setPreselect(pre.rows.length > 0 || pre.reason ? pre : null);
+      setEditedVariants(pre.applied ? pre.groups : startGroups);
       setEditingVariant({});
       // Preis vorausfüllen
       const p = parsePrice(data.price);
@@ -666,6 +688,7 @@ export default function Lieferanten() {
     if (complianceBlocked && !override) return; // P-66: harte Sperre bleibt Standard, nur expliziter Override umgeht sie
     if (gpsrBlocked) return; // A-040: GPSR-Sperre gilt auch mit Override (Server prüft zusätzlich, 422)
     if (variantLimitError) return; // höchstens 5 Varianten (Server prüft zusätzlich, 422)
+    if (ratingBlocked) return; // Sterne-Sperre (Server prüft zusätzlich, 422)
     setSaveLoading(true);
     setSaveResult(null);
     try {
@@ -707,6 +730,8 @@ export default function Lieferanten() {
           images: visibleImages,
           buyPrice: einkauf || null,
           sellPrice: verkauf || null,
+          rating: product.rating ?? null, // OFFEN 006: Server prüft die Sterne-Sperre
+          reviewCount: product.reviewCount ?? null,
           targetMarginEur: minGewinn,
           adRate: adRate,
           shippingCost: parseFloat(shippingCost.replace(",", ".")) || 0,
@@ -2147,7 +2172,7 @@ export default function Lieferanten() {
                   <Package size={18} color='#fff'/>
                 </div>
                 <span style={{fontWeight:700,fontSize:15,color:'#0F172A'}}>Varianten</span>
-                <span title={`Höchstens ${MAX_VARIANT_COMBINATIONS} Varianten (Inhaber 18.10.2026)`} style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:6,background: variantCount > MAX_VARIANT_COMBINATIONS ? '#FEF2F2' : '#F0FDF4',color: variantCount > MAX_VARIANT_COMBINATIONS ? '#B91C1C' : '#15803D'}}>{variantCount} von max. {MAX_VARIANT_COMBINATIONS}</span>
+                <span title={`Höchstens ${importRules.maxVariants} Varianten (Inhaber 18.10.2026)`} style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:6,background: variantCount > importRules.maxVariants ? '#FEF2F2' : '#F0FDF4',color: variantCount > importRules.maxVariants ? '#B91C1C' : '#15803D'}}>{variantCount} von max. {importRules.maxVariants}</span>
                 <button onClick={() => {
                   const name = 'Variante';
                   setEditedVariants(prev => [...prev, {name, values:[]}]);
@@ -2156,6 +2181,36 @@ export default function Lieferanten() {
                   <Plus size={13}/> Gruppe hinzufügen
                 </button>
               </div>
+              {ratingBlocked && (
+                <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', fontSize: 12 }}>
+                  <b>Sterne-Sperre:</b> {ratingCheck.reason} Speichern und Einstellen sind gesperrt.
+                </div>
+              )}
+              {preselect && product && groupsOrig.length === 1 && (() => {
+                const g = editedVariants.find(x => !isSkipVariantGroup(x.name));
+                const orig = groupsOrig[0];
+                const renamed = !!g && g.values.some(v => !orig.values.includes(v));
+                const toggle = (value: string, on: boolean) => setEditedVariants(prev => prev.map(x => x === g ? { ...x, values: on ? orig.values.filter(v => v === value || x.values.includes(v)) : x.values.filter(v => v !== value) } : x));
+                return (
+                  <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', fontSize: 12 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>Varianten-Auswahl (höchstens {importRules.maxVariants})</div>
+                    {preselect.applied && <div style={{ color: '#475569', marginBottom: 4 }}>Automatisch gewählt: Lager ≥ 5 und Gewinn ≥ 1,00 € beim vorgeschlagenen Preis, die mit dem besten Gewinn. Haken ändern die Auswahl.</div>}
+                    {preselect.reason && <div style={{ color: '#B45309', marginBottom: 4 }}>{preselect.reason}</div>}
+                    {renamed ? <div style={{ color: '#64748B' }}>Werte umbenannt — Auswahl bitte mit dem × an den Werten ändern.</div> : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {preselect.rows.map(r => (
+                          <label key={r.value} style={{ display: 'flex', gap: 6, alignItems: 'center', color: r.eligible ? '#0F172A' : '#94A3B8' }}>
+                            <input type="checkbox" checked={!!g?.values.includes(r.value)} onChange={e => toggle(r.value, e.target.checked)} />
+                            <span>{r.value}</span>
+                            <span>· Lager {r.stock ?? '?'}</span>
+                            <span>· Gewinn {r.profit != null ? r.profit.toFixed(2).replace('.', ',') + ' €' : '?'}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {variantLimitError && (
                 <div style={{marginBottom:12,padding:'8px 10px',borderRadius:8,background:'#FEF2F2',border:'1px solid #FCA5A5',color:'#991B1B',fontSize:12}}>
                   <b>Zu viele Varianten:</b> {variantLimitError} Mit dem × an den Werten löschen. Speichern und Einstellen sind gesperrt.
@@ -2276,19 +2331,19 @@ export default function Lieferanten() {
 
               <button
                 onClick={() => handleSave()}
-                disabled={saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked || !!variantLimitError}
+                disabled={saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked || !!variantLimitError || ratingBlocked}
                 style={{
                   width: "100%", padding: "13px 0", borderRadius: 12,
                   border: saveResult?.id ? "1.5px solid #BBF7D0" : "1.5px solid transparent",
-                  background: saveResult?.id ? "#F0FDF4" : (complianceBlocked || gpsrBlocked || variantLimitError) ? "#FEE2E2" : saveLoading ? "#E2E8F0" : "#0F172A",
-                  color: saveResult?.id ? "#15803D" : (complianceBlocked || gpsrBlocked || variantLimitError) ? "#991B1B" : saveLoading ? "#94A3B8" : "#C9A227",
+                  background: saveResult?.id ? "#F0FDF4" : (complianceBlocked || gpsrBlocked || variantLimitError || ratingBlocked) ? "#FEE2E2" : saveLoading ? "#E2E8F0" : "#0F172A",
+                  color: saveResult?.id ? "#15803D" : (complianceBlocked || gpsrBlocked || variantLimitError || ratingBlocked) ? "#991B1B" : saveLoading ? "#94A3B8" : "#C9A227",
                   fontWeight: 700, fontSize: 14,
-                  cursor: (saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked || variantLimitError) ? "not-allowed" : "pointer",
+                  cursor: (saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked || variantLimitError || ratingBlocked) ? "not-allowed" : "pointer",
                   fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
                 {saveLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={16} />}
-                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : variantLimitError ? `Blockiert — mehr als ${MAX_VARIANT_COMBINATIONS} Varianten (${variantCount})` : gpsrBlocked ? "Blockiert — Hersteller/EU-Person unvollständig" : complianceBlocked ? "Blockiert — Lieferant nicht geprüft" : "In DB speichern"}
+                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : ratingBlocked ? "Blockiert — zu wenig Sterne" : variantLimitError ? `Blockiert — mehr als ${importRules.maxVariants} Varianten (${variantCount})` : gpsrBlocked ? "Blockiert — Hersteller/EU-Person unvollständig" : complianceBlocked ? "Blockiert — Lieferant nicht geprüft" : "In DB speichern"}
               </button>
               {gpsrBlocked && !saveResult?.id && (
                 <div style={{ margin: "8px 0 0", padding: "8px 10px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12 }}>

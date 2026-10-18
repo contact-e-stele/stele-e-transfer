@@ -1933,6 +1933,28 @@ const app = new Hono()
   // Einfuhrumsatzsteuer darauf (Standard). Betrifft NUR den Bestellungs-Gewinn (Bestellungen-Tab),
   // NICHT die Verkaufspreis-Formel (CHINA_ZOLL_EUR/DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur).
   // Multi-Rabatt (Inhaber 18.10.2026): Euro-Regel (app_settings "multi_rabatt_regel"), Vorschau je Produkt, Senden NUR per Knopf.
+  // OFFEN 006: Import-Regeln (Sterne-Sperre, höchstens Varianten) — app_settings, im Einstellungen-Tab änderbar.
+  .get('/settings/import-rules', async (c) => {
+    try {
+      const { getImportRules } = await import('./import-rules');
+      return c.json({ value: await getImportRules(), default: { minRating: 4.2, maxVariants: 5 } }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/import-rules', async (c) => {
+    try {
+      const v = ((await c.req.json().catch(() => null)) as { value?: { minRating?: unknown; maxVariants?: unknown } } | null)?.value;
+      const minRating = v?.minRating, maxVariants = v?.maxVariants;
+      if (typeof minRating !== 'number' || !(minRating > 0 && minRating <= 5)) return c.json({ ok: false, error: 'minRating muss zwischen 0 und 5 liegen' }, 400);
+      if (typeof maxVariants !== 'number' || !Number.isInteger(maxVariants) || maxVariants < 1 || maxVariants > 50) return c.json({ ok: false, error: 'maxVariants muss eine ganze Zahl 1–50 sein' }, 400);
+      const { setImportRules } = await import('./import-rules');
+      await setImportRules({ minRating, maxVariants });
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   .get('/settings/multi-rabatt', async (c) => {
     try {
       const { getVolumeDiscountRule } = await import('./multi-rabatt');
@@ -2352,10 +2374,17 @@ const app = new Hono()
       // Höchstens 5 Varianten (Inhaber 18.10.2026): neue bzw. noch nicht gelistete Produkte mit mehr als 5 Varianten werden nicht
       // gespeichert — im Import-Tab die übrigen löschen. Schon gelistete Produkte bleiben unberührt.
       if (!existing[0]?.ebayListingId) {
+        const { getImportRules } = await import('./import-rules');
+        const rules = await getImportRules();
         const groupsForLimit = (Array.isArray(body.variants) ? body.variants as unknown as VariantGroup[] : [])
           .filter(g => g && typeof g === 'object' && !NON_VARIATION_ASPECTS.has(g.name));
-        const tooMany = maxVariantsError(groupsForLimit);
+        const tooMany = maxVariantsError(groupsForLimit, rules.maxVariants);
         if (tooMany) return c.json({ error: tooMany }, 422);
+        // R1 Sterne-Sperre (BESCHLUSS 18.10.2026, OFFEN 006): nur ab rules.minRating Sternen (Standard 4,2). Fehlt die Bewertung → gesperrt.
+        const { ratingGate } = await import('../shared/rating-gate');
+        const rb = body as unknown as { rating?: unknown; reviewCount?: unknown };
+        const rg = ratingGate(typeof rb.rating === 'number' ? rb.rating : null, typeof rb.reviewCount === 'number' ? rb.reviewCount : null, rules.minRating);
+        if (!rg.ok) return c.json({ error: `Import gesperrt: ${rg.reason}` }, 422);
       }
 
       // Titel + Beschreibung parallel generieren (schneller)
@@ -2728,7 +2757,8 @@ const app = new Hono()
       let variantWarnings: string[] = [];
       // Höchstens 5 Varianten (Inhaber 18.10.2026): Erst-Listing mit mehr als 5 Varianten wird blockiert. Schon gelistete bleiben unberührt.
       if (!product.ebayListingId) {
-        const tooMany = maxVariantsError(variantGroups);
+        const { getImportRules } = await import('./import-rules');
+        const tooMany = maxVariantsError(variantGroups, (await getImportRules()).maxVariants);
         if (tooMany) return c.json({ error: tooMany }, 400);
       }
       if (variantGroups.length > 0) {
@@ -3214,7 +3244,8 @@ const app = new Hono()
         variantPrices: JSON.stringify(syncedVariantPrices),
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, id));
-      return c.json({ ok: true }, 200);
+      // OFFEN 006 Teil 1: entfernte Einträge auch in der Antwort nennen.
+      return c.json({ ok: true, removedVariantEntries: pruned.removed.map(r => ({ skuId: r.skuId, attrs: r.attrs })), renamedAndRemoved: pruned.renamedAndRemoved }, 200);
     } catch (e) {
       return c.json({ error: 'DB Fehler' }, 503);
     }
