@@ -15,6 +15,7 @@ import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSe
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
 import { planVolumeDiscount } from "../../shared/volume-discount";
 import { MultiRabattTable, useMultiRabattRule } from "../components/multi-rabatt";
+import { pruneRemovedVariantEntries, maxVariantsError, countVariantCombinations, MAX_VARIANT_COMBINATIONS } from "../../shared/variant-cleanup";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -494,6 +495,12 @@ export default function Lieferanten() {
   // A-040: Hersteller + EU-Person müssen vollständig sein (Ampel GRÜN), sonst geht der Import nicht weiter — kein Override.
   const gpsrGate = gpsrFormGate(gpsrHersteller, effectiveForm(gpsrHersteller, gpsrOverrides));
   const gpsrBlocked = !gpsrGate.ok;
+  // Fix 238 + höchstens 5 Varianten (Inhaber 18.10.2026): Tabelle und Speichern nutzen nur die Einträge, deren Variante noch da ist.
+  const groupsOrig = (product?.variants ?? []).filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name));
+  const groupsNow = editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name));
+  const prunedVariants = pruneRemovedVariantEntries(groupsOrig, groupsNow, product?.variantPrices ?? []);
+  const variantCount = countVariantCombinations(groupsNow);
+  const variantLimitError = product ? maxVariantsError(groupsNow) : null;
   // A-029 (P-E01): Elektro beim Import nur VORSCHLAGEN (gelb "Elektro?"); gespeichert wird nur der Vorschlag, bestätigt (ja/nein) wird im Produkte-Tab.
   const electricHint = product ? suggestElectric([product.title, editableTitle, product.description, ...Object.entries(product.specs ?? {}).map(([k, v]) => `${k} ${v}`)]) : null;
 
@@ -658,6 +665,7 @@ export default function Lieferanten() {
     if (!result || !product) return;
     if (complianceBlocked && !override) return; // P-66: harte Sperre bleibt Standard, nur expliziter Override umgeht sie
     if (gpsrBlocked) return; // A-040: GPSR-Sperre gilt auch mit Override (Server prüft zusätzlich, 422)
+    if (variantLimitError) return; // höchstens 5 Varianten (Server prüft zusätzlich, 422)
     setSaveLoading(true);
     setSaveResult(null);
     try {
@@ -684,7 +692,7 @@ export default function Lieferanten() {
             0,
             (product.variants ?? []).filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
             editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
-            product.variantPrices ?? [],
+            prunedVariants.kept,
           ).map(v => ({
             ...v,
             ebayPrice: v.skuId ? (parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined) : undefined,
@@ -1870,8 +1878,8 @@ export default function Lieferanten() {
             </div>
 
             {/* Varianten-Preistabelle — AutoDS-Style: Bild + Name + SKU + Preis */}
-            {product && (product.variantPrices ?? []).length > 0 && (() => {
-              const vp = product.variantPrices!;
+            {product && prunedVariants.kept.length > 0 && (() => {
+              const vp = prunedVariants.kept;
               const minP = Math.min(...vp.map(v => v.price));
               // P-75: Gleiche Formel wie der Einzel-Varianten-Button unten (inkl. P-74 ,95-Rundung) —
               // hier einmal extrahiert, damit "Alle übernehmen" und Einzel-Button garantiert identisch rechnen.
@@ -2095,7 +2103,7 @@ export default function Lieferanten() {
 
             {/* Multi-Rabatt (Inhaber 18.10.2026): Vorschau aus den eingegebenen eBay-Preisen — gesendet wird erst im Listings-Tab. */}
             {product && multiRule && (() => {
-              const vp = product.variantPrices ?? [];
+              const vp = prunedVariants.kept; // wie die Varianten-Preistabelle (#188): entfernte Varianten nicht mitrechnen
               const variants = vp.length > 0
                 ? vp.map(v => ({
                     label: Object.entries(v.attrs).filter(([k]) => !['ships from','ships_from','versandland','ship from','shipto','country'].includes(k.toLowerCase())).map(([, val]) => val).join(" / ") || `…${v.skuId.slice(-6)}`,
@@ -2139,6 +2147,7 @@ export default function Lieferanten() {
                   <Package size={18} color='#fff'/>
                 </div>
                 <span style={{fontWeight:700,fontSize:15,color:'#0F172A'}}>Varianten</span>
+                <span title={`Höchstens ${MAX_VARIANT_COMBINATIONS} Varianten (Inhaber 18.10.2026)`} style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:6,background: variantCount > MAX_VARIANT_COMBINATIONS ? '#FEF2F2' : '#F0FDF4',color: variantCount > MAX_VARIANT_COMBINATIONS ? '#B91C1C' : '#15803D'}}>{variantCount} von max. {MAX_VARIANT_COMBINATIONS}</span>
                 <button onClick={() => {
                   const name = 'Variante';
                   setEditedVariants(prev => [...prev, {name, values:[]}]);
@@ -2147,6 +2156,16 @@ export default function Lieferanten() {
                   <Plus size={13}/> Gruppe hinzufügen
                 </button>
               </div>
+              {variantLimitError && (
+                <div style={{marginBottom:12,padding:'8px 10px',borderRadius:8,background:'#FEF2F2',border:'1px solid #FCA5A5',color:'#991B1B',fontSize:12}}>
+                  <b>Zu viele Varianten:</b> {variantLimitError} Mit dem × an den Werten löschen. Speichern und Einstellen sind gesperrt.
+                </div>
+              )}
+              {prunedVariants.renamedAndRemoved && (
+                <div style={{marginBottom:12,padding:'8px 10px',borderRadius:8,background:'#FFFBEB',border:'1px solid #FDE68A',color:'#92400E',fontSize:12}}>
+                  Werte umbenannt UND gelöscht: Die Preistabelle zeigt noch alle Einträge. Bitte erst löschen und speichern, danach umbenennen.
+                </div>
+              )}
               {editedVariants.filter(g => g.name.toLowerCase() !== 'ships from').length === 0 && (
                 <p style={{textAlign:'center',color:'#94A3B8',fontSize:13,padding:'16px 0'}}>Keine Varianten — oben Gruppe hinzufügen</p>
               )}
@@ -2257,19 +2276,19 @@ export default function Lieferanten() {
 
               <button
                 onClick={() => handleSave()}
-                disabled={saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked}
+                disabled={saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked || !!variantLimitError}
                 style={{
                   width: "100%", padding: "13px 0", borderRadius: 12,
                   border: saveResult?.id ? "1.5px solid #BBF7D0" : "1.5px solid transparent",
-                  background: saveResult?.id ? "#F0FDF4" : (complianceBlocked || gpsrBlocked) ? "#FEE2E2" : saveLoading ? "#E2E8F0" : "#0F172A",
-                  color: saveResult?.id ? "#15803D" : (complianceBlocked || gpsrBlocked) ? "#991B1B" : saveLoading ? "#94A3B8" : "#C9A227",
+                  background: saveResult?.id ? "#F0FDF4" : (complianceBlocked || gpsrBlocked || variantLimitError) ? "#FEE2E2" : saveLoading ? "#E2E8F0" : "#0F172A",
+                  color: saveResult?.id ? "#15803D" : (complianceBlocked || gpsrBlocked || variantLimitError) ? "#991B1B" : saveLoading ? "#94A3B8" : "#C9A227",
                   fontWeight: 700, fontSize: 14,
-                  cursor: (saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked) ? "not-allowed" : "pointer",
+                  cursor: (saveLoading || !!saveResult?.id || complianceBlocked || gpsrBlocked || variantLimitError) ? "not-allowed" : "pointer",
                   fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
                 {saveLoading ? <Loader size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={16} />}
-                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : gpsrBlocked ? "Blockiert — Hersteller/EU-Person unvollständig" : complianceBlocked ? "Blockiert — Lieferant nicht geprüft" : "In DB speichern"}
+                {saveLoading ? "Wird gespeichert…" : saveResult?.id ? "Bereits gespeichert" : variantLimitError ? `Blockiert — mehr als ${MAX_VARIANT_COMBINATIONS} Varianten (${variantCount})` : gpsrBlocked ? "Blockiert — Hersteller/EU-Person unvollständig" : complianceBlocked ? "Blockiert — Lieferant nicht geprüft" : "In DB speichern"}
               </button>
               {gpsrBlocked && !saveResult?.id && (
                 <div style={{ margin: "8px 0 0", padding: "8px 10px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B", fontSize: 12 }}>

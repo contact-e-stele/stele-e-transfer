@@ -82,7 +82,8 @@ describe('A-040 Verdrahtung (Wächter)', () => {
     expect(idx.slice(iList, iList + 600)).toContain('}, 400);');
   });
   test('Import-Tab: Speichern-Knopf gesperrt + Rücksprung in handleSave auch mit Override', () => {
-    expect(lief).toContain('complianceBlocked || gpsrBlocked}');
+    // 18.10.2026: Sperre um „höchstens 5 Varianten“ erweitert — GPSR bleibt Teil der disabled-Bedingung.
+    expect(lief).toContain('complianceBlocked || gpsrBlocked || !!variantLimitError}');
     expect(lief).toContain('if (gpsrBlocked) return;');
   });
 });
