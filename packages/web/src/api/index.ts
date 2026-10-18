@@ -31,6 +31,8 @@ import { isVariantProduct } from '../shared/variant-product';
 import { runTierReprice, type TierRepriceProductRow } from './tier-reprice';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
 import { evaluateVariantGate } from '../shared/variant-gate';
+import { maxVariantsError, pruneRemovedVariantEntries } from '../shared/variant-cleanup';
+import { NON_VARIATION_ASPECTS, type VariantGroup } from '../shared/variant-resolver';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, orderProductInfoFromRow, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
 import { Sentry } from '../instrument';
@@ -2257,6 +2259,15 @@ const app = new Hono()
       const gpsrGate = gpsrCompleteGate(gpsrFinal);
       if (!gpsrGate.ok) return c.json({ error: gpsrGateMessage(GPSR_IMPORT_BLOCKED_PREFIX, gpsrGate), missing: gpsrGate.missing }, 422);
 
+      // Höchstens 5 Varianten (Inhaber 18.10.2026): neue bzw. noch nicht gelistete Produkte mit mehr als 5 Varianten werden nicht
+      // gespeichert — im Import-Tab die übrigen löschen. Schon gelistete Produkte bleiben unberührt.
+      if (!existing[0]?.ebayListingId) {
+        const groupsForLimit = (Array.isArray(body.variants) ? body.variants as unknown as VariantGroup[] : [])
+          .filter(g => g && typeof g === 'object' && !NON_VARIATION_ASPECTS.has(g.name));
+        const tooMany = maxVariantsError(groupsForLimit);
+        if (tooMany) return c.json({ error: tooMany }, 422);
+      }
+
       // Titel + Beschreibung parallel generieren (schneller)
       const specs = body.specs ?? {};
       const rawTitle = body.generatedTitle ?? body.title;
@@ -2625,6 +2636,11 @@ const app = new Hono()
       // P-85 Schritt 2c (20.09.2026): nur Kombinationsfehler blockieren; verwaiste Einträge sind
       // Warnungen (Server-Log + `warnings` im Erfolgs-JSON), s. shared/variant-gate.ts.
       let variantWarnings: string[] = [];
+      // Höchstens 5 Varianten (Inhaber 18.10.2026): Erst-Listing mit mehr als 5 Varianten wird blockiert. Schon gelistete bleiben unberührt.
+      if (!product.ebayListingId) {
+        const tooMany = maxVariantsError(variantGroups);
+        if (tooMany) return c.json({ error: tooMany }, 400);
+      }
       if (variantGroups.length > 0) {
         const gate = evaluateVariantGate(product.id, variantGroups, variantPricesForListing as VariantPriceEntry[]);
         variantWarnings = gate.warnings;
@@ -3097,7 +3113,11 @@ const app = new Hono()
       const currentVariantPrices: VariantPriceEntry[] = (() => {
         try { const p = current?.variantPrices ? JSON.parse(current.variantPrices) : []; return Array.isArray(p) ? p : []; } catch { return []; }
       })();
-      const syncedVariantPrices = syncDisplayValuesOnRename(id, oldVariants, body.variants, currentVariantPrices);
+      // Fix 238 (18.10.2026): Einträge, deren Kombination durch das Entfernen von Werten weggefallen ist, mit entfernen
+      // (vorher blieben sie in variantPrices und zählten weiter in Gewinn, Preis-Lauf und Stufen). Schon vorher verwaiste bleiben.
+      const pruned = pruneRemovedVariantEntries(oldVariants, body.variants, currentVariantPrices);
+      if (pruned.removed.length > 0) console.log(`[Varianten] stele-${id}: ${pruned.removed.length} Eintrag/Einträge entfernt (Wert gelöscht): ${pruned.removed.map(r => r.skuId).join(', ')}`);
+      const syncedVariantPrices = syncDisplayValuesOnRename(id, oldVariants, body.variants, pruned.kept);
 
       await db.update(schema.products).set({
         variants: JSON.stringify(body.variants),
