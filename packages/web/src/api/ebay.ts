@@ -3227,6 +3227,20 @@ export async function createShippingFulfillment(orderId: string, trackingNumber:
   }
 }
 
+// Sendungsnummer-Prüfung (18.10.2026): NUR LESEN — welche Sendungsnummern hat eBay für diese Bestellung schon?
+// GET /sell/fulfillment/v1/order/{orderId}/shipping_fulfillment. Schreibt nichts bei eBay.
+export async function getShippingFulfillments(orderId: string): Promise<Array<{ trackingNumber: string; carrier: string | null }>> {
+  const token = await getAccessToken();
+  const res = await fetch(`${BASE_URL}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}/shipping_fulfillment`, {
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error(`getShippingFulfillments ${orderId}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json() as { fulfillments?: Array<{ shipmentTrackingNumber?: string; shippingCarrierCode?: string }> };
+  return (data.fulfillments ?? [])
+    .filter(f => typeof f.shipmentTrackingNumber === 'string' && f.shipmentTrackingNumber.trim())
+    .map(f => ({ trackingNumber: f.shipmentTrackingNumber!.trim(), carrier: f.shippingCarrierCode ?? null }));
+}
+
 // ─── Retouren (Post-Order API) ─────────────────────────────────────────────────
 // Doku-Hinweis: "This method is not supported in the Sandbox environment" —
 // im Sandbox-Modus (EBAY_SANDBOX=true) schlägt der Call daher erwartungsgemäß fehl.

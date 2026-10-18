@@ -369,6 +369,34 @@ export default function Bestellungen() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Sendungsnummer bei eBay prüfen (18.10.2026): einmal je Seitenaufruf im Hintergrund — liest bei eBay, ob die
+  // App-Nummer dort schon hinterlegt ist; Treffer → gelber Hinweis verschwindet. Schreibt NICHTS bei eBay.
+  const verifyTracking = useCallback(async (orderIds?: string[]) => {
+    const r = await fetch("/api/order-notes/verify-tracking", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(orderIds ? { orderIds } : {}) });
+    const d = await r.json().catch(() => null) as { ok?: boolean; results?: Array<{ orderId: string; result: string; onEbay?: string[]; error?: string }> } | null;
+    if (d?.results?.length) await load(true);
+    return d;
+  }, [load]);
+  useEffect(() => { void verifyTracking().catch(() => { /* Hinweise bleiben, Knopf "Bei eBay prüfen" je Bestellung */ }); }, [verifyTracking]);
+  const handleVerifyOne = async (orderId: string) => {
+    const d = await verifyTracking([orderId]).catch(() => null);
+    const r = d?.results?.[0];
+    showToast(!r ? "Prüfen fehlgeschlagen" : r.result === "match" ? "✅ eBay hat diese Sendungsnummer — alles in Ordnung"
+      : r.result === "missing" ? "⚠️ eBay hat noch KEINE Sendungsnummer — bitte Carrier wählen und übermitteln"
+      : r.result === "different" ? `⚠️ eBay hat eine andere Nummer: ${(r.onEbay ?? []).join(", ")}` : `Fehler: ${r.error ?? "unbekannt"}`);
+  };
+
+  // Kopieren / Einfügen (18.10.2026): Nummer in die Zwischenablage bzw. aus der Zwischenablage ins Feld.
+  const copyText = async (text: string, label: string) => {
+    try { await navigator.clipboard.writeText(text); showToast(`📋 ${label} kopiert: ${text}`); }
+    catch { showToast("Kopieren nicht möglich — Browser erlaubt die Zwischenablage nicht"); }
+  };
+  const pasteInto = async (set: (v: string) => void) => {
+    try { const t = (await navigator.clipboard.readText()).trim(); if (t) set(t); else showToast("Zwischenablage ist leer"); }
+    catch { showToast("Einfügen nicht möglich — bitte Zugriff auf die Zwischenablage erlauben oder lange tippen → Einfügen"); }
+  };
+  const miniBtn = { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit" } as const;
+
   // P-84: Vorschläge laden — best-effort, bricht die Seite nicht falls Gmail nicht
   // verbunden ist oder der Abgleich fehlschlägt (einfach keine Vorschläge anzeigen).
   useEffect(() => {
@@ -702,6 +730,7 @@ export default function Bestellungen() {
                       placeholder="AliExpress-Bestellnummer"
                       style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1.5px solid #FF6B00", outline: "none", fontFamily: "inherit", width: 160 }}
                     />
+                    <button type="button" onClick={() => pasteInto(setAliIdInput)} style={miniBtn} title="Nummer aus der Zwischenablage einfügen">Einfügen</button>
                     <button onClick={() => handleAliIdSave(order.orderId)} style={{ background: "#FF6B00", color: "#fff", border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>
                       <CheckCircle size={11} />
                     </button>
@@ -714,6 +743,9 @@ export default function Bestellungen() {
                     <FileText size={11} />
                     {order.localNote?.aliexpressOrderId ? `AliExpress-Bestellnr.: ${order.localNote.aliexpressOrderId}` : "AliExpress-Bestellnummer eintragen"}
                   </button>
+                )}
+                {editingAliId !== order.orderId && order.localNote?.aliexpressOrderId && (
+                  <button type="button" onClick={() => copyText(order.localNote!.aliexpressOrderId!, "AliExpress-Bestellnr.")} style={miniBtn} title="In die Zwischenablage kopieren">Kopieren</button>
                 )}
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
@@ -818,6 +850,7 @@ export default function Bestellungen() {
                       placeholder="Sendungsnummer"
                       style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1.5px solid #0EA5E9", outline: "none", fontFamily: "inherit", width: 160 }}
                     />
+                    <button type="button" onClick={() => pasteInto(setTrackingNumberInput)} style={miniBtn} title="Nummer aus der Zwischenablage einfügen">Einfügen</button>
                     <select
                       value={carrierInput}
                       onChange={e => setCarrierInput(e.target.value)}
@@ -843,6 +876,9 @@ export default function Bestellungen() {
                       ? `Sendung: ${order.localNote.carrier ?? "?"} ${order.localNote.trackingNumber}`
                       : "Sendungsnummer eintragen (→ eBay)"}
                   </button>
+                )}
+                {editingTracking !== order.orderId && order.localNote?.trackingNumber && (
+                  <button type="button" onClick={() => copyText(order.localNote!.trackingNumber!, "Sendungsnummer")} style={miniBtn} title="In die Zwischenablage kopieren">Kopieren</button>
                 )}
                 {savingNote === order.orderId && <Loader size={11} style={{ animation: "spin 1s linear infinite" }} color="#94A3B8" />}
               </div>
@@ -877,6 +913,14 @@ export default function Bestellungen() {
                       style={{ marginTop: 6, background: confirmed ? "#DC2626" : "#B45309", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: savingNote === order.orderId ? "not-allowed" : "pointer" }}
                     >
                       Erneut an eBay übermitteln
+                    </button>
+                    <button
+                      onClick={() => handleVerifyOne(order.orderId)}
+                      disabled={savingNote === order.orderId}
+                      style={{ marginTop: 6, marginLeft: 6, background: "#fff", color: "#B45309", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                      title="Liest bei eBay nach, ob diese Sendungsnummer dort schon hinterlegt ist — sendet nichts"
+                    >
+                      Bei eBay prüfen
                     </button>
                   </div>
                 );
