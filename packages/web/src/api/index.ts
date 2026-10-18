@@ -2824,7 +2824,13 @@ const app = new Hono()
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, body.productId));
 
-      return c.json({ listingId, success: true, warnings: variantWarnings }, 200);
+      // Multi-Rabatt automatisch beim ERSTEN Listen (Inhaber 18.10.2026 22:48). Schon gelistete (Re-Listing/Revise) nicht —
+      // dort gibt es den Knopf. Fehler hier lassen das Listen erfolgreich; Ergebnis steht im Log und in der Antwort.
+      const multiRabatt = !product.ebayListingId
+        ? await import('./multi-rabatt').then(m => m.sendMultiRabattForNewListing(body.productId))
+        : null;
+
+      return c.json({ listingId, success: true, warnings: variantWarnings, ...(multiRabatt ? { multiRabatt } : {}) }, 200);
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
       // P-91: lesbare Meldung fürs Frontend statt des rohen eBay-JSON-Blobs
