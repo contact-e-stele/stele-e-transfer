@@ -32,3 +32,15 @@ describe('Angebot verknüpfen', () => {
     expect(checkListingLink('<GetItemResponse><Ack>Failure</Ack></GetItemResponse>', 228).ok).toBe(false);
   });
 });
+
+describe('Verknüpfen-Route nutzt die volle GetItem-Antwort', () => {
+  test('kein OutputSelector-Aufruf (getItemStatusXml), sondern getItemBuyerPricesXml', () => {
+    const { readFileSync } = require('fs') as typeof import('fs');
+    const { resolve } = require('path') as typeof import('path');
+    const idx = readFileSync(resolve(import.meta.dir, '..', 'api', 'index.ts'), 'utf-8');
+    const i = idx.indexOf(".post('/products/:id/link-listing'");
+    const block = idx.slice(i, i + 2500);
+    expect(block).toContain('getItemBuyerPricesXml(listingId)');
+    expect(block).not.toContain('getItemStatusXml(');
+  });
+});

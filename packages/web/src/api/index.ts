@@ -1947,9 +1947,10 @@ const app = new Hono()
       if (product.ebayListingId && product.ebayListingId !== listingId) return c.json({ ok: false, error: `Produkt ist schon mit ${product.ebayListingId} verknüpft` }, 409);
       const other = await db.select({ id: schema.products.id }).from(schema.products).where(eq(schema.products.ebayListingId, listingId)).get();
       if (other && other.id !== id) return c.json({ ok: false, error: `Angebot ${listingId} gehört schon zu stele-${other.id}` }, 409);
-      const { getItemStatusXml } = await import('./ebay');
+      // Volle GetItem-Antwort (SKU + Variationen). getItemStatusXml liefert per OutputSelector nur Status — damit fehlte die SKU (Live 19.10.: 228 abgelehnt "Angebot: keine").
+      const { getItemBuyerPricesXml } = await import('./ebay');
       const { checkListingLink } = await import('../shared/listing-link');
-      const { httpStatus, xml } = await getItemStatusXml(listingId);
+      const { httpStatus, xml } = await getItemBuyerPricesXml(listingId);
       const check = checkListingLink(xml, id, httpStatus);
       if (!check.ok) return c.json({ ok: false, error: check.reason, check }, 422);
       await db.update(schema.products).set({ ebayListingId: listingId, ebayStatus: 'listed', ebayError: null, ebayMissingAspect: null, updatedAt: new Date().toISOString() })
