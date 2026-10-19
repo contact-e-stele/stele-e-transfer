@@ -704,6 +704,17 @@ export async function getAspectAllowedValues(categoryId: string | undefined, asp
   return match?.aspectValues?.map(v => v.localizedValue) ?? [];
 }
 
+// OFFEN 008 (19.10.2026, stele-232/stele-228 „Das Feld EAN fehlt“): Die Produktkennung gehört in der Inventory API in
+// product.ean (Array). Bisher schickte die App "gtin" — ein Feld, das der Typ Product nicht hat (Felder laut eBay: aspects, brand,
+// description, ean, epid, imageUrls, isbn, mpn, subtitle, title, upc, videoIds) → eBay ignorierte es, die EAN kam nie an.
+// Ohne echte EAN: der für eBay.de vorgeschriebene Ersatztext "Nicht zutreffend" (developer.ebay.com „Product Identifier Text“,
+// Zeile eBay Germany). Nie eine EAN erfinden.
+export const EAN_NOT_APPLICABLE_DE = 'Nicht zutreffend';
+export function productIdentifierFields(ean: string | null | undefined): { ean: string[] } {
+  const v = typeof ean === 'string' ? ean.trim() : '';
+  return { ean: [v || EAN_NOT_APPLICABLE_DE] };
+}
+
 // P-88: Extrahiert den exakten Feldnamen aus eBays "Das Artikelmerkmal X fehlt"-Fehlertext —
 // gemeinsam genutzt vom Selbstheilungs-Loop und von prettifyEbayError(), damit der Feldname 1:1
 // mit dem übereinstimmt, was im manuellen Eingabefeld (Frontend) angezeigt wird.
@@ -788,7 +799,9 @@ async function publishWithAspectHealing(
 export function prettifyEbayError(rawMessage: string): string {
   const missingAspect = extractMissingAspectName(rawMessage);
   if (missingAspect) {
-    return `eBay-Pflichtfeld "${missingAspect}" fehlt und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen oder eBay-Kategorie prüfen.`;
+    // OFFEN 008 c): kenntlich machen, dass eBay abgelehnt hat (nicht die App), mit eBay-Fehlernummer, falls vorhanden.
+    const errorId = rawMessage.match(/"errorId"\s*:\s*(\d+)/)?.[1];
+    return `eBay lehnt ab${errorId ? ` (Fehler ${errorId})` : ''}: Pflichtfeld "${missingAspect}" fehlt und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen oder eBay-Kategorie prüfen.`;
   }
   // Generische eBay-Fehlerbeschreibung aus dem JSON extrahieren, statt den rohen Blob zu zeigen
   const longMessageMatch = rawMessage.match(/"longMessage"\s*:\s*"([^"]{5,300})"/)
@@ -1165,7 +1178,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       description: plainDesc,
       imageUrls: input.imageUrls,
       aspects: await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]),
-      ...(input.ean?.trim() ? { gtin: input.ean.trim() } : {}),
+      ...productIdentifierFields(input.ean), // OFFEN 008: echtes Inventory-API-Feld product.ean (vorher "gtin" — gibt es nicht, eBay ignorierte es)
     },
   };
 
@@ -1812,7 +1825,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         description: plainDesc,
         imageUrls: varImageUrls.filter(u => u.startsWith('http')).slice(0, 8),
         aspects: variantAspects,
-        ...(input.ean?.trim() ? { gtin: input.ean.trim() } : {}),
+        ...productIdentifierFields(input.ean), // OFFEN 008: echtes Inventory-API-Feld product.ean (vorher "gtin" — gibt es nicht, eBay ignorierte es)
       },
     };
 
