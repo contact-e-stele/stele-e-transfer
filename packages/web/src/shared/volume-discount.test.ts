@@ -114,3 +114,23 @@ describe('Multi-Rabatt je Produkt (api/multi-rabatt.ts planForProduct)', () => {
     expect(mr).toContain("Vorschau veraltet");
   });
 });
+
+describe('Multi-Rabatt nach dem Listen nachholen (stele-232/228, 19.10.2026)', () => {
+  // Echte eBay-Antwort für stele-232 direkt nach dem Listen (Render-Log 19.10.2026).
+  const real38227 = 'eBay createItemPromotion 400: {"errors":[{"errorId":38227,"domain":"API_MARKETING","category":"REQUEST","message":"The listing ID is invalid.","parameters":[{"name":"listingIds","value":"198728207452"}]}]}';
+  test('38227 = Angebot der Marketing API noch unbekannt → nachholen', async () => {
+    const { isListingNotYetKnown, MULTI_RABATT_RETRY_MINUTES } = await import('../api/multi-rabatt');
+    expect(isListingNotYetKnown(real38227)).toBe(true);
+    expect(isListingNotYetKnown('eBay createItemPromotion 400: {"errors":[{"errorId":38202}]}')).toBe(false);
+    expect(isListingNotYetKnown('Vorschau veraltet')).toBe(false);
+    expect(isListingNotYetKnown(null)).toBe(false);
+    expect([...MULTI_RABATT_RETRY_MINUTES]).toEqual([5, 10, 20, 40]);
+  });
+  test('alte Aktion eines beendeten Angebots wird nicht umgeschrieben (stele-228: 198725901272 → 198728227102)', async () => {
+    const { reusablePromotion } = await import('../api/multi-rabatt');
+    const old = { promotionId: '1617297224105@EBAY_DE', listingId: '198725901272' };
+    expect(reusablePromotion(old, '198728227102')).toBeNull();
+    expect(reusablePromotion(old, '198725901272')).toBe(old);
+    expect(reusablePromotion(null, '198728227102')).toBeNull();
+  });
+});

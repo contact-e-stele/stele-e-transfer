@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-19 abends, aktuelle Version: v1.33):**
+**Aktueller Zählerstand (Stand 2026-10-19 abends, aktuelle Version: v1.34):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -254,7 +254,9 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | — | #195 | *(zählt nicht — Versionszähler-Nachtrag, Housekeeping)* |
 | 1 | #194 | Sendungsnummer prüfen: Hermes-Nummer mit/ohne „H“ gleich |
 | 2 | #196 | OFFEN 008: EAN als product.ean statt gtin |
-| — | (dieser PR) | *(zählt nicht — Folge-Fix zu #193 (volle GetItem-Antwort) + Versions-Bump)* |
+| — | #197 | *(zählt nicht — Folge-Fix zu #193 (volle GetItem-Antwort) + Versions-Bump)* |
+| 3 | #198 | OFFEN 007: Packmenge je Angebot (Ware × N, Lager ÷ N, Bestellmenge) |
+| 4 | #199 | Multi-Rabatt nach dem Listen nachholen (eBay 38227) + neue Aktion bei neuem Angebot → **Bump v1.33 → v1.34 bei #199** |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -270,7 +272,7 @@ Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Br
 Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
 aber „2 von 4“.*
 
-**→ Zähler: 2 von 4 seit v1.33** (#194, #196 — nächster Bump beim 4. größeren PR).
+**→ Zähler: 0 von 4 seit v1.34** (nächster Bump beim 4. größeren PR).
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -302,6 +304,7 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.30 → v1.31: PR #182, #183, #184, #185 (nachgetragen 19.10.)
 - v1.31 → v1.32: PR #186, #187, #188, #189 (nachgetragen 19.10.)
 - v1.32 → v1.33: PR #190, #191, #192, #193
+- v1.33 → v1.34: PR #194, #196, #198, #199
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 

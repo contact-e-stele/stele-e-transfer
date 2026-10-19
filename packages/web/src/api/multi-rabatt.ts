@@ -84,7 +84,8 @@ export async function sendMultiRabatt(productId: number, expected: { 2: number; 
   const start = new Date(Date.now() + 5 * 60_000);
   const end = new Date(start.getTime() + 365 * 24 * 3600_000); // 1 Jahr; danach neu senden (Anzeige im Listings-Tab)
   const body = buildVolumeDiscountPromotion({ listingId: prev.listingId, productLabel: `stele-${productId}`, percents: prev.plan.percents, start, end });
-  const existing = prev.sent;
+  // Aktion gehört zu einem ANDEREN (z.B. beendeten) Angebot → neue Aktion anlegen statt die alte umzuschreiben (stele-228, 19.10.2026).
+  const existing = reusablePromotion(prev.sent, prev.listingId);
   const url = existing ? `${EBAY_API_BASE_URL}/sell/marketing/v1/item_promotion/${encodeURIComponent(existing.promotionId)}` : `${EBAY_API_BASE_URL}/sell/marketing/v1/item_promotion`;
   const res = await fetch(url, { method: existing ? 'PUT' : 'POST', headers, body: JSON.stringify(body) });
   const text = await res.text();
@@ -107,6 +108,39 @@ export async function sendMultiRabatt(productId: number, expected: { 2: number; 
   return { ok: true as const, status: 200, promotionId, verified, promotionStatus: checkJson?.promotionStatus ?? null, percents: prev.plan.percents };
 }
 
+/** Vorhandene Aktion nur weiterverwenden, wenn sie zu genau diesem Angebot gehört. */
+export function reusablePromotion<T extends { listingId: string }>(sent: T | null | undefined, listingId: string): T | null {
+  return sent && sent.listingId === listingId ? sent : null;
+}
+
+/**
+ * eBay-Fehler 38227 "The listing ID is invalid": die Marketing API kennt ein gerade erst eingestelltes Angebot noch nicht
+ * (gemessen 19.10.2026: stele-232/228 direkt nach dem Listen 38227, stele-232 gut 10 Min später angenommen).
+ */
+export function isListingNotYetKnown(error: string | null | undefined): boolean {
+  return !!error && /\b38227\b/.test(error);
+}
+/** Nachhol-Versuche nach dem Listen (Minuten ab Listen). */
+export const MULTI_RABATT_RETRY_MINUTES = [5, 10, 20, 40] as const;
+
+function scheduleMultiRabattRetry(productId: number, attempt: number) {
+  if (attempt >= MULTI_RABATT_RETRY_MINUTES.length) {
+    console.warn(`[Multi-Rabatt] stele-${productId}: nach ${MULTI_RABATT_RETRY_MINUTES.length} Nachhol-Versuchen nicht gesendet — Knopf im Listings-Tab nutzen.`);
+    return;
+  }
+  const waitMin = MULTI_RABATT_RETRY_MINUTES[attempt] - (attempt === 0 ? 0 : MULTI_RABATT_RETRY_MINUTES[attempt - 1]);
+  setTimeout(async () => {
+    try {
+      const prev = await previewMultiRabatt(productId);
+      if (!prev?.plan.ok || !prev.plan.percents) { console.warn(`[Multi-Rabatt] stele-${productId}: Nachholen abgebrochen — ${prev?.plan.error ?? 'Vorschau nicht möglich'}`); return; }
+      if (prev.sent && prev.sent.listingId === prev.listingId) return; // inzwischen per Knopf gesendet
+      const r = await sendMultiRabatt(productId, prev.plan.percents);
+      console.log(`[Multi-Rabatt] stele-${productId}: Nachhol-Versuch ${attempt + 1} ${r.ok ? `gesendet ${r.percents[2]} %/${r.percents[3]} %, geprüft=${r.verified}` : `NICHT gesendet: ${r.error}`}`);
+      if (!r.ok && isListingNotYetKnown(r.error)) scheduleMultiRabattRetry(productId, attempt + 1);
+    } catch (e) { console.warn(`[Multi-Rabatt] stele-${productId}: Nachhol-Versuch ${attempt + 1} Fehler: ${String(e)}`); }
+  }, waitMin * 60_000);
+}
+
 /**
  * Inhaber 18.10.2026 22:48 ("Multi-Rabatt muss bei neuen Angeboten automatisch rein, als Gesetz überall"): nach dem ERSTEN
  * erfolgreichen Listen den Multi-Rabatt mit der aktuellen Vorschau senden. Fehler brechen das Listen nie ab — Ergebnis nur
@@ -122,6 +156,10 @@ export async function sendMultiRabattForNewListing(productId: number) {
     }
     const r = await sendMultiRabatt(productId, prev.plan.percents);
     console.log(`[Multi-Rabatt] stele-${productId}: nach dem Listen ${r.ok ? `gesendet ${r.percents[2]} %/${r.percents[3]} %, geprüft=${r.verified}` : `NICHT gesendet: ${r.error}`}`);
+    if (!r.ok && isListingNotYetKnown(r.error)) {
+      scheduleMultiRabattRetry(productId, 0);
+      return { ...r, retryScheduled: true as const, retryMinutes: [...MULTI_RABATT_RETRY_MINUTES] };
+    }
     return r;
   } catch (e) {
     console.warn(`[Multi-Rabatt] stele-${productId}: nach dem Listen Fehler: ${String(e)}`);
