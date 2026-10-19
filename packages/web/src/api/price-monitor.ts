@@ -21,6 +21,8 @@ import { applyOfferQuantity } from '../shared/offer-quantity';
 import { withTimeLimit, fetchWithTimeout } from '../shared/with-time-limit';
 import { resolveVariantEntries, type VariantGroup, type VariantPriceEntry } from '../shared/variant-resolver';
 import { Sentry } from '../instrument';
+import { applyAliUnitValues, normalizePackQty, type PackFields } from '../shared/pack-qty';
+import { getSinglePackQtys } from './pack-settings';
 
 // P-27/P-28-Konsolidierung (2026-09-08), Teil 2A+2B (2026-09-10): die eigentliche Formel lebt
 // ausschließlich in shared/pricing.ts (Backend UND Frontend brauchen sie). Re-Export hier, damit
@@ -94,7 +96,7 @@ export function mergeFreshVariantPrices(
   const existingSkus = new Set(existing.map(e => String(e.skuId)));
   const merged = existing.map(e => {
     const f = freshBySku.get(String(e.skuId));
-    return f ? { ...e, price: f.price, stock: typeof f.stock === 'number' ? f.stock : e.stock } : e;
+    return f ? applyAliUnitValues(e as PackFields, f.price, typeof f.stock === 'number' ? f.stock : undefined) : e; // OFFEN 007: Packmenge bleibt erhalten
   });
 
   const unknownFresh = fresh.filter(f => !existingSkus.has(String(f.skuId)));
@@ -114,7 +116,7 @@ export function mergeFreshVariantPrices(
       const { e, i } = absent[0];
       const f = group[0];
       replaced.push({ from: String(e.skuId), to: String(f.skuId), oldPrice: typeof e.price === 'number' ? e.price : null, newPrice: f.price });
-      merged[i] = { ...e, skuId: f.skuId, price: f.price, stock: typeof f.stock === 'number' ? f.stock : e.stock };
+      merged[i] = { ...applyAliUnitValues(e as PackFields, f.price, typeof f.stock === 'number' ? f.stock : undefined), skuId: f.skuId }; // OFFEN 007
     } else {
       ambiguous.push(`attrs ${JSON.stringify(group[0].attrs)}: ${group.length} neue skuId(s) [${group.map(g => g.skuId).join(', ')}] vs. ${sameAttrs.length} bestehende(r) Eintrag/Einträge [${sameAttrs.map(x => String(x.e.skuId)).join(', ')}], davon ${absent.length} im Scrape fehlend — nichts geändert, nicht angehängt`);
     }
@@ -805,7 +807,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
       if (!data.price) { errors++; return; }
 
-      const newBuyPrice = parsePrice(data.price);
+      // OFFEN 007: Einzelartikel als Pack → Ware je Angebot = Stückpreis × Packmenge (Varianten: im Eintrag, s. mergeFreshVariantPrices).
+      const singlePack = isVariantProduct(product.variants, product.variantPrices) ? 1 : normalizePackQty((await getSinglePackQtys())[String(product.id)]);
+      const unitBuyPrice = parsePrice(data.price);
+      const newBuyPrice = unitBuyPrice ? Math.round(unitBuyPrice * singlePack * 100) / 100 : unitBuyPrice;
       if (!newBuyPrice || newBuyPrice <= 0) { errors++; return; }
 
       const oldBuyPrice = product.buyPrice ?? 0;

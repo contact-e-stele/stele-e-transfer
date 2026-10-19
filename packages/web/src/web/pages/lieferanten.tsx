@@ -18,6 +18,7 @@ import { MultiRabattTable, useMultiRabattRule } from "../components/multi-rabatt
 import { pruneRemovedVariantEntries, maxVariantsError, countVariantCombinations, MAX_VARIANT_COMBINATIONS } from "../../shared/variant-cleanup";
 import { ratingGate, DEFAULT_MIN_RATING } from "../../shared/rating-gate";
 import { preselectVariants, type PreselectResult } from "../../shared/variant-preselect";
+import { setPackQty, normalizePackQty, MAX_PACK_QTY } from "../../shared/pack-qty";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
   RefreshCw, Package, Link, ChevronLeft,
@@ -35,6 +36,9 @@ interface VariantPrice {
   originalPrice?: number;
   stock?: number;
   imageUrl?: string;
+  packQty?: number;    // OFFEN 007: Stück je eBay-Angebot (fehlt = 1)
+  unitPrice?: number;  // OFFEN 007: AliExpress-Preis je Stück (nur bei packQty > 1)
+  unitStock?: number;  // OFFEN 007: AliExpress-Lager je Stück (nur bei packQty > 1)
 }
 
 interface ScrapedProduct {
@@ -284,6 +288,9 @@ export default function Lieferanten() {
     fetch("/api/settings/import-rules").then(r => (r.ok ? r.json() : null)).then(d => { if (d?.value) setImportRules(d.value); }).catch(() => { /* Standardwerte */ });
   }, []);
   const [preselect, setPreselect] = useState<PreselectResult | null>(null);
+  // OFFEN 007: Packmenge je Variante (skuId → N) und für Einzelartikel. 1 = wie bisher.
+  const [packQtys, setPackQtys] = useState<Record<string, number>>({});
+  const [singlePack, setSinglePack] = useState<number>(1);
   const [, setEbayResult] = useState<{ listingId?: string; error?: string } | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [gpsrHersteller, setGpsrHersteller] = useState("");
@@ -474,7 +481,9 @@ export default function Lieferanten() {
   // profitAtSellPrice()/DEFAULT_PRICING_CONFIG-Formel wie die Preisempfehlung oben und die
   // Varianten-Anzeige unten (statt einer eigenen Inline-Formel) — und zieht dabei, wie dort auch,
   // Versand + Zoll vom Einkauf ab statt nur den reinen Einkaufspreis.
-  const einkauf = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
+  // OFFEN 007: Einzelartikel als Pack — Ware je Angebot = Stückpreis × Packmenge (Versand/Einfuhr rechnet die Formel nur einmal).
+  const einkaufStueck = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
+  const einkauf = Math.round(einkaufStueck * normalizePackQty(singlePack) * 100) / 100;
   const verkauf = parseFloat(ebayPrice.replace(",", ".")) || 0;
   const ebayFee = verkauf * (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor
     + DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
@@ -506,7 +515,9 @@ export default function Lieferanten() {
   // Fix 238 + höchstens 5 Varianten (Inhaber 18.10.2026): Tabelle und Speichern nutzen nur die Einträge, deren Variante noch da ist.
   const groupsOrig = (product?.variants ?? []).filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name));
   const groupsNow = editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name));
-  const prunedVariants = pruneRemovedVariantEntries(groupsOrig, groupsNow, product?.variantPrices ?? []);
+  // OFFEN 007: Packmenge vor allem anderen anwenden — Tabelle, Gewinn, Multi-Rabatt und Speichern sehen die Pack-Werte.
+  const packedVariantPrices = (product?.variantPrices ?? []).map(e => setPackQty(e, packQtys[e.skuId] ?? 1));
+  const prunedVariants = pruneRemovedVariantEntries(groupsOrig, groupsNow, packedVariantPrices);
   const variantCount = countVariantCombinations(groupsNow);
   const variantLimitError = product ? maxVariantsError(groupsNow, importRules.maxVariants) : null;
   // R1 Sterne-Sperre (OFFEN 006): Speichern erst ab importRules.minRating Sternen; fehlt die Bewertung → gesperrt.
@@ -624,6 +635,7 @@ export default function Lieferanten() {
         return profitAtSellPrice({ ...cfg, sellPrice: sell, buyPrice: e.price, isChinaOrigin: isChina });
       });
       setPreselect(pre.rows.length > 0 || pre.reason ? pre : null);
+      setPackQtys({}); setSinglePack(1); // OFFEN 007: neues Produkt → Packmenge zurück auf 1
       setEditedVariants(pre.applied ? pre.groups : startGroups);
       setEditingVariant({});
       // Preis vorausfüllen
@@ -729,6 +741,7 @@ export default function Lieferanten() {
           description: product.description,
           images: visibleImages,
           buyPrice: einkauf || null,
+          packQty: normalizePackQty(singlePack), // OFFEN 007: Einzelartikel-Packmenge (Server merkt sie für den Preis-Lauf)
           sellPrice: verkauf || null,
           rating: product.rating ?? null, // OFFEN 006: Server prüft die Sterne-Sperre
           reviewCount: product.reviewCount ?? null,
@@ -1695,6 +1708,15 @@ export default function Lieferanten() {
                     border: "2px solid #E2E8F0", borderRadius: 10, outline: "none",
                     fontFamily: "inherit", boxSizing: "border-box", color: "#0F172A",
                   }} />
+                  {/* OFFEN 007: Packmenge für Einzelartikel (bei Varianten je Zeile in der Varianten-Tabelle) */}
+                  {!(product?.variantPrices ?? []).length && (
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 11, color: "#475569" }} title="Wie viele Stück vom AliExpress-Artikel sind in EINEM eBay-Angebot (2er-Pack = 2)">
+                      Packmenge
+                      <input type="number" min={1} max={MAX_PACK_QTY} step={1} value={singlePack} onChange={e => setSinglePack(normalizePackQty(Number(e.target.value)))}
+                        style={{ width: 48, fontSize: 12, padding: "2px 6px", border: "1.5px solid #E2E8F0", borderRadius: 6, fontFamily: "inherit" }} />
+                      {singlePack > 1 && <span style={{ color: "#92400E" }}>Ware je Angebot {einkauf.toFixed(2).replace(".", ",")} €</span>}
+                    </label>
+                  )}
                 </div>
                 <div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -2046,6 +2068,18 @@ export default function Lieferanten() {
                           </div>
                           {/* Herkunft / Zoll pro Variante — Versand ist zentral oben in der Preiskalkulation (P-69) */}
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", paddingLeft: 42 }}>
+                            {/* OFFEN 007: Packmenge je Variante */}
+                            <label style={{ fontSize: 10, color: "#475569", display: "inline-flex", alignItems: "center", gap: 4 }} title="Wie viele Stück vom AliExpress-Artikel sind in EINEM eBay-Angebot (2er-Pack = 2)">
+                              Packmenge
+                              <input type="number" min={1} max={MAX_PACK_QTY} step={1} value={normalizePackQty(v.packQty)}
+                                onChange={e => setPackQtys(prev => ({ ...prev, [v.skuId]: normalizePackQty(Number(e.target.value)) }))}
+                                style={{ width: 42, fontSize: 11, padding: "1px 4px", border: "1.5px solid #E2E8F0", borderRadius: 6, fontFamily: "inherit" }} />
+                            </label>
+                            {normalizePackQty(v.packQty) > 1 && (
+                              <span style={{ fontSize: 10, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 6 }}>
+                                je Stück {typeof v.unitPrice === "number" ? v.unitPrice.toFixed(2).replace(".", ",") : "?"} € · Lager je Stück {v.unitStock ?? "?"}
+                              </span>
+                            )}
                             <div style={{ display: "flex", gap: 3 }}>
                               <button
                                 type="button"

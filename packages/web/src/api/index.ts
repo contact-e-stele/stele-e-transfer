@@ -32,6 +32,7 @@ import { runTierReprice, type TierRepriceProductRow } from './tier-reprice';
 import { syncDisplayValuesOnRename, type VariantPriceEntry } from '../shared/variant-resolver';
 import { evaluateVariantGate } from '../shared/variant-gate';
 import { maxVariantsError, pruneRemovedVariantEntries } from '../shared/variant-cleanup';
+import { applyAliUnitValues, normalizePackQty, aliOrderQuantity, type PackFields } from '../shared/pack-qty';
 import { NON_VARIATION_ASPECTS, type VariantGroup } from '../shared/variant-resolver';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, orderProductInfoFromRow, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
@@ -862,8 +863,22 @@ const app = new Hono()
             return product ? orderProductInfoFromRow(product) : null;
           },
         });
+        // OFFEN 007: Packmenge je Position → "bei AliExpress N Stück bestellen" (nur wenn ≠ eBay-Menge, d. h. Packmenge > 1).
+        const aliQuantities: Record<string, number> = {};
+        for (const li of order.lineItems) {
+          const product = findProductForSku(li.sku);
+          if (!product?.variantPrices || !li.sku) continue;
+          try {
+            const entries = JSON.parse(product.variantPrices) as Array<{ attrs?: Record<string, string>; packQty?: number }>;
+            const suffix = li.sku.startsWith(`stele-${product.id}-`) ? li.sku.slice(`stele-${product.id}-`.length) : '';
+            const hits = entries.filter(v => (Object.values(v.attrs ?? {}).map(slugify).filter(Boolean).join('-')) === suffix);
+            const pack = hits.length === 1 ? normalizePackQty(hits[0].packQty) : 1;
+            if (pack > 1) aliQuantities[li.lineItemId] = aliOrderQuantity(li.quantity, pack);
+          } catch { /* ignore */ }
+        }
         return {
           ...order,
+          aliQuantities,
           localNote: note,
           nettoEinkauf: netto.nettoEinkauf,
           nettoErgebnis: netto.nettoErgebnis,
@@ -2501,6 +2516,13 @@ const app = new Hono()
         complianceOverrideKeyword: body.complianceOverrideKeyword ?? null,
         complianceOverrideField: body.complianceOverrideField ?? null,
       }).returning({ id: schema.products.id });
+      // OFFEN 007: Packmenge eines Einzelartikels merken (Preis-Lauf rechnet den AliExpress-Stückpreis × N).
+      const packQtyBody = (body as unknown as { packQty?: unknown }).packQty;
+      const hasVariantEntries = Array.isArray(body.variantPrices) && body.variantPrices.length > 0;
+      if (!hasVariantEntries && packQtyBody != null) {
+        const { setSinglePackQty } = await import('./pack-settings');
+        await setSinglePackQty(result[0].id, packQtyBody);
+      }
       return c.json({ id: result[0].id, created: true }, 201);
     } catch (e) {
       console.error('DB error:', e);
@@ -3088,7 +3110,7 @@ const app = new Hono()
         const freshStock = freshStockBySku[skuId];
         if (typeof freshStock === 'number') {
           variantsWithStock++;
-          return { ...v, stock: freshStock };
+          return applyAliUnitValues(v as PackFields, undefined, freshStock); // OFFEN 007: bei Packs Bestand ÷ Packmenge
         }
         return v; // kein frischer Wert gefunden — bestehenden Wert (inkl. evtl. vorhandenem "–") unangetastet lassen
       });
