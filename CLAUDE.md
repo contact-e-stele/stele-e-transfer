@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-14, aktuelle Version: v1.28):**
+**Aktueller Zählerstand (Stand 2026-10-19, aktuelle Version: v1.32):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -229,6 +229,27 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | 2 | #169 | K-005: Ali-Preisfelder-Diagnose, Versandland aus Varianten, Bewerbung je Angebot, Senk-Kandidaten |
 | 3 | #170 | Fix: Senk-Kandidaten nur mit echtem Varianten-VK |
 | 4 | #171 | K-006: Preisendungen ,45/,95 + Toleranz 0,10 €, nie unter 1,00 € → **Bump v1.27 → v1.28 bei #171** |
+| — | #172 | *(zählt nicht — Versions-Nachtrag v1.28, Housekeeping)* |
+| 1 | #173 | K-005 Diagnose: Seitenpreise je SKU neben DS-API-Preis (nur lesen, App-Funktion) |
+| 2 | #174 | K-005 Weg b: Kassen-Faktor je Produkt aus AliExpress-Rechnung (Migration) |
+| 3 | #175 | K-005: Faktor-Grenze 0,85 + Warnhinweis bei Verlust ohne Faktor |
+| — | #176 | *(zählt nicht — Zwischen-Merge in den PR-Branch von #175 (Base `k005d-grenze-085`, kein Merge nach main))* |
+| 4 | #177 | K-009: Anzeige 0 % (aus) wählbar → **Bump v1.28 → v1.29 bei #177** (nachgetragen 19.10.) |
+| 1 | #178 | App-Preise aus eBay übernehmen (nur lesen bei eBay) |
+| 2 | #179 | K-011: Käuferpreis = Wahrheit, Sperre bei Abweichung |
+| 3 | #180 | Mengen-Lese-Prüfung je Variante |
+| 4 | #181 | K-009 Rest: Sammel-Auswahl Anzeige 0 % → **Bump v1.29 → v1.30 bei #181** (nachgetragen 19.10.) |
+| 1 | #182 | K-010 Schritt 1: AliExpress-Bestellbeträge lesen |
+| 2 | #183 | Mengen-Fix A+B: Offer-Menge folgt der Lagermenge |
+| 3 | #184 | Mengen-Fix Nachtrag: kein Offer-PUT ohne gleichen Käuferpreis |
+| 4 | #185 | Zeitlimit je Produkt/eBay-Aufruf im Mengen-Lauf → **Bump v1.30 → v1.31 bei #185** (nachgetragen 19.10.) |
+| 1 | #186 | Dubletten-Bereinigung als Knopf (stele-189) |
+| 2 | #187 | Plan F: Restmenge bei eBay je Bestellposition |
+| 3 | #188 | Varianten aufräumen + höchstens 5 Varianten |
+| 4 | #189 | Multi-Rabatt (2 Stück −3 €, 3 Stück −5 €) → **Bump v1.31 → v1.32 bei #189** (nachgetragen 19.10.) |
+| 1 | #190 | Sendungsnummer bei eBay prüfen + Kopieren/Einfügen |
+| 2 | #191 | OFFEN 006: Sterne-Sperre ab 4,2 + höchstens 5 Varianten mit Vorauswahl |
+| 3 | #192 | Multi-Rabatt automatisch beim ersten Listen |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -239,7 +260,12 @@ main). **Grenzfälle, die wörtlich zählen:** #93 (neues Modul `gpsr-parser.ts`
 *Strengere Lesart (nur Änderungen am App-Verhalten zählen, also #93/#131 NICHT): 41 statt 43 gezählte PRs seit #90 → v1.21, "3 von 4".
 Die Entscheidung liegt beim Inhaber; hier gilt die wörtliche Lesart.* Gezählt: 43 PRs ab #90 plus Startwert 2 (#88, #89) = 45 = 11 × 4 + 1.
 
-**→ Zähler: 0 von 4 seit v1.28** (Bump bei #171).
+Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Branch, Dateiliste) eingeordnet. Die vier fälligen Sprünge
+(#177, #181, #185, #189) wurden nie umgesetzt und werden hier in einem Schritt v1.28 → v1.32 nachgeholt. #173 zählt wörtlich (neue
+Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
+aber „2 von 4“.*
+
+**→ Zähler: 3 von 4 seit v1.32** (#190, #191, #192 — nächster Bump beim 4. größeren PR).
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -266,6 +292,10 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.25 → v1.26: PR #156, #157, #158, #160 (siehe Tabelle oben)
 - v1.26 → v1.27: PR #161, #163, #164, #165 (siehe Tabelle oben)
 - v1.27 → v1.28: PR #167, #169, #170, #171 (siehe Tabelle oben)
+- v1.28 → v1.29: PR #173, #174, #175, #177 (nachgetragen 19.10.)
+- v1.29 → v1.30: PR #178, #179, #180, #181 (nachgetragen 19.10.)
+- v1.30 → v1.31: PR #182, #183, #184, #185 (nachgetragen 19.10.)
+- v1.31 → v1.32: PR #186, #187, #188, #189 (nachgetragen 19.10.)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
