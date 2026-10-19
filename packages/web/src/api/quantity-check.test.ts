@@ -39,3 +39,19 @@ describe('runQuantityCheck (Mock, nur GET)', () => {
     expect(calls.every(c => c.startsWith('GET '))).toBe(true);
   });
 });
+
+describe('runQuantityCheck mit umbenannten Varianten (stele-224, 19.10.2026)', () => {
+  test('Ziel aus AliExpress-Lager trotz deutscher Anzeigewerte', async () => {
+    const xml = `<GetItemResponse><Ack>Success</Ack><Item><Variations><Variation><SKU>stele-224-GRAU</SKU><StartPrice currencyID="EUR">20.95</StartPrice><Quantity>2</Quantity><SellingStatus><QuantitySold>0</QuantitySold></SellingStatus></Variation></Variations></Item></GetItemResponse>`;
+    const f = (async (url: string) => {
+      if (url.includes('/inventory_item/')) return new Response(JSON.stringify({ availability: { shipToLocationAvailability: { quantity: 2 } } }), { status: 200 });
+      return new Response(JSON.stringify({ offers: [{ availableQuantity: 2 }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const r = await runQuantityCheck({ productId: 224, ebayListingId: '198724953739', maxQty: 4, token: 't', fetchFn: f,
+      variantGroups: [{ name: 'Varianten', values: ['SCHWARZ', 'GRAU', 'BLAU'] }],
+      variantEntries: [{ skuId: '12000056789088502', attrs: { Color: 'Grey' }, stock: 19, price: 12.19, displayValues: { Varianten: 'GRAU' } }],
+      getItemXml: async () => ({ httpStatus: 200, xml }) });
+    expect(r.error).toBeUndefined();
+    expect(r.rows[0]).toMatchObject({ sku: 'stele-224-GRAU', aliStock: 19, targetQty: 4 });
+  });
+});
