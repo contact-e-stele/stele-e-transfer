@@ -1932,6 +1932,35 @@ const app = new Hono()
   // Seit 01.07.2026 gilt eine Pauschale je Warenposition, real gemessen 3,58€ inkl.
   // Einfuhrumsatzsteuer darauf (Standard). Betrifft NUR den Bestellungs-Gewinn (Bestellungen-Tab),
   // NICHT die Verkaufspreis-Formel (CHINA_ZOLL_EUR/DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur).
+  // Angebot verknüpfen (Inhaber 19.10.2026 "228 verknüpfen"): außerhalb der App eingestelltes Angebot dem Produkt zuordnen.
+  // Prüft per GetItem (nur lesen): aktiv + Bestandseinheit gehört zu stele-<id>. Schreibt NUR die App-DB (ebayListingId/Status),
+  // danach Multi-Rabatt wie beim ersten Listen (Gesetz "Multi-Rabatt überall").
+  .post('/products/:id/link-listing', async (c) => {
+    try {
+      const id = Number(c.req.param('id'));
+      const body = await c.req.json().catch(() => null) as { listingId?: unknown } | null;
+      const listingId = typeof body?.listingId === 'string' && /^\d{9,15}$/.test(body.listingId) ? body.listingId : null;
+      if (!Number.isInteger(id) || id <= 0 || !listingId) return c.json({ ok: false, error: 'Produkt-ID und listingId (eBay-Artikelnummer) sind Pflicht' }, 400);
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const [product] = await db.select({ id: schema.products.id, ebayListingId: schema.products.ebayListingId }).from(schema.products).where(eq(schema.products.id, id));
+      if (!product) return c.json({ ok: false, error: 'Produkt nicht gefunden' }, 404);
+      if (product.ebayListingId && product.ebayListingId !== listingId) return c.json({ ok: false, error: `Produkt ist schon mit ${product.ebayListingId} verknüpft` }, 409);
+      const other = await db.select({ id: schema.products.id }).from(schema.products).where(eq(schema.products.ebayListingId, listingId)).get();
+      if (other && other.id !== id) return c.json({ ok: false, error: `Angebot ${listingId} gehört schon zu stele-${other.id}` }, 409);
+      const { getItemStatusXml } = await import('./ebay');
+      const { checkListingLink } = await import('../shared/listing-link');
+      const { httpStatus, xml } = await getItemStatusXml(listingId);
+      const check = checkListingLink(xml, id, httpStatus);
+      if (!check.ok) return c.json({ ok: false, error: check.reason, check }, 422);
+      await db.update(schema.products).set({ ebayListingId: listingId, ebayStatus: 'listed', ebayError: null, ebayMissingAspect: null, updatedAt: new Date().toISOString() })
+        .where(eq(schema.products.id, id));
+      console.log(`[Verknüpfen] stele-${id} ↔ eBay ${listingId} (SKU ${check.itemSku}, Varianten ${check.variantSkus.join(', ') || '–'})`);
+      const multiRabatt = await import('./multi-rabatt').then(m => m.sendMultiRabattForNewListing(id));
+      return c.json({ ok: true, check, multiRabatt }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   // Multi-Rabatt (Inhaber 18.10.2026): Euro-Regel (app_settings "multi_rabatt_regel"), Vorschau je Produkt, Senden NUR per Knopf.
   // OFFEN 006: Import-Regeln (Sterne-Sperre, höchstens Varianten) — app_settings, im Einstellungen-Tab änderbar.
   .get('/settings/import-rules', async (c) => {
