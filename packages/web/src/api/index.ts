@@ -4360,6 +4360,32 @@ app.post('/products/checkout-factor/sync', async (c) => {
 // Mengen-Fix (Inhaber 15.10.2026 "Ja Mengen-Fix A+B"): Mengen je Variante JETZT auf das App-Ziel setzen (MIN(AliExpress-Lager, Obergrenze)),
 // im Lager UND in der Offer-Menge (setInventoryItemQuantity zieht die Offer-Menge mit). Ohne confirm: nur Vorschau (quantity-check).
 // Mit {confirm:true}: NUR auf Inhaber-Klick. Danach zurücklesen. Sperre (K-011b) gilt.
+// EAN-Merkmal korrigieren (Inhaber 19.10.2026 "Nicht zutreffend" für stele-228): ungültige EAN/GTIN/UPC/ISBN-Merkmale im LIVE-Angebot
+// (Gruppe + Varianten-Items) durch „Nicht zutreffend" ersetzen. Ohne {confirm:true} nur Vorschau. Nur Merkmale, kein Preis, keine Menge.
+app.post('/products/:id/fix-ean-aspect', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: { confirm?: unknown } = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (product.ebayStatus !== 'listed' || !product.ebayListingId) return c.json({ error: 'Produkt ist nicht live bei eBay gelistet' }, 422);
+    const { getAccessToken, getInventoryItemGroupSkus, EBAY_API_BASE_URL, sanitizeItemProductForPut, stripZeroWeight } = await import('./ebay');
+    const { fixListingIdentifierAspects } = await import('./identifier-aspect-fix');
+    const token = await getAccessToken();
+    const itemSkus = await getInventoryItemGroupSkus(`stele-${id}-GROUP`, token).catch(() => [] as string[]);
+    const r = await fixListingIdentifierAspects({ productId: id, token, baseUrl: EBAY_API_BASE_URL, confirm: body.confirm === true, itemSkus,
+      prepareItem: (item) => { if (item.product) item.product = sanitizeItemProductForPut(item.product as Record<string, unknown>); stripZeroWeight(item); } });
+    console.log(`[EAN-Merkmal] stele-${id} ${body.confirm === true ? 'apply' : 'preview'}: ${JSON.stringify(r.rows)}`);
+    return c.json({ mode: body.confirm === true ? 'apply' : 'preview', ...r }, 200);
+  } catch (e) {
+    console.error('[fix-ean-aspect]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.post('/products/:id/sync-quantities', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
