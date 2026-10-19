@@ -1009,7 +1009,7 @@ const app = new Hono()
       for (const n of notes) {
         try {
           const onEbay = await getShippingFulfillments(n.ebayOrderId);
-          const result = compareTracking(n.trackingNumber!, onEbay);
+          const result = compareTracking(n.trackingNumber!, onEbay, n.carrier);
           const now = new Date().toISOString();
           const day = now.slice(0, 10);
           if (result === 'match') {
