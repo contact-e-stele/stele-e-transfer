@@ -94,7 +94,10 @@ function buildWorkflowText(order: Order, template: string): string {
     : "⚠️ Keine Lieferadresse in der App hinterlegt — bitte direkt in eBay nachsehen.";
 
   const itemsBlock = order.lineItems
-    .map(li => `   - ${li.title}${li.sku ? ` (SKU: ${li.sku})` : ""} × ${li.quantity}`)
+    .map(li => {
+      const ali = (order as { aliQuantities?: Record<string, number> }).aliQuantities?.[li.lineItemId]; // OFFEN 007: Packmenge
+      return `   - ${li.title}${li.sku ? ` (SKU: ${li.sku})` : ""} × ${li.quantity}${ali != null ? ` → bei AliExpress ${ali} Stück bestellen (Packmenge)` : ""}`;
+    })
     .join("\n");
 
   const nettoBlock = order.nettoErgebnis != null
@@ -633,7 +636,11 @@ export default function Bestellungen() {
                   <div style={{ fontSize: 12, color: "#0F172A", fontWeight: 600 }}>
                     {li.title}
                     {li.sku && <span style={{ color: "#94A3B8", fontWeight: 500 }}> ({li.sku})</span>}
-                    <span style={{ color: "#94A3B8", fontWeight: 500 }}> · {li.quantity}×</span>
+                    <span style={{ color: "#94A3B8", fontWeight: 500 }}> · {li.quantity}×</span>{(order as { aliQuantities?: Record<string, number> }).aliQuantities?.[li.lineItemId] != null && (
+                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 6, background: "#FEF3C7", color: "#92400E" }} title="Packmenge: dieses Angebot enthält mehrere Stück">
+                        bei AliExpress {(order as { aliQuantities?: Record<string, number> }).aliQuantities![li.lineItemId]} Stück bestellen
+                      </span>
+                    )}
                     {li.sku && li.sku in remaining && (() => {
                       const n = remaining[li.sku as string];
                       const lvl = remainingLevel(n);
