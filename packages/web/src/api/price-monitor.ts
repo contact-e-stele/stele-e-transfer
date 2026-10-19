@@ -5,6 +5,7 @@ import { db } from '../db/index';
 import * as schema from '../db/schema';
 import { scrapeAliExpressUrl, checkSourceAvailability, type ScrapedProduct } from './aliexpress';
 import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliProductData } from './aliexpress-api';
+import { stockBySkuFor } from '../shared/variant-stock';
 import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, getInventoryItemQuantity, getItemBuyerPricesXml, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
@@ -877,10 +878,16 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
                 const g = await getItemBuyerPricesXml(product.ebayListingId);
                 if (g.httpStatus === 200) for (const b of parseGetItemBuyerPrices(g.xml).rows) buyerPriceBySku.set(b.sku, b.price);
               } catch (e) { console.warn(`[PriceMonitor] ${product.id}: Käuferpreise nicht lesbar — Offer-Mengen werden nicht gesetzt:`, e); }
-              for (const v of knownStock) {
-                const suffix = Object.values(v.attrs ?? {}).map(slugify).filter(Boolean).join('-');
-                const candidateSku = `stele-${product.id}-${suffix}`;
+              // stele-224 (19.10.2026): echte eBay-SKU aus dem ANZEIGEWERT (wie beim Listen), nicht aus den AliExpress-attrs —
+              // sonst bleiben umbenannte Varianten nie nachgefüllt. Nur Einträge mit frischem Lager aus DIESEM Scrape.
+              const freshSkuIds = new Set(knownStock.map(v => v.skuId).filter(Boolean));
+              let mergedEntries: VariantPriceEntry[] = [];
+              try { const pv = freshVariantPricesJson ? JSON.parse(freshVariantPricesJson) : []; mergedEntries = Array.isArray(pv) ? pv : []; } catch { mergedEntries = []; }
+              const stockBySku = stockBySkuFor(product.id, parseVariantGroupsJson(product.variants),
+                mergedEntries.filter(e => e.skuId && freshSkuIds.has(e.skuId)));
+              for (const [candidateSku, stock] of stockBySku) {
                 if (!realSkus.includes(candidateSku)) continue; // kein eindeutiger Match — nichts unternehmen
+                const v = { stock };
                 const targetQuantity = resolveVariantQuantity(v.stock, 0, maxVariantQuantity);
                 const ok = await setInventoryItemQuantity(candidateSku, targetQuantity, token, ebayFetch, buyerPriceBySku.get(candidateSku) ?? null);
                 if (ok) {

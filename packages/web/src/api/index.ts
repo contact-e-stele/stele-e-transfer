@@ -4376,7 +4376,7 @@ app.post('/products/:id/sync-quantities', async (c) => {
     try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
     const token = await getAccessToken();
     const maxQty = await getMaxVariantQuantity();
-    const check = () => runQuantityCheck({ productId: id, ebayListingId: product.ebayListingId as string, variantEntries: entries, slug: slugify, maxQty, token,
+    const check = () => runQuantityCheck({ productId: id, ebayListingId: product.ebayListingId as string, variantEntries: entries, variantGroups: (() => { try { const g = product.variants ? JSON.parse(product.variants) : []; return Array.isArray(g) ? g : []; } catch { return []; } })(), maxQty, token,
       getItemXml: () => getItemBuyerPricesXml(product.ebayListingId as string) });
     const before = await check();
     if (body.confirm !== true) return c.json({ mode: 'preview', maxQty, ...before }, 200);
@@ -4477,7 +4477,7 @@ app.get('/products/:id/quantity-check', async (c) => {
     try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
     const token = await getAccessToken();
     const maxQty = await getMaxVariantQuantity();
-    const r = await runQuantityCheck({ productId: id, ebayListingId: product.ebayListingId, variantEntries: entries, slug: slugify, maxQty, token,
+    const r = await runQuantityCheck({ productId: id, ebayListingId: product.ebayListingId, variantEntries: entries, variantGroups: (() => { try { const g = product.variants ? JSON.parse(product.variants) : []; return Array.isArray(g) ? g : []; } catch { return []; } })(), maxQty, token,
       getItemXml: () => getItemBuyerPricesXml(product.ebayListingId as string) });
     return c.json({ productId: id, maxQty, ...r }, 200);
   } catch (e) {

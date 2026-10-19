@@ -1,6 +1,8 @@
 // Mengen-Lese-Prüfung je Variante — eBay NUR LESEN (GET inventory_item, GET offer?sku, Trading GetItem). Logik: shared/quantity-check.ts.
 import { evaluateQuantityRow, type QuantityRow, type QuantityVerdict } from '../shared/quantity-check';
 import { parseGetItemBuyerPrices } from '../shared/ebay-buyer-price';
+import { stockBySkuFor } from '../shared/variant-stock';
+import type { VariantGroup, VariantPriceEntry } from '../shared/variant-resolver';
 import { resolveVariantQuantity, getInventoryItemQuantity } from './ebay';
 
 const BASE = 'https://api.ebay.com';
@@ -19,8 +21,9 @@ export async function readOfferQty(sku: string, token: string, f: typeof fetch =
 export async function runQuantityCheck(input: {
   productId: number;
   ebayListingId: string;
-  variantEntries: Array<{ attrs?: Record<string, string>; stock?: number }>;
-  slug: (s: string) => string;
+  variantEntries: VariantPriceEntry[];
+  variantGroups?: VariantGroup[]; // product.variants — für umbenannte Anzeigewerte (stele-224)
+  slug?: (s: string) => string;   // nicht mehr benutzt (SKU-Aufbau jetzt in shared/variant-stock.ts)
   maxQty: number;
   token: string;
   getItemXml: () => Promise<{ httpStatus: number; xml: string }>;
@@ -30,11 +33,7 @@ export async function runQuantityCheck(input: {
   const g = await input.getItemXml();
   const buyer = parseGetItemBuyerPrices(g.xml);
   if (g.httpStatus !== 200 || buyer.error) return { rows: [], error: `GetItem nicht lesbar: ${buyer.error ?? 'HTTP ' + g.httpStatus}` };
-  const stockBySku = new Map<string, number | undefined>();
-  for (const v of input.variantEntries) {
-    const suffix = Object.values(v.attrs ?? {}).map(input.slug).filter(Boolean).join('-');
-    stockBySku.set(`stele-${input.productId}-${suffix}`, v.stock);
-  }
+  const stockBySku = stockBySkuFor(input.productId, input.variantGroups ?? [], input.variantEntries);
   const rows: QuantityVerdict[] = [];
   for (const b of buyer.rows) {
     const sku = b.sku || `stele-${input.productId}`;
