@@ -44,3 +44,21 @@ describe('Live-Angebot korrigieren (Mock, stele-228)', () => {
     expect((store.item.availability as { shipToLocationAvailability: { quantity: number } }).shipToLocationAvailability.quantity).toBe(4);
   });
 });
+
+describe('EAN-Schutz beim Listen und Speichern (Inhaber 20.10.2026)', () => {
+  test('productIdentifierFields: ungültige EAN → Ersatztext, gültige bleibt', async () => {
+    process.env.TURSO_DATABASE_URL ??= 'file:/tmp/x.db';
+    const { productIdentifierFields } = await import('../api/ebay');
+    expect(productIdentifierFields('101406')).toEqual({ ean: ['Nicht zutreffend'] });
+    expect(productIdentifierFields('4006381333931')).toEqual({ ean: ['4006381333931'] });
+    expect(productIdentifierFields(null)).toEqual({ ean: ['Nicht zutreffend'] });
+  });
+  test('buildAspects und Speichern-Route prüfen die Kennung', () => {
+    const { readFileSync } = require('fs') as typeof import('fs');
+    const { resolve } = require('path') as typeof import('path');
+    const ebay = readFileSync(resolve(import.meta.dir, '..', 'api', 'ebay.ts'), 'utf-8');
+    expect(ebay).toContain('const fixed = fixIdentifierAspects(aspects);');
+    const idx = readFileSync(resolve(import.meta.dir, '..', 'api', 'index.ts'), 'utf-8');
+    expect(idx).toContain('ist keine gültige Nummer (8/12/13/14 Ziffern mit Prüfziffer)');
+  });
+});

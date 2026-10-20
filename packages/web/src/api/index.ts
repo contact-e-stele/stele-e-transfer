@@ -3542,6 +3542,17 @@ const app = new Hono()
       const allowed: Partial<typeof schema.products.$inferInsert> = {};
       if ('ebayCategory' in body) allowed.ebayCategory = body.ebayCategory as string | null;
       if ('ean'          in body) allowed.ean          = body.ean          as string | null;
+      // EAN-Schutz (Inhaber 20.10.2026, stele-228): nur echte EAN (Prüfziffer) oder „Nicht zutreffend“ speichern.
+      {
+        const { isValidIdentifierValue } = await import('../shared/identifier-aspect');
+        const eanIn = typeof body.ean === 'string' ? body.ean.trim() : '';
+        const manIn = (body.manualAspects && typeof body.manualAspects === 'object') ? body.manualAspects as Record<string, unknown> : {};
+        const bad = [
+          ...(eanIn && !isValidIdentifierValue(eanIn) ? [`EAN „${eanIn}“`] : []),
+          ...['EAN', 'GTIN', 'UPC', 'ISBN'].filter(k => typeof manIn[k] === 'string' && (manIn[k] as string).trim() && !isValidIdentifierValue(manIn[k] as string)).map(k => `${k} „${String(manIn[k]).trim()}“`),
+        ];
+        if (bad.length > 0) return c.json({ error: `${bad.join(', ')} ist keine gültige Nummer (8/12/13/14 Ziffern mit Prüfziffer). Ohne echte Nummer bitte „Nicht zutreffend“ eintragen.` }, 400);
+      }
       if ('gpsrName'    in body) allowed.gpsrName    = body.gpsrName    as string | null;
       if ('gpsrAddress' in body) allowed.gpsrAddress = body.gpsrAddress as string | null;
       if ('gpsrCity'    in body) allowed.gpsrCity    = body.gpsrCity    as string | null;

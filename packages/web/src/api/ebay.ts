@@ -1,6 +1,7 @@
 // eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
+import { fixIdentifierAspects, isValidIdentifierValue } from '../shared/identifier-aspect';
 import { eq } from 'drizzle-orm';
 import { computeMinSellPrice, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import type { ResolvedGpsr } from '../shared/gpsr-parser';
@@ -712,7 +713,7 @@ export async function getAspectAllowedValues(categoryId: string | undefined, asp
 export const EAN_NOT_APPLICABLE_DE = 'Nicht zutreffend';
 export function productIdentifierFields(ean: string | null | undefined): { ean: string[] } {
   const v = typeof ean === 'string' ? ean.trim() : '';
-  return { ean: [v || EAN_NOT_APPLICABLE_DE] };
+  return { ean: [v && isValidIdentifierValue(v) ? v : EAN_NOT_APPLICABLE_DE] }; // EAN-Schutz: ungültig → Ersatztext
 }
 
 // P-88: Extrahiert den exakten Feldnamen aus eBays "Das Artikelmerkmal X fehlt"-Fehlertext —
@@ -993,7 +994,10 @@ export async function buildAspects(
     if (val?.trim()) aspects[name] = [val.trim()];
   }
 
-  return aspects;
+  // EAN-Schutz (Inhaber 20.10.2026, Live-Fund stele-228 „EAN 101406“ = Kategorie-Nummer): ungültige EAN/GTIN/UPC/ISBN nie an eBay.
+  const fixed = fixIdentifierAspects(aspects);
+  if (fixed.changed.length > 0) console.warn(`[EAN-Schutz] ungültige Kennung ersetzt durch "Nicht zutreffend": ${fixed.changed.join('; ')}`);
+  return fixed.aspects;
 }
 
 // P-88 Schritt 1b: Kategorie- und globale Defaults GETRENNT (statt gemergt wie
