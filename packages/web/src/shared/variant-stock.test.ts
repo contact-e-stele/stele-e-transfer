@@ -39,3 +39,20 @@ test('Mengen-Lauf und Mengen-Prüfung nutzen dieselbe Zuordnung (Grundgesetz 8)'
     expect(src).toContain('stockBySkuFor(');
   }
 });
+
+// Live-Fund stele-119 (22.10.2026, App-DB): zwei AliExpress-Einträge "100pcs" (EK 3,25 Lager 6 / EK 4,09 Lager 1992), eBay hat EINE
+// Variante stele-119-100PCS. Vorher: mehrdeutig → kein Lager → Ziel leer → Menge blieb bei 1, "2 kaufen" (Multi-Rabatt) gesperrt.
+// Jetzt: dieselbe Regel wie der Dubletten-Knopf (planVariantDedupe, Grundgesetz 8) — der frischeste Eintrag trägt das Lager.
+const groups119 = [{ name: 'Varianten ', values: ['200pcs', '100pcs'] }];
+const entries119 = [
+  { skuId: '12000050569622128', attrs: { Color: '200pcs', 'Ships From': 'China Mainland' }, price: 5.59, stock: 1954 },
+  { skuId: '12000050569622130', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 3.25, stock: 6 },
+  { skuId: '12000050569622129', attrs: { Color: '100pcs', 'Ships From': 'China Mainland' }, price: 4.09, stock: 1992 },
+];
+describe('Dubletten-Kombination (stele-119)', () => {
+  test('Lager der Dublette kommt aus der Dubletten-Regel (frischester Eintrag)', () => {
+    const m = stockBySkuFor(119, groups119, entries119);
+    expect(m.get('stele-119-200PCS')).toBe(1954);
+    expect(m.get('stele-119-100PCS')).toBe(1992);
+  });
+});
