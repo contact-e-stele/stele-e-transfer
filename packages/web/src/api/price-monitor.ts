@@ -9,6 +9,7 @@ import { stockBySkuFor } from '../shared/variant-stock';
 import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, getInventoryItemQuantity, getItemBuyerPricesXml, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import { aliEinfuhrEur, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
+import { planVariantDedupe } from '../shared/variant-dedupe';
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
@@ -439,14 +440,18 @@ export async function sendVariantRaises(
     return { resolved: false, reason: `${ambiguous.length} mehrdeutige Kombination(en): ${ambiguous.map(a => a.error).join(' | ')}`, results: [] };
   }
   const realSkus = await getInventoryItemGroupSkus(`stele-${productId}-GROUP`, token, fetchFn);
+  if (realSkus.length === 0) return { resolved: false, reason: `eBay-Gruppe stele-${productId}-GROUP nicht lesbar oder leer`, results: [] };
   const targets: Array<{ skuId: string; sku: string; newSell: number }> = [];
+  const results: VariantSendResult['results'] = [];
+  // Live-Fund 24.10.2026 (Render-Log, 195/196/197/199/228/230–233): EIN AliExpress-Eintrag ohne eBay-Variante (z. B. beim Aufräumen auf
+  // höchstens 5 Varianten weggelassen) blockierte bisher die Anhebung ALLER Varianten des Produkts. Jetzt wird nur dieser Eintrag
+  // übersprungen (er wird bei eBay nicht angeboten); die eindeutig zugeordneten Varianten werden angehoben.
   for (const r of raises) {
     const hit = resolved.find(x => x.entry?.skuId === r.skuId && !x.error);
-    if (!hit) return { resolved: false, reason: `Variante ${r.skuId} lässt sich keiner Kombination eindeutig zuordnen`, results: [] };
-    if (!realSkus.includes(hit.sku)) return { resolved: false, reason: `Variante ${r.skuId}: SKU ${hit.sku} ist in der eBay-Gruppe nicht vorhanden`, results: [] };
+    if (!hit) { results.push({ skuId: r.skuId, ok: false, error: 'keiner eBay-Variante zugeordnet (nicht bei eBay angeboten) — übersprungen' }); continue; }
+    if (!realSkus.includes(hit.sku)) { results.push({ skuId: r.skuId, sku: hit.sku, ok: false, error: `SKU ${hit.sku} nicht in der eBay-Gruppe (nicht angeboten) — übersprungen` }); continue; }
     targets.push({ skuId: r.skuId, sku: hit.sku, newSell: r.newSell });
   }
-  const results: VariantSendResult['results'] = [];
   for (const t of targets) {
     // Je Variante abgefangen: eine Exception (Netz, JSON) bei Variante B darf das Ergebnis von bereits angehobener Variante A nicht verwerfen
     // (sonst würde A nie gespeichert, obwohl eBay sie schon trägt).
@@ -472,10 +477,19 @@ export async function maybeRaiseVariants(
   heldSkuIds?: ReadonlySet<string>, // K-008
 ): Promise<VariantRaiseOutcome | null> {
   try {
-    const row = { ...product, shipsFrom, variantPrices: freshVariantPricesJson };
     const groups = parseVariantGroupsJson(product.variants);
     let entries: VariantPriceEntry[] = [];
     try { const p = freshVariantPricesJson ? JSON.parse(freshVariantPricesJson) : []; entries = Array.isArray(p) ? p : []; } catch { /* leer */ }
+    // Live-Fund 24.10.2026 (189, 229): mehrere AliExpress-Einträge für dieselbe eBay-Variante blockierten die Anhebung ganz. Für die
+    // Anhebung (nur im Speicher, variantPrices in der DB bleiben unverändert — Inhaber-Regel 119: Varianten bleiben) gilt dieselbe Regel
+    // wie der Knopf "Dubletten prüfen" (planVariantDedupe, Grundgesetz 8): je Kombination ein Eintrag mit dem HÖCHSTEN Einkaufspreis.
+    const dedupe = planVariantDedupe(groups, entries.filter((e): e is VariantPriceEntry & { skuId: string; price: number } =>
+      typeof e.skuId === 'string' && typeof e.price === 'number'));
+    if (dedupe.changes.length > 0 && dedupe.ambiguous.length === 0) {
+      entries = dedupe.newEntries as VariantPriceEntry[];
+      console.log(`[VariantRaise] stele-${product.id}: ${dedupe.changes.length} Dubletten-Kombination(en) für die Anhebung zusammengefasst (höchster EK)`);
+    }
+    const row = { ...product, shipsFrom, variantPrices: JSON.stringify(entries) };
     return await runVariantRaise(row, {
       enabled: AUTO_VARIANT_RAISE_ENABLED,
       heldSkuIds,
