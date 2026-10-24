@@ -20,7 +20,7 @@
 // parallele Datei anzulegen.
 
 import {
-  MIN_GEWINN_EUR, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, ALI_EINFUHR_EUR,
+  MIN_GEWINN_EUR, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, aliEinfuhrEur,
   MARGIN_TIERS, HIDDEN_MARGIN_TIER, MIN_PROFIT_FLOOR_EUR,
 } from './constants';
 import { applyCheckoutFactor } from './checkout-factor';
@@ -55,7 +55,7 @@ export interface AliCosts { ware: number; shipping: number; customs: number; tot
 // (belegt im Kalkulator-Auftrag K-004; vorher wurde der Versand auch bei EU-Lager gerechnet).
 export function computeAliCosts(ware: number, isChinaOrigin: boolean): AliCosts {
   const shipping = isChinaOrigin && ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
-  const customs = isChinaOrigin ? ALI_EINFUHR_EUR : 0;
+  const customs = isChinaOrigin ? aliEinfuhrEur() : 0;
   return { ware, shipping, customs, totalCost: ware + shipping + customs };
 }
 

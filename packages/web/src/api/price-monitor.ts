@@ -8,7 +8,7 @@ import { getAliProductByApi, getAliAccessToken, ensureFreshAliToken, type AliPro
 import { stockBySkuFor } from '../shared/variant-stock';
 import { getAccessToken, getMaxVariantQuantity, hasVariations, getInventoryItemGroupSkus, setInventoryItemQuantity, getInventoryItemQuantity, getItemBuyerPricesXml, slugify, resolveVariantQuantity, NON_VARIATION_ASPECTS, endListing } from './ebay';
 import { eq, isNotNull, and } from 'drizzle-orm';
-import { ALI_EINFUHR_EUR, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
+import { aliEinfuhrEur, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
@@ -803,7 +803,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // unterschiedlichen Gebührensätzen für dasselbe Produkt je nachdem, ob es Varianten hat.
       const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
       if (isChina) {
-        console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Einfuhrabgaben +${ALI_EINFUHR_EUR}€ werden addiert`);
+        console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Einfuhrabgaben +${aliEinfuhrEur()}€ werden addiert`);
       }
 
       if (!data.price) { errors++; return; }

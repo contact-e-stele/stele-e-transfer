@@ -11,7 +11,7 @@ import {
   evaluateVariantRule6c, computeVariantSellPrices, applyRaiseOnly, roundToProfitFloor, DEFAULT_PRICING_CONFIG,
 } from './pricing';
 import {
-  ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, ALI_EINFUHR_EUR, MARGIN_TIERS, HIDDEN_MARGIN_TIER, VARIANT_RULE_6C_ENABLED,
+  ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR, MARGIN_TIERS, HIDDEN_MARGIN_TIER, VARIANT_RULE_6C_ENABLED,
 } from './constants';
 
 const FEES = { ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19 };
@@ -28,10 +28,11 @@ function v2Price(ware: number, targetMarginEur: number, opts: { china?: boolean;
 }
 
 describe('Konstanten Preisformel v2', () => {
-  test('Versand 1,99 €, frei ab 10,00 €, Einfuhrabgaben 3,57 € (belegt am AliExpress-Beleg 3077135261597211)', () => {
+  test('Versand 1,99 €, frei ab 10,00 €, Einfuhrabgaben: alt 3,57 € (Beleg 3077135261597211), seit 23.10.2026 5,95 € (P-EINFUHR)', () => {
     expect(ALI_VERSAND_EUR).toBe(1.99);
     expect(ALI_VERSAND_FREI_AB_EUR).toBe(10.00);
-    expect(ALI_EINFUHR_EUR).toBe(3.57);
+    expect(ALI_EINFUHR_EUR).toBe(5.95);
+    expect(ALI_EINFUHR_ALT_EUR).toBe(3.57);
   });
 
   test('Margen-Stufen A–D (Inhaber 04.10.2026 10:21): Ziel/Boden 1,00/1,00 · 1,50/1,20 · 2,00/1,30 · 3,00/1,50', () => {

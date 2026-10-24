@@ -4,7 +4,15 @@
 // einer Bestellung) einen Faktor je Produkt ableiten und die App-Ware damit multiplizieren.
 // Regeln des Inhabers: Faktor nie über 1,00 · älter als 14 Tage oder fehlend = ohne Faktor rechnen · automatisch nachjustiert.
 // REINE Funktionen (Grundgesetz 2/8) — eine Stelle für Gültigkeit, Anwendung und Ableitung.
-import { ALI_EINFUHR_EUR, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR } from './constants';
+import { aliEinfuhrEur, ALI_EINFUHR_ALT_EUR, ALI_EINFUHR_ALT_BIS, ALI_EINFUHR_NEU_AB, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR } from './constants';
+
+// P-EINFUHR: die Einfuhr auf einer Rechnung hängt vom Bestelltag ab (bis 20.10.2026: 3,57; ab 23.10.2026: aktueller Wert). 21.–22.10. unbelegt → null.
+export function einfuhrForOrderDate(orderDate: string): number | null {
+  const d = orderDate.slice(0, 10);
+  if (d <= ALI_EINFUHR_ALT_BIS) return ALI_EINFUHR_ALT_EUR;
+  if (d >= ALI_EINFUHR_NEU_AB) return aliEinfuhrEur();
+  return null;
+}
 
 export const CHECKOUT_FACTOR_MAX_AGE_DAYS = 14;
 export const CHECKOUT_FACTOR_MAX = 1.0;
@@ -37,14 +45,14 @@ export function applyCheckoutFactor(ware: number, factor: number | null | undefi
  * (China, Ware < 10 €) werden mit denselben Konstanten wie computeAliCosts herausgerechnet.
  * Hinweis: Rabatte/Münzen stecken im Rechnungsbetrag und lassen sich daraus nicht trennen (Faktor dann etwas niedriger).
  */
-export function checkoutWareFromInvoiceTotal(total: number, isChinaOrigin: boolean, apiWareHint?: number): number {
+export function checkoutWareFromInvoiceTotal(total: number, isChinaOrigin: boolean, apiWareHint?: number, einfuhr: number = aliEinfuhrEur()): number {
   if (!isChinaOrigin) return total;
   // Zwischen 13,57 und 15,56 € ist der Betrag doppeldeutig: Ware ≥ 10 ohne Versand ODER Ware < 10 mit Versand. Beide Lesarten
   // werden nur genommen, wenn sie in sich stimmig sind; passen beide, entscheidet die Nähe zum App-Preis der Variante
   // (stele-220: 15,04, App 12,19 → 11,47 statt 9,48). Ohne Hinweis gilt "Ware ≥ 10" zuerst.
   const r2 = (n: number) => Math.round(n * 100) / 100;
-  const noShip = r2(total - ALI_EINFUHR_EUR);                    // stimmig, wenn ≥ 10
-  const withShip = r2(total - ALI_EINFUHR_EUR - ALI_VERSAND_EUR); // stimmig, wenn < 10
+  const noShip = r2(total - einfuhr);                    // stimmig, wenn ≥ 10
+  const withShip = r2(total - einfuhr - ALI_VERSAND_EUR); // stimmig, wenn < 10
   const noShipOk = noShip >= ALI_VERSAND_FREI_AB_EUR;
   const withShipOk = withShip < ALI_VERSAND_FREI_AB_EUR;
   if (noShipOk && withShipOk && typeof apiWareHint === 'number' && apiWareHint > 0) {
@@ -74,7 +82,9 @@ export function deriveCheckoutFactors(
     if (o.lineItems.length !== 1 || o.lineItems[0].quantity !== 1) { skipped.push({ orderId: o.orderId, reason: 'mehrere Positionen oder Menge > 1' }); continue; }
     const m = match(o.lineItems[0].sku);
     if (!m || !(m.apiWare > 0)) { skipped.push({ orderId: o.orderId, reason: 'Produkt/Variante oder App-Preis unbekannt' }); continue; }
-    const checkoutWare = checkoutWareFromInvoiceTotal(o.manualBuyPrice, m.isChinaOrigin, m.apiWare);
+    const einfuhr = m.isChinaOrigin ? einfuhrForOrderDate(o.orderDate) : 0;
+    if (einfuhr == null) { skipped.push({ orderId: o.orderId, reason: 'Einfuhr an diesem Bestelltag unbelegt (3,57 oder 5,95) — nichts geraten' }); continue; }
+    const checkoutWare = checkoutWareFromInvoiceTotal(o.manualBuyPrice, m.isChinaOrigin, m.apiWare, einfuhr);
     const raw = checkoutWare / m.apiWare;
     if (!(raw >= CHECKOUT_FACTOR_MIN_PLAUSIBLE)) { skipped.push({ orderId: o.orderId, reason: `Faktor ${r4(raw)} unplausibel (< ${CHECKOUT_FACTOR_MIN_PLAUSIBLE})` }); continue; }
     const factor = r4(Math.min(CHECKOUT_FACTOR_MAX, raw));

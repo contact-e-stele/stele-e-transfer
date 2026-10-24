@@ -7,7 +7,21 @@
 // beschlossen) — bei Bestätigung hier zentral anpassen.
 export const ALI_VERSAND_EUR = 1.99;          // AliExpress-Versand je Bestellung, wenn Ware < ALI_VERSAND_FREI_AB_EUR
 export const ALI_VERSAND_FREI_AB_EUR = 10.00; // ab diesem Warenwert kein Versand (ANNAHME aus 1 Beleg, 27.08.: Ware 10,29 → Nebenkosten 3,57)
-export const ALI_EINFUHR_EUR = 3.57;          // Einfuhrabgaben je Bestellung bei shipsFrom China (ANNAHME 3,00 × 1,19, Festwert)
+// P-EINFUHR (Inhaber 24.10.2026 „Auftrag P-EINFUHR PRIO 1“; AUFSICHT 23.10.2026 A4; Gesetzbuch v11 Nr 15/60): die AliExpress-Kasse zeigt
+// seit Ende Oktober 2026 „Geschätzte Einfuhrabgaben 5,95“ = Zoll 3,57 (3,00 + 19 %) + EU-Bearbeitungsgebühr 2,38 (2,00 + 19 %).
+// Belege: 18-15318-09330 (23.10. und 24.10.), 06-15341-26458 (24.10.). Am 20.10. war an der Kasse noch 3,57 belegt.
+export const ALI_EINFUHR_EUR = 5.95;          // Standard: Einfuhrabgaben je Bestellung bei shipsFrom China (seit 23.10.2026)
+export const ALI_EINFUHR_ALT_EUR = 3.57;      // alter Wert (Zoll ohne Bearbeitungsgebühr), belegt bis 20.10.2026
+export const ALI_EINFUHR_ALT_BIS = '2026-10-20'; // letzter Bestelltag mit Beleg 3,57
+export const ALI_EINFUHR_NEU_AB = '2026-10-23';  // erster Bestelltag mit Beleg 5,95
+// Laufzeitwert, den die Formel liest (eine Stelle, Grundgesetz 8). Standard ALI_EINFUHR_EUR. Tests mit den alten Beleg-Beispielen setzen
+// ihn über test-preload-einfuhr.ts auf 3,57 (die Beispiele sind mit 3,57 belegt); die neuen Tests prüfen 5,95 ausdrücklich.
+let aliEinfuhrCurrent = ALI_EINFUHR_EUR;
+export function aliEinfuhrEur(): number { return aliEinfuhrCurrent; }
+export function setAliEinfuhrEur(v: number): void {
+  if (!Number.isFinite(v) || v < 0 || v > 50) throw new Error(`Einfuhr ${v} unplausibel`);
+  aliEinfuhrCurrent = v;
+}
 
 // Margen-Stufen (Inhaber-Entscheid 04.10.2026, 10:21): Zielgewinn + Boden (Gewinn darf nie darunter fallen).
 // Ersetzen die bisherigen Auswahl-Stufen 1,50 / 3,00 / 4,50. Reihenfolge = Anzeige-Reihenfolge.
@@ -32,7 +46,9 @@ export const VARIANT_RULE_6C_ENABLED = false;
 // A-019 Teil 2: Preisprüfung hebt bei Varianten-Produkten NUR die Variante an, deren Gewinn unter dem Boden der Stufe liegt (raise-only,
 // Formel v2, GET→PUT volles Offer je Variante). Default AUS: bei AUS wird nur geloggt, was angehoben WÜRDE (0 Sende-/Speicher-Aufrufe).
 // Einschalten nur durch den Inhaber (Geld-Logik).
-export const AUTO_VARIANT_RAISE_ENABLED = false;
+// Inhaber 24.10.2026 (Chat): „alle müssen mit sofortiger Wirkung anpassen, wir machen bei jeder Bestellung Verlust“ → AN. Nur anheben
+// (raiseOnly, Live-Preis wird nie gesenkt), nur bei Gewinn unter dem Boden der Stufe, K-011-Sperre und eindeutige Zuordnung bleiben.
+export const AUTO_VARIANT_RAISE_ENABLED = true;
 
 // Mindestgewinn pro Verkauf (€) — wird in der Preisempfehlung/automatischer Neuberechnung mit einkalkuliert
 // Geaendert von 1,60€ auf 2,00€ am 2026-07-14 auf Wunsch des Users

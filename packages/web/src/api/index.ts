@@ -22,7 +22,7 @@ import { getGmailOAuthUrl, handleGmailCallback, isGmailConnected, searchRecentTr
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { eq, or, like, inArray } from 'drizzle-orm';
 import { authRouter, authMiddleware } from './auth';
-import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT, ALI_EINFUHR_EUR, MARGIN_TIERS } from '../shared/constants';
+import { MIN_GEWINN_EUR, MAX_PRICE_DECREASE_PERCENT, aliEinfuhrEur, MARGIN_TIERS } from '../shared/constants';
 import { parseMissingAspectNames, stillMissingAspectNames } from '../shared/missing-aspects';
 import { isStringRecord } from '../shared/validation';
 import { parseBulkTargetMarginBody } from '../shared/target-margin-bulk';
@@ -1401,7 +1401,7 @@ const app = new Hono()
           // jetzt gleichermaßen hier wie in computeVariantPriceRows() und im Einzelartikel-Zweig
           // unten.
           const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-          const variantZoll = isChinaShipping(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
+          const variantZoll = isChinaShipping(product.shipsFrom) ? aliEinfuhrEur() : 0;
           const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt)); // K-005
           const rawNewPrice = safeUniformVariantPrice(rows);
           if (rawNewPrice == null) continue;
@@ -1432,7 +1432,7 @@ const app = new Hono()
         if (product.buyPrice == null) continue;
         // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08).
         // adRateWasNull im debug-Feld zeigt weiterhin an, ob der Default hier gerade greift.
-        const zoll = isChinaShipping(product.shipsFrom) ? ALI_EINFUHR_EUR : 0;
+        const zoll = isChinaShipping(product.shipsFrom) ? aliEinfuhrEur() : 0;
         const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
         const rawNewPrice = computeMinSellPrice({
