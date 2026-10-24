@@ -467,6 +467,82 @@ export async function sendVariantRaises(
   return { resolved: true, results };
 }
 
+// App-Preise = eBay-Käuferpreise (wie Knopf "App-Preise übernehmen"), nur App-DB, eBay wird nur gelesen. Dubletten im Speicher zusammengefasst
+// (wie die Anhebung). Weichen Käuferpreis und Angebotsdaten ab (K-011), wird NICHTS übernommen (das löst maybeAutoAlign).
+export async function adoptEbaySellPricesToApp(product: {
+  id: number; variants: string | null; variantPrices: string | null; variantSellPrices: string | null; sellPrice: number | null;
+}, token: string, listingId: string): Promise<{ variantSellPrices: string | null; sellPrice: number | null } | null> {
+  const groups = parseVariantGroupsJson(product.variants);
+  let entries: VariantPriceEntry[] = [];
+  try { const p = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(p) ? p : []; } catch { /* leer */ }
+  const dd = planVariantDedupe(groups, entries.filter((e): e is VariantPriceEntry & { skuId: string; price: number } => typeof e.skuId === 'string' && typeof e.price === 'number'));
+  if (dd.changes.length > 0 && dd.ambiguous.length === 0) entries = dd.newEntries as VariantPriceEntry[];
+  const isVariant = isVariantProduct(product.variants, product.variantPrices);
+  const appSellPrices = parseVariantSellPrices(product.variantSellPrices);
+  const rb = await readEbaySellPrices({
+    productId: product.id, groups, entries, isVariant, appSellPrices, appSellPrice: product.sellPrice, token,
+    getGroupSkus: (k) => getInventoryItemGroupSkus(k, token),
+    getBuyerPrices: async () => { const r = await getItemBuyerPricesXml(listingId); return r.httpStatus === 200 ? parseGetItemBuyerPrices(r.xml) : { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` }; },
+  });
+  if (!rb.ok) { console.warn(`[App-Preise←eBay auto] stele-${product.id}: nicht übernommen — ${rb.reason ?? 'unbekannt'}`); return null; }
+  if (rb.rows.some(r => r.offerPrice != null && r.ebayPrice != null && Math.abs(r.offerPrice - r.ebayPrice) > 0.011)) {
+    console.warn(`[App-Preise←eBay auto] stele-${product.id}: Käuferpreis ≠ Angebotsdaten — nicht übernommen`);
+    return null;
+  }
+  if (rb.isVariant) {
+    const next = applyEbayPrices(appSellPrices, rb.rows);
+    if (next.changed.length === 0) return null;
+    const json = serializeVariantSellPrices(Object.entries(next.variantSellPrices).map(([skuId, sellPrice]) => ({ skuId, sellPrice })));
+    await db.update(schema.products).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+    console.log(`[App-Preise←eBay auto] stele-${product.id}: ${next.changed.map(x => `${x.skuId} ${x.from ?? '–'}→${x.to}`).join(', ')}`);
+    return { variantSellPrices: json, sellPrice: product.sellPrice };
+  }
+  const price = rb.rows[0].ebayPrice as number;
+  if (product.sellPrice != null && Math.abs(product.sellPrice - price) < 0.005) return null;
+  await db.update(schema.products).set({ sellPrice: price, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+  console.log(`[App-Preise←eBay auto] stele-${product.id}: sellPrice ${product.sellPrice ?? '–'}→${price}`);
+  return { variantSellPrices: product.variantSellPrices, sellPrice: price };
+}
+
+// PR B Punkt 6 (Inhaber 24.10.2026): Einzelartikel, wenn AliExpress keine Daten liefert — dieselben Formel-Funktionen wie der normale
+// Einzelartikel-Zweig (computeMinSellPrice, evaluatePriceAlarm, applyRaiseOnly, Preis halten), aber mit dem GESPEICHERTEN Einkaufspreis.
+// Senden mit raiseOnly gegen den Live-Preis (nie senken), K-011-Sperre greift in updateOfferPriceBySku. Darf den Cron nie abbrechen.
+export async function raiseSingleWithStoredBuyPrice(product: typeof schema.products.$inferSelect, holdsForProduct: Parameters<typeof resolvePriceHolds>[1]): Promise<void> {
+  try {
+    const buy = product.buyPrice;
+    if (buy == null || !(buy > 0) || product.sellPrice == null) return;
+    const isChina = isChinaShipping(product.shipsFrom);
+    const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+    const checkoutFactor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt);
+    const target = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
+    const raw = computeMinSellPrice({
+      earUmlageEur: earUmlageFor(product), buyPrice: buy, isChinaOrigin: isChina,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target,
+      safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95', checkoutFactor,
+    }).minSellPrice;
+    const hold = resolvePriceHolds(product, holdsForProduct);
+    const alarmRes = evaluatePriceAlarm({
+      currentSellPrice: product.sellPrice, variants: [{ buyPrice: buy }], isChinaOrigin: isChina,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target, checkoutFactor,
+    });
+    const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
+    const decision = applyRaiseOnly(product.sellPrice, raw, alarm);
+    if (decision.action !== 'raise' || !AUTO_PRICE_WRITE_ENABLED) return;
+    const token = await getAccessToken();
+    const res = await updateOfferPriceBySku(`stele-${product.id}`, decision.price, token, fetch, true);
+    if (res.ok && !res.skipped) {
+      await db.update(schema.products).set({ sellPrice: decision.price, priceChanged: false, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+      console.log(`[PriceMonitor] stele-${product.id}: ANGEHOBEN (gespeicherter EK ${buy.toFixed(2)} €, AliExpress nicht lesbar) ${product.sellPrice.toFixed(2)} → ${decision.price.toFixed(2)} €`);
+    } else {
+      console.log(`[PriceMonitor] stele-${product.id}: NICHT angehoben (gespeicherter EK) — ${res.skipped ?? res.error ?? 'unbekannt'}`);
+    }
+  } catch (e) {
+    console.warn(`[PriceMonitor] stele-${product.id}: Einzelartikel-Anhebung ohne AliExpress-Daten fehlgeschlagen (Lauf geht weiter): ${String(e)}`);
+  }
+}
+
 // Inhaber 24.10.2026: K-011-Sperre automatisch lösen, wenn eBay HÖHER steht (Logik: api/auto-align.ts). Darf den Cron NIE abbrechen.
 // Gibt die (ggf. aus eBay übernommenen) App-Preise zurück, damit die anschließende Anhebung mit den echten Preisen rechnet.
 export async function maybeAutoAlign(product: {
@@ -493,32 +569,7 @@ export async function maybeAutoAlign(product: {
       },
       writeOffer: (sku, price) => updateOfferPriceBySku(sku, price, token, fetch, false, { bypassPriceLock: true }),
       setLock: (rows) => setPriceLock(product.id, rows ? { at: new Date().toISOString(), rows: rows.filter(r => r.offerPrice != null).map(r => ({ sku: r.sku, label: r.sku, buyerPrice: r.buyerPrice, offerPrice: r.offerPrice as number })) } : null),
-      adoptAppPrices: async () => {
-        // App-Preise = Käuferpreise (wie Knopf "App-Preise übernehmen"); Dubletten im Speicher zusammengefasst (wie die Anhebung).
-        const groups = parseVariantGroupsJson(product.variants);
-        let entries: VariantPriceEntry[] = [];
-        try { const p = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(p) ? p : []; } catch { /* leer */ }
-        const dd = planVariantDedupe(groups, entries.filter((e): e is VariantPriceEntry & { skuId: string; price: number } => typeof e.skuId === 'string' && typeof e.price === 'number'));
-        if (dd.changes.length > 0 && dd.ambiguous.length === 0) entries = dd.newEntries as VariantPriceEntry[];
-        const isVariant = isVariantProduct(product.variants, product.variantPrices);
-        const appSellPrices = parseVariantSellPrices(product.variantSellPrices);
-        const rb = await readEbaySellPrices({
-          productId: product.id, groups, entries, isVariant, appSellPrices, appSellPrice: product.sellPrice, token,
-          getGroupSkus: (k) => getInventoryItemGroupSkus(k, token),
-          getBuyerPrices: async () => { const r = await getItemBuyerPricesXml(listingId); return r.httpStatus === 200 ? parseGetItemBuyerPrices(r.xml) : { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` }; },
-        });
-        if (!rb.ok) { console.warn(`[K-011 auto] stele-${product.id}: App-Preise nicht übernommen — ${rb.reason ?? 'unbekannt'}`); return; }
-        if (rb.isVariant) {
-          const next = applyEbayPrices(appSellPrices, rb.rows);
-          const json = serializeVariantSellPrices(Object.entries(next.variantSellPrices).map(([skuId, sellPrice]) => ({ skuId, sellPrice })));
-          await db.update(schema.products).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
-          adopted = { variantSellPrices: json, sellPrice: product.sellPrice };
-        } else {
-          const price = rb.rows[0].ebayPrice as number;
-          await db.update(schema.products).set({ sellPrice: price, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
-          adopted = { variantSellPrices: product.variantSellPrices, sellPrice: price };
-        }
-      },
+      adoptAppPrices: async () => { adopted = await adoptEbaySellPricesToApp(product, token, listingId); },
       log: (m) => console.log(m),
     });
     return adopted;
@@ -827,6 +878,14 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // Inhaber 24.10.2026: Sperre bei HÖHEREM eBay-Preis automatisch lösen und App-Preise übernehmen, BEVOR geprüft/angehoben wird.
       const adopted = await maybeAutoAlign(product);
       if (adopted) { product.variantSellPrices = adopted.variantSellPrices; product.sellPrice = adopted.sellPrice; }
+      else if (product.ebayStatus === 'listed' && product.ebayListingId && !(await isProductPriceLocked(product.id))) {
+        // PR B Punkt 5 (Inhaber 24.10.2026): bei jedem Lauf die echten eBay-Preise in die App übernehmen, damit Gewinn-Anzeige und
+        // Anhebung mit den Preisen rechnen, die Käufer wirklich sehen. Fehler brechen die Prüfung nie ab.
+        try {
+          const a = await adoptEbaySellPricesToApp(product, await getAccessToken(), product.ebayListingId);
+          if (a) { product.variantSellPrices = a.variantSellPrices; product.sellPrice = a.sellPrice; }
+        } catch (e) { console.warn(`[App-Preise←eBay auto] stele-${product.id}: Fehler (Prüfung läuft weiter): ${String(e)}`); }
+      }
 
       // Root-Cause-Fix (Bestands-Untersuchung stele-136): DS-API zuerst versuchen — liefert
       // sku_available_stock zuverlässig pro Variante (siehe aliexpress-api.ts), während der
@@ -860,6 +919,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           const hold = resolvePriceHolds(product, priceHolds[String(product.id)]);
           console.log(`[PriceMonitor] ${product.id}: AliExpress nicht lesbar — Anhebung mit gespeichertem Einkaufspreis`);
           await maybeRaiseVariants(product, product.variantPrices, product.shipsFrom, hold.heldKeys);
+        } else if (product.ebayStatus === 'listed' && product.ebayListingId) {
+          // PR B Punkt 6: Einzelartikel ohne AliExpress-Daten mit dem gespeicherten Einkaufspreis anheben (nur anheben, Live-Preis nie gesenkt).
+          await raiseSingleWithStoredBuyPrice(product, priceHolds[String(product.id)]);
         }
         // Teil B (2026-09-09): erst NACHDEM die komplette bestehende Scrape-Fallback-Kette
         // (DS-API + Scraper + Retry) bereits vollständig fehlgeschlagen ist — als letzter,
