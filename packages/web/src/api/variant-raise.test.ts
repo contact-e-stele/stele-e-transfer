@@ -234,14 +234,26 @@ describe('sendVariantRaises / updateOfferPriceBySku (raise-only) mit gemocktem e
     expect(puts).toHaveLength(0);
   });
 
-  test('SKU nicht in der eBay-Gruppe oder Variante ohne Zuordnung → resolved:false, KEIN PUT', async () => {
+  test('eBay-Gruppe nicht lesbar → resolved:false; Variante ohne Zuordnung → übersprungen, KEIN PUT', async () => {
     const fnNoGroup = (async (url: string) => String(url).includes('/inventory_item_group/') ? new Response(JSON.stringify({ variantSKUs: [] }), { status: 200 }) : new Response('{}', { status: 500 })) as unknown as typeof fetch;
     const a = await sendVariantRaises(119, GROUPS119, entries, [{ skuId: 'v200', newSell: 15.95 }], 'tok', fnNoGroup);
     expect(a.resolved).toBe(false);
+    // Live-Fund 24.10.2026: eine nicht zugeordnete Variante wird übersprungen statt alles zu blockieren — trotzdem KEIN PUT für sie.
     const { fn, puts } = mockEbay({});
     const b = await sendVariantRaises(119, GROUPS119, entries, [{ skuId: 'unbekannt', newSell: 15.95 }], 'tok', fn);
-    expect(b.resolved).toBe(false);
+    expect(b.resolved).toBe(true);
+    expect(b.results[0].ok).toBe(false);
+    expect(b.results[0].error).toContain('übersprungen');
     expect(puts).toHaveLength(0);
+  });
+
+  test('Live-Fund 24.10.: eine Waise blockiert die übrigen Varianten nicht — 200pcs wird angehoben, die Waise übersprungen', async () => {
+    const { fn, puts } = mockEbay({});
+    const res = await sendVariantRaises(119, GROUPS119, entries, [{ skuId: 'waise', newSell: 19.95 }, { skuId: 'v200', newSell: 15.95 }], 'tok', fn);
+    expect(res.resolved).toBe(true);
+    expect(res.results.find(r => r.skuId === 'waise')?.ok).toBe(false);
+    expect(res.results.find(r => r.skuId === 'v200')?.ok).toBe(true);
+    expect(puts.map(p => p.sku)).toEqual([skuOf('200pcs')]);
   });
 
   test('Exception bei Variante B (fetch wirft) verwirft das Ergebnis von Variante A NICHT: A ok, B ok:false mit Fehlertext', async () => {
