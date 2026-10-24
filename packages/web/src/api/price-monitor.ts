@@ -772,6 +772,15 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
       if (!data) {
         errors++;
+        // P-EINFUHR Live-Fund 24.10.2026: AliExpress-Token abgelaufen ("IllegalRefreshToken") → 68 von 82 Produkten ohne Daten, die
+        // Anhebung lief nur für 14. Ohne frische AliExpress-Daten wird jetzt mit dem GESPEICHERTEN Einkaufspreis je Variante angehoben
+        // (dieselbe Funktion, raise-only, Live-Preis wird nie gesenkt, K-011-Sperre, eindeutige Zuordnung). Nichts wird gespeichert außer
+        // den erfolgreich gesendeten Varianten-VK.
+        if (isVariantProduct(product.variants, product.variantPrices) && product.ebayStatus === 'listed' && product.ebayListingId) {
+          const hold = resolvePriceHolds(product, priceHolds[String(product.id)]);
+          console.log(`[PriceMonitor] ${product.id}: AliExpress nicht lesbar — Anhebung mit gespeichertem Einkaufspreis`);
+          await maybeRaiseVariants(product, product.variantPrices, product.shipsFrom, hold.heldKeys);
+        }
         // Teil B (2026-09-09): erst NACHDEM die komplette bestehende Scrape-Fallback-Kette
         // (DS-API + Scraper + Retry) bereits vollständig fehlgeschlagen ist — als letzter,
         // zusätzlicher Schritt prüfen, ob der Quellartikel eindeutig (404 / bestätigter
