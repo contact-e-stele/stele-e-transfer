@@ -6,6 +6,7 @@
 // bedeutet, dass Bericht und App unterschiedliche Bestellungen demselben Produkt zuordnen — bei
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
+import { einfuhrForOrderDate } from '../shared/checkout-factor';
 import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant } from '../shared/pricing';
 import { activeCheckoutFactor, applyCheckoutFactor } from '../shared/checkout-factor';
 import { slugify, NON_VARIATION_ASPECTS, resolveVariantEntries, type VariantGroup } from '../shared/variant-resolver';
@@ -105,6 +106,7 @@ export interface OrderNettoInput {
   lineItems: Array<{ sku: string | null; quantity: number }>;
   manualBuyPrice: number | null | undefined;
   findProduct: (sku: string | null) => OrderProductInfo | null;
+  orderDate?: string; // P-EINFUHR: Einfuhr nach Bestelltag (bis 22.10.2026: 3,57; ab 23.10.2026: 5,95)
 }
 
 /** K-004: was der Bestellungs-Gewinn je Position braucht. id/variants/adRate sind optional (ältere Aufrufer). */
@@ -205,7 +207,10 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
     // Einfuhrabgaben fallen je Bestellung an, nicht je Stück). Der manuell erfasste Einkauf (manualBuyPrice = "Insgesamt"
     // laut AliExpress-Rechnung) hat weiterhin Vorrang. Die frühere Einstellung "order_china_zoll_eur" (3,58 €) fließt hier
     // nicht mehr ein (eine Quelle: ALI_EINFUHR_EUR in constants.ts).
-    einkaufGesamt += computeAliCosts(ware * li.quantity, isChinaOriginForVariant(variant?.attrs, product.shipsFrom)).totalCost;
+    const costs = computeAliCosts(ware * li.quantity, isChinaOriginForVariant(variant?.attrs, product.shipsFrom));
+    // P-EINFUHR (24.10.2026): alte Bestellungen mit der damals belegten Einfuhr (3,57), neue mit 5,95 — eine Quelle: einfuhrForOrderDate.
+    const dated = costs.customs > 0 && input.orderDate ? einfuhrForOrderDate(input.orderDate) : null;
+    einkaufGesamt += costs.totalCost - costs.customs + (dated ?? costs.customs);
   }
   if (!einkaufBekannt) {
     return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null };

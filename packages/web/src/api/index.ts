@@ -857,6 +857,7 @@ const app = new Hono()
           orderTotal: order.total,
           lineItems: order.lineItems.map(li => ({ sku: li.sku, quantity: li.quantity })),
           manualBuyPrice: note?.manualBuyPrice,
+          orderDate: order.orderDate,
           findProduct: (sku) => {
             const product = findProductForSku(sku);
             // K-004 Varianten/Anzeigensatz, K-005 Kassen-Faktor — Umwandlung an EINER Stelle (order-matching.ts).

@@ -28,10 +28,11 @@ describe('P-EINFUHR: Einfuhr 5,95 im Betrieb', () => {
 });
 
 describe('P-EINFUHR: Kassen-Faktor nach Bestelltag', () => {
-  test('bis 20.10. 3,57 · ab 23.10. 5,95 · 21.–22.10. unbelegt', () => {
-    expect(einfuhrForOrderDate('2026-10-20T23:00:00Z')).toBe(3.57);
-    expect(einfuhrForOrderDate('2026-10-21T08:00:00Z')).toBeNull();
-    expect(einfuhrForOrderDate('2026-10-22T08:00:00Z')).toBeNull();
+  test('bis 22.10. 3,57 (Gegencheck 19./21./22.10.) · ab 23.10. 5,95 · keine Lücke mehr', () => {
+    expect(einfuhrForOrderDate('2026-10-19T10:00:00Z')).toBe(3.57);
+    expect(einfuhrForOrderDate('2026-10-21T08:00:00Z')).toBe(3.57);
+    expect(einfuhrForOrderDate('2026-10-22T08:00:00Z')).toBe(3.57);
+    expect(einfuhrForOrderDate('2026-10-23T08:00:00Z')).toBe(5.95);
     expect(einfuhrForOrderDate('2026-10-24T08:00:00Z')).toBe(5.95);
   });
 
@@ -40,13 +41,13 @@ describe('P-EINFUHR: Kassen-Faktor nach Bestelltag', () => {
     expect(checkoutWareFromInvoiceTotal(11.43, true, 3.49, 3.57)).toBe(5.87);
   });
 
-  test('Bestellung am 21.10. wird übersprungen statt geraten', () => {
+  test('Bestellung 3077462292107211 (22.10., Kasse 8,74 = 3,25 + 1,99 − 0,07 + 3,57) → Ware aus der Rechnung mit 3,57', () => {
     const r = deriveCheckoutFactors(
-      [{ orderId: 'X', orderDate: '2026-10-21T10:00:00Z', lineItems: [{ sku: 's', quantity: 1 }], manualBuyPrice: 11.43 }],
-      () => ({ productId: 127, apiWare: 3.49, isChinaOrigin: true }),
+      [{ orderId: 'X', orderDate: '2026-10-22T10:00:00Z', lineItems: [{ sku: 's', quantity: 1 }], manualBuyPrice: 8.74 }],
+      () => ({ productId: 119, apiWare: 3.25, isChinaOrigin: true }),
     );
-    expect(r.factors).toHaveLength(0);
-    expect(r.skipped[0].reason).toContain('unbelegt');
+    expect(r.factors).toHaveLength(1);
+    expect(r.factors[0].checkoutWare).toBeCloseTo(3.18, 10); // 8,74 − 3,57 − 1,99 (Münzen −0,07 stecken drin)
   });
 });
 
@@ -81,5 +82,19 @@ describe('P-EINFUHR: Varianten-Anhebung stele-127 (raise-only)', () => {
   test('mit dem alten Wert 3,57 hätte die App nur eine Variante angehoben (darum griff nichts)', () => {
     setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR);
     expect(planVariantRaises(p127 as never).map(x => x.label)).toEqual(['Multicolour 500pcs']);
+  });
+});
+
+describe('P-EINFUHR: Bestellungs-Gewinn ohne Rechnung nach Bestelltag', () => {
+  test('gleiche Bestellung: 22.10. mit 3,57, 24.10. mit 5,95 (Unterschied genau 2,38 im Einkauf)', async () => {
+    const { computeOrderNettoErgebnis } = await import('../api/order-matching');
+    const base = { orderTotal: 13.95, lineItems: [{ sku: 'stele-1', quantity: 1 }], manualBuyPrice: null,
+      findProduct: () => ({ buyPrice: 3.25, shipsFrom: 'China', adRate: 0 }) as never };
+    const alt = computeOrderNettoErgebnis({ ...base, orderDate: '2026-10-22T10:00:00Z' });
+    const neu = computeOrderNettoErgebnis({ ...base, orderDate: '2026-10-24T10:00:00Z' });
+    expect(alt.nettoEinkauf).toBeCloseTo(3.25 + 1.99 + 3.57, 10);
+    expect(neu.nettoEinkauf).toBeCloseTo(3.25 + 1.99 + 5.95, 10);
+    const ohneDatum = computeOrderNettoErgebnis(base);
+    expect(ohneDatum.nettoEinkauf).toBeCloseTo(3.25 + 1.99 + 5.95, 10); // ohne Datum: aktueller Wert (wie bisher)
   });
 });

@@ -1166,7 +1166,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
     }));
   }
 
-  console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, eBay-Updates: ${ebayUpdated}, Fehler: ${errors}, Varianten auf Menge 0 gesetzt: ${stockUpdated}`);
+  console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, eBay-Updates: ${ebayUpdated}, Fehler: ${errors}, Varianten-Mengen gesetzt (Ziel = Lager, höchstens Obergrenze): ${stockUpdated}`);
   return { checked, updated, ebayUpdated, errors, stockUpdated };
 }
 
