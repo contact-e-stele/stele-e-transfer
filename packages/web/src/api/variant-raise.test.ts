@@ -101,8 +101,8 @@ describe('Produkt 95 (Teil 1): Varianten-Gruppen + 1 variantPrices-Eintrag = Var
 });
 
 describe('runVariantRaise — Schalter, Senden, Speichern, Log', () => {
-  test('AUTO_VARIANT_RAISE_ENABLED ist im Code standardmäßig AUS', () => {
-    expect(AUTO_VARIANT_RAISE_ENABLED).toBe(false);
+  test('AUTO_VARIANT_RAISE_ENABLED ist AN (Inhaber 24.10.2026: alle Angebote mit sofortiger Wirkung anpassen)', () => {
+    expect(AUTO_VARIANT_RAISE_ENABLED).toBe(true);
   });
 
   test('Schalter AUS: 0 Sende-Aufrufe, 0 Speichern, aber "würde anheben"-Log mit SKU/alt/neu/EK/Gewinn', async () => {

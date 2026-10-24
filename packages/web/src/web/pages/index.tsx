@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
-import { ALI_EINFUHR_EUR } from "../../shared/constants";
+import { aliEinfuhrEur } from "../../shared/constants";
 import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 
 // Teil 2B (2026-09-10): reicht für die Anzeigengebühr-Zuordnung im Preisrechner — nur die hier
@@ -107,7 +107,7 @@ export default function Index() {
   const [lieferant, setLieferant] = useState("aliexpress");
   const [versand, setVersand] = useState("");
   const [ausChina, setAusChina] = useState(true);
-  const [zollPauschale, setZollPauschale] = useState(String(ALI_EINFUHR_EUR));
+  const [zollPauschale, setZollPauschale] = useState(String(aliEinfuhrEur()));
   const [zollManuell, setZollManuell] = useState("");
 
   const [copied, setCopied] = useState(false);

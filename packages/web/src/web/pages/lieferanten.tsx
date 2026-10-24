@@ -8,7 +8,7 @@ import { safeJson } from "../lib/safeFetch";
 import { emptyOverrides, overridesToFlat, effectiveForm, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
 import { gpsrFormGate } from "../../shared/gpsr-import-gate";
 import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fields-editor";
-import { ALI_EINFUHR_EUR, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
+import { aliEinfuhrEur, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant } from "../../shared/pricing";
@@ -2110,7 +2110,7 @@ export default function Lieferanten() {
                             </div>
                             {ausChinaV && !ueberSchwelleV && (
                               <span style={{ fontSize: 10, color: "#94A3B8" }}>
-                                Einfuhrabgaben: {ALI_EINFUHR_EUR.toFixed(2)} €
+                                Einfuhrabgaben: {aliEinfuhrEur().toFixed(2)} €
                               </span>
                             )}
                             {ueberSchwelleV && (
