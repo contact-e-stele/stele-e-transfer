@@ -17,7 +17,9 @@ import { earUmlageFor } from '../shared/electric';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
 import { getPriceHolds, releasePriceHolds } from './price-holds';
-import { isProductPriceLocked } from './price-locks';
+import { isProductPriceLocked, setPriceLock } from './price-locks';
+import { autoAlignUpward, type AlignRow } from './auto-align';
+import { readOfferPrice, readEbaySellPrices, applyEbayPrices } from './ebay-price-readback';
 import { productIdFromSku, parseGetItemBuyerPrices } from '../shared/ebay-buyer-price';
 import { applyOfferQuantity } from '../shared/offer-quantity';
 import { withTimeLimit, fetchWithTimeout } from '../shared/with-time-limit';
@@ -465,6 +467,67 @@ export async function sendVariantRaises(
   return { resolved: true, results };
 }
 
+// Inhaber 24.10.2026: K-011-Sperre automatisch lösen, wenn eBay HÖHER steht (Logik: api/auto-align.ts). Darf den Cron NIE abbrechen.
+// Gibt die (ggf. aus eBay übernommenen) App-Preise zurück, damit die anschließende Anhebung mit den echten Preisen rechnet.
+export async function maybeAutoAlign(product: {
+  id: number; ebayStatus: string | null; ebayListingId: string | null; variants: string | null; variantPrices: string | null;
+  variantSellPrices: string | null; sellPrice: number | null;
+}): Promise<{ variantSellPrices: string | null; sellPrice: number | null } | null> {
+  try {
+    if (product.ebayStatus !== 'listed' || !product.ebayListingId) return null;
+    if (!(await isProductPriceLocked(product.id))) return null;
+    const token = await getAccessToken();
+    const listingId = product.ebayListingId;
+    let adopted: { variantSellPrices: string | null; sellPrice: number | null } | null = null;
+    await autoAlignUpward(product.id, {
+      readRows: async () => {
+        const g = await getItemBuyerPricesXml(listingId);
+        const buyer = parseGetItemBuyerPrices(g.xml);
+        if (g.httpStatus !== 200 || buyer.error) throw new Error(`Käuferpreis nicht lesbar: ${buyer.error ?? 'HTTP ' + g.httpStatus}`);
+        const rows: AlignRow[] = [];
+        for (const b of buyer.rows) {
+          const sku = b.sku || `stele-${product.id}`;
+          rows.push({ sku, buyerPrice: b.price, offerPrice: (await readOfferPrice(sku, token)).price });
+        }
+        return rows;
+      },
+      writeOffer: (sku, price) => updateOfferPriceBySku(sku, price, token, fetch, false, { bypassPriceLock: true }),
+      setLock: (rows) => setPriceLock(product.id, rows ? { at: new Date().toISOString(), rows: rows.filter(r => r.offerPrice != null).map(r => ({ sku: r.sku, label: r.sku, buyerPrice: r.buyerPrice, offerPrice: r.offerPrice as number })) } : null),
+      adoptAppPrices: async () => {
+        // App-Preise = Käuferpreise (wie Knopf "App-Preise übernehmen"); Dubletten im Speicher zusammengefasst (wie die Anhebung).
+        const groups = parseVariantGroupsJson(product.variants);
+        let entries: VariantPriceEntry[] = [];
+        try { const p = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(p) ? p : []; } catch { /* leer */ }
+        const dd = planVariantDedupe(groups, entries.filter((e): e is VariantPriceEntry & { skuId: string; price: number } => typeof e.skuId === 'string' && typeof e.price === 'number'));
+        if (dd.changes.length > 0 && dd.ambiguous.length === 0) entries = dd.newEntries as VariantPriceEntry[];
+        const isVariant = isVariantProduct(product.variants, product.variantPrices);
+        const appSellPrices = parseVariantSellPrices(product.variantSellPrices);
+        const rb = await readEbaySellPrices({
+          productId: product.id, groups, entries, isVariant, appSellPrices, appSellPrice: product.sellPrice, token,
+          getGroupSkus: (k) => getInventoryItemGroupSkus(k, token),
+          getBuyerPrices: async () => { const r = await getItemBuyerPricesXml(listingId); return r.httpStatus === 200 ? parseGetItemBuyerPrices(r.xml) : { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` }; },
+        });
+        if (!rb.ok) { console.warn(`[K-011 auto] stele-${product.id}: App-Preise nicht übernommen — ${rb.reason ?? 'unbekannt'}`); return; }
+        if (rb.isVariant) {
+          const next = applyEbayPrices(appSellPrices, rb.rows);
+          const json = serializeVariantSellPrices(Object.entries(next.variantSellPrices).map(([skuId, sellPrice]) => ({ skuId, sellPrice })));
+          await db.update(schema.products).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+          adopted = { variantSellPrices: json, sellPrice: product.sellPrice };
+        } else {
+          const price = rb.rows[0].ebayPrice as number;
+          await db.update(schema.products).set({ sellPrice: price, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, product.id));
+          adopted = { variantSellPrices: product.variantSellPrices, sellPrice: price };
+        }
+      },
+      log: (m) => console.log(m),
+    });
+    return adopted;
+  } catch (e) {
+    console.warn(`[K-011 auto] stele-${product.id}: Fehler (Preisprüfung läuft weiter): ${String(e)}`);
+    return null;
+  }
+}
+
 // Verdrahtung für die Preisprüfung (checkOne, Varianten-Zweig): darf den Cron NIE abbrechen.
 export async function maybeRaiseVariants(
   product: {
@@ -761,6 +824,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
     try {
       checked++;
+      // Inhaber 24.10.2026: Sperre bei HÖHEREM eBay-Preis automatisch lösen und App-Preise übernehmen, BEVOR geprüft/angehoben wird.
+      const adopted = await maybeAutoAlign(product);
+      if (adopted) { product.variantSellPrices = adopted.variantSellPrices; product.sellPrice = adopted.sellPrice; }
 
       // Root-Cause-Fix (Bestands-Untersuchung stele-136): DS-API zuerst versuchen — liefert
       // sku_available_stock zuverlässig pro Variante (siehe aliexpress-api.ts), während der
