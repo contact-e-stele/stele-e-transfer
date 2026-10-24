@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-19 abends, aktuelle Version: v1.34):**
+**Aktueller Zählerstand (Stand 2026-10-24 abends, aktuelle Version: v1.36):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -257,6 +257,14 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | — | #197 | *(zählt nicht — Folge-Fix zu #193 (volle GetItem-Antwort) + Versions-Bump)* |
 | 3 | #198 | OFFEN 007: Packmenge je Angebot (Ware × N, Lager ÷ N, Bestellmenge) |
 | 4 | #199 | Multi-Rabatt nach dem Listen nachholen (eBay 38227) + neue Aktion bei neuem Angebot → **Bump v1.33 → v1.34 bei #199** |
+| 1 | #200 | Mengen-Lauf: umbenannte Varianten wurden nie nachgefüllt (stele-224 u. 10 weitere) |
+| 2 | #201 | EAN-Merkmal im Live-Angebot korrigieren (stele-228) |
+| 3 | #202 | EAN-Schutz: ungültige EAN beim Speichern ablehnen, beim Listen ersetzen |
+| 4 | #204 | P-EINFUHR: Einfuhr 5,95 statt 3,57 + Varianten-Anhebung AN → **Bump v1.34 → v1.35 bei #204** (nachgetragen 24.10.) |
+| 1 | #205 | Preisprüfung: ohne AliExpress-Daten mit gespeichertem EK anheben |
+| 2 | #203 | Mengen: Varianten-Dubletten bekommen Lager, kein falsches „ok“, Multi-Rabatt-Hinweis (stele-119) |
+| 3 | #206 | Anhebung: Waisen überspringen, Dubletten zusammenfassen |
+| 4 | #207 | K-011 automatisch angleichen bei höherem eBay-Preis → **Bump v1.35 → v1.36 bei #207** |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -272,7 +280,7 @@ Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Br
 Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
 aber „2 von 4“.*
 
-**→ Zähler: 0 von 4 seit v1.34** (nächster Bump beim 4. größeren PR).
+**→ Zähler: 0 von 4 seit v1.36** (nächster Bump beim 4. größeren PR). Reihenfolge = Merge-Zeitpunkt (#203 wurde nach #205 gemergt).
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -305,6 +313,8 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.31 → v1.32: PR #186, #187, #188, #189 (nachgetragen 19.10.)
 - v1.32 → v1.33: PR #190, #191, #192, #193
 - v1.33 → v1.34: PR #194, #196, #198, #199
+- v1.34 → v1.35: PR #200, #201, #202, #204 (nachgetragen 24.10.)
+- v1.35 → v1.36: PR #205, #203, #206, #207
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
