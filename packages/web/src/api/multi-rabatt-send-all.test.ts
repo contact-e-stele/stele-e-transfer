@@ -19,10 +19,14 @@ describe('Multi-Rabatt: alle neu senden (Inhaber 25.10.2026)', () => {
     const r = classifySendAll([{ productId: 228, listingId: 'NEU', plan: plan({ 2: 10, 3: 12 }), sent: sent('ALT', { 2: 10, 3: 12 }) }]);
     expect(r[0]).toMatchObject({ aktion: 'senden', bisher: null });
   });
-  test('nicht sendbar (Sperre je Stück) → nur melden, laufende alte Aktion als Warnung', () => {
-    const r = classifySendAll([{ productId: 77, listingId: 'L77', plan: plan(null, '2 Stück: … bringt jedes Stück weniger als ein Einzelkauf'), sent: sent('L77', { 2: 7, 3: 8 }) }]);
-    expect(r[0].aktion).toBe('nicht sendbar');
-    expect(r[0].grund).toMatch(/alte Aktion 7 %\/8 % läuft weiter/);
+  test('nicht sendbar mit laufender alter Aktion → beenden (Inhaber 25.10., stele-97 EU-Ware); ohne Aktion → nur melden', () => {
+    const r = classifySendAll([
+      { productId: 97, listingId: 'L97', plan: plan(null, '2 Stück: … bringt jedes Stück weniger als ein Einzelkauf'), sent: sent('L97', { 2: 8, 3: 9 }) },
+      { productId: 230, listingId: 'L230', plan: plan(null, 'unter Boden'), sent: null },
+    ]);
+    expect(r[0].aktion).toBe('beenden');
+    expect(r[0].grund).toMatch(/alte Aktion 8 %\/9 % wird beendet/);
+    expect(r[1].aktion).toBe('nicht sendbar');
   });
   test('höchstens 15 je Aufruf', () => expect(MULTI_RABATT_SEND_ALL_MAX).toBe(15));
 });
@@ -84,5 +88,36 @@ describe('eBay 38232: aktive Aktion ersetzen (pausieren → ändern/neu → fort
     const r = await replaceActivePromotion({ base: 'https://x', headers: {}, oldId: 'ALT', body, fetchFn: m.f });
     expect(r.ok).toBe(false);
     expect(m.calls).toEqual(['POST /promotion/ALT/pause']);
+  });
+});
+
+describe('Aktion beenden (pausieren, dann löschen)', () => {
+  const mk = (plan: Record<string, number>, status = 'RUNNING') => {
+    const calls: string[] = [];
+    const f = (async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? 'GET'} ${url.replace('https://x/sell/marketing/v1', '')}`; calls.push(key);
+      const st = plan[key] ?? 200;
+      if (key === 'GET /item_promotion/P' && st === 200) return new Response(JSON.stringify({ promotionStatus: status }), { status: 200 });
+      return new Response('', { status: st });
+    }) as unknown as typeof fetch;
+    return { f, calls };
+  };
+  test('laufend → pausieren → löschen', async () => {
+    const { endPromotion } = await import('./multi-rabatt');
+    const m = mk({});
+    expect((await endPromotion({ base: 'https://x', headers: {}, promotionId: 'P', fetchFn: m.f })).ok).toBe(true);
+    expect(m.calls).toEqual(['GET /item_promotion/P', 'POST /promotion/P/pause', 'DELETE /item_promotion/P']);
+  });
+  test('Pause scheitert → nichts gelöscht, Fehler', async () => {
+    const { endPromotion } = await import('./multi-rabatt');
+    const m = mk({ 'POST /promotion/P/pause': 400 });
+    const r = await endPromotion({ base: 'https://x', headers: {}, promotionId: 'P', fetchFn: m.f });
+    expect(r.ok).toBe(false);
+    expect(m.calls.some(c => c.startsWith('DELETE'))).toBe(false);
+  });
+  test('gibt es nicht mehr (404) → ok', async () => {
+    const { endPromotion } = await import('./multi-rabatt');
+    const m = mk({ 'GET /item_promotion/P': 404 });
+    expect((await endPromotion({ base: 'https://x', headers: {}, promotionId: 'P', fetchFn: m.f })).ok).toBe(true);
   });
 });

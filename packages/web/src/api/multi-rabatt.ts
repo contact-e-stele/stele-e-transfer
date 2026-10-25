@@ -196,7 +196,7 @@ export const MULTI_RABATT_SEND_ALL_MAX = 15;
 export interface SendAllRow {
   productId: number; listingId: string | null;
   neu: { 2: number; 3: number } | null; bisher: { 2: number; 3: number } | null;
-  aktion: 'senden' | 'unverändert' | 'nicht sendbar'; grund?: string;
+  aktion: 'senden' | 'unverändert' | 'nicht sendbar' | 'beenden'; grund?: string;
   ergebnis?: string;
 }
 
@@ -204,8 +204,10 @@ export function classifySendAll(rows: Array<{ productId: number; listingId: stri
   return rows.map(r => {
     const bisher = r.sent && r.sent.listingId === r.listingId ? r.sent.percents : null;
     if (!r.plan.ok || !r.plan.percents) {
-      return { productId: r.productId, listingId: r.listingId, neu: null, bisher, aktion: 'nicht sendbar' as const,
-        grund: (r.plan.error ?? 'nicht berechenbar') + (bisher ? ` | ACHTUNG: alte Aktion ${bisher[2]} %/${bisher[3]} % läuft weiter` : '') };
+      // Inhaber 25.10.2026 (stele-97, EU-Ware): lohnt der Mengenrabatt nicht, darf auch keine ALTE Aktion weiterlaufen → beenden.
+      if (bisher) return { productId: r.productId, listingId: r.listingId, neu: null, bisher, aktion: 'beenden' as const,
+        grund: `${r.plan.error ?? 'nicht berechenbar'} | alte Aktion ${bisher[2]} %/${bisher[3]} % wird beendet` };
+      return { productId: r.productId, listingId: r.listingId, neu: null, bisher, aktion: 'nicht sendbar' as const, grund: r.plan.error ?? 'nicht berechenbar' };
     }
     const same = !!bisher && bisher[2] === r.plan.percents[2] && bisher[3] === r.plan.percents[3];
     return { productId: r.productId, listingId: r.listingId, neu: r.plan.percents, bisher, aktion: same ? 'unverändert' as const : 'senden' as const };
@@ -218,14 +220,19 @@ export async function sendAllMultiRabatt(opts: { apply?: boolean; limit?: number
   const all = (await db.select().from(products)).filter(p => !!p.ebayListingId).sort((a, b) => a.id - b.id);
   const [rule, sent] = await Promise.all([getVolumeDiscountRule(), getSentPromotions()]);
   const rows = classifySendAll(all.map(p => ({ productId: p.id, listingId: p.ebayListingId ?? null, plan: planForProduct(p as PlanProduct, rule), sent: sent[String(p.id)] ?? null })));
-  const todo = rows.filter(r => r.aktion === 'senden');
+  const todo = rows.filter(r => r.aktion === 'senden' || r.aktion === 'beenden');
   if (opts.apply !== true) return { dryRun: true, rule, rows, zuSenden: todo.length };
   const limit = Math.min(Math.max(1, Math.floor(opts.limit ?? MULTI_RABATT_SEND_ALL_MAX)), MULTI_RABATT_SEND_ALL_MAX);
   for (const [i, r] of todo.slice(0, limit).entries()) {
     if (i > 0) await new Promise(res => setTimeout(res, 800));
     try {
-      const s = await sendMultiRabatt(r.productId, r.neu!);
-      r.ergebnis = s.ok ? `gesendet ${s.percents[2]} %/${s.percents[3]} %, geprüft=${s.verified}` : `NICHT gesendet: ${s.error}`;
+      if (r.aktion === 'beenden') {
+        const e = await endMultiRabatt(r.productId);
+        r.ergebnis = e.ok ? `beendet (${e.trace.join(', ')})` : `NICHT beendet: ${e.error} (${e.trace.join(', ')})`;
+      } else {
+        const s = await sendMultiRabatt(r.productId, r.neu!);
+        r.ergebnis = s.ok ? `gesendet ${s.percents[2]} %/${s.percents[3]} %, geprüft=${s.verified}` : `NICHT gesendet: ${s.error}`;
+      }
     } catch (e) { r.ergebnis = `Fehler: ${String(e).slice(0, 300)}`; }
     console.log(`[Multi-Rabatt alle] stele-${r.productId}: ${r.ergebnis}`);
   }
@@ -279,4 +286,39 @@ export async function replaceActivePromotion(a: { base: string; headers: Record<
   const del = await f(oldUrl, { method: 'DELETE', headers: a.headers });
   trace.push(`alte löschen ${del.status}${del.ok || del.status === 204 ? '' : ' ' + await short(del)}`);
   return newId ? { ok: true, promotionId: newId, trace } : { ok: false, trace, error: 'neue Aktion ohne ID' };
+}
+
+/**
+ * Aktion eines Angebots beenden (Inhaber 25.10.2026, EU-Ware ohne lohnenden Mengenrabatt). eBay: aktive Aktion nicht löschbar →
+ * erst pausieren, dann löschen (live belegt an stele-220: "pause 204 … alte löschen 200"). Danach aus der Liste gesendeter Aktionen.
+ */
+export async function endPromotion(a: { base: string; headers: Record<string, string>; promotionId: string; fetchFn: typeof fetch }): Promise<{ ok: boolean; trace: string[]; error?: string }> {
+  const trace: string[] = [];
+  const id = encodeURIComponent(a.promotionId);
+  const cur = await a.fetchFn(`${a.base}/sell/marketing/v1/item_promotion/${id}`, { headers: a.headers });
+  const status = cur.ok ? ((await cur.json()) as { promotionStatus?: string }).promotionStatus ?? null : null;
+  trace.push(`status ${cur.ok ? status : cur.status}`);
+  if (cur.status === 404) return { ok: true, trace }; // gibt es nicht mehr
+  if (status === 'RUNNING') {
+    const p = await a.fetchFn(`${a.base}/sell/marketing/v1/promotion/${id}/pause`, { method: 'POST', headers: a.headers });
+    trace.push(`pause ${p.status}`);
+    if (!p.ok) return { ok: false, trace, error: `pausePromotion ${p.status}` };
+  }
+  const d = await a.fetchFn(`${a.base}/sell/marketing/v1/item_promotion/${id}`, { method: 'DELETE', headers: a.headers });
+  trace.push(`löschen ${d.status}`);
+  if (d.ok || d.status === 204 || d.status === 404) return { ok: true, trace };
+  return { ok: false, trace, error: `deleteItemPromotion ${d.status}` }; // bleibt pausiert = wirkt nicht mehr
+}
+
+export async function endMultiRabatt(productId: number): Promise<{ ok: boolean; trace: string[]; error?: string }> {
+  const all = await getSentPromotions();
+  const sent = all[String(productId)];
+  if (!sent) return { ok: true, trace: ['keine Aktion gespeichert'] };
+  const { getMarketingAccessToken, EBAY_API_BASE_URL } = await import('./ebay');
+  const token = await getMarketingAccessToken();
+  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' };
+  const r = await endPromotion({ base: EBAY_API_BASE_URL, headers, promotionId: sent.promotionId, fetchFn: fetch });
+  if (r.ok) { delete all[String(productId)]; await writeSetting(PROMO_KEY, JSON.stringify(all)); }
+  console.log(`[Multi-Rabatt] stele-${productId}: Aktion ${sent.promotionId} beenden → ${r.ok ? 'ok' : 'FEHLER'} | ${r.trace.join(' | ')}`);
+  return r;
 }
