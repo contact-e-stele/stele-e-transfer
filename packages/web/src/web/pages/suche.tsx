@@ -62,6 +62,7 @@ interface SearchResult {
   rating: number;
   sold: number;
   url: string;
+  relevant?: boolean; // false = kein Suchwort im Titel (nur Hinweis, nicht ausgeblendet)
 }
 
 interface SearchResponse {
@@ -369,11 +370,16 @@ export default function Suche() {
               </span>
             </div>
 
+            <p style={{ margin: "0 0 12px", fontSize: 12, color: "#64748B" }}>
+              Treffer aus dem AliExpress-Dropshipping-Sortiment. Nicht gefunden? Direkt auf AliExpress suchen und den Link importieren.
+            </p>
+
             {response!.results.map(item => (
               <div key={item.id} style={{
                 background: "#fff", borderRadius: 16, padding: 14,
                 boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 10,
                 display: "flex", gap: 12,
+                opacity: item.relevant === false ? 0.55 : 1,
               }}>
                 {/* Bild */}
                 <div style={{
@@ -401,6 +407,11 @@ export default function Suche() {
                   }}>
                     {item.title || "Kein Titel"}
                   </p>
+                  {item.relevant === false && (
+                    <p style={{ margin: "0 0 4px", fontSize: 11, color: "#B45309" }}>
+                      passt evtl. nicht zum Suchbegriff
+                    </p>
+                  )}
 
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
                     {/* Preis */}
@@ -437,7 +448,7 @@ export default function Suche() {
                     {/* Rating */}
                     {item.rating > 0 && (
                       <span style={{ fontSize: 11, color: "#F59E0B", display: "flex", alignItems: "center", gap: 2 }}>
-                        <Star size={10} fill="#F59E0B" /> {Number(item.rating).toFixed(1)}%
+                        <Star size={10} fill="#F59E0B" /> {Number(item.rating).toFixed(1).replace(".", ",")} %
                       </span>
                     )}
                   </div>
