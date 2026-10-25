@@ -648,7 +648,7 @@ export function getLastAspectFetchError(categoryId: string): string | null {
 // Liefert null bei Fehlschlag (statt [] permanent zu cachen) — Aufrufer müssen den Unterschied
 // zwischen "eBay meldet: keine Aspekte" und "Abruf fehlgeschlagen" kennen, sonst wird ein
 // transienter Fehler wie eine echte "leere Kategorie" behandelt.
-async function getRawAspectsForCategory(
+export async function getRawAspectsForCategory(
   categoryId: string,
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAppToken,
@@ -918,7 +918,11 @@ export async function buildAspects(
 
   // P-88 1b: AliExpress-Specs zuerst, dann über alle Varianten hinweg konstante Attribute
   // ergänzen, was specs nicht liefert (specs hat Vorrang, falls beide denselben Ziel-Namen mappen).
-  const effectiveSpecs = { ...deriveConstantVariantAttrs(variantAttrsList), ...specs };
+  // C2 (25.10.2026): bis #216 war specs bei allen Produkten leer — die feste Zuordnung (SPEC_KEY_MAP) lief praktisch nur auf den
+  // Varianten-Attributen. Seit dem Nachladen kommen englische Rohwerte ("Type: cats", "Size: Pack of 100"); die gehen NICHT mehr
+  // über SPEC_KEY_MAP, sondern nur über den geprüften Abgleich unten (shared/spec-aspects.ts). Ausnahme Geschlecht → Abteilung.
+  const genderSpecs = Object.fromEntries(Object.entries(specs).filter(([k]) => /^(gender|geschlecht|abteilung)$/i.test(k.trim())));
+  const effectiveSpecs = { ...deriveConstantVariantAttrs(variantAttrsList), ...genderSpecs };
   const effectiveSpecsAspects = mapSpecsToAspects(effectiveSpecs);
   if (!effectiveSpecsAspects['Farbe']) {
     const titleColor = findColorInTitles(titleSources);
@@ -930,11 +934,11 @@ export async function buildAspects(
 
   // Punkt C (25.10.2026): weitere AliExpress-Merkmale (Material, Herkunft, Maße …) — nur Namen, die die Kategorie führt,
   // bei Auswahl-Merkmalen nur erlaubte Werte (shared/spec-aspects.ts). Bereits gesetzte Merkmale bleiben unberührt.
-  if (categoryId && Object.keys(effectiveSpecs).length > 0) {
+  if (categoryId && Object.keys(specs).length > 0) {
     const categoryAspects = await getRawAspectsForCategory(categoryId, fetchFn, getTokenFn);
     if (categoryAspects) {
       const { matchSpecsToCategoryAspects } = await import('../shared/spec-aspects');
-      const match = matchSpecsToCategoryAspects(effectiveSpecs, categoryAspects, Object.keys(aspects));
+      const match = matchSpecsToCategoryAspects(specs, categoryAspects, Object.keys(aspects));
       for (const [name, value] of Object.entries(match.aspects)) {
         aspects[name] = [value];
         effectiveSpecsAspects[name] = value; // auch für resolveRequiredAspect sichtbar
@@ -1154,7 +1158,8 @@ export async function findUnresolvedRequiredAspects(
   const required = await getRequiredAspects(categoryId, fetchFn, getTokenFn);
   if (required === null) return { unresolved: [], fetchFailed: true };
 
-  const effectiveSpecsAspects = mapSpecsToAspects({ ...deriveConstantVariantAttrs(variantAttrsList), ...specs });
+  // C2: gleiche Eingabe wie buildAspects (Rohwerte aus specs nur Geschlecht), sonst meldet die Vorab-Prüfung Werte als vorhanden, die nie gesendet werden.
+  const effectiveSpecsAspects = mapSpecsToAspects({ ...deriveConstantVariantAttrs(variantAttrsList), ...Object.fromEntries(Object.entries(specs).filter(([k]) => /^(gender|geschlecht|abteilung)$/i.test(k.trim()))) });
   if (!effectiveSpecsAspects['Farbe']) {
     const titleColor = findColorInTitles(titleSources);
     if (titleColor) effectiveSpecsAspects['Farbe'] = titleColor;

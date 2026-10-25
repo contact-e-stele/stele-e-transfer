@@ -4344,6 +4344,53 @@ app.post('/products/:id/fix-ean-aspect', async (c) => {
   }
 });
 
+// C2 (Inhaber 25.10.2026 "Punkt C ja"): fehlende Artikelmerkmale aus products.specs in die LIVE-Angebote ergänzen (Gruppe + Items bzw.
+// Einzel-Item). Nur fehlende Merkmale, geprüft/übersetzt (shared/spec-aspects.ts). Ohne {confirm:true} nur Vorschau. Kein Preis, keine Menge.
+async function merkmaleLiveForProduct(id: number, confirm: boolean) {
+  const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+  const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+  if (!product) return { productId: id, error: 'Produkt nicht gefunden' };
+  if (product.ebayStatus !== 'listed' || !product.ebayListingId) return { productId: id, error: 'nicht live gelistet' };
+  let specs: Record<string, string> = {};
+  try { specs = JSON.parse(product.specs ?? '{}') ?? {}; } catch { specs = {}; }
+  if (Object.keys(specs).length === 0) return { productId: id, error: 'keine Merkmale gespeichert (erst "Merkmale nachladen")' };
+  const { getAccessToken, getInventoryItemGroupSkus, EBAY_API_BASE_URL, sanitizeItemProductForPut, stripZeroWeight, getRawAspectsForCategory } = await import('./ebay');
+  const { applySpecAspectsToListing } = await import('./live-aspects');
+  const token = await getAccessToken();
+  const itemSkus = await getInventoryItemGroupSkus(`stele-${id}-GROUP`, token).catch(() => [] as string[]);
+  const r = await applySpecAspectsToListing({ productId: id, specs, token, baseUrl: EBAY_API_BASE_URL, confirm, itemSkus,
+    getCategoryAspects: (cat) => getRawAspectsForCategory(cat),
+    prepareItem: (item) => { if (item.product) item.product = sanitizeItemProductForPut(item.product as Record<string, unknown>); stripZeroWeight(item); } });
+  console.log(`[Merkmale live] stele-${id} ${confirm ? 'apply' : 'preview'}: Kat ${r.categoryId} ${r.error ?? ''} ${JSON.stringify(r.rows)}`);
+  return { productId: id, ...r };
+}
+
+app.post('/products/:id/merkmale-live', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const body = await c.req.json().catch(() => ({})) as { confirm?: unknown };
+  try { return c.json({ mode: body.confirm === true ? 'apply' : 'preview', ...(await merkmaleLiveForProduct(id, body.confirm === true)) }, 200); }
+  catch (e) { return c.json({ error: String(e) }, 500); }
+});
+
+// Sammel-Weg: alle gelisteten Produkte mit Merkmalen, je Aufruf höchstens 10 (Render-Zeitlimit). productIds optional.
+app.post('/products/merkmale-live-all', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { confirm?: unknown; productIds?: unknown; offset?: unknown };
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const wanted = Array.isArray(body.productIds) ? new Set(body.productIds.filter((x): x is number => Number.isInteger(x))) : null;
+    const ids = (await db.select({ id: schema.products.id, l: schema.products.ebayListingId, s: schema.products.specs }).from(schema.products))
+      .filter(p => !!p.l && !!p.s && p.s !== '{}' && (!wanted || wanted.has(p.id))).map(p => p.id).sort((a, b) => a - b);
+    const offset = typeof body.offset === 'number' && body.offset > 0 ? Math.floor(body.offset) : 0;
+    const batch = ids.slice(offset, offset + 10);
+    const results = [];
+    for (const id of batch) {
+      try { results.push(await merkmaleLiveForProduct(id, body.confirm === true)); } catch (e) { results.push({ productId: id, error: String(e).slice(0, 300) }); }
+    }
+    return c.json({ mode: body.confirm === true ? 'apply' : 'preview', gesamt: ids.length, offset, naechsterOffset: offset + batch.length < ids.length ? offset + batch.length : null, results }, 200);
+  } catch (e) { return c.json({ error: String(e) }, 500); }
+});
+
 app.post('/products/:id/sync-quantities', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);

@@ -20,41 +20,70 @@ const NEVER_FROM_SPECS = /^(marke|brand|markenname|brand name|ean|gtin|upc|isbn|
 /**
  * Ali-Schlüssel → mögliche eBay-Merkmalnamen (Kleinbuchstaben). Nur Zuordnungen, bei denen derselbe Begriff gemeint ist.
  * Welcher Name tatsächlich gesetzt wird, entscheidet die Kategorie-Liste (erster vorhandener Name gewinnt).
+ * C2 (25.10.2026, echte Werte aller 72 Live-Produkte gesichtet): AliExpress liefert die Werte ENGLISCH und oft unsauber
+ * ("Type: cats", "Feature: Stocked", "Style: fashion"). Deshalb nur noch Merkmale, deren Wert sich eindeutig übersetzen
+ * bzw. prüfen lässt; Typ/Stil/Besonderheiten/Zubehör/Menge/Gewicht werden NICHT mehr übernommen.
  */
 const KEY_ALIASES: Record<string, string[]> = {
   origin: ['herstellungsland und -region', 'herstellungsland', 'ursprungsland'],
   herkunft: ['herstellungsland und -region', 'herstellungsland', 'ursprungsland'],
   ursprung: ['herstellungsland und -region', 'herstellungsland', 'ursprungsland'],
   'place of origin': ['herstellungsland und -region', 'herstellungsland', 'ursprungsland'],
-  material: ['material'],
-  materialien: ['material'],
-  'main material': ['material'],
-  hauptmaterial: ['material'],
-  color: ['farbe'], colour: ['farbe'], farbe: ['farbe'],
-  type: ['produktart', 'typ'], typ: ['produktart', 'typ'], art: ['produktart', 'typ'],
-  style: ['stil'], stil: ['stil'],
+  material: ['material'], materialien: ['material'], 'main material': ['material'], hauptmaterial: ['material'],
+  filling: ['füllmaterial', 'füllung'], füllung: ['füllmaterial', 'füllung'], füllmaterial: ['füllmaterial', 'füllung'],
   pattern: ['muster'], 'pattern type': ['muster'], muster: ['muster'],
-  size: ['größe', 'maße'], größe: ['größe', 'maße'], groesse: ['größe', 'maße'],
-  dimensions: ['maße', 'abmessungen'], dimension: ['maße', 'abmessungen'], abmessungen: ['abmessungen', 'maße'], maße: ['maße', 'abmessungen'],
-  weight: ['gewicht', 'artikelgewicht'], gewicht: ['gewicht', 'artikelgewicht'],
   shape: ['form'], form: ['form'],
-  feature: ['besonderheiten'], features: ['besonderheiten'], merkmal: ['besonderheiten'], besonderheiten: ['besonderheiten'],
-  accessory: ['zubehör'], accessories: ['zubehör'], zubehör: ['zubehör'],
-  'suitable for': ['geeignet für'], 'geeignet für': ['geeignet für'],
-  'number of pieces': ['anzahl der einheiten', 'stückzahl'], quantity: ['anzahl der einheiten', 'stückzahl'], menge: ['anzahl der einheiten', 'stückzahl'],
+  size: ['maße', 'abmessungen'], dimensions: ['maße', 'abmessungen'], dimension: ['maße', 'abmessungen'], abmessungen: ['abmessungen', 'maße'], maße: ['maße', 'abmessungen'],
 };
 
-/** AliExpress-Herkunftsangaben, die eindeutig China bedeuten. Alles andere bleibt wie geliefert. */
-const CHINA_VALUES = /^(cn|china|mainland china|china mainland|cn\(origin\)|festlandchina|festland china|china \(festland\))$/i;
+/** Nur diese eBay-Merkmale werden aus AliExpress gesetzt (Kleinbuchstaben). */
+const ALLOWED_TARGETS = /^(herstellungsland und -region|herstellungsland|ursprungsland|material|füllmaterial|füllung|muster|form|maße|abmessungen)$/;
+
+/** Übersetzungen — nur Werte, die am 25.10.2026 in den 72 Live-Produkten vorkamen, und eindeutige Fachbegriffe. Unbekannt → weglassen. */
+const MATERIAL_DE: Record<string, string> = {
+  plastic: 'Kunststoff', 'abs': 'ABS-Kunststoff', 'abs plastic': 'ABS-Kunststoff', pp: 'Polypropylen (PP)', polypropylene: 'Polypropylen (PP)',
+  pe: 'Polyethylen (PE)', polyethylene: 'Polyethylen (PE)', pvc: 'PVC', polyester: 'Polyester', cotton: 'Baumwolle', nylon: 'Nylon',
+  metal: 'Metall', 'stainless steel': 'Edelstahl', '304 stainless steel': 'Edelstahl', alloy: 'Legierung', paper: 'Papier',
+  'art paper': 'Papier', 'synthetic paper': 'Synthetikpapier', cardboard: 'Karton', felt: 'Filz', latex: 'Latex', gel: 'Gel',
+  leather: 'Leder', 'non-woven fabric': 'Vliesstoff', 'non-woven fabrics': 'Vliesstoff', fiber: 'Faser', 'cubic zirconia': 'Zirkonia',
+  silicone: 'Silikon', wood: 'Holz', glass: 'Glas', rubber: 'Gummi', bamboo: 'Bambus', ceramic: 'Keramik',
+};
+const PATTERN_DE: Record<string, string> = { solid: 'Einfarbig', floral: 'Blumen', cartoon: 'Cartoon', print: 'Bedruckt', geometric: 'Geometrisch' };
+const SHAPE_DE: Record<string, string> = { square: 'Quadratisch', round: 'Rund', rectangle: 'Rechteckig', rectangular: 'Rechteckig', heart: 'Herz' };
+
+/** "Polyester / Cotton" → "Polyester, Baumwolle"; jeder Teil muss übersetzbar sein, sonst null. */
+export function translateValue(table: Record<string, string>, value: string): string | null {
+  const parts = value.split(/\s*[/,+&]\s*/).map(x => x.trim().toLowerCase()).filter(Boolean);
+  if (parts.length === 0) return null;
+  const out = parts.map(x => table[x]);
+  if (out.some(x => !x)) return null;
+  return [...new Set(out)].join(', ');
+}
+
+/** Maße nur, wenn Zahlen mit Einheit: "45x50cm", "About 13.5*3cm" → "45 x 50 cm", "13,5 x 3 cm". */
+export function normalizeDimensions(value: string): string | null {
+  const m = value.toLowerCase().replace(/^about\s+/, '').match(/^(\d+(?:[.,]\d+)?)\s*[x*×]\s*(\d+(?:[.,]\d+)?)(?:\s*[x*×]\s*(\d+(?:[.,]\d+)?))?\s*(cm|mm)$/);
+  if (!m) return null;
+  const n = (x: string) => x.replace('.', ',');
+  return [m[1], m[2], m[3]].filter(Boolean).map(x => n(x!)).join(' x ') + ' ' + m[4];
+}
+
+/** AliExpress-Herkunftsangaben, die eindeutig China bedeuten. */
+const CHINA_VALUES = /^(cn|china|mainland china|china mainland|cn\(origin\)|china \(mainland\)|festlandchina|festland china|china \(festland\))$/i;
 
 function norm(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function normalizeValue(aspectNameLc: string, value: string): string {
+/** Wert für das Ziel-Merkmal: übersetzt/geprüft oder null (= weglassen). */
+function valueFor(aspectNameLc: string, value: string): string | null {
   const v = value.trim().replace(/\s+/g, ' ');
-  if (/herstellungsland|ursprungsland/.test(aspectNameLc) && CHINA_VALUES.test(v)) return 'China';
-  return v;
+  if (/herstellungsland|ursprungsland/.test(aspectNameLc)) return CHINA_VALUES.test(v) ? 'China' : null;
+  if (/^(material|füllmaterial|füllung)$/.test(aspectNameLc)) return translateValue(MATERIAL_DE, v);
+  if (aspectNameLc === 'muster') return translateValue(PATTERN_DE, v);
+  if (aspectNameLc === 'form') return translateValue(SHAPE_DE, v);
+  if (aspectNameLc === 'maße' || aspectNameLc === 'abmessungen') return normalizeDimensions(v);
+  return null;
 }
 
 export interface SpecAspectMatch {
@@ -90,7 +119,10 @@ export function matchSpecsToCategoryAspects(
     const nameLc = norm(def.localizedAspectName);
     if (taken.has(nameLc)) { out.skipped.push({ specKey: rawKey, reason: `${def.localizedAspectName} schon gesetzt` }); continue; }
 
-    let v = normalizeValue(nameLc, value);
+    if (!ALLOWED_TARGETS.test(nameLc)) { out.skipped.push({ specKey: rawKey, reason: `${def.localizedAspectName} wird nicht aus AliExpress übernommen` }); continue; }
+    const translated = valueFor(nameLc, value);
+    if (translated === null) { out.skipped.push({ specKey: rawKey, reason: `Wert "${value}" nicht eindeutig übersetzbar` }); continue; }
+    let v = translated;
     if (v.length > ASPECT_VALUE_MAX) { out.skipped.push({ specKey: rawKey, reason: `Wert länger als ${ASPECT_VALUE_MAX} Zeichen` }); continue; }
     if (def.aspectConstraint?.aspectMode === 'SELECTION_ONLY') {
       const allowed = (def.aspectValues ?? []).find(a => norm(a.localizedValue) === norm(v));
