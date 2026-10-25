@@ -87,7 +87,14 @@ export async function sendMultiRabatt(productId: number, expected: { 2: number; 
   // Aktion gehört zu einem ANDEREN (z.B. beendeten) Angebot → neue Aktion anlegen statt die alte umzuschreiben (stele-228, 19.10.2026).
   const existing = reusablePromotion(prev.sent, prev.listingId);
   const url = existing ? `${EBAY_API_BASE_URL}/sell/marketing/v1/item_promotion/${encodeURIComponent(existing.promotionId)}` : `${EBAY_API_BASE_URL}/sell/marketing/v1/item_promotion`;
-  const res = await fetch(url, { method: existing ? 'PUT' : 'POST', headers, body: JSON.stringify(body) });
+  // eBay 38260 (Live 25.10.2026, 15 Angebote): eine LAUFENDE Aktion darf ihr Startdatum nicht ändern → bei Update Start, Ende
+  // und Status der bestehenden Aktion übernehmen, nur die Stufen neu (keepRunningPromotionDates).
+  let sendBody: Record<string, unknown> = body;
+  if (existing) {
+    const cur = await fetch(url, { headers });
+    if (cur.ok) sendBody = keepRunningPromotionDates(body, await cur.json() as Record<string, unknown>);
+  }
+  const res = await fetch(url, { method: existing ? 'PUT' : 'POST', headers, body: JSON.stringify(sendBody) });
   const text = await res.text();
   if (!res.ok) return { ok: false as const, status: 502, error: `eBay ${existing ? 'updateItemPromotion' : 'createItemPromotion'} ${res.status}: ${text.slice(0, 800)}` };
   let promotionId = existing?.promotionId ?? null;
@@ -213,4 +220,17 @@ export async function sendAllMultiRabatt(opts: { apply?: boolean; limit?: number
     console.log(`[Multi-Rabatt alle] stele-${r.productId}: ${r.ergebnis}`);
   }
   return { dryRun: false, rule, rows, zuSenden: todo.length, gesendetInDiesemAufruf: Math.min(limit, todo.length), rest: Math.max(0, todo.length - limit) };
+}
+
+/**
+ * eBay 38260 "To update the start date of a promotion, the promotion must be in draft or scheduled state": beim Update einer
+ * bestehenden Aktion Start/Ende/Status von eBay übernehmen (laufende Aktion bleibt laufend), nur Stufen/Name/Angebot neu.
+ * Ist die bestehende Aktion schon beendet/gelöscht oder fehlt das Startdatum → neuer Körper unverändert.
+ */
+export function keepRunningPromotionDates<T extends Record<string, unknown>>(next: T, current: Record<string, unknown>): T {
+  const status = typeof current.promotionStatus === 'string' ? current.promotionStatus : null;
+  if (!status || !['RUNNING', 'PAUSED', 'SCHEDULED', 'DRAFT'].includes(status) || typeof current.startDate !== 'string') return next;
+  const out: Record<string, unknown> = { ...next, startDate: current.startDate, promotionStatus: status };
+  if (typeof current.endDate === 'string') out.endDate = current.endDate;
+  return out as T;
 }
