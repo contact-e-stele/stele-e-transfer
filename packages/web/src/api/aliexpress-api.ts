@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import type { VariantPrice, GpsrInfo } from './aliexpress';
 import { collectShopRelatedFields } from './aliexpress';
+import { mapAliSearchSort, parseAliTextSearchResponse, isEuShipFrom, sortEuFirst, type AliSearchHit } from '../shared/ali-search';
 import { skuPriceDiagnostic, deriveProductShipsFrom, type SkuPriceDiagnostic } from '../shared/ali-sku-price';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
@@ -686,5 +687,102 @@ export async function getAliProductByApi(productId: string, accessToken: string)
   } catch (e) {
     console.error('[AliExpress API] getAliProductByApi error:', e);
     return null;
+  }
+}
+// ── P-37: Produktsuche über die offizielle DS-API ─────────────────────────────
+export interface AliSearchResult {
+  status: 'ok' | 'no_token' | 'api_error';
+  results: AliSearchHit[];
+  total: number;
+  code?: string;
+  message?: string;
+}
+
+const ALI_SEARCH_PAGE_SIZE = 20;
+const ALI_SEARCH_TOTAL_BUDGET_MS = 22000; // Route hart unter 25 s
+const ALI_SEARCH_SHIP_TIMEOUT_MS = 8000;
+const ALI_SEARCH_SHIP_CONCURRENCY = 5;
+
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>(r => setTimeout(() => r(fallback), ms))]);
+}
+
+export async function searchAliProductsByApi(
+  keyword: string,
+  page: number,
+  shipFromFilter: string,
+  frontendSort: string,
+): Promise<AliSearchResult> {
+  const started = Date.now();
+  const method = 'aliexpress.ds.text.search';
+  await ensureFreshAliToken();
+  const accessToken = await getAliAccessToken();
+  if (!accessToken) {
+    console.log(`[AliSearch] Methode=${method} kein Token (${Date.now() - started} ms)`);
+    return { status: 'no_token', results: [], total: 0, message: 'Kein AliExpress-Token vorhanden.' };
+  }
+
+  try {
+    const params: Record<string, string> = {
+      app_key: APP_KEY,
+      method,
+      timestamp: String(Date.now()),
+      format: 'json',
+      sign_method: 'md5',
+      v: '2.0',
+      access_token: accessToken,
+      keyWord: keyword,
+      local: 'de_DE',
+      countryCode: 'DE',
+      currency: 'EUR',
+      pageIndex: String(page),
+      pageSize: String(ALI_SEARCH_PAGE_SIZE),
+      sortBy: mapAliSearchSort(frontendSort),
+    };
+    params.sign = iopSign(APP_SECRET, params);
+
+    const res = await fetch(IOP_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    const parsed = parseAliTextSearchResponse(data);
+    if (!parsed.ok) {
+      console.error(`[AliSearch] Methode=${method} API-Fehlercode=${parsed.code} msg=${parsed.msg} (${Date.now() - started} ms)`);
+      return { status: 'api_error', results: [], total: 0, code: parsed.code, message: `${parsed.code}: ${parsed.msg}` };
+    }
+
+    // Versandland je Treffer (max. 5 parallel, je 8 s), Gesamtbudget hart begrenzt
+    const hits = parsed.hits;
+    let next = 0;
+    const worker = async () => {
+      while (next < hits.length) {
+        const h = hits[next++];
+        const product = await withTimeout(
+          getAliProductByApi(h.id, accessToken).catch(() => null),
+          ALI_SEARCH_SHIP_TIMEOUT_MS,
+          null,
+        );
+        if (product?.shipsFrom) {
+          h.shipFrom = product.shipsFrom;
+          h.isEU = isEuShipFrom(product.shipsFrom);
+        }
+      }
+    };
+    const remaining = Math.max(1000, ALI_SEARCH_TOTAL_BUDGET_MS - (Date.now() - started));
+    await withTimeout(
+      Promise.all(Array.from({ length: Math.min(ALI_SEARCH_SHIP_CONCURRENCY, hits.length) }, worker)),
+      remaining,
+      undefined,
+    );
+
+    const results = sortEuFirst(hits.map(h => ({ ...h })), shipFromFilter);
+    console.log(`[AliSearch] Methode=${method} Treffer=${results.length} total=${parsed.total} (${Date.now() - started} ms)`);
+    return { status: 'ok', results, total: parsed.total };
+  } catch (e) {
+    console.error(`[AliSearch] Methode=${method} Fehler (${Date.now() - started} ms):`, e instanceof Error ? e.message : e);
+    return { status: 'api_error', results: [], total: 0, code: 'exception', message: e instanceof Error ? e.message : String(e) };
   }
 }
