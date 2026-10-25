@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-24 abends, aktuelle Version: v1.36):**
+**Aktueller Zählerstand (Stand 2026-10-25, aktuelle Version: v1.37):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -265,6 +265,15 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | 2 | #203 | Mengen: Varianten-Dubletten bekommen Lager, kein falsches „ok“, Multi-Rabatt-Hinweis (stele-119) |
 | 3 | #206 | Anhebung: Waisen überspringen, Dubletten zusammenfassen |
 | 4 | #207 | K-011 automatisch angleichen bei höherem eBay-Preis → **Bump v1.35 → v1.36 bei #207** |
+| — | #208 | *(zählt nicht — Versions-Nachtrag v1.36, Housekeeping)* |
+| 1 | #209 | PR A: Einfuhr in allen Anzeigen (Einstellungen, Bestellungen, Bericht, Grenze 22.10.) |
+| 2 | #210 | PR B: eBay-Preise automatisch in die App + Einzelartikel ohne AliExpress-Daten anheben |
+| 3 | #211 | P-37: Suche-Tab über aliexpress.ds.text.search (502-Fix) |
+| — | #212 | *(zählt nicht — nur temporäres Debug-Log, keine Verhaltensänderung)* |
+| — | #213 | *(zählt nicht — nur temporäre Log-Probe (Squash-Commit „nur Log, temporär“))* |
+| 4 | #214 | P-37b: Suche filtert per /sync, Sortierung + Relevanz in der App, Bewertung in % → **Bump v1.36 → v1.37 bei #214** (nachgetragen 25.10.) |
+| 1 | #215 | Bildsuche „Gleiche Ware günstiger?“ + P-37 Rest |
+| 2 | #216 | Punkt C: AliExpress-Artikelmerkmale speichern, nachladen, beim Listen an eBay |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -280,7 +289,7 @@ Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Br
 Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
 aber „2 von 4“.*
 
-**→ Zähler: 0 von 4 seit v1.36** (nächster Bump beim 4. größeren PR). Reihenfolge = Merge-Zeitpunkt (#203 wurde nach #205 gemergt).
+**→ Zähler: 2 von 4 seit v1.37** (#215, #216; nächster Bump beim 4. größeren PR). Reihenfolge = Merge-Zeitpunkt. *Lesart #212/#213: nur Log ohne Verhaltensänderung = zählt nicht (wie #98). Würde man sie zählen, wäre der Bump schon bei #212 und ein zweiter bei #216 fällig (v1.38) — Entscheidung beim Inhaber.*
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -315,6 +324,7 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.33 → v1.34: PR #194, #196, #198, #199
 - v1.34 → v1.35: PR #200, #201, #202, #204 (nachgetragen 24.10.)
 - v1.35 → v1.36: PR #205, #203, #206, #207
+- v1.36 → v1.37: PR #209, #210, #211, #214 (nachgetragen 25.10.)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 

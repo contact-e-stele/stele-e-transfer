@@ -1770,8 +1770,7 @@ const app = new Hono()
     const redirectUri = `${baseUrl.replace(/\/$/, '')}/api/aliexpress/callback`;
     const tokens = await exchangeAliCodeForToken(code, redirectUri);
     if (!tokens) return c.json({ error: 'Token-Exchange fehlgeschlagen' }, 500);
-    console.log('[AliExpress OAuth] Access token obtained:', tokens.access_token.slice(0, 20) + '...');
-    console.log('[AliExpress OAuth] Refresh token:', tokens.refresh_token.slice(0, 20) + '...');
+    console.log('[AliExpress OAuth] Access token erhalten (Wert wird nicht geloggt, K-012)');
     // Token automatisch in DB speichern
     const expiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;  // Aktueller Timestamp (Sekunden) + expires_in (Sekunden)
     await saveAliTokens(tokens.access_token, tokens.refresh_token, expiresAt);
@@ -4003,6 +4002,18 @@ app.post('/products/specs-backfill', async (c) => {
       },
     });
     console.log(`[Merkmale nachladen] ${r.dryRun ? 'Trockenlauf' : 'GESPEICHERT'}: ${r.rows.map(x => `stele-${x.productId}=${x.status}(${x.count})`).join(', ')} | offen gesamt ${r.offenGesamt}, Rest ${r.rest}`);
+    return c.json({ ok: true, ...r }, 200);
+  } catch (e) {
+    return c.json({ ok: false, error: String(e) }, 500);
+  }
+});
+
+// Inhaber 25.10.2026: Multi-Rabatt nach Regeländerung für ALLE gelisteten Angebote neu senden. Standard Trockenlauf; {apply:true} sendet höchstens 15 je Aufruf.
+app.post('/multi-rabatt/send-all', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as { apply?: unknown; limit?: unknown };
+    const { sendAllMultiRabatt } = await import('./multi-rabatt');
+    const r = await sendAllMultiRabatt({ apply: body.apply === true, limit: typeof body.limit === 'number' ? body.limit : undefined });
     return c.json({ ok: true, ...r }, 200);
   } catch (e) {
     return c.json({ ok: false, error: String(e) }, 500);

@@ -129,6 +129,14 @@ export async function ensureFreshAliToken(): Promise<void> {
   }
 }
 
+/**
+ * K-012 (Kalkulator 15.10.2026): Token-Antworten nie im Klartext ins Log. Ersetzt die Werte von access_token/refresh_token
+ * (auch in Varianten wie "accessToken") durch "***". Fehlertexte (code, message) bleiben lesbar.
+ */
+export function redactTokens(text: string): string {
+  return text.replace(/("?(?:access_token|refresh_token|accessToken|refreshToken)"?\s*[:=]\s*"?)([^",&\s}]+)/gi, '$1***');
+}
+
 export function getAliExpressOAuthUrl(redirectUri: string, state: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
@@ -167,7 +175,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
       body: new URLSearchParams(params),
     });
     const rawText = await res.text();
-    console.log(`[AliExpress OAuth] Token exchange HTTP ${res.status}, Body:`, rawText.slice(0, 1000));
+    console.log(`[AliExpress OAuth] Token exchange HTTP ${res.status}`); // K-012: Body enthält Tokens → nie loggen
 
     let data: Record<string, unknown> | null = null;
     try {
@@ -178,7 +186,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
     }
 
     if (!data) {
-      console.error(`[AliExpress OAuth] Token exchange fehlgeschlagen — HTTP ${res.status}, kein verwertbares JSON-Objekt. Roh-Body:`, rawText.slice(0, 1000));
+      console.error(`[AliExpress OAuth] Token exchange fehlgeschlagen — HTTP ${res.status}, kein verwertbares JSON-Objekt. Roh-Body:`, redactTokens(rawText).slice(0, 1000));
       return null;
     }
 
@@ -196,7 +204,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
         refresh_token_valid_time: Number(result.refresh_expires_in || result.refresh_token_valid_time || 0),
       };
     }
-    console.error('[AliExpress OAuth] Token exchange fehlgeschlagen — Response:', JSON.stringify(data).slice(0, 1000));
+    console.error('[AliExpress OAuth] Token exchange fehlgeschlagen — Response:', redactTokens(JSON.stringify(data)).slice(0, 1000));
     return null;
   } catch (e) {
     console.error('[AliExpress OAuth] Token exchange error:', e);
@@ -222,7 +230,7 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
       body: new URLSearchParams(params),
     });
     const rawText = await res.text();
-    console.log(`[AliExpress OAuth] Token refresh HTTP ${res.status}, Body:`, rawText.slice(0, 1000));
+    console.log(`[AliExpress OAuth] Token refresh HTTP ${res.status}`); // K-012: Body enthält Tokens → nie loggen
 
     let data: Record<string, unknown> | null = null;
     try {
@@ -233,7 +241,7 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
     }
 
     if (!data) {
-      console.error(`[AliExpress OAuth] Token refresh fehlgeschlagen — HTTP ${res.status}, kein verwertbares JSON-Objekt. Roh-Body:`, rawText.slice(0, 1000));
+      console.error(`[AliExpress OAuth] Token refresh fehlgeschlagen — HTTP ${res.status}, kein verwertbares JSON-Objekt. Roh-Body:`, redactTokens(rawText).slice(0, 1000));
       return null;
     }
 
@@ -251,7 +259,7 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
         expires_in: Number(result.expires_in || result.expire_time || 0),
       };
     }
-    console.error('[AliExpress OAuth] Token refresh fehlgeschlagen — Response:', JSON.stringify(data).slice(0, 1000));
+    console.error('[AliExpress OAuth] Token refresh fehlgeschlagen — Response:', redactTokens(JSON.stringify(data)).slice(0, 1000));
     return null;
   } catch (e) {
     console.error('[AliExpress OAuth] Token refresh error:', e);
