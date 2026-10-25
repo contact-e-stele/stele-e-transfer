@@ -830,7 +830,7 @@ function MultiRabattSendAll() {
       const d = await r.json() as { ok?: boolean; error?: string; rows?: SendAllRowUi[]; zuSenden?: number; rest?: number };
       if (!d.ok) { setMsg(d.error || "Fehler"); return; }
       setRows(d.rows ?? []);
-      setMsg(apply ? `Gesendet. Noch offen: ${d.rest ?? 0} — bei Bedarf erneut "Senden" klicken.` : `Vorschau: ${d.zuSenden ?? 0} Angebote würden gesendet.`);
+      setMsg(apply ? `Gesendet/beendet. Noch offen: ${d.rest ?? 0} — bei Bedarf erneut klicken.` : `Vorschau: ${d.zuSenden ?? 0} Angebote würden gesendet oder beendet.`);
     } catch { setMsg("Netzwerkfehler"); } finally { setBusy(false); }
   };
   const btn = (bg: string) => ({ padding: "8px 14px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: bg, color: "#fff", cursor: busy ? "wait" : "pointer", fontFamily: "inherit" } as const);
@@ -839,13 +839,13 @@ function MultiRabattSendAll() {
     <div style={{ marginTop: 12, borderTop: "1px solid #E2E8F0", paddingTop: 10 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <button disabled={busy} onClick={() => call(false)} style={btn("#2563EB")}>Alle Angebote: Vorschau</button>
-        <button disabled={busy || !rows || !rows.some(r => r.aktion === "senden")} onClick={() => call(true)} style={btn("#16A34A")}>An eBay senden (max. 15)</button>
+        <button disabled={busy || !rows || !rows.some(r => r.aktion === "senden" || r.aktion === "beenden")} onClick={() => call(true)} style={btn("#16A34A")}>An eBay senden (max. 15)</button>
         {msg && <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{msg}</span>}
       </div>
       {rows && (
         <div style={{ maxHeight: 260, overflowY: "auto", marginTop: 8, fontSize: 12 }}>
           {rows.map(r => (
-            <div key={r.productId} style={{ padding: "3px 0", color: r.aktion === "nicht sendbar" ? "#B45309" : r.aktion === "senden" ? "#1E293B" : "#94A3B8" }}>
+            <div key={r.productId} style={{ padding: "3px 0", color: r.aktion === "nicht sendbar" ? "#B45309" : r.aktion === "beenden" ? "#DC2626" : r.aktion === "senden" ? "#1E293B" : "#94A3B8" }}>
               stele-{r.productId}: {r.aktion} · neu {pct(r.neu)} · bisher {pct(r.bisher)}{r.grund ? ` · ${r.grund}` : ""}{r.ergebnis ? ` · ${r.ergebnis}` : ""}
             </div>
           ))}
