@@ -166,3 +166,51 @@ export async function sendMultiRabattForNewListing(productId: number) {
     return { ok: false as const, status: 500, error: String(e) };
   }
 }
+
+/**
+ * Inhaber 25.10.2026 ("Multi-Rabatt attraktiver", Regel 6 €/11 €): nach einer Regeländerung ALLE gelisteten Angebote neu senden.
+ * Trockenlauf (Standard) zeigt je Angebot: neue Prozent, bisher gesendete Prozent, ob gesendet würde. apply:true sendet höchstens
+ * `limit` Angebote je Aufruf (Render-Zeitlimit) über dieselbe sendMultiRabatt() wie der Knopf — nur Angebote, deren Prozent sich
+ * ändern oder die noch keine Aktion haben. Nicht sendbare Angebote (z. B. Sperre "je Stück weniger als Einzelkauf") werden nur
+ * gemeldet; eine dort noch laufende alte Aktion bleibt bestehen und wird als Hinweis ausgegeben.
+ */
+export const MULTI_RABATT_SEND_ALL_MAX = 15;
+
+export interface SendAllRow {
+  productId: number; listingId: string | null;
+  neu: { 2: number; 3: number } | null; bisher: { 2: number; 3: number } | null;
+  aktion: 'senden' | 'unverändert' | 'nicht sendbar'; grund?: string;
+  ergebnis?: string;
+}
+
+export function classifySendAll(rows: Array<{ productId: number; listingId: string | null; plan: VolumeDiscountPlan; sent: SentPromotion | null }>): SendAllRow[] {
+  return rows.map(r => {
+    const bisher = r.sent && r.sent.listingId === r.listingId ? r.sent.percents : null;
+    if (!r.plan.ok || !r.plan.percents) {
+      return { productId: r.productId, listingId: r.listingId, neu: null, bisher, aktion: 'nicht sendbar' as const,
+        grund: (r.plan.error ?? 'nicht berechenbar') + (bisher ? ` | ACHTUNG: alte Aktion ${bisher[2]} %/${bisher[3]} % läuft weiter` : '') };
+    }
+    const same = !!bisher && bisher[2] === r.plan.percents[2] && bisher[3] === r.plan.percents[3];
+    return { productId: r.productId, listingId: r.listingId, neu: r.plan.percents, bisher, aktion: same ? 'unverändert' as const : 'senden' as const };
+  });
+}
+
+export async function sendAllMultiRabatt(opts: { apply?: boolean; limit?: number }) {
+  const { db } = await import('../db/index');
+  const { products } = await import('../db/schema');
+  const all = (await db.select().from(products)).filter(p => !!p.ebayListingId).sort((a, b) => a.id - b.id);
+  const [rule, sent] = await Promise.all([getVolumeDiscountRule(), getSentPromotions()]);
+  const rows = classifySendAll(all.map(p => ({ productId: p.id, listingId: p.ebayListingId ?? null, plan: planForProduct(p as PlanProduct, rule), sent: sent[String(p.id)] ?? null })));
+  const todo = rows.filter(r => r.aktion === 'senden');
+  if (opts.apply !== true) return { dryRun: true, rule, rows, zuSenden: todo.length };
+  const limit = Math.min(Math.max(1, Math.floor(opts.limit ?? MULTI_RABATT_SEND_ALL_MAX)), MULTI_RABATT_SEND_ALL_MAX);
+  for (const [i, r] of todo.slice(0, limit).entries()) {
+    if (i > 0) await new Promise(res => setTimeout(res, 800));
+    try {
+      const s = await sendMultiRabatt(r.productId, r.neu!);
+      r.ergebnis = s.ok ? `gesendet ${s.percents[2]} %/${s.percents[3]} %, geprüft=${s.verified}` : `NICHT gesendet: ${s.error}`;
+    } catch (e) { r.ergebnis = `Fehler: ${String(e).slice(0, 300)}`; }
+    console.log(`[Multi-Rabatt alle] stele-${r.productId}: ${r.ergebnis}`);
+  }
+  return { dryRun: false, rule, rows, zuSenden: todo.length, gesendetInDiesemAufruf: Math.min(limit, todo.length), rest: Math.max(0, todo.length - limit) };
+}
