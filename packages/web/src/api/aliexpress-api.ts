@@ -708,6 +708,59 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>(r => setTimeout(() => r(fallback), ms))]);
 }
 
+
+// P-37b TEMPORÄR: einmalige Varianten-Probe (wird mit dem Fix entfernt). Testet, welche Aufrufform
+// die Suche wirklich nach Suchbegriff/Sortierung filtert. Loggt nur totalCount, Titel, Preise.
+let aliSearchProbeDone = false;
+async function aliSearchVariantProbe(accessToken: string): Promise<void> {
+  if (aliSearchProbeDone) return;
+  aliSearchProbeDone = true;
+  const base = (keyWord: string, local: string): Record<string, string> => ({
+    keyWord, local, countryCode: 'DE', currency: 'EUR', pageIndex: '1', pageSize: '20', sortBy: 'min_price,asc',
+  });
+  const summarize = (data: Record<string, unknown>): string => {
+    const resp = data['aliexpress_ds_text_search_response'] as Record<string, unknown> | undefined;
+    const d = resp?.data as Record<string, unknown> | undefined;
+    const prods = (d?.products as { selection_search_product?: Array<Record<string, unknown>> } | undefined)?.selection_search_product ?? [];
+    const first = prods.slice(0, 4).map(x => `${String(x.title ?? '').slice(0, 30)}|${x.targetSalePrice ?? x.salePrice}`).join(' ; ');
+    return `code=${String(resp?.code ?? JSON.stringify(data).slice(0, 200))} total=${String(d?.totalCount)} n=${prods.length} [${first}]`;
+  };
+  const variants: Array<{ name: string; gw: 'sync' | 'rest'; extra: Record<string, string> }> = [
+    { name: 'A sync en_US', gw: 'sync', extra: base('cat litter scoop', 'en_US') },
+    { name: 'B rest de_DE', gw: 'rest', extra: base('cat litter scoop', 'de_DE') },
+    { name: 'C rest en_US', gw: 'rest', extra: base('cat litter scoop', 'en_US') },
+    { name: 'D sync de_DE Kontrolle "phone case"', gw: 'sync', extra: base('phone case', 'de_DE') },
+  ];
+  await Promise.all(variants.map(async (v) => {
+    try {
+      const method = 'aliexpress.ds.text.search';
+      const params: Record<string, string> = { app_key: APP_KEY, timestamp: String(Date.now()), access_token: accessToken, ...v.extra };
+      let url = IOP_ENDPOINT;
+      if (v.gw === 'sync') {
+        Object.assign(params, { method, format: 'json', sign_method: 'md5', v: '2.0' });
+        params.sign = iopSign(APP_SECRET, params);
+      } else {
+        const apiPath = '/' + method.replace(/\./g, '/');
+        Object.assign(params, { sign_method: 'sha256' });
+        params.sign = iopRestSign(APP_SECRET, apiPath, params);
+        url = `${IOP_REST_ENDPOINT}${apiPath}`;
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(params),
+        signal: AbortSignal.timeout(15000),
+      });
+      const text = await res.text();
+      let line: string;
+      try { line = summarize(JSON.parse(text) as Record<string, unknown>); } catch { line = `kein JSON: ${text.slice(0, 200)}`; }
+      console.log(`[AliSearch-Probe] ${v.name} HTTP ${res.status} ${line}`);
+    } catch (e) {
+      console.log(`[AliSearch-Probe] ${v.name} Fehler:`, e instanceof Error ? e.message : e);
+    }
+  }));
+}
+
 export async function searchAliProductsByApi(
   keyword: string,
   page: number,
@@ -756,6 +809,7 @@ export async function searchAliProductsByApi(
       console.log('[AliSearch-Debug] Request:', JSON.stringify(sent));
       console.log('[AliSearch-Debug] Antwort (1500):', JSON.stringify(data).slice(0, 1500));
     }
+    void aliSearchVariantProbe(accessToken); // P-37b TEMPORÄR, blockiert nicht
     const parsed = parseAliTextSearchResponse(data);
     if (!parsed.ok) {
       console.error(`[AliSearch] Methode=${method} API-Fehlercode=${parsed.code} msg=${parsed.msg} (${Date.now() - started} ms)`);
