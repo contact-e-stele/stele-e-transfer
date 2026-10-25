@@ -4,6 +4,8 @@ import {
   buildVolumeDiscountPromotion, DEFAULT_VOLUME_DISCOUNT_RULE,
 } from './volume-discount';
 import { productProfitRows } from './target-margin-bulk';
+import { afterEach, beforeEach } from 'bun:test';
+import { setAliEinfuhrEur, ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR } from './constants';
 
 // Echte Werte (App-DB, 18.10.2026): stele-220 GRAY VK 20,95 / EK 12,19 / Anzeige 0 %; stele-223 VK 11,95 / EK 1,99 / Anzeige 5 %. Beide China.
 const v220 = { label: 'GRAY', sellPrice: 20.95, buyPrice: 12.19, isChinaOrigin: true };
@@ -46,13 +48,6 @@ describe('Multi-Rabatt Plan (Formel v2)', () => {
     expect(p.basePrice).toBe(20.95);
     expect(p.percents![2]).toBe(percentForEur(3, 2, 20.95));
     expect(p.tiers[0].rows[1].saving).toBeLessThan(3);
-  });
-  test('eBay-Minimum: teurer Artikel wird auf 5 % / 6 % angehoben, mit Grund', () => {
-    // Synthetischer Rechenfall (kein Produkt): VK 99,95, EK 30.
-    const p = planVolumeDiscount({ rule, variants: [{ label: 'x', sellPrice: 99.95, buyPrice: 30, isChinaOrigin: true }], adRatePercent: 0, floorEur: 1 });
-    expect(percentForEur(3, 2, 99.95)).toBe(2);
-    expect(p.percents).toEqual({ 2: 5, 3: 6 });
-    expect(p.tiers[0].reason).toBe('eBay-Minimum 5 %');
   });
   test('Gewinn unter Boden → Prozent gesenkt bzw. gesperrt', () => {
     // Synthetisch: VK 20,95, EK 13,00. Boden 1 → sendbar; Boden 6 → schon beim eBay-Minimum unter dem Boden → gesperrt.
@@ -132,5 +127,40 @@ describe('Multi-Rabatt nach dem Listen nachholen (stele-232/228, 19.10.2026)', (
     expect(reusablePromotion(old, '198728227102')).toBeNull();
     expect(reusablePromotion(old, '198725901272')).toBe(old);
     expect(reusablePromotion(null, '198728227102')).toBeNull();
+  });
+});
+
+// 25.10.2026: Rechnung mit dem Betriebswert Einfuhr 5,95 (der Test-Preload setzt sonst 3,57 für alte Beleg-Fälle).
+describe('Multi-Rabatt Sperre je Stück (Einfuhr 5,95)', () => {
+  beforeEach(() => setAliEinfuhrEur(ALI_EINFUHR_EUR));
+  afterEach(() => setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR));
+  test('eBay-Minimum: Artikel wird auf 5 % / 6 % angehoben, mit Grund', () => {
+    // Synthetischer Rechenfall (kein Produkt): VK 49,95, EK 15 (25.10.: vorher 99,95/30 — dort greift jetzt die Sperre unten).
+    const p = planVolumeDiscount({ rule, variants: [{ label: 'x', sellPrice: 49.95, buyPrice: 15, isChinaOrigin: true }], adRatePercent: 0, floorEur: 1 });
+    expect(percentForEur(3, 2, 49.95)).toBe(4);
+    expect(p.percents).toEqual({ 2: 5, 3: 6 });
+    expect(p.tiers[0].reason).toBe('eBay-Minimum 5 %');
+  });
+  test('Sperre Inhaber 25.10.: je Stück nie weniger als ein Einzelkauf — teurer Artikel (5 % > gesparte Einfuhr)', () => {
+    const p = planVolumeDiscount({ rule, variants: [{ label: 'x', sellPrice: 99.95, buyPrice: 30, isChinaOrigin: true }], adRatePercent: 0, floorEur: 1 });
+    expect(p.singleRows[0].profit).toBe(45.8);
+    expect(p.tiers[0].rows[0].profit).toBe(89.7); // 44,85 je Stück < 45,80
+    expect(p.ok).toBe(false);
+    expect(p.error).toMatch(/bringt jedes Stück weniger als ein Einzelkauf/);
+  });
+  test('Sperre: EU-Lager wie stele-77 (21,45 / 14,29 / Germany / 5 %) bei Regel 6 €/11 € → kein Mengenrabatt', () => {
+    const p = planVolumeDiscount({ rule: { eur2: 6, eur3: 11 }, variants: [{ label: 'eu', sellPrice: 21.45, buyPrice: 14.29, isChinaOrigin: false }], adRatePercent: 5, floorEur: 1.3 });
+    expect(p.singleRows[0].profit).toBe(1.7);
+    expect(p.tiers[0].rows[0].profit).toBe(2.12); // 1,06 je Stück < 1,70
+    expect(p.tiers[0].reason).toBe('gesenkt: Gewinn je Stück sonst unter Einzelkauf');
+    expect(p.ok).toBe(false);
+  });
+  test('Regel 6 €/11 € stele-220 GRAY live (23,45 / 12,39 / 0 % / Faktor 0,9338) → 13 % / 16 %, je Stück über Einzelkauf', () => {
+    const p = planVolumeDiscount({ rule: { eur2: 6, eur3: 11 }, variants: [{ label: 'GRAY', sellPrice: 23.45, buyPrice: 12.39, isChinaOrigin: true }], adRatePercent: 0, floorEur: 1, checkoutFactor: 0.9338 });
+    expect(p.ok).toBe(true);
+    expect(p.percents).toEqual({ 2: 13, 3: 16 });
+    expect(p.singleRows[0].profit).toBe(1.39);
+    expect(p.tiers[0].rows[0]).toMatchObject({ total: 40.8, profit: 4.07 });
+    expect(p.tiers[1].rows[0]).toMatchObject({ total: 59.1, profit: 7.53 });
   });
 });

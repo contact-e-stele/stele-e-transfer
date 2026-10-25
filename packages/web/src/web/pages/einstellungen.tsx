@@ -729,6 +729,7 @@ export default function Einstellungen() {
           <button onClick={saveMulti} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Speichern</button>
           {multiMsg && <span style={{ fontSize: 12, fontWeight: 600, color: multiMsg.ok ? "#16A34A" : "#DC2626" }}>{multiMsg.text}</span>}
         </div>
+        <MultiRabattSendAll />
       </div>
 
       {/* P-EINFUHR (24.10.2026): Das frühere Feld "Zollpauschale (Bestellungen-Tab) 3,58 €" floss seit A-014 in keine Rechnung mehr ein
@@ -762,6 +763,44 @@ export default function Einstellungen() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Inhaber 25.10.2026: nach einer Regeländerung alle Angebote neu senden — erst Vorschau, dann Senden (je Klick höchstens 15).
+type SendAllRowUi = { productId: number; neu: { 2: number; 3: number } | null; bisher: { 2: number; 3: number } | null; aktion: string; grund?: string; ergebnis?: string };
+function MultiRabattSendAll() {
+  const [rows, setRows] = useState<SendAllRowUi[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const call = async (apply: boolean) => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch("/api/multi-rabatt/send-all", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ apply }) });
+      const d = await r.json() as { ok?: boolean; error?: string; rows?: SendAllRowUi[]; zuSenden?: number; rest?: number };
+      if (!d.ok) { setMsg(d.error || "Fehler"); return; }
+      setRows(d.rows ?? []);
+      setMsg(apply ? `Gesendet. Noch offen: ${d.rest ?? 0} — bei Bedarf erneut "Senden" klicken.` : `Vorschau: ${d.zuSenden ?? 0} Angebote würden gesendet.`);
+    } catch { setMsg("Netzwerkfehler"); } finally { setBusy(false); }
+  };
+  const btn = (bg: string) => ({ padding: "8px 14px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: bg, color: "#fff", cursor: busy ? "wait" : "pointer", fontFamily: "inherit" } as const);
+  const pct = (p: { 2: number; 3: number } | null) => (p ? `${p[2]} % / ${p[3]} %` : "—");
+  return (
+    <div style={{ marginTop: 12, borderTop: "1px solid #E2E8F0", paddingTop: 10 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button disabled={busy} onClick={() => call(false)} style={btn("#2563EB")}>Alle Angebote: Vorschau</button>
+        <button disabled={busy || !rows || !rows.some(r => r.aktion === "senden")} onClick={() => call(true)} style={btn("#16A34A")}>An eBay senden (max. 15)</button>
+        {msg && <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>{msg}</span>}
+      </div>
+      {rows && (
+        <div style={{ maxHeight: 260, overflowY: "auto", marginTop: 8, fontSize: 12 }}>
+          {rows.map(r => (
+            <div key={r.productId} style={{ padding: "3px 0", color: r.aktion === "nicht sendbar" ? "#B45309" : r.aktion === "senden" ? "#1E293B" : "#94A3B8" }}>
+              stele-{r.productId}: {r.aktion} · neu {pct(r.neu)} · bisher {pct(r.bisher)}{r.grund ? ` · ${r.grund}` : ""}{r.ergebnis ? ` · ${r.ergebnis}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

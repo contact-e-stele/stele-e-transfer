@@ -4009,6 +4009,18 @@ app.post('/products/specs-backfill', async (c) => {
   }
 });
 
+// Inhaber 25.10.2026: Multi-Rabatt nach Regeländerung für ALLE gelisteten Angebote neu senden. Standard Trockenlauf; {apply:true} sendet höchstens 15 je Aufruf.
+app.post('/multi-rabatt/send-all', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as { apply?: unknown; limit?: unknown };
+    const { sendAllMultiRabatt } = await import('./multi-rabatt');
+    const r = await sendAllMultiRabatt({ apply: body.apply === true, limit: typeof body.limit === 'number' ? body.limit : undefined });
+    return c.json({ ok: true, ...r }, 200);
+  } catch (e) {
+    return c.json({ ok: false, error: String(e) }, 500);
+  }
+});
+
 app.get('/aliexpress/search', async (c) => {
   const keyword = c.req.query('keyword') || '';
   const page = Math.max(1, parseInt(c.req.query('page') || '1') || 1);

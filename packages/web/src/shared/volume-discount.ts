@@ -87,7 +87,13 @@ export function planVolumeDiscount(inp: VolumeDiscountInput): VolumeDiscountPlan
   const minProfit = effectiveProfitFloor(inp.floorEur);
   const basePrice = Math.max(...variants.map(v => v.sellPrice));
   const singleRows = variants.map(v => ({ label: v.label, skuId: v.skuId, profit: cents(orderProfit(v, 1, 0, inp).profit) }));
-  const allAboveFloor = (qty: number, p: number) => variants.every(v => orderProfit(v, qty, p, inp).profit >= minProfit - 1e-9);
+  const singleProfit = new Map(variants.map(v => [v, orderProfit(v, 1, 0, inp).profit]));
+  // Inhaber 25.10.2026 (Regel 6 €/11 €): Mehrstück darf je Stück nie weniger bringen als ein Einzelkauf. Sonst lohnt der Rabatt nicht
+  // (betrifft Artikel ohne gesparten Versand/Einfuhr, z. B. EU-Lager: 77, 92, 95, 97, 139, 140, 145 am 25.10.).
+  const unitNotWorse = (v: VolumeDiscountVariant, qty: number, p: number) => orderProfit(v, qty, p, inp).profit / qty >= singleProfit.get(v)! - 1e-9;
+  const floorOk = (qty: number, p: number) => variants.every(v => orderProfit(v, qty, p, inp).profit >= minProfit - 1e-9);
+  const unitOk = (qty: number, p: number) => variants.every(v => unitNotWorse(v, qty, p));
+  const allAboveFloor = (qty: number, p: number) => floorOk(qty, p) && unitOk(qty, p);
 
   const percents = { 2: 0, 3: 0 } as { 2: number; 3: number };
   const tiers: VolumeDiscountTier[] = [];
@@ -99,8 +105,9 @@ export function planVolumeDiscount(inp: VolumeDiscountInput): VolumeDiscountPlan
     let p = Math.min(Math.max(wanted, lower), EBAY_TIER_MAX_PERCENT[qty]);
     let reason: string | null = p > wanted ? (wanted < EBAY_TIER_MIN_PERCENT[qty] ? `eBay-Minimum ${EBAY_TIER_MIN_PERCENT[qty]} %` : 'muss höher sein als 2 Stück')
       : p < wanted ? `eBay-Maximum ${EBAY_TIER_MAX_PERCENT[qty]} %` : null;
-    while (p > lower && !allAboveFloor(qty, p)) { p--; reason = 'gesenkt: Gewinn sonst unter dem Boden'; }
-    if (!allAboveFloor(qty, p) && !error) error = `${qty} Stück: schon bei ${p} % (kleinster erlaubter Wert) liegt der Gewinn einer Variante unter ${minProfit.toFixed(2).replace('.', ',')} €.`;
+    while (p > lower && !allAboveFloor(qty, p)) { p--; reason = floorOk(qty, p + 1) ? 'gesenkt: Gewinn je Stück sonst unter Einzelkauf' : 'gesenkt: Gewinn sonst unter dem Boden'; }
+    if (!floorOk(qty, p) && !error) error = `${qty} Stück: schon bei ${p} % (kleinster erlaubter Wert) liegt der Gewinn einer Variante unter ${minProfit.toFixed(2).replace('.', ',')} €.`;
+    else if (!unitOk(qty, p) && !error) error = `${qty} Stück: schon bei ${p} % (kleinster erlaubter Wert) bringt jedes Stück weniger als ein Einzelkauf — Mengenrabatt lohnt hier nicht (Rabatt größer als der gesparte Versand/Einfuhr, z. B. EU-Lager oder teurer Artikel).`;
     percents[qty] = p;
     const rows = variants.map(v => {
       const r = orderProfit(v, qty, p, inp);
