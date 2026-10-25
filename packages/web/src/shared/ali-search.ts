@@ -11,6 +11,8 @@ export interface AliSearchHit {
   rating: number;
   sold: number;
   url: string;
+  /** false = kein Wort des Suchbegriffs im Titel (nur Markierung, nie ausgeblendet) */
+  relevant: boolean;
 }
 
 export type AliSearchParsed =
@@ -90,6 +92,7 @@ export function parseAliTextSearchResponse(data: Record<string, unknown>): AliSe
         rating: toRating(p.evaluateRate),
         sold: Math.round(toNumber(p.orders)),
         url,
+        relevant: true,
       };
     });
 
@@ -103,4 +106,41 @@ export function sortEuFirst(hits: AliSearchHit[], shipFromFilter: string): AliSe
   return [...hits.map((h, i) => ({ h, i }))]
     .sort((a, b) => (Number(b.h.isEU) - Number(a.h.isEU)) || a.i - b.i)
     .map(x => x.h);
+}
+
+/**
+ * ds.text.search ignoriert sortBy (live belegt, P-37b) — daher Sortierung in der App,
+ * innerhalb der geladenen Seite. Stabil; unbekannte Sortierung = Reihenfolge der API.
+ */
+export function sortAliHits(hits: AliSearchHit[], frontendSort: string | undefined): AliSearchHit[] {
+  const indexed = hits.map((h, i) => ({ h, i }));
+  switch (frontendSort) {
+    case 'SALE_PRICE_ASC':
+      indexed.sort((a, b) => (a.h.price || Infinity) - (b.h.price || Infinity) || a.i - b.i);
+      break;
+    case 'SALE_PRICE_DESC':
+      indexed.sort((a, b) => b.h.price - a.h.price || a.i - b.i);
+      break;
+    case 'LAST_VOLUME_DESC':
+      indexed.sort((a, b) => b.h.sold - a.h.sold || a.i - b.i);
+      break;
+    default:
+      return hits;
+  }
+  return indexed.map(x => x.h);
+}
+
+/** Wörter des Suchbegriffs ab 3 Buchstaben, klein geschrieben. */
+export function searchTerms(keyword: string): string[] {
+  return keyword.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3);
+}
+
+/** Markiert Treffer ohne jedes Suchwort im Titel als relevant:false (blendet nichts aus). */
+export function markRelevance(hits: AliSearchHit[], keyword: string): AliSearchHit[] {
+  const terms = searchTerms(keyword);
+  if (terms.length === 0) return hits.map(h => ({ ...h, relevant: true }));
+  return hits.map(h => {
+    const t = h.title.toLowerCase();
+    return { ...h, relevant: terms.some(w => t.includes(w)) };
+  });
 }
