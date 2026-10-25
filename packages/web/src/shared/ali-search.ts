@@ -143,3 +143,11 @@ export function markRelevance(hits: AliSearchHit[], keyword: string): AliSearchH
     return { ...h, relevant: terms.some(w => t.includes(w)) };
   });
 }
+
+/** Passende Treffer (relevant:true) vor den ausgegrauten; stabil, nichts wird ausgeblendet. */
+export function relevantFirst(hits: AliSearchHit[]): AliSearchHit[] {
+  return hits
+    .map((h, i) => ({ h, i }))
+    .sort((a, b) => (Number(b.h.relevant) - Number(a.h.relevant)) || a.i - b.i)
+    .map(x => x.h);
+}
