@@ -1770,8 +1770,7 @@ const app = new Hono()
     const redirectUri = `${baseUrl.replace(/\/$/, '')}/api/aliexpress/callback`;
     const tokens = await exchangeAliCodeForToken(code, redirectUri);
     if (!tokens) return c.json({ error: 'Token-Exchange fehlgeschlagen' }, 500);
-    console.log('[AliExpress OAuth] Access token obtained:', tokens.access_token.slice(0, 20) + '...');
-    console.log('[AliExpress OAuth] Refresh token:', tokens.refresh_token.slice(0, 20) + '...');
+    console.log('[AliExpress OAuth] Access token erhalten (Wert wird nicht geloggt, K-012)');
     // Token automatisch in DB speichern
     const expiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;  // Aktueller Timestamp (Sekunden) + expires_in (Sekunden)
     await saveAliTokens(tokens.access_token, tokens.refresh_token, expiresAt);
