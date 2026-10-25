@@ -8,6 +8,7 @@ import { safeJson } from "../lib/safeFetch";
 import { emptyOverrides, overridesToFlat, effectiveForm, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
 import { gpsrFormGate } from "../../shared/gpsr-import-gate";
 import { GpsrFieldsEditor, invalidatePartyOptions } from "../components/gpsr-fields-editor";
+import { BildsucheCard } from "../components/bildsuche-card";
 import { aliEinfuhrEur, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
@@ -1495,6 +1496,9 @@ export default function Lieferanten() {
                 {product.price && <p style={{ margin: "8px 0 0", fontSize: 16, fontWeight: 700, color: "#FF6B00" }}>{product.price}</p>}
               </div>
             )}
+
+            {/* Gleiche Ware günstiger? — Bildsuche, nur Anzeige */}
+            <BildsucheCard imageUrl={visibleImages[0] ?? allImages[0]} currentPrice={einkaufStueck > 0 ? einkaufStueck : null} />
 
             {/* Titel */}
             <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(0,0,0,0.07)", marginBottom: 14 }}>

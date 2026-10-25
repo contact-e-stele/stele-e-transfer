@@ -3993,6 +3993,14 @@ app.get('/aliexpress/search', async (c) => {
   const r = await searchAliProductsByApi(keyword.trim(), page, shipFrom, sort);
   return c.json({ status: r.status, results: r.results, total: r.total, page, keyword, message: r.message }, 200);
 });
+// ─── Bildsuche "gleiche Ware günstiger?" (nur Anzeige, ändert nichts) ─────────────
+app.get('/aliexpress/image-search', async (c) => {
+  const imageUrl = c.req.query('imageUrl') || '';
+  if (!imageUrl.trim()) return c.json({ error: 'imageUrl fehlt' }, 400);
+  const { searchAliByImageApi } = await import('./aliexpress-api');
+  const r = await searchAliByImageApi(imageUrl.trim());
+  return c.json({ status: r.status, results: r.results, total: r.total, message: r.message }, 200);
+});
 app.get('/backup/test', async (c) => {
   const { runBackup } = await import('./backup');
   const result = await runBackup();

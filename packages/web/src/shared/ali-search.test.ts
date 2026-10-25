@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mapAliSearchSort, parseAliTextSearchResponse, sortEuFirst, isEuShipFrom, sortAliHits, markRelevance, searchTerms, type AliSearchHit } from './ali-search';
+import { mapAliSearchSort, parseAliTextSearchResponse, sortEuFirst, isEuShipFrom, sortAliHits, markRelevance, searchTerms, relevantFirst, type AliSearchHit } from './ali-search';
 
 describe('mapAliSearchSort', () => {
   test('Frontend → API', () => {
@@ -102,5 +102,13 @@ describe('markRelevance', () => {
   });
   test('Suchbegriff ohne Wort ≥3 Buchstaben → alles relevant', () => {
     expect(markRelevance([mk('1', 'x')], 'ab').every(h => h.relevant)).toBe(true);
+  });
+});
+
+describe('relevantFirst', () => {
+  const mk = (id: string, relevant: boolean): AliSearchHit => ({ id, title: '', image: '', price: 1, shipFrom: '?', isEU: false, rating: 0, sold: 0, url: '', relevant });
+  test('passende zuerst, Reihenfolge innerhalb der Gruppen stabil, nichts entfernt', () => {
+    const out = relevantFirst([mk('a', false), mk('b', true), mk('c', false), mk('d', true)]);
+    expect(out.map(h => h.id)).toEqual(['b', 'd', 'a', 'c']);
   });
 });

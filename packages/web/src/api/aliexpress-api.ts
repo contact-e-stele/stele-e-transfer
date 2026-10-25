@@ -7,7 +7,8 @@ import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import type { VariantPrice, GpsrInfo } from './aliexpress';
 import { collectShopRelatedFields } from './aliexpress';
-import { mapAliSearchSort, parseAliTextSearchResponse, isEuShipFrom, sortEuFirst, sortAliHits, markRelevance, type AliSearchHit } from '../shared/ali-search';
+import { mapAliSearchSort, parseAliTextSearchResponse, isEuShipFrom, sortEuFirst, sortAliHits, markRelevance, relevantFirst, type AliSearchHit } from '../shared/ali-search';
+import { isAllowedImageUrl, normalizeImageUrl, parseAliImageSearchResponse, cheapestFirst } from '../shared/ali-image-search';
 import { skuPriceDiagnostic, deriveProductShipsFrom, type SkuPriceDiagnostic } from '../shared/ali-sku-price';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
@@ -707,6 +708,35 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>(r => setTimeout(() => r(fallback), ms))]);
 }
 
+/**
+ * Versandland je Treffer über den bestehenden Helper getAliProductByApi (ds.product.get).
+ * ds.freight.query liefert kein Versandland und braucht eine skuId (siehe PR #211).
+ * Zählt bekannt/EU/unbekannt, damit "0 von 20 EU" im Log belegbar ist.
+ */
+async function enrichShipFrom(hits: AliSearchHit[], accessToken: string, budgetMs: number): Promise<{ known: number; eu: number; unknown: number }> {
+  let next = 0;
+  const worker = async () => {
+    while (next < hits.length) {
+      const h = hits[next++];
+      const product = await withTimeout(
+        getAliProductByApi(h.id, accessToken).catch(() => null),
+        ALI_SEARCH_SHIP_TIMEOUT_MS,
+        null,
+      );
+      if (product?.shipsFrom) {
+        h.shipFrom = product.shipsFrom;
+        h.isEU = isEuShipFrom(product.shipsFrom);
+      }
+    }
+  };
+  await withTimeout(
+    Promise.all(Array.from({ length: Math.min(ALI_SEARCH_SHIP_CONCURRENCY, hits.length) }, worker)),
+    budgetMs,
+    undefined,
+  );
+  const known = hits.filter(h => h.shipFrom !== '?').length;
+  return { known, eu: hits.filter(h => h.isEU).length, unknown: hits.length - known };
+}
 
 export async function searchAliProductsByApi(
   keyword: string,
@@ -757,34 +787,88 @@ export async function searchAliProductsByApi(
 
     // Versandland je Treffer (max. 5 parallel, je 8 s), Gesamtbudget hart begrenzt
     const hits = parsed.hits;
-    let next = 0;
-    const worker = async () => {
-      while (next < hits.length) {
-        const h = hits[next++];
-        const product = await withTimeout(
-          getAliProductByApi(h.id, accessToken).catch(() => null),
-          ALI_SEARCH_SHIP_TIMEOUT_MS,
-          null,
-        );
-        if (product?.shipsFrom) {
-          h.shipFrom = product.shipsFrom;
-          h.isEU = isEuShipFrom(product.shipsFrom);
-        }
-      }
-    };
-    const remaining = Math.max(1000, ALI_SEARCH_TOTAL_BUDGET_MS - (Date.now() - started));
-    await withTimeout(
-      Promise.all(Array.from({ length: Math.min(ALI_SEARCH_SHIP_CONCURRENCY, hits.length) }, worker)),
-      remaining,
-      undefined,
-    );
+    const ship = await enrichShipFrom(hits, accessToken, Math.max(1000, ALI_SEARCH_TOTAL_BUDGET_MS - (Date.now() - started)));
 
-    // sortBy wirkt bei der API nicht (live belegt) → Sortierung/Relevanz in der App, dann EU zuerst (stabil)
-    const results = sortEuFirst(sortAliHits(markRelevance(hits, keyword), frontendSort), shipFromFilter);
-    console.log(`[AliSearch] Methode=${method} Treffer=${results.length} total=${parsed.total} (${Date.now() - started} ms)`);
+    // sortBy wirkt bei der API nicht (live belegt) → Sortierung/Relevanz in der App.
+    // Rangfolge (stabil, letzte Sortierung gewinnt): passend > EU-Versand (bei Filter DE) > gewählte Sortierung
+    const results = relevantFirst(sortEuFirst(sortAliHits(markRelevance(hits, keyword), frontendSort), shipFromFilter));
+    console.log(`[AliSearch] Methode=${method} Treffer=${results.length} total=${parsed.total} passend=${results.filter(h => h.relevant).length} Versandland: bekannt=${ship.known} EU=${ship.eu} unbekannt=${ship.unknown} (${Date.now() - started} ms)`);
     return { status: 'ok', results, total: parsed.total };
   } catch (e) {
     console.error(`[AliSearch] Methode=${method} Fehler (${Date.now() - started} ms):`, e instanceof Error ? e.message : e);
+    return { status: 'api_error', results: [], total: 0, code: 'exception', message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// ── Bildsuche "gleiche Ware günstiger?" (aliexpress.ds.image.searchV2, nur Anzeige) ─────────
+const ALI_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+let aliImageLogged = false; // echte Request-/Response-Form einmal pro Prozessstart im Log belegen
+
+export async function searchAliByImageApi(imageUrl: string): Promise<AliSearchResult> {
+  const started = Date.now();
+  const method = 'aliexpress.ds.image.searchV2';
+  if (!isAllowedImageUrl(imageUrl)) {
+    return { status: 'api_error', results: [], total: 0, code: 'bad_image_url', message: 'Bild-URL nicht erlaubt (nur https von AliExpress-Hosts).' };
+  }
+  await ensureFreshAliToken();
+  const accessToken = await getAliAccessToken();
+  if (!accessToken) {
+    console.log(`[AliImage] Methode=${method} kein Token (${Date.now() - started} ms)`);
+    return { status: 'no_token', results: [], total: 0, message: 'Kein AliExpress-Token vorhanden.' };
+  }
+
+  try {
+    const imgRes = await fetch(normalizeImageUrl(imageUrl), { signal: AbortSignal.timeout(8000) });
+    if (!imgRes.ok) {
+      return { status: 'api_error', results: [], total: 0, code: `image_http_${imgRes.status}`, message: `Bild konnte nicht geladen werden (HTTP ${imgRes.status}).` };
+    }
+    const bytes = Buffer.from(await imgRes.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > ALI_IMAGE_MAX_BYTES) {
+      return { status: 'api_error', results: [], total: 0, code: 'image_size', message: `Bildgröße ${bytes.length} Byte nicht zulässig (max. 5 MB).` };
+    }
+
+    const params: Record<string, string> = {
+      app_key: APP_KEY,
+      method,
+      timestamp: String(Date.now()),
+      format: 'json',
+      sign_method: 'md5',
+      v: '2.0',
+      access_token: accessToken,
+      image_file_bytes: bytes.toString('base64'),
+      shpt_to: 'DE',
+      target_currency: 'EUR',
+      target_language: 'DE',
+      product_cnt: '20',
+    };
+    params.sign = iopSign(APP_SECRET, params);
+
+    const res = await fetch(IOP_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    if (!aliImageLogged) {
+      aliImageLogged = true;
+      const { access_token: _t, sign: _s, image_file_bytes: _b, ...sent } = params;
+      console.log('[AliImage] Request (ohne Token/Sign/Bildbytes):', JSON.stringify({ ...sent, image_bytes: bytes.length }));
+      console.log('[AliImage] Antwort (1500):', JSON.stringify(data).slice(0, 1500));
+    }
+    const parsed = parseAliImageSearchResponse(data);
+    if (!parsed.ok) {
+      console.error(`[AliImage] Methode=${method} API-Fehlercode=${parsed.code} msg=${parsed.msg} (${Date.now() - started} ms)`);
+      return { status: 'api_error', results: [], total: 0, code: parsed.code, message: `${parsed.code}: ${parsed.msg}` };
+    }
+
+    const hits = parsed.hits;
+    const ship = await enrichShipFrom(hits, accessToken, Math.max(1000, ALI_SEARCH_TOTAL_BUDGET_MS - (Date.now() - started)));
+    const results = cheapestFirst(hits);
+    console.log(`[AliImage] Methode=${method} Treffer=${results.length} Versandland: bekannt=${ship.known} EU=${ship.eu} unbekannt=${ship.unknown} (${Date.now() - started} ms)`);
+    return { status: 'ok', results, total: results.length };
+  } catch (e) {
+    console.error(`[AliImage] Methode=${method} Fehler (${Date.now() - started} ms):`, e instanceof Error ? e.message : e);
     return { status: 'api_error', results: [], total: 0, code: 'exception', message: e instanceof Error ? e.message : String(e) };
   }
 }
