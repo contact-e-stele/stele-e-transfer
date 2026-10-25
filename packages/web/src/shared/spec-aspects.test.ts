@@ -14,14 +14,26 @@ const CAT: CategoryAspectDef[] = [
 ];
 
 describe('Punkt C: AliExpress-Merkmale → eBay-Merkmale der Kategorie', () => {
-  test('Reisekissen-Fall: Material, Herkunft (Mainland China → China), Typ, Zubehör', () => {
+  test('Reisekissen-Fall: Material und Herkunft ja; Typ/Zubehör (englische Freitexte) nein — C2', () => {
     const r = matchSpecsToCategoryAspects({ Material: 'PVC', Origin: 'Mainland China', Type: 'Travel Pillow', Accessory: 'Storage Bag' }, CAT);
-    expect(r.aspects).toEqual({ Material: 'PVC', 'Herstellungsland und -region': 'China', Produktart: 'Travel Pillow', Zubehör: 'Storage Bag' });
+    expect(r.aspects).toEqual({ Material: 'PVC', 'Herstellungsland und -region': 'China' });
+  });
+  test('C2: echte Werte vom 25.10. werden übersetzt, unklare ausgelassen', () => {
+    const cat = [...CAT, { localizedAspectName: 'Füllmaterial' }, { localizedAspectName: 'Muster' }, { localizedAspectName: 'Maße' }] as CategoryAspectDef[];
+    expect(matchSpecsToCategoryAspects({ Material: 'Plastic', Filling: 'POLYESTER', 'Pattern Type': 'Solid', Size: '45x50cm' }, cat).aspects)
+      .toEqual({ Material: 'Kunststoff', Füllmaterial: 'Polyester', Muster: 'Einfarbig', Maße: '45 x 50 cm' });
+    expect(matchSpecsToCategoryAspects({ Material: 'Polyester / Cotton' }, cat).aspects).toEqual({ Material: 'Polyester, Baumwolle' });
+    expect(matchSpecsToCategoryAspects({ Material: '304 Stainless Steel' }, cat).aspects).toEqual({ Material: 'Edelstahl' });
+    expect(matchSpecsToCategoryAspects({ Material: 'other', Size: 'Pack of 100', 'Place Of Origin': 'China (mainland)' }, cat).aspects)
+      .toEqual({ 'Herstellungsland und -region': 'China' });
+    expect(matchSpecsToCategoryAspects({ Size: 'About 13.5*3cm' }, cat).aspects).toEqual({ Maße: '13,5 x 3 cm' });
   });
   test('Auswahl-Merkmal: Wert außerhalb der Liste wird NICHT gesendet (kein Raten)', () => {
-    const r = matchSpecsToCategoryAspects({ Origin: 'Guangdong' }, CAT);
+    const cat = [{ localizedAspectName: 'Material', aspectConstraint: { aspectMode: 'SELECTION_ONLY' }, aspectValues: [{ localizedValue: 'Holz' }] }] as CategoryAspectDef[];
+    const r = matchSpecsToCategoryAspects({ Material: 'Plastic' }, cat);
     expect(r.aspects).toEqual({});
     expect(r.skipped[0].reason).toMatch(/Auswahlliste/);
+    expect(matchSpecsToCategoryAspects({ Origin: 'Guangdong' }, CAT).aspects).toEqual({}); // keine eindeutige China-Angabe
   });
   test('Auswahl-Merkmal: eBay-Schreibweise wird übernommen', () => {
     expect(matchSpecsToCategoryAspects({ Herkunft: 'china' }, CAT).aspects).toEqual({ 'Herstellungsland und -region': 'China' });
@@ -58,11 +70,13 @@ describe('Punkt C: ds.product.get-Eigenschaften lesen', () => {
 
 describe('Punkt C: buildAspects nutzt die Merkmale (Kategorie aus der Taxonomy API)', () => {
   const fetchCat = (async () => new Response(JSON.stringify({ aspects: CAT }), { status: 200 })) as unknown as typeof fetch;
-  test('Material/Herkunft/Zubehör landen im Angebot, Marke bleibt Markenlos', async () => {
-    const a = await buildAspects({ Material: 'PVC', Origin: 'Mainland China', Accessory: 'Storage Bag', 'Brand Name': 'Wanchuan' }, undefined, 'CAT-SPEC-C-1', undefined, undefined, [], [], fetchCat, async () => 't');
-    expect(a['Material']).toEqual(['PVC']);
+  test('Material (übersetzt) und Herkunft landen im Angebot; Typ/Zubehör/Größe-Rohwerte nicht; Marke bleibt Markenlos', async () => {
+    const a = await buildAspects({ Material: 'Plastic', Origin: 'Mainland China', Accessory: 'Storage Bag', Type: 'cats', Size: 'Pack of 100', 'Brand Name': 'Wanchuan' }, undefined, 'CAT-SPEC-C-1', undefined, undefined, [], [], fetchCat, async () => 't');
+    expect(a['Material']).toEqual(['Kunststoff']);
     expect(a['Herstellungsland und -region']).toEqual(['China']);
-    expect(a['Zubehör']).toEqual(['Storage Bag']);
+    expect(a['Zubehör']).toBeUndefined();
+    expect(a['Typ']).toBeUndefined();
+    expect(a['Größe']).toBeUndefined();
     expect(a['Marke']).toEqual(['Markenlos']);
   });
   test('ohne specs: unverändert wie bisher (nur Marke/EAN)', async () => {

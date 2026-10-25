@@ -731,6 +731,18 @@ export default function Einstellungen() {
         </div>
       </div>
 
+      {/* C2 (Inhaber 25.10.2026): Artikelmerkmale aus AliExpress in die Live-Angebote — nur fehlende, je Klick 10 Angebote */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>🧾</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Artikelmerkmale in Live-Angebote</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 8px" }}>
+          Ergänzt nur fehlende Merkmale (Material, Herstellungsland, Füllmaterial, Muster, Form, Maße) — übersetzt und gegen die eBay-Kategorie geprüft. Vorhandene Merkmale, Preise und Mengen bleiben unverändert.
+        </p>
+        <MerkmaleLive />
+      </div>
+
       {/* P-EINFUHR (24.10.2026): Das frühere Feld "Zollpauschale (Bestellungen-Tab) 3,58 €" floss seit A-014 in keine Rechnung mehr ein
           (order-matching.ts) und führte in die Irre. Ersetzt durch eine reine Anzeige des Werts, mit dem die App überall rechnet. */}
       <div style={card}>
@@ -762,6 +774,44 @@ export default function Einstellungen() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+type MerkmaleRow = { productId: number; error?: string; rows?: Array<{ target: string; added: Record<string, string>; written: boolean; verified?: boolean; error?: string }> };
+function MerkmaleLive() {
+  const [offset, setOffset] = useState(0);
+  const [res, setRes] = useState<{ gesamt?: number; naechsterOffset?: number | null; results?: MerkmaleRow[]; mode?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const call = async (confirm: boolean) => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/products/merkmale-live-all", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ confirm, offset }) });
+      const d = await r.json() as { error?: string; gesamt?: number; naechsterOffset?: number | null; results?: MerkmaleRow[]; mode?: string };
+      if (d.error) setErr(d.error); else setRes(d);
+    } catch { setErr("Netzwerkfehler"); } finally { setBusy(false); }
+  };
+  const btn = (bg: string) => ({ padding: "8px 14px", fontSize: 13, fontWeight: 700, borderRadius: 8, border: "none", background: bg, color: "#fff", cursor: busy ? "wait" : "pointer", fontFamily: "inherit" } as const);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button disabled={busy} onClick={() => call(false)} style={btn("#2563EB")}>Vorschau (10 ab Nr. {offset + 1})</button>
+        <button disabled={busy || !res || res.mode !== "preview"} onClick={() => call(true)} style={btn("#16A34A")}>Diese 10 an eBay schreiben</button>
+        <button disabled={busy || res?.naechsterOffset == null} onClick={() => { if (res?.naechsterOffset != null) { setOffset(res.naechsterOffset); setRes(null); } }} style={btn("#64748B")}>Nächste 10</button>
+        {res?.gesamt != null && <span style={{ fontSize: 12, color: "#334155" }}>{res.gesamt} Angebote mit Merkmalen</span>}
+        {err && <span style={{ fontSize: 12, color: "#DC2626" }}>{err}</span>}
+      </div>
+      {res?.results && (
+        <div style={{ maxHeight: 260, overflowY: "auto", marginTop: 8, fontSize: 12 }}>
+          {res.results.map(r => {
+            const first = r.rows?.[0];
+            const added = first ? Object.entries(first.added).map(([k, v]) => `${k}: ${v}`).join(", ") : "";
+            const status = r.error ? `⚠ ${r.error}` : res.mode === "apply" ? (r.rows?.every(x => x.written || Object.keys(x.added).length === 0) ? (r.rows?.every(x => x.verified !== false) ? "✓ geschrieben" : "geschrieben, Rücklese-Abweichung") : `Fehler: ${r.rows?.find(x => x.error)?.error ?? ""}`) : (added ? "würde ergänzen" : "nichts zu ergänzen");
+            return <div key={r.productId} style={{ padding: "3px 0", color: r.error ? "#B45309" : "#1E293B" }}>stele-{r.productId}: {status}{added ? ` · ${added}` : ""}</div>;
+          })}
+        </div>
+      )}
     </div>
   );
 }

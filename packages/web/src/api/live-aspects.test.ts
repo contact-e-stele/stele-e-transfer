@@ -1,0 +1,63 @@
+import { describe, expect, test } from 'bun:test';
+import { applySpecAspectsToListing, aspectAdditions } from './live-aspects';
+import type { CategoryAspectDef } from '../shared/spec-aspects';
+
+const CAT: CategoryAspectDef[] = [
+  { localizedAspectName: 'Material' }, { localizedAspectName: 'Herstellungsland und -region' }, { localizedAspectName: 'Farbe' }, { localizedAspectName: 'Marke' },
+];
+// echte Merkmale stele-127 (Probelauf 25.10.2026)
+const SPECS127 = { 'Brand Name': 'NONE', Material: 'Plastic', 'Require Food Contact': 'Yes', 'High-concerned chemical': 'none', Origin: 'Mainland China', Choice: 'yes', semi_Choice: 'yes' };
+
+function mockEbay(docs: Record<string, Record<string, unknown>>, categoryId = '12345') {
+  const calls: Array<{ method: string; url: string; body?: unknown }> = [];
+  const store = JSON.parse(JSON.stringify(docs)) as Record<string, Record<string, unknown>>;
+  const f = (async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (url.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ categoryId }] }), { status: 200 });
+    const key = decodeURIComponent(url.split('/').pop()!);
+    if (method === 'PUT') { store[key] = JSON.parse(String(init!.body)); return new Response(null, { status: 204 }); }
+    return store[key] ? new Response(JSON.stringify(store[key]), { status: 200 }) : new Response('{}', { status: 404 });
+  }) as unknown as typeof fetch;
+  return { f, calls, store };
+}
+
+describe('C2: Merkmale in Live-Angebote (nur fehlende ergänzen)', () => {
+  test('aspectAdditions: vorhandene und Variations-Merkmale bleiben unberührt', () => {
+    expect(aspectAdditions({ Marke: ['Markenlos'] }, SPECS127, CAT)).toEqual({ Material: 'Kunststoff', 'Herstellungsland und -region': 'China' });
+    expect(aspectAdditions({ Material: ['PP'] }, SPECS127, CAT)).toEqual({ 'Herstellungsland und -region': 'China' });
+    expect(aspectAdditions({}, { Material: 'Plastic' }, CAT, ['Material'])).toEqual({});
+  });
+
+  test('Varianten-Angebot: Vorschau schreibt nichts', async () => {
+    const m = mockEbay({ 'stele-127-GROUP': { aspects: { Marke: ['Markenlos'] }, variesBy: { specifications: [{ name: 'Farbe' }] } }, A: { product: { aspects: { Marke: ['Markenlos'], Farbe: ['Weiß'] } } } });
+    const r = await applySpecAspectsToListing({ productId: 127, specs: SPECS127, token: 't', baseUrl: 'https://x', confirm: false, itemSkus: ['A'], getCategoryAspects: async () => CAT, fetchFn: m.f });
+    expect(r.categoryId).toBe('12345');
+    expect(r.rows.map(x => [x.target, x.written, x.added])).toEqual([
+      ['stele-127-GROUP', false, { Material: 'Kunststoff', 'Herstellungsland und -region': 'China' }],
+      ['A', false, { Material: 'Kunststoff', 'Herstellungsland und -region': 'China' }],
+    ]);
+    expect(m.calls.filter(c => c.method === 'PUT')).toEqual([]);
+  });
+
+  test('Varianten-Angebot: Schreiben ergänzt nur, voller Doc, zurückgelesen', async () => {
+    const m = mockEbay({ 'stele-127-GROUP': { aspects: { Marke: ['Markenlos'] }, variantSKUs: ['A'], title: 'T', variesBy: { specifications: [{ name: 'Farbe' }] } }, A: { product: { aspects: { Marke: ['Markenlos'], Farbe: ['Weiß'] }, title: 'T' }, availability: { shipToLocationAvailability: { quantity: 4 } } } });
+    const r = await applySpecAspectsToListing({ productId: 127, specs: SPECS127, token: 't', baseUrl: 'https://x', confirm: true, itemSkus: ['A'], getCategoryAspects: async () => CAT, fetchFn: m.f });
+    expect(r.rows.every(x => x.written && x.verified)).toBe(true);
+    expect(m.store['stele-127-GROUP']).toMatchObject({ aspects: { Marke: ['Markenlos'], Material: ['Kunststoff'], 'Herstellungsland und -region': ['China'] }, variantSKUs: ['A'], title: 'T' });
+    expect(m.store['A']).toMatchObject({ product: { aspects: { Marke: ['Markenlos'], Farbe: ['Weiß'], Material: ['Kunststoff'] } }, availability: { shipToLocationAvailability: { quantity: 4 } } });
+  });
+
+  test('Einzelangebot ohne Gruppe: Item stele-<id>', async () => {
+    const m = mockEbay({ 'stele-220': { product: { aspects: { Marke: ['Markenlos'] } } } });
+    const r = await applySpecAspectsToListing({ productId: 220, specs: { Origin: 'Mainland China', Filling: 'POLYESTER' }, token: 't', baseUrl: 'https://x', confirm: true, itemSkus: [], getCategoryAspects: async () => CAT, fetchFn: m.f });
+    expect(r.rows).toEqual([{ target: 'stele-220', added: { 'Herstellungsland und -region': 'China' }, written: true, verified: true }]);
+  });
+
+  test('Kategorie nicht lesbar → nichts geschrieben', async () => {
+    const m = mockEbay({ 'stele-1': { product: { aspects: {} } } }, '');
+    const r = await applySpecAspectsToListing({ productId: 1, specs: SPECS127, token: 't', baseUrl: 'https://x', confirm: true, itemSkus: [], getCategoryAspects: async () => CAT, fetchFn: m.f });
+    expect(r.error).toMatch(/Kategorie nicht lesbar/);
+    expect(m.calls.filter(c => c.method === 'PUT')).toEqual([]);
+  });
+});
