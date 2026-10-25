@@ -715,6 +715,8 @@ export default function Lieferanten() {
           generatedTitle: editableTitle,
           htmlDescription: editableHtml,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
+          // Punkt C (25.10.2026): Merkmale selbst mitspeichern — bisher nur als bullets, products.specs blieb NULL → eBay ohne Merkmale
+          specs: product.specs && Object.keys(product.specs).length > 0 ? product.specs : undefined,
           variants: editedVariants
             .filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
           // P-85 Schritt 2b: hat die Nutzerin während des Imports einen Anzeigewert umbenannt

@@ -652,12 +652,12 @@ export async function getAliProductByApi(productId: string, accessToken: string)
     const shipsFromDE = EU_COUNTRIES.some(c => shipFrom.toLowerCase().includes(c));
 
     // ── Eigenschaften / Specs ─────────────────────────────────────────────────
-    const specs: Record<string, string> = {};
-    const propContainer = result.ae_item_properties as { ae_item_property?: Array<{ property_name?: string; property_value?: string }> } | undefined;
-    const props = propContainer?.ae_item_property || [];
-    for (const p of props.slice(0, 15)) {
-      if (p.property_name && p.property_value) specs[p.property_name] = p.property_value;
-    }
+    // Punkt C (25.10.2026): bisher nur property_name/property_value gelesen → bei allen 72 Live-Angeboten specs leer.
+    // Jetzt beide Schreibweisen (attr_name/attr_value) über die reine Funktion; erste Eigenschaft einmal im Log als Beleg.
+    const { parseAliItemProperties } = await import('../shared/spec-aspects');
+    const specs = parseAliItemProperties(result.ae_item_properties);
+    const firstProp = (result.ae_item_properties as { ae_item_property?: unknown[] } | undefined)?.ae_item_property?.[0];
+    console.log(`[AliExpress API] Merkmale: ${Object.keys(specs).length} gelesen${firstProp ? ` | Felder der ersten Eigenschaft: ${Object.keys(firstProp as object).join(',')}` : ' | ae_item_properties leer'}`);
 
     // ── Beschreibung ───────────────────────────────────────────────────────────
     const desc = (result.detail_desc as string || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000);

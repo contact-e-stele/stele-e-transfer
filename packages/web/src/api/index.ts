@@ -3981,6 +3981,34 @@ const app = new Hono()
 
 // ─── AliExpress DS Produkt-Suche ─────────────────────────────────────────────
 // P-37: offizielle DS-API (aliexpress.ds.text.search), kein Scraping mehr. Immer HTTP 200.
+  // Punkt C (25.10.2026): AliExpress-Merkmale nachladen. Standard Trockenlauf; {apply:true} schreibt NUR leere products.specs.
+app.post('/products/specs-backfill', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as { apply?: unknown; productIds?: unknown; limit?: unknown };
+    const productIds = Array.isArray(body.productIds) ? body.productIds.filter((x): x is number => Number.isInteger(x) && (x as number) > 0) : undefined;
+    const { db } = await import('../db/index');
+    const schema = await import('../db/schema');
+    const { runSpecsBackfill, hasSpecs } = await import('./specs-backfill');
+    await ensureFreshAliToken();
+    const token = await getAliAccessToken();
+    if (!token) return c.json({ ok: false, error: 'AliExpress nicht verbunden (kein Token)' }, 400);
+    const r = await runSpecsBackfill({ apply: body.apply === true, productIds, limit: typeof body.limit === 'number' ? body.limit : undefined }, {
+      listProducts: async () => (await db.select({ id: schema.products.id, sourceUrl: schema.products.sourceUrl, specs: schema.products.specs, ebayListingId: schema.products.ebayListingId }).from(schema.products)),
+      fetchSpecs: async (aliId) => { const d = await getAliProductByApi(aliId, token); return d ? (d.specs ?? {}) : null; },
+      // nie überschreiben: nur wenn specs weiterhin leer ist
+      saveSpecs: async (id, json) => {
+        const cur = await db.select({ specs: schema.products.specs }).from(schema.products).where(eq(schema.products.id, id)).get();
+        if (hasSpecs(cur?.specs ?? null)) return; // inzwischen befüllt → nicht überschreiben
+        await db.update(schema.products).set({ specs: json }).where(eq(schema.products.id, id));
+      },
+    });
+    console.log(`[Merkmale nachladen] ${r.dryRun ? 'Trockenlauf' : 'GESPEICHERT'}: ${r.rows.map(x => `stele-${x.productId}=${x.status}(${x.count})`).join(', ')} | offen gesamt ${r.offenGesamt}, Rest ${r.rest}`);
+    return c.json({ ok: true, ...r }, 200);
+  } catch (e) {
+    return c.json({ ok: false, error: String(e) }, 500);
+  }
+});
+
 app.get('/aliexpress/search', async (c) => {
   const keyword = c.req.query('keyword') || '';
   const page = Math.max(1, parseInt(c.req.query('page') || '1') || 1);
