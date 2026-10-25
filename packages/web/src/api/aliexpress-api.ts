@@ -698,6 +698,7 @@ export interface AliSearchResult {
   message?: string;
 }
 
+let aliSearchDebugLogged = false; // P-37b TEMPORÄR
 const ALI_SEARCH_PAGE_SIZE = 20;
 const ALI_SEARCH_TOTAL_BUDGET_MS = 22000; // Route hart unter 25 s
 const ALI_SEARCH_SHIP_TIMEOUT_MS = 8000;
@@ -748,6 +749,13 @@ export async function searchAliProductsByApi(
       signal: AbortSignal.timeout(15000),
     });
     const data = await res.json() as Record<string, unknown>;
+    if (!aliSearchDebugLogged) {
+      // P-37b TEMPORÄR: einmalig gesendeter Request (ohne access_token/sign) + Rohantwort; danach wieder entfernen
+      aliSearchDebugLogged = true;
+      const { access_token: _t, sign: _s, ...sent } = params;
+      console.log('[AliSearch-Debug] Request:', JSON.stringify(sent));
+      console.log('[AliSearch-Debug] Antwort (1500):', JSON.stringify(data).slice(0, 1500));
+    }
     const parsed = parseAliTextSearchResponse(data);
     if (!parsed.ok) {
       console.error(`[AliSearch] Methode=${method} API-Fehlercode=${parsed.code} msg=${parsed.msg} (${Date.now() - started} ms)`);
