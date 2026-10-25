@@ -45,10 +45,9 @@ function toNumber(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** "95.5%" → 4.8 (Sterne 0–5); bereits ≤5 bleibt unverändert. */
+/** evaluateRate kommt als Prozentwert ("95.5%" / "58.3") → Zahl in Prozent, ohne Umrechnung. */
 function toRating(v: unknown): number {
-  const n = toNumber(v);
-  return n > 5 ? Math.round((n / 20) * 10) / 10 : n;
+  return toNumber(v);
 }
 
 /** Antwort von aliexpress.ds.text.search → Treffer oder Fehler (code/msg wörtlich). */

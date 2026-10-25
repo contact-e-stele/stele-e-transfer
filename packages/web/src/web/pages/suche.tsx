@@ -448,7 +448,7 @@ export default function Suche() {
                     {/* Rating */}
                     {item.rating > 0 && (
                       <span style={{ fontSize: 11, color: "#F59E0B", display: "flex", alignItems: "center", gap: 2 }}>
-                        <Star size={10} fill="#F59E0B" /> {Number(item.rating).toFixed(1)}%
+                        <Star size={10} fill="#F59E0B" /> {Number(item.rating).toFixed(1).replace(".", ",")} %
                       </span>
                     )}
                   </div>

@@ -17,7 +17,7 @@ describe('parseAliTextSearchResponse', () => {
         totalCount: '1234',
         products: [
           { itemId: 1005001, title: ' Katzenstreuschaufel ', itemMainPic: '//ae01.alicdn.com/a.jpg', targetSalePrice: '3.49', salePrice: '4.00', evaluateRate: '95.0%', orders: '1500', itemUrl: '//de.aliexpress.com/item/1005001.html' },
-          { itemId: 1005002, title: 'B', itemMainPic: 'https://x/b.jpg', salePrice: '2,10', evaluateRate: '4.6', orders: 20 },
+          { itemId: 1005002, title: 'B', itemMainPic: 'https://x/b.jpg', salePrice: '2,10', evaluateRate: '58.3', orders: 20 },
         ],
       },
       rsp_code: '200',
@@ -28,8 +28,8 @@ describe('parseAliTextSearchResponse', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.total).toBe(1234);
-    expect(r.hits[0]).toMatchObject({ id: '1005001', title: 'Katzenstreuschaufel', image: 'https://ae01.alicdn.com/a.jpg', price: 3.49, rating: 4.8, sold: 1500, url: 'https://de.aliexpress.com/item/1005001.html', shipFrom: '?', isEU: false, relevant: true });
-    expect(r.hits[1]).toMatchObject({ price: 2.1, rating: 4.6, sold: 20, url: 'https://de.aliexpress.com/item/1005002.html' });
+    expect(r.hits[0]).toMatchObject({ id: '1005001', title: 'Katzenstreuschaufel', image: 'https://ae01.alicdn.com/a.jpg', price: 3.49, rating: 95, sold: 1500, url: 'https://de.aliexpress.com/item/1005001.html', shipFrom: '?', isEU: false, relevant: true });
+    expect(r.hits[1]).toMatchObject({ price: 2.1, rating: 58.3, sold: 20, url: 'https://de.aliexpress.com/item/1005002.html' });
   });
   test('IllegalAccessToken → Fehler wörtlich', () => {
     const r = parseAliTextSearchResponse({ error_response: { code: 'IllegalAccessToken', msg: 'Invalid access token' } });
