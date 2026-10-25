@@ -3980,119 +3980,18 @@ const app = new Hono()
   });
 
 // ─── AliExpress DS Produkt-Suche ─────────────────────────────────────────────
-// aliexpress.ds.product.search — sucht Produkte mit EU/DE-Lager Filter
+// P-37: offizielle DS-API (aliexpress.ds.text.search), kein Scraping mehr. Immer HTTP 200.
 app.get('/aliexpress/search', async (c) => {
   const keyword = c.req.query('keyword') || '';
-  const page = parseInt(c.req.query('page') || '1');
+  const page = Math.max(1, parseInt(c.req.query('page') || '1') || 1);
   const shipFrom = c.req.query('ship_from') || 'DE';
+  const sort = c.req.query('sort') || 'LAST_VOLUME_DESC';
 
   if (!keyword.trim()) return c.json({ error: 'keyword fehlt' }, 400);
 
-  const SCRAPINGANT_KEY = process.env.SCRAPINGANT_API_KEY || '';
-  if (!SCRAPINGANT_KEY) {
-    return c.json({ status: 'no_token', message: 'ScrapingAnt Key fehlt.', results: [], total: 0 }, 200);
-  }
-
-  try {
-    const slug = keyword.trim().replace(/\s+/g, '-').toLowerCase();
-    const shipParam = (shipFrom && shipFrom !== 'ALL') ? `&shipCountry=${shipFrom.toLowerCase()}` : '';
-    const searchUrl = `https://de.aliexpress.com/w/wholesale-${encodeURIComponent(slug)}.html?sorttype=total_tranAmount_sort${shipParam}`;
-    const antUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(searchUrl)}&x-api-key=${SCRAPINGANT_KEY}&browser=true&proxy_country=DE`;
-
-    console.log('[AliSearch] Scraping:', searchUrl);
-
-    // Retry bei 409 (concurrent limit) — bis 3x mit 4s Pause
-    let res: Response | null = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      res = await fetch(antUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(50000),
-      });
-      if (res.status !== 409) break;
-      console.log(`[AliSearch] 409 concurrent — Versuch ${attempt}/3, warte 4s...`);
-      if (attempt < 3) await new Promise(r => setTimeout(r, 4000));
-    }
-
-    if (!res!.ok) {
-      const errText = await res!.text();
-      console.error('[AliSearch] ScrapingAnt error:', res!.status, errText.slice(0, 200));
-      return c.json({ status: 'api_error', message: `ScrapingAnt ${res!.status}`, results: [], total: 0 }, 200);
-    }
-
-    const html = await res!.text();
-    console.log(`[AliSearch] Got ${html.length} chars from ScrapingAnt`);
-
-    const listIdx = html.indexOf('"itemList":{"content":[');
-    if (listIdx === -1) {
-      console.warn('[AliSearch] itemList not found in HTML');
-      return c.json({ status: 'no_result', results: [], total: 0, page, keyword }, 200);
-    }
-
-    const arrStart = html.indexOf('[', listIdx);
-    let depth = 0;
-    let arrEnd = arrStart;
-    for (let i = arrStart; i < Math.min(html.length, arrStart + 600000); i++) {
-      if (html[i] === '[') depth++;
-      else if (html[i] === ']') {
-        depth--;
-        if (depth === 0) { arrEnd = i + 1; break; }
-      }
-    }
-
-    let rawItems: Record<string, unknown>[] = [];
-    try {
-      rawItems = JSON.parse(html.slice(arrStart, arrEnd)) as Record<string, unknown>[];
-    } catch (parseErr) {
-      console.error('[AliSearch] JSON parse error:', parseErr);
-      return c.json({ status: 'api_error', message: 'HTML parse error', results: [], total: 0 }, 200);
-    }
-
-    const productItems = rawItems.filter(item => item.productId && item.itemType === 'productV3');
-    console.log(`[AliSearch] ${productItems.length} products extracted`);
-
-    const PAGE_SIZE = 20;
-    const startIdx = (page - 1) * PAGE_SIZE;
-    const pageItems = productItems.slice(startIdx, startIdx + PAGE_SIZE);
-    const total = productItems.length;
-
-    const EU_CODES = ['de','at','fr','es','it','nl','pl','cz','be','lu','ch'];
-
-    interface AliItem {
-      productId?: unknown;
-      title?: { displayTitle?: string };
-      image?: { imgUrl?: string };
-      images?: { imgUrl?: string }[];
-      prices?: {
-        salePrice?: { minPrice?: number; formattedPrice?: string };
-        originalPrice?: { minPrice?: number; formattedPrice?: string };
-      };
-      evaluation?: { starRating?: number; averageStar?: string };
-      trade?: { tradeCount?: string; realTradeCount?: number };
-      shipFromCountry?: string;
-      logisticsInfo?: { shipFromCountry?: string };
-    }
-
-    const results = (pageItems as AliItem[]).map((item) => {
-      const id = String(item.productId || '');
-      const title = item.title?.displayTitle?.trim() || '';
-      let img = item.image?.imgUrl || item.images?.[0]?.imgUrl || '';
-      if (img.startsWith('//')) img = 'https:' + img;
-      const salePrice = item.prices?.salePrice?.minPrice ?? item.prices?.originalPrice?.minPrice ?? 0;
-      const priceFormatted = item.prices?.salePrice?.formattedPrice || item.prices?.originalPrice?.formattedPrice || '';
-      const price = salePrice || parseFloat(priceFormatted.replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
-      const shipCountry = (item.shipFromCountry || item.logisticsInfo?.shipFromCountry || '').toLowerCase();
-      const isEU = EU_CODES.some(c => shipCountry.includes(c));
-      const rating = Number(item.evaluation?.starRating || item.evaluation?.averageStar || 0);
-      const sold = Number(item.trade?.realTradeCount || (item.trade?.tradeCount || '').toString().replace(/[^\d]/g, '') || 0);
-      const url = `https://de.aliexpress.com/item/${id}.html`;
-      return { id, title, image: img, price, shipFrom: shipCountry || '?', isEU, rating, sold, url };
-    });
-
-    return c.json({ status: 'ok', results, total, page, keyword }, 200);
-  } catch (e) {
-    console.error('[AliExpress Search] Fehler:', e);
-    return c.json({ status: 'error', message: String(e), results: [], total: 0 }, 500);
-  }
+  const { searchAliProductsByApi } = await import('./aliexpress-api');
+  const r = await searchAliProductsByApi(keyword.trim(), page, shipFrom, sort);
+  return c.json({ status: r.status, results: r.results, total: r.total, page, keyword, message: r.message }, 200);
 });
 app.get('/backup/test', async (c) => {
   const { runBackup } = await import('./backup');
