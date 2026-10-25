@@ -928,6 +928,21 @@ export async function buildAspects(
     aspects[name] = [value];
   }
 
+  // Punkt C (25.10.2026): weitere AliExpress-Merkmale (Material, Herkunft, Maße …) — nur Namen, die die Kategorie führt,
+  // bei Auswahl-Merkmalen nur erlaubte Werte (shared/spec-aspects.ts). Bereits gesetzte Merkmale bleiben unberührt.
+  if (categoryId && Object.keys(effectiveSpecs).length > 0) {
+    const categoryAspects = await getRawAspectsForCategory(categoryId, fetchFn, getTokenFn);
+    if (categoryAspects) {
+      const { matchSpecsToCategoryAspects } = await import('../shared/spec-aspects');
+      const match = matchSpecsToCategoryAspects(effectiveSpecs, categoryAspects, Object.keys(aspects));
+      for (const [name, value] of Object.entries(match.aspects)) {
+        aspects[name] = [value];
+        effectiveSpecsAspects[name] = value; // auch für resolveRequiredAspect sichtbar
+      }
+      if (match.used.length > 0) console.log(`[eBay] Merkmale aus AliExpress (Kategorie ${categoryId}): ${match.used.map(u => `${u.aspect}=${u.value}`).join('; ')}`);
+    }
+  }
+
   // P-88 1a/1b Korrektur (20.09.2026, Prüfbefund): Pflichtmerkmale werden NUR noch über
   // resolveRequiredAspect() befüllt (AliExpress → Kategorie-Default → globaler Default,
   // manualAspects gewinnt immer). allowedValues[0]/"Nicht angegeben" als Auto-Füllung ENTFERNT —
