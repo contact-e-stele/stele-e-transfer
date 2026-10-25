@@ -224,13 +224,15 @@ export async function sendAllMultiRabatt(opts: { apply?: boolean; limit?: number
 
 /**
  * eBay 38260 "To update the start date of a promotion, the promotion must be in draft or scheduled state": beim Update einer
- * bestehenden Aktion Start/Ende/Status von eBay übernehmen (laufende Aktion bleibt laufend), nur Stufen/Name/Angebot neu.
+ * bestehenden Aktion Start/Ende von eBay übernehmen, Status SCHEDULED (eBay-Vorgabe für Update einer laufenden Aktion), nur Stufen/Name/Angebot neu.
  * Ist die bestehende Aktion schon beendet/gelöscht oder fehlt das Startdatum → neuer Körper unverändert.
  */
 export function keepRunningPromotionDates<T extends Record<string, unknown>>(next: T, current: Record<string, unknown>): T {
   const status = typeof current.promotionStatus === 'string' ? current.promotionStatus : null;
   if (!status || !['RUNNING', 'PAUSED', 'SCHEDULED', 'DRAFT'].includes(status) || typeof current.startDate !== 'string') return next;
-  const out: Record<string, unknown> = { ...next, startDate: current.startDate, promotionStatus: status };
+  // eBay-Doku ItemPromotion.promotionStatus: "you must set this value to SCHEDULED when you update a RUNNING discount" (Live-Fund
+  // 25.10.2026 15:46: RUNNING → 38240 "Invalid input for the 'promotionStatus' field"). Status bleibt daher aus `next` (SCHEDULED).
+  const out: Record<string, unknown> = { ...next, startDate: current.startDate };
   if (typeof current.endDate === 'string') out.endDate = current.endDate;
   return out as T;
 }

@@ -28,11 +28,12 @@ describe('Multi-Rabatt: alle neu senden (Inhaber 25.10.2026)', () => {
 });
 
 describe('eBay 38260: laufende Aktion behält ihr Startdatum (Live-Fund 25.10.2026, 15 Angebote)', () => {
-  test('RUNNING: Start/Ende/Status von eBay, Stufen neu', async () => {
+  test('RUNNING: Start/Ende von eBay, Status SCHEDULED, Stufen neu', async () => {
     const { keepRunningPromotionDates } = await import('./multi-rabatt');
     const next = { name: 'Multi-Rabatt stele-70', promotionStatus: 'SCHEDULED', startDate: '2026-10-25T14:40:00.000Z', endDate: '2027-10-25T14:40:00.000Z', discountRules: [{ x: 13 }] };
     const out = keepRunningPromotionDates(next, { promotionStatus: 'RUNNING', startDate: '2026-10-19T08:00:00.000Z', endDate: '2027-10-19T08:00:00.000Z' });
-    expect(out).toEqual({ ...next, promotionStatus: 'RUNNING', startDate: '2026-10-19T08:00:00.000Z', endDate: '2027-10-19T08:00:00.000Z' });
+    // Status SCHEDULED (eBay: Pflicht beim Update einer laufenden Aktion; RUNNING → 38240, Live 25.10. 15:46)
+    expect(out).toEqual({ ...next, promotionStatus: 'SCHEDULED', startDate: '2026-10-19T08:00:00.000Z', endDate: '2027-10-19T08:00:00.000Z' });
   });
   test('beendete Aktion oder unlesbar → unverändert', async () => {
     const { keepRunningPromotionDates } = await import('./multi-rabatt');
