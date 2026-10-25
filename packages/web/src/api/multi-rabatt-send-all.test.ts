@@ -42,3 +42,47 @@ describe('eBay 38260: laufende Aktion behält ihr Startdatum (Live-Fund 25.10.20
     expect(keepRunningPromotionDates(next, {})).toEqual(next);
   });
 });
+
+describe('eBay 38232: aktive Aktion ersetzen (pausieren → ändern/neu → fortsetzen/löschen)', () => {
+  const mk = (plan: Record<string, number>) => {
+    const calls: string[] = [];
+    const f = (async (url: string, init?: RequestInit) => {
+      const m = init?.method ?? 'GET'; const key = `${m} ${url.replace('https://x/sell/marketing/v1', '')}`; calls.push(key);
+      const st = plan[key] ?? 200;
+      if (key === 'POST /item_promotion' && st < 300) return new Response('', { status: 201, headers: { location: 'https://x/sell/marketing/v1/item_promotion/NEU' } });
+      if (key === 'GET /item_promotion/ALT') return new Response(JSON.stringify({ promotionStatus: 'PAUSED', startDate: 'S', endDate: 'E' }), { status: 200 });
+      return new Response(st < 300 ? '' : '{"errors":[{"errorId":1}]}', { status: st });
+    }) as unknown as typeof fetch;
+    return { f, calls };
+  };
+  const body = { promotionStatus: 'SCHEDULED', startDate: 'N', endDate: 'NE', discountRules: [] };
+  test('pausiert änderbar → ändern + fortsetzen, ID bleibt', async () => {
+    const { replaceActivePromotion } = await import('./multi-rabatt');
+    const m = mk({});
+    const r = await replaceActivePromotion({ base: 'https://x', headers: {}, oldId: 'ALT', body, fetchFn: m.f });
+    expect(r).toMatchObject({ ok: true, promotionId: 'ALT' });
+    expect(m.calls).toEqual(['POST /promotion/ALT/pause', 'GET /item_promotion/ALT', 'PUT /item_promotion/ALT', 'POST /promotion/ALT/resume']);
+  });
+  test('auch pausiert nicht änderbar → neue anlegen, erst DANN alte löschen', async () => {
+    const { replaceActivePromotion } = await import('./multi-rabatt');
+    const m = mk({ 'PUT /item_promotion/ALT': 400 });
+    const r = await replaceActivePromotion({ base: 'https://x', headers: {}, oldId: 'ALT', body, fetchFn: m.f });
+    expect(r).toMatchObject({ ok: true, promotionId: 'NEU' });
+    expect(m.calls.slice(-2)).toEqual(['POST /item_promotion', 'DELETE /item_promotion/ALT']);
+  });
+  test('neue scheitert → alte wird fortgesetzt, nichts gelöscht', async () => {
+    const { replaceActivePromotion } = await import('./multi-rabatt');
+    const m = mk({ 'PUT /item_promotion/ALT': 400, 'POST /item_promotion': 409 });
+    const r = await replaceActivePromotion({ base: 'https://x', headers: {}, oldId: 'ALT', body, fetchFn: m.f });
+    expect(r.ok).toBe(false);
+    expect(m.calls).toContain('POST /promotion/ALT/resume');
+    expect(m.calls.some(c => c.startsWith('DELETE'))).toBe(false);
+  });
+  test('Pause scheitert → Abbruch, keine zweite Aktion', async () => {
+    const { replaceActivePromotion } = await import('./multi-rabatt');
+    const m = mk({ 'POST /promotion/ALT/pause': 400 });
+    const r = await replaceActivePromotion({ base: 'https://x', headers: {}, oldId: 'ALT', body, fetchFn: m.f });
+    expect(r.ok).toBe(false);
+    expect(m.calls).toEqual(['POST /promotion/ALT/pause']);
+  });
+});

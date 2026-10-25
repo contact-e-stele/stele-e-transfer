@@ -96,9 +96,19 @@ export async function sendMultiRabatt(productId: number, expected: { 2: number; 
   }
   const res = await fetch(url, { method: existing ? 'PUT' : 'POST', headers, body: JSON.stringify(sendBody) });
   const text = await res.text();
-  if (!res.ok) return { ok: false as const, status: 502, error: `eBay ${existing ? 'updateItemPromotion' : 'createItemPromotion'} ${res.status}: ${text.slice(0, 800)}` };
   let promotionId = existing?.promotionId ?? null;
-  if (!promotionId) {
+  let trace: string[] | undefined;
+  if (!res.ok && existing && /\b38232\b/.test(text)) {
+    // eBay 38232 (Live 25.10.2026 16:20, stele-220): "You cannot update the promotion discount for an active promotion."
+    const r = await replaceActivePromotion({ base: EBAY_API_BASE_URL, headers, oldId: existing.promotionId, body, fetchFn: fetch });
+    trace = r.trace;
+    console.log(`[Multi-Rabatt] stele-${productId}: aktive Aktion ersetzen → ${r.ok ? 'ok' : 'FEHLER'} | ${r.trace.join(' | ')}`);
+    if (!r.ok || !r.promotionId) return { ok: false as const, status: 502, error: `eBay: laufende Aktion nicht änderbar (38232), Ersetzen gescheitert: ${r.error ?? ''} | Schritte: ${r.trace.join(' | ')}` };
+    promotionId = r.promotionId;
+  } else if (!res.ok) {
+    return { ok: false as const, status: 502, error: `eBay ${existing ? 'updateItemPromotion' : 'createItemPromotion'} ${res.status}: ${text.slice(0, 800)}` };
+  }
+  if (!promotionId && res.ok) {
     const loc = res.headers.get('location') ?? '';
     promotionId = loc.split('/').filter(Boolean).pop() ?? null;
     if (!promotionId) { try { promotionId = (JSON.parse(text) as { promotionId?: string }).promotionId ?? null; } catch { /* leer */ } }
@@ -112,7 +122,7 @@ export async function sendMultiRabatt(productId: number, expected: { 2: number; 
   const all = await getSentPromotions();
   all[String(productId)] = { promotionId, listingId: prev.listingId, percents: prev.plan.percents, sentAt: new Date().toISOString(), status: checkJson?.promotionStatus ?? null };
   await writeSetting(PROMO_KEY, JSON.stringify(all));
-  return { ok: true as const, status: 200, promotionId, verified, promotionStatus: checkJson?.promotionStatus ?? null, percents: prev.plan.percents };
+  return { ok: true as const, status: 200, promotionId, verified, promotionStatus: checkJson?.promotionStatus ?? null, percents: prev.plan.percents, ...(trace ? { trace } : {}) };
 }
 
 /** Vorhandene Aktion nur weiterverwenden, wenn sie zu genau diesem Angebot gehört. */
@@ -235,4 +245,38 @@ export function keepRunningPromotionDates<T extends Record<string, unknown>>(nex
   const out: Record<string, unknown> = { ...next, startDate: current.startDate };
   if (typeof current.endDate === 'string') out.endDate = current.endDate;
   return out as T;
+}
+
+/**
+ * eBay 38232: die Stufen einer AKTIVEN Aktion sind nicht änderbar. Sicherer Ablauf (jeder Schritt protokolliert):
+ * 1) alte Aktion pausieren → 2) Update erneut versuchen (pausiert = nicht aktiv) → bei Erfolg wieder fortsetzen.
+ * 3) Sonst NEUE Aktion anlegen (Start +5 Min) → bei Erfolg alte (pausierte) löschen. 4) Scheitert auch das → alte wieder fortsetzen
+ * (Rückfall: es läuft wieder genau die alte Aktion). Die alte wird nie gelöscht, bevor die neue angelegt ist.
+ */
+export async function replaceActivePromotion(a: { base: string; headers: Record<string, string>; oldId: string; body: Record<string, unknown>; fetchFn: typeof fetch }):
+  Promise<{ ok: boolean; promotionId?: string; trace: string[]; error?: string }> {
+  const f = a.fetchFn; const trace: string[] = [];
+  const oldUrl = `${a.base}/sell/marketing/v1/item_promotion/${encodeURIComponent(a.oldId)}`;
+  const short = async (r: Response) => (await r.text().catch(() => '')).slice(0, 200);
+  const pause = await f(`${a.base}/sell/marketing/v1/promotion/${encodeURIComponent(a.oldId)}/pause`, { method: 'POST', headers: a.headers });
+  trace.push(`pause ${pause.status}${pause.ok ? '' : ' ' + await short(pause)}`);
+  const resume = async () => { const r = await f(`${a.base}/sell/marketing/v1/promotion/${encodeURIComponent(a.oldId)}/resume`, { method: 'POST', headers: a.headers }); trace.push(`resume ${r.status}${r.ok ? '' : ' ' + await short(r)}`); };
+  // Ohne Pause keine zweite Aktion anlegen (sonst liefen zwei Mengenrabatte gleichzeitig) → abbrechen, alte läuft unverändert.
+  if (!pause.ok) return { ok: false, trace, error: `pausePromotion ${pause.status}` };
+  {
+    const cur = await f(oldUrl, { headers: a.headers });
+    const curJson = cur.ok ? await cur.json() as Record<string, unknown> : {};
+    const put = await f(oldUrl, { method: 'PUT', headers: a.headers, body: JSON.stringify(keepRunningPromotionDates(a.body, curJson)) });
+    trace.push(`update(pausiert) ${put.status}${put.ok ? '' : ' ' + await short(put)}`);
+    if (put.ok) { await resume(); return { ok: true, promotionId: a.oldId, trace }; }
+  }
+  const post = await f(`${a.base}/sell/marketing/v1/item_promotion`, { method: 'POST', headers: a.headers, body: JSON.stringify(a.body) });
+  const postText = await post.text().catch(() => '');
+  trace.push(`neu ${post.status}${post.ok ? '' : ' ' + postText.slice(0, 200)}`);
+  if (!post.ok) { await resume(); return { ok: false, trace, error: `createItemPromotion ${post.status}` }; }
+  let newId = (post.headers.get('location') ?? '').split('/').filter(Boolean).pop() ?? null;
+  if (!newId) { try { newId = (JSON.parse(postText) as { promotionId?: string }).promotionId ?? null; } catch { /* leer */ } }
+  const del = await f(oldUrl, { method: 'DELETE', headers: a.headers });
+  trace.push(`alte löschen ${del.status}${del.ok || del.status === 204 ? '' : ' ' + await short(del)}`);
+  return newId ? { ok: true, promotionId: newId, trace } : { ok: false, trace, error: 'neue Aktion ohne ID' };
 }
