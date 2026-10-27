@@ -61,3 +61,20 @@ describe('C2: Merkmale in Live-Angebote (nur fehlende ergänzen)', () => {
     expect(m.calls.filter(c => c.method === 'PUT')).toEqual([]);
   });
 });
+
+describe('C2 Nachtrag: erste SKU ohne Offer (Live 27.10., stele-121/127)', () => {
+  test('Kategorie kommt aus der nächsten SKU der Gruppe', async () => {
+    const calls: string[] = [];
+    const store: Record<string, Record<string, unknown>> = { 'stele-127-GROUP': { aspects: {}, variesBy: { specifications: [] } }, A: { product: { aspects: {} } }, B: { product: { aspects: {} } } };
+    const f = (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.includes('/offer?sku=A')) return new Response(JSON.stringify({ offers: [] }), { status: 200 });
+      if (url.includes('/offer?sku=B')) return new Response(JSON.stringify({ offers: [{ categoryId: '777' }] }), { status: 200 });
+      const key = decodeURIComponent(url.split('/').pop()!);
+      return new Response(JSON.stringify(store[key] ?? {}), { status: store[key] ? 200 : 404 });
+    }) as unknown as typeof fetch;
+    const r = await applySpecAspectsToListing({ productId: 127, specs: { Origin: 'Mainland China' }, token: 't', baseUrl: 'https://x', confirm: false, itemSkus: ['A', 'B'], getCategoryAspects: async () => CAT, fetchFn: f });
+    expect(r.categoryId).toBe('777');
+    expect(r.error).toBeUndefined();
+  });
+});
