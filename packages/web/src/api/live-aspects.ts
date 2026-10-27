@@ -31,11 +31,18 @@ export async function applySpecAspectsToListing(input: {
   const groupSku = `stele-${input.productId}-GROUP`;
   const itemSkus = isGroup ? input.itemSkus : [`stele-${input.productId}`];
 
-  // Kategorie aus dem Offer der ersten SKU
-  const o = await f(`${input.baseUrl}/sell/inventory/v1/offer?sku=${encodeURIComponent(itemSkus[0])}&marketplace_id=EBAY_DE`, { headers: h });
-  const oj = o.ok ? await o.json() as { offers?: Array<{ categoryId?: string }> } : null;
-  const categoryId = oj?.offers?.find(x => x.categoryId)?.categoryId ?? null;
-  if (!categoryId) return { categoryId: null, rows: [], error: `Kategorie nicht lesbar (Offer GET ${o.status})` };
+  // Kategorie aus dem Offer — Live 27.10.2026: bei 8 von 20 Varianten-Angeboten (z. B. stele-121/127) hat die ERSTE SKU der Gruppe kein
+  // Offer (umbenannte/verwaiste Variante) → nacheinander die SKUs der Gruppe (höchstens 10) bzw. die Gruppen-SKU versuchen.
+  let categoryId: string | null = null;
+  const tried: string[] = [];
+  for (const sku of [...itemSkus.slice(0, 10)]) {
+    const o = await f(`${input.baseUrl}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`, { headers: h });
+    tried.push(`${sku}:${o.status}`);
+    const oj = o.ok ? await o.json() as { offers?: Array<{ categoryId?: string }> } : null;
+    categoryId = oj?.offers?.find(x => x.categoryId)?.categoryId ?? null;
+    if (categoryId) break;
+  }
+  if (!categoryId) return { categoryId: null, rows: [], error: `Kategorie nicht lesbar (Offer GET ${tried.join(', ')})` };
   const category = await input.getCategoryAspects(categoryId);
   if (!category) return { categoryId, rows: [], error: `Merkmal-Liste der Kategorie ${categoryId} nicht abrufbar` };
 
