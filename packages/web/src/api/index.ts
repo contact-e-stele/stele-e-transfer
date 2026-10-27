@@ -3,6 +3,7 @@ import { cors } from "hono/cors"
 import { isAliOrderIdNotTracking, ALI_ORDER_ID_AS_TRACKING_ERROR } from '../shared/tracking-guard';
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
 import { sentPricesToPatch } from '../shared/sent-prices';
+import { cleanGeneratedTitle } from '../shared/title-clean';
 import { earUmlageFor, evaluateElectricGate, suggestElectric, weeeLineForListing, parseElectricPatch, parseElectricSettingsBody } from '../shared/electric';
 import { getElectricSettings, setElectricSettings } from './electric-settings';
 import { electricSalesCsv } from './electric-export';
@@ -197,6 +198,7 @@ REGELN:
 - Ausgabe: NUR der fertige deutsche eBay-Titel, keine Erklärung, kein Kommentar
 - Sprache: Deutsch
 - Länge: exakt 75-80 Zeichen (sehr wichtig – eBay nutzt alle 80 Zeichen)
+- Schreibe NIE eine Längen- oder Zeichenangabe in den Titel (z. B. nicht "78 Zeichen")
 - Keine Mengenangaben (Stück, Set, Pack)
 - Keine Maße/Größen (werden als Varianten gelistet)
 - Keine Sonderzeichen, keine Emojis
@@ -210,7 +212,8 @@ REGELN:
         const genAI = new GoogleGenerativeAI(key);
         const model = genAI.getGenerativeModel({ model: modelName });
         const result = await model.generateContent(prompt);
-        const text = result.response.text().trim().replace(/^["']|["']$/g, '').slice(0, 80);
+        // OFFEN 009: Anhängsel wie "78 Zeichen" entfernen (stele-181/241)
+        const text = cleanGeneratedTitle(result.response.text());
         console.log(`[Gemini-Titel] "${text}" (${text.length} Zeichen)`);
         return text;
       } catch (e) {
@@ -1029,7 +1032,10 @@ const app = new Hono()
           const now = new Date().toISOString();
           const day = now.slice(0, 10);
           if (result === 'match') {
-            await db.update(schema.orderNotes).set({ trackingEbaySubmitted: true, trackingEbaySubmittedError: null, updatedAt: now })
+            // OFFEN 009 Punkt 2: Versanddienst von eBay übernehmen, wenn in der App leer (reines DB-Update, löst nichts bei eBay aus).
+            const { carrierFromEbayCode, carrierFromTrackingNumber } = await import('../shared/carrier-guess');
+            const carrier = n.carrier?.trim() ? undefined : (onEbay.map(f => carrierFromEbayCode(f.carrier)).find(Boolean) ?? carrierFromTrackingNumber(n.trackingNumber) ?? undefined);
+            await db.update(schema.orderNotes).set({ trackingEbaySubmitted: true, trackingEbaySubmittedError: null, updatedAt: now, ...(carrier ? { carrier } : {}) })
               .where(eq(schema.orderNotes.ebayOrderId, n.ebayOrderId));
           } else {
             const msg = result === 'missing'
@@ -2425,6 +2431,16 @@ const app = new Hono()
           .filter(g => g && typeof g === 'object' && !NON_VARIATION_ASPECTS.has(g.name));
         const tooMany = maxVariantsError(groupsForLimit, rules.maxVariants);
         if (tooMany) return c.json({ error: tooMany }, 422);
+        // OFFEN 009 Punkt 3: gleiche Merkmale in mehreren AliExpress-SKUs (stele-242) → ein Eintrag je Kombination (höchster EK, SKU mit
+        // größtem Lager), sonst wären mehr Einträge als Varianten gespeichert und das Listen scheitert mit "Mehrdeutig".
+        if (Array.isArray(body.variantPrices) && groupsForLimit.length > 0) {
+          const { mergeImportDuplicates } = await import('../shared/variant-dedupe');
+          const m = mergeImportDuplicates(groupsForLimit, body.variantPrices as unknown as Parameters<typeof mergeImportDuplicates>[1]);
+          if (m.merged.length > 0) {
+            console.log(`[Import] Varianten-Dubletten zusammengeführt: ${m.merged.map(x => `${x.label} → SKU ${x.keptSkuId}, EK ${x.price.toFixed(2)} (entfernt ${x.removedSkuIds.join(', ')})`).join(' | ')}`);
+            (body as { variantPrices?: unknown }).variantPrices = m.entries;
+          }
+        }
         // R1 Sterne-Sperre (BESCHLUSS 18.10.2026, OFFEN 006): nur ab rules.minRating Sternen (Standard 4,2). Fehlt die Bewertung → gesperrt.
         const { ratingGate } = await import('../shared/rating-gate');
         const rb = body as unknown as { rating?: unknown; reviewCount?: unknown };
@@ -2436,8 +2452,10 @@ const app = new Hono()
       const specs = body.specs ?? {};
       const rawTitle = body.generatedTitle ?? body.title;
 
+      // OFFEN 009: Ein im Import-Tab bereits erzeugter/bearbeiteter Titel wird NICHT erneut von der KI umgeschrieben (sonst konnte eine
+      // Handkorrektur verloren gehen bzw. Fremdtext entstehen) — nur bereinigt. Ohne generatedTitle wie bisher erzeugen.
       const [germanTitle, generatedDescription] = await Promise.all([
-        generateGermanTitle(rawTitle, specs),
+        body.generatedTitle?.trim() ? Promise.resolve(cleanGeneratedTitle(body.generatedTitle)) : generateGermanTitle(rawTitle, specs),
         generateDescriptionWithGemini(rawTitle, specs, body.description ?? '', 3, body.variantContents),
       ]);
       console.log(`[Import] Titel: "${germanTitle}" | Beschreibung generiert`);
@@ -4015,6 +4033,24 @@ app.post('/multi-rabatt/send-all', async (c) => {
     const { sendAllMultiRabatt } = await import('./multi-rabatt');
     const r = await sendAllMultiRabatt({ apply: body.apply === true, limit: typeof body.limit === 'number' ? body.limit : undefined });
     return c.json({ ok: true, ...r }, 200);
+  } catch (e) {
+    return c.json({ ok: false, error: String(e) }, 500);
+  }
+});
+
+// OFFEN 009 Punkt 2: Versanddienst für vorhandene Sendungen nachtragen, wo er leer ist und das Nummernformat eindeutig ist
+// (DHL "00340434…", Hermes "H"+19 Ziffern). Standard Vorschau; {apply:true} schreibt nur order_notes.carrier (kein eBay-Aufruf).
+app.post('/order-notes/fill-carrier', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as { apply?: unknown };
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const { carrierFromTrackingNumber } = await import('../shared/carrier-guess');
+    const notes = (await db.select().from(schema.orderNotes).all()).filter(n => n.trackingNumber?.trim() && !n.carrier?.trim());
+    const rows = notes.map(n => ({ orderId: n.ebayOrderId, carrier: carrierFromTrackingNumber(n.trackingNumber) }));
+    if (body.apply === true) {
+      for (const r of rows) if (r.carrier) await db.update(schema.orderNotes).set({ carrier: r.carrier, updatedAt: new Date().toISOString() }).where(eq(schema.orderNotes.ebayOrderId, r.orderId));
+    }
+    return c.json({ ok: true, apply: body.apply === true, ohneVersanddienst: rows.length, ableitbar: rows.filter(r => r.carrier).length, rows }, 200);
   } catch (e) {
     return c.json({ ok: false, error: String(e) }, 500);
   }
