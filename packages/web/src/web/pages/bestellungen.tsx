@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { DEFAULT_WORKFLOW_TEMPLATE, renderWorkflowTemplate } from "../../shared/workflow-template";
 import { remainingLevel, remainingText } from "../../shared/remaining-qty";
+import { carrierFromTrackingNumber } from "../../shared/carrier-guess";
 
 interface OrderLineItem {
   lineItemId: string;
@@ -880,7 +881,7 @@ export default function Bestellungen() {
                   >
                     <Truck size={11} />
                     {order.localNote?.trackingNumber
-                      ? `Sendung: ${order.localNote.carrier ?? "?"} ${order.localNote.trackingNumber}`
+                      ? `Sendung: ${order.localNote.carrier || carrierFromTrackingNumber(order.localNote.trackingNumber) || "?"} ${order.localNote.trackingNumber}`
                       : "Sendungsnummer eintragen (→ eBay)"}
                   </button>
                 )}

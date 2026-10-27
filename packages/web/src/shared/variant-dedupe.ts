@@ -158,3 +158,33 @@ export function dedupeStillAmbiguous(productId: number, groups: VariantGroup[], 
 
 // Produkte, die die Bereinigung nie anfasst (Inhaber: stele-214 ruht).
 export const DEDUPE_RESTING_PRODUCT_IDS: ReadonlySet<number> = new Set([214]);
+
+/**
+ * OFFEN 009 Punkt 3 (27.10.2026, stele-242): AliExpress liefert selbst zwei SKUs mit identischen Merkmalen ("SET086-10pcs set":
+ * …604031 EK 4,49 / Lager 125 und …131812 EK 4,39 / Lager 18). Die 5er-Grenze zählt Kombinationen (5), gespeichert wären 6 Einträge
+ * → beim Listen "Mehrdeutig". Beim IMPORT werden solche Dubletten zu GENAU einem Eintrag je Kombination zusammengeführt:
+ *  - EK = höchster EK der Dubletten (gleiche Regel wie planVariantDedupe: im Zweifel kein Verlust),
+ *  - Träger (skuId, Lager, Bild) = die Dublette mit dem größten Lager (dort wird bestellt); Gleichstand → zuerst gelieferte.
+ * Einträge ohne passende Kombination bleiben unverändert. REINE Funktion.
+ */
+export function mergeImportDuplicates<T extends DedupeEntry>(groups: VariantGroup[], entries: T[]): { entries: T[]; merged: Array<{ label: string; keptSkuId: string; removedSkuIds: string[]; price: number }> } {
+  const g = groups.filter(x => Array.isArray(x.values) && x.values.length > 0);
+  if (g.length === 0) return { entries: [...entries], merged: [] };
+  const combos = buildCombinations(g);
+  const drop = new Set<T>();
+  const replace = new Map<T, T>();
+  const merged: Array<{ label: string; keptSkuId: string; removedSkuIds: string[]; price: number }> = [];
+  for (const combo of combos) {
+    const members = entries.filter(e => entryMatchesCombo(combo, e));
+    if (members.length <= 1) continue;
+    const prices = members.map(m => m.price).filter(p => Number.isFinite(p) && p > 0);
+    if (prices.length === 0) continue; // ohne gültigen EK nichts raten
+    const stockOf = (m: T) => (typeof m.stock === 'number' && Number.isFinite(m.stock) ? m.stock : -1);
+    const keeper = members.reduce((best, m) => (stockOf(m) > stockOf(best) ? m : best), members[0]);
+    const price = Math.max(...prices);
+    replace.set(keeper, { ...keeper, price });
+    members.filter(m => m !== keeper).forEach(m => drop.add(m));
+    merged.push({ label: Object.entries(combo).map(([k, v]) => `${k}=${v}`).join(', '), keptSkuId: keeper.skuId, removedSkuIds: members.filter(m => m !== keeper).map(m => m.skuId), price });
+  }
+  return { entries: entries.filter(e => !drop.has(e)).map(e => replace.get(e) ?? e), merged };
+}

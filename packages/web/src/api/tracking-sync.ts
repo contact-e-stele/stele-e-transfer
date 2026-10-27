@@ -139,10 +139,15 @@ async function writeTrackingNumberToDb(ebayOrderId: string, trackingNumber: stri
   const { db } = await import('../db/index');
   const schema = await import('../db/schema');
   const now = new Date().toISOString();
+  // OFFEN 009 Punkt 2: Versanddienst nur aus EINDEUTIGEM Nummernformat (DHL/Hermes), sonst leer. Ein DB-Wert löst KEIN
+  // createShippingFulfillment aus — das passiert ausschließlich im PATCH /order-notes (Handeingabe), s. Kommentar oben.
+  const { carrierFromTrackingNumber } = await import('../shared/carrier-guess');
+  const carrier = carrierFromTrackingNumber(trackingNumber);
   await db.update(schema.orderNotes).set({
     trackingNumber,
     shippedAt: now,
     updatedAt: now,
+    ...(carrier ? { carrier } : {}),
   }).where(and(
     eq(schema.orderNotes.ebayOrderId, ebayOrderId),
     or(isNull(schema.orderNotes.trackingNumber), eq(schema.orderNotes.trackingNumber, ''))
