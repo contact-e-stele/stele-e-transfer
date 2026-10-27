@@ -67,3 +67,26 @@ describe('OFFEN 009 Punkt 3: Dubletten beim Import (echte Daten stele-242, ds.pr
     expect(mergeImportDuplicates([{ name: 'Color', values: ['A'] }], one).entries).toEqual(one);
   });
 });
+
+describe('Meldung 27.10. 18:25: Versanddienst per Gegencheck eBay/AliExpress (01-15317-84805, stele-220-BLUE)', () => {
+  test('gespeichert ohne "H" → Format allein unklar', async () => {
+    const { decideCarrier } = await import('./carrier-guess');
+    expect(decideCarrier({ local: '1003660829824501016' })).toBeNull();
+  });
+  test('eBay meldet Hermes → Hermes (Quelle eBay)', async () => {
+    const { decideCarrier } = await import('./carrier-guess');
+    expect(decideCarrier({ local: '1003660829824501016', ebayCodes: ['Hermes'] })).toEqual({ carrier: 'Hermes', source: 'ebay' });
+  });
+  test('AliExpress liefert H1003660829824501016 (dieselbe Sendung) → Hermes (Quelle AliExpress)', async () => {
+    const { decideCarrier } = await import('./carrier-guess');
+    expect(decideCarrier({ local: '1003660829824501016', ebayCodes: [null], aliTracking: 'H1003660829824501016' })).toEqual({ carrier: 'Hermes', source: 'aliexpress' });
+  });
+  test('AliExpress-Nummer einer ANDEREN Sendung zählt nicht', async () => {
+    const { decideCarrier } = await import('./carrier-guess');
+    expect(decideCarrier({ local: '1003660829824501016', aliTracking: 'H1003660829824509999' })).toBeNull();
+  });
+  test('eindeutiges Format geht vor (DHL)', async () => {
+    const { decideCarrier } = await import('./carrier-guess');
+    expect(decideCarrier({ local: '00340434886115235908', ebayCodes: ['DHL'] })).toEqual({ carrier: 'DHL', source: 'format' });
+  });
+});

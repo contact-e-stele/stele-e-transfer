@@ -1033,8 +1033,8 @@ const app = new Hono()
           const day = now.slice(0, 10);
           if (result === 'match') {
             // OFFEN 009 Punkt 2: Versanddienst von eBay übernehmen, wenn in der App leer (reines DB-Update, löst nichts bei eBay aus).
-            const { carrierFromEbayCode, carrierFromTrackingNumber } = await import('../shared/carrier-guess');
-            const carrier = n.carrier?.trim() ? undefined : (onEbay.map(f => carrierFromEbayCode(f.carrier)).find(Boolean) ?? carrierFromTrackingNumber(n.trackingNumber) ?? undefined);
+            const { decideCarrier } = await import('../shared/carrier-guess');
+            const carrier = n.carrier?.trim() ? undefined : (decideCarrier({ local: n.trackingNumber, ebayCodes: onEbay.map(f => f.carrier) })?.carrier ?? undefined);
             await db.update(schema.orderNotes).set({ trackingEbaySubmitted: true, trackingEbaySubmittedError: null, updatedAt: now, ...(carrier ? { carrier } : {}) })
               .where(eq(schema.orderNotes.ebayOrderId, n.ebayOrderId));
           } else {
@@ -4038,18 +4038,40 @@ app.post('/multi-rabatt/send-all', async (c) => {
   }
 });
 
-// OFFEN 009 Punkt 2: Versanddienst für vorhandene Sendungen nachtragen, wo er leer ist und das Nummernformat eindeutig ist
-// (DHL "00340434…", Hermes "H"+19 Ziffern). Standard Vorschau; {apply:true} schreibt nur order_notes.carrier (kein eBay-Aufruf).
+// OFFEN 009 Punkt 2 + Meldung 27.10. 18:25: Versanddienst für vorhandene Sendungen nachtragen, wo er leer ist. Quellen: Nummernformat,
+// dann Gegencheck eBay-Bestellung (Versanddaten, auch bei schon übermittelten) und AliExpress-Bestellung (Sendungsnummer). Nur eindeutige
+// Ergebnisse (shared/carrier-guess.ts decideCarrier). Standard Vorschau; {apply:true} schreibt nur order_notes.carrier (kein eBay-Schreibaufruf).
 app.post('/order-notes/fill-carrier', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({})) as { apply?: unknown };
     const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
-    const { carrierFromTrackingNumber } = await import('../shared/carrier-guess');
-    const notes = (await db.select().from(schema.orderNotes).all()).filter(n => n.trackingNumber?.trim() && !n.carrier?.trim());
-    const rows = notes.map(n => ({ orderId: n.ebayOrderId, carrier: carrierFromTrackingNumber(n.trackingNumber) }));
+    const { decideCarrier, carrierFromTrackingNumber } = await import('../shared/carrier-guess');
+    const { getShippingFulfillments } = await import('./ebay');
+    const { getAliOrderTracking } = await import('./aliexpress-api');
+    const notes = (await db.select().from(schema.orderNotes).all()).filter(n => n.trackingNumber?.trim() && !n.carrier?.trim()).slice(0, 25);
+    let aliToken: string | null | undefined;
+    const rows: Array<{ orderId: string; carrier: string | null; source: string | null; error?: string }> = [];
+    for (const n of notes) {
+      try {
+        let d = decideCarrier({ local: n.trackingNumber });
+        if (!d) {
+          const onEbay = await getShippingFulfillments(n.ebayOrderId).catch(() => []);
+          d = decideCarrier({ local: n.trackingNumber, ebayCodes: onEbay.map(f => f.carrier) });
+          if (!d && n.aliexpressOrderId) {
+            if (aliToken === undefined) { await ensureFreshAliToken(); aliToken = await getAliAccessToken(); }
+            const ali = aliToken ? await getAliOrderTracking(n.aliexpressOrderId, aliToken) : null;
+            d = decideCarrier({ local: n.trackingNumber, aliTracking: ali?.trackingNumber ?? null });
+          }
+        }
+        rows.push({ orderId: n.ebayOrderId, carrier: d?.carrier ?? null, source: d?.source ?? null });
+      } catch (e) {
+        rows.push({ orderId: n.ebayOrderId, carrier: carrierFromTrackingNumber(n.trackingNumber), source: null, error: String(e).slice(0, 200) });
+      }
+    }
     if (body.apply === true) {
       for (const r of rows) if (r.carrier) await db.update(schema.orderNotes).set({ carrier: r.carrier, updatedAt: new Date().toISOString() }).where(eq(schema.orderNotes.ebayOrderId, r.orderId));
     }
+    console.log(`[Versanddienst nachtragen] ${body.apply === true ? 'apply' : 'Vorschau'}: ${rows.map(r => `${r.orderId}=${r.carrier ?? '—'}(${r.source ?? 'unklar'})`).join(', ')}`);
     return c.json({ ok: true, apply: body.apply === true, ohneVersanddienst: rows.length, ableitbar: rows.filter(r => r.carrier).length, rows }, 200);
   } catch (e) {
     return c.json({ ok: false, error: String(e) }, 500);
