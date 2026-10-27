@@ -4392,7 +4392,7 @@ app.post('/products/:id/fix-ean-aspect', async (c) => {
     const { fixListingIdentifierAspects } = await import('./identifier-aspect-fix');
     const token = await getAccessToken();
     const itemSkus = await getInventoryItemGroupSkus(`stele-${id}-GROUP`, token).catch(() => [] as string[]);
-    const r = await fixListingIdentifierAspects({ productId: id, token, baseUrl: EBAY_API_BASE_URL, confirm: body.confirm === true, itemSkus,
+    const r = await fixListingIdentifierAspects({ productId: id, token, baseUrl: EBAY_API_BASE_URL, confirm: body.confirm === true, itemSkus, sourceUrl: product.sourceUrl,
       prepareItem: (item) => { if (item.product) item.product = sanitizeItemProductForPut(item.product as Record<string, unknown>); stripZeroWeight(item); } });
     console.log(`[EAN-Merkmal] stele-${id} ${body.confirm === true ? 'apply' : 'preview'}: ${JSON.stringify(r.rows)}`);
     return c.json({ mode: body.confirm === true ? 'apply' : 'preview', ...r }, 200);
@@ -4446,6 +4446,35 @@ app.post('/products/merkmale-live-all', async (c) => {
       try { results.push(await merkmaleLiveForProduct(id, body.confirm === true)); } catch (e) { results.push({ productId: id, error: String(e).slice(0, 300) }); }
     }
     return c.json({ mode: body.confirm === true ? 'apply' : 'preview', gesamt: ids.length, offset, naechsterOffset: offset + batch.length < ids.length ? offset + batch.length : null, results }, 200);
+  } catch (e) { return c.json({ error: String(e) }, 500); }
+});
+
+// „ja MPN" (Inhaber 27.10.2026): Kennungen (EAN + MPN/Herstellernummer = AliExpress-ID) in ALLEN Live-Angeboten prüfen. Standard Vorschau;
+// {confirm:true, productIds:[…]} schreibt nur die genannten (Ablauf: erst Vorschau, dann genau diese IDs). Je Aufruf höchstens 10.
+app.post('/products/fix-identifier-all', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { confirm?: unknown; productIds?: unknown; offset?: unknown };
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const wanted = Array.isArray(body.productIds) ? new Set(body.productIds.filter((x): x is number => Number.isInteger(x))) : null;
+    const confirm = body.confirm === true;
+    if (confirm && !wanted) return c.json({ error: 'Schreiben nur mit productIds aus der Vorschau' }, 400);
+    const live = (await db.select().from(schema.products)).filter(p => p.ebayStatus === 'listed' && !!p.ebayListingId && (!wanted || wanted.has(p.id))).sort((a, b) => a.id - b.id);
+    const offset = typeof body.offset === 'number' && body.offset > 0 ? Math.floor(body.offset) : 0;
+    const batch = live.slice(offset, offset + 10);
+    const { getAccessToken, getInventoryItemGroupSkus, EBAY_API_BASE_URL, sanitizeItemProductForPut, stripZeroWeight } = await import('./ebay');
+    const { fixListingIdentifierAspects } = await import('./identifier-aspect-fix');
+    const token = await getAccessToken();
+    const results = [];
+    for (const p of batch) {
+      try {
+        const itemSkus = await getInventoryItemGroupSkus(`stele-${p.id}-GROUP`, token).catch(() => [] as string[]);
+        const r = await fixListingIdentifierAspects({ productId: p.id, token, baseUrl: EBAY_API_BASE_URL, confirm, itemSkus, sourceUrl: p.sourceUrl,
+          prepareItem: (item) => { if (item.product) item.product = sanitizeItemProductForPut(item.product as Record<string, unknown>); stripZeroWeight(item); } });
+        results.push({ productId: p.id, rows: r.rows });
+      } catch (e) { results.push({ productId: p.id, error: String(e).slice(0, 300) }); }
+    }
+    console.log(`[Kennungen alle] ${confirm ? 'apply' : 'Vorschau'}: ${results.map(r => `stele-${r.productId}=${'rows' in r && r.rows ? r.rows.filter(x => x.changed.length).length : 'Fehler'}`).join(', ')}`);
+    return c.json({ mode: confirm ? 'apply' : 'preview', gesamt: live.length, offset, naechsterOffset: offset + batch.length < live.length ? offset + batch.length : null, results }, 200);
   } catch (e) { return c.json({ error: String(e) }, 500); }
 });
 

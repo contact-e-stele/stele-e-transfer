@@ -31,3 +31,24 @@ export function fixIdentifierAspects(aspects: Record<string, string[]> | undefin
   }
   return { aspects: out, changed };
 }
+
+import { isForbiddenMpn } from './mpn-guard';
+
+/**
+ * „ja MPN" (Inhaber 27.10.2026): In ALTEN Live-Angeboten steht als Herstellernummer noch die AliExpress-Produkt-ID
+ * (Live stele-107: „MPN: 1005009281437592") — Käufer finden damit das Produkt bei AliExpress, und es verletzt die Regel 5 (MPN-Guard).
+ * Gleiche Prüfung wie beim Neu-Listen (mpn-guard.ts isForbiddenMpn, Grundgesetz 8): solche Werte → „Nicht zutreffend". REINE Funktion.
+ */
+export function fixMpnAspects(aspects: Record<string, string[]> | undefined | null, sourceUrl?: string | null): { aspects: Record<string, string[]>; changed: string[] } {
+  const out: Record<string, string[]> = { ...(aspects ?? {}) };
+  const changed: string[] = [];
+  for (const [name, values] of Object.entries(out)) {
+    if (!/^(mpn|herstellernummer)$/i.test(name) || !Array.isArray(values)) continue;
+    const bad = values.filter(v => String(v).trim() !== IDENTIFIER_NOT_APPLICABLE && isForbiddenMpn(String(v), sourceUrl));
+    if (bad.length === 0) continue;
+    changed.push(`${name}: ${bad.join(', ')}`);
+    const good = values.filter(v => !bad.includes(v));
+    out[name] = good.length > 0 ? good : [IDENTIFIER_NOT_APPLICABLE];
+  }
+  return { aspects: out, changed };
+}
