@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-25, aktuelle Version: v1.37):**
+**Aktueller Zählerstand (Stand 2026-10-27, aktuelle Version: v1.39):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -274,6 +274,16 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | 4 | #214 | P-37b: Suche filtert per /sync, Sortierung + Relevanz in der App, Bewertung in % → **Bump v1.36 → v1.37 bei #214** (nachgetragen 25.10.) |
 | 1 | #215 | Bildsuche „Gleiche Ware günstiger?“ + P-37 Rest |
 | 2 | #216 | Punkt C: AliExpress-Artikelmerkmale speichern, nachladen, beim Listen an eBay |
+| 3 | #218 | Multi-Rabatt 6 €/11 €: Sperre je Stück + alle Angebote neu senden |
+| 4 | #217 | K-012: AliExpress-Tokens nie ins Log → **Bump v1.37 → v1.38 bei #217** (nachgetragen 27.10.) |
+| — | #220 | *(zählt nicht — Versions-Nachtrag v1.37, Housekeeping)* |
+| 1 | #219 | C2: Artikelmerkmale übersetzt in Live-Angebote ergänzen |
+| 2 | #221 | Multi-Rabatt: laufende Aktion behält Startdatum (eBay 38260) |
+| 3 | #222 | Multi-Rabatt: Update laufender Aktion mit SCHEDULED (eBay 38240) |
+| 4 | #223 | Multi-Rabatt: aktive Aktion sicher ersetzen (eBay 38232) → **Bump v1.38 → v1.39 bei #223** (nachgetragen 27.10.) |
+| 1 | #224 | Multi-Rabatt: alte Aktion beenden, wenn Mengenrabatt nicht lohnt (EU-Ware) |
+| 2 | #225 | OFFEN 009: KI-Titel bereinigen, Versanddienst, Varianten-Dubletten beim Import |
+| 3 | #226 | Versanddienst: Gegencheck eBay + AliExpress |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -289,7 +299,7 @@ Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Br
 Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
 aber „2 von 4“.*
 
-**→ Zähler: 2 von 4 seit v1.37** (#215, #216; nächster Bump beim 4. größeren PR). Reihenfolge = Merge-Zeitpunkt. *Lesart #212/#213: nur Log ohne Verhaltensänderung = zählt nicht (wie #98). Würde man sie zählen, wäre der Bump schon bei #212 und ein zweiter bei #216 fällig (v1.38) — Entscheidung beim Inhaber.*
+**→ Zähler: 3 von 4 seit v1.39** (#224, #225, #226; nächster Bump beim 4. größeren PR). Reihenfolge = Merge-Zeitpunkt (#218 vor #217, #220 vor #219). *Lesart #212/#213 wie oben. Lesart „#221–#223 sind Folge-Fixes eines Themas und zählen nur einmal“: dann v1.38 und „4 von 4“ — Entscheidung beim Inhaber; hier wörtlich (eigenständige Bugfix-PRs, wie #205/#206).*
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -325,6 +335,8 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.34 → v1.35: PR #200, #201, #202, #204 (nachgetragen 24.10.)
 - v1.35 → v1.36: PR #205, #203, #206, #207
 - v1.36 → v1.37: PR #209, #210, #211, #214 (nachgetragen 25.10.)
+- v1.37 → v1.38: PR #215, #216, #218, #217 (nachgetragen 27.10.)
+- v1.38 → v1.39: PR #219, #221, #222, #223 (nachgetragen 27.10.)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
