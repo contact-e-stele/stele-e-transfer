@@ -123,7 +123,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-10-27, aktuelle Version: v1.40):**
+**Aktueller Zählerstand (Stand 2026-10-27, aktuelle Version: v1.41):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -287,6 +287,13 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | — | #227 | *(zählt nicht — Versions-Nachtrag v1.39, Housekeeping)* |
 | 4 | #228 | Merkmale live: Kategorie aus nächster Varianten-SKU → **Bump v1.39 → v1.40 bei #228** |
 | 1 | #229 | MPN: AliExpress-ID in Live-Angeboten ersetzen |
+| — | #230 | *(zählt nicht — Versions-Nachtrag v1.40, Housekeeping)* |
+| 2 | #231 | Merkmale live: Kategorie aus GetItem |
+| 3 | #232 | Import-Tab: stele-Nummer bei „Bereits importiert“ + Sprung in den Produkte-Tab |
+| 4 | #233 | PRIO 1: englischer Titel (stele-245), KI-Titel nur bei titleFinal überspringen → **Bump v1.40 → v1.41 bei #233** |
+| 1 | #234 | OFFEN 010: Ausnahmeliste Preisprüfung, Preissprung 15 %, AliExpress-Namen je SKU |
+| 2 | #235 | K-016: AliExpress App-Secret ohne Klartext-Fallback |
+| 3 | #236 | K-014 Schritt 2: Erwartet + Preisalarm nur gelistete Varianten mit eigenem VK |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -302,7 +309,7 @@ Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Br
 Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
 aber „2 von 4“.*
 
-**→ Zähler: 1 von 4 seit v1.40** (#229; nächster Bump beim 4. größeren PR). Reihenfolge = Merge-Zeitpunkt (#218 vor #217, #220 vor #219). *Lesart #212/#213 wie oben. Lesart „#221–#223 sind Folge-Fixes eines Themas und zählen nur einmal“: dann v1.38 und „4 von 4“ — Entscheidung beim Inhaber; hier wörtlich (eigenständige Bugfix-PRs, wie #205/#206).*
+**→ Zähler: 3 von 4 seit v1.41** (#234, #235, #236; nächster Bump beim 4. größeren PR). Reihenfolge = Merge-Zeitpunkt (#218 vor #217, #220 vor #219). *Lesart #212/#213 wie oben. Lesart „#221–#223 sind Folge-Fixes eines Themas und zählen nur einmal“: dann v1.38 und „4 von 4“ — Entscheidung beim Inhaber; hier wörtlich (eigenständige Bugfix-PRs, wie #205/#206).*
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -341,6 +348,7 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.37 → v1.38: PR #215, #216, #218, #217 (nachgetragen 27.10.)
 - v1.38 → v1.39: PR #219, #221, #222, #223 (nachgetragen 27.10.)
 - v1.39 → v1.40: PR #224, #225, #226, #228
+- v1.40 → v1.41: PR #229, #231, #232, #233
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
