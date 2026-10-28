@@ -6,6 +6,7 @@ import { startOrderNotifier } from "./api/order-notifier";
 import { startTrackingSyncCron } from "./api/tracking-sync";
 import { runMigrations } from "./db/migrate";
 import { runStartupCheck } from "./startup-check";
+import { readEnvSecret } from "./shared/env-secret";
 
 const port = Number(process.env.PORT ?? 3000);
 const distDir = `${import.meta.dir}/../dist`;
@@ -81,6 +82,9 @@ await runStartupCheck();
 
 // Automatischer DB-Backup: täglich 15:00, 23:35 Uhr (P-23)
 startBackupScheduler();
+
+// K-016: ohne ALIEXPRESS_APP_SECRET (kein Klartext-Fallback mehr) laufen AliExpress-Aufrufe nicht — beim Start laut melden.
+if (!readEnvSecret("ALIEXPRESS_APP_SECRET")) console.error("[K-016] ❌ ALIEXPRESS_APP_SECRET fehlt in Render — AliExpress-Aufrufe (Preise, Lager, Import, Sendungsnummern) schlagen fehl, bis die Variable gesetzt ist.");
 
 // Preisüberwachung: alle 8h AliExpress-Preise prüfen, erster Check nach 2 Min (P-23)
 startPriceMonitor();

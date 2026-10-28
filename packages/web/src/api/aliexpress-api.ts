@@ -1,3 +1,4 @@
+import { requireEnvSecret } from '../shared/env-secret';
 // AliExpress DS API — offizielle Produktdaten über IOP OAuth
 // Zwei Gateways/Signierverfahren:
 // - /sync (TOP-Legacy, MD5): aliexpress.ds.product.get → title, images, price, specs, shipsFrom, variantPrices
@@ -12,7 +13,8 @@ import { isAllowedImageUrl, normalizeImageUrl, parseAliImageSearchResponse, chea
 import { skuPriceDiagnostic, deriveProductShipsFrom, type SkuPriceDiagnostic } from '../shared/ali-sku-price';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
-const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
+// K-016: kein Klartext-Fallback mehr (Repo öffentlich). Fehlt die Variable → klarer Fehler beim AliExpress-Aufruf (App läuft weiter).
+const appSecret = () => requireEnvSecret('ALIEXPRESS_APP_SECRET');
 const IOP_ENDPOINT = 'https://api-sg.aliexpress.com/sync';
 // Neueres IOP-REST-Gateway — für OAuth Token-Create/Refresh. Das alte /sync-Gateway mit
 // method=aliexpress.solution.oauth.token.create liefert dort "InvalidApiPath".
@@ -167,7 +169,7 @@ export async function exchangeAliCodeForToken(code: string, redirectUri: string)
       sign_method: 'sha256',
       simplify: 'true',
     };
-    params.sign = iopRestSign(APP_SECRET, apiPath, params);
+    params.sign = iopRestSign(appSecret(), apiPath, params);
 
     const res = await fetch(`${IOP_REST_ENDPOINT}${apiPath}`, {
       method: 'POST',
@@ -222,7 +224,7 @@ export async function refreshAliToken(refreshToken: string): Promise<{ access_to
       sign_method: 'sha256',
       simplify: 'true',
     };
-    params.sign = iopRestSign(APP_SECRET, apiPath, params);
+    params.sign = iopRestSign(appSecret(), apiPath, params);
 
     const res = await fetch(`${IOP_REST_ENDPOINT}${apiPath}`, {
       method: 'POST',
@@ -423,7 +425,7 @@ async function fetchAliOrderResult(aliOrderId: string, accessToken: string): Pro
     access_token: accessToken,
     single_order_query: JSON.stringify({ order_id: aliOrderId }),
   };
-  params.sign = iopSign(APP_SECRET, params);
+  params.sign = iopSign(appSecret(), params);
 
   const res = await fetch(IOP_ENDPOINT, {
     method: 'POST',
@@ -512,7 +514,7 @@ export async function getFreightCost(productId: string, skuId: string, accessTok
         language: 'de',
       }),
     };
-    params.sign = iopSign(APP_SECRET, params);
+    params.sign = iopSign(appSecret(), params);
 
     const res = await fetch(IOP_ENDPOINT, {
       method: 'POST',
@@ -560,7 +562,7 @@ export async function getAliProductByApi(productId: string, accessToken: string)
       ship_to_country: 'DE',
       target_currency: 'EUR',
     };
-    params.sign = iopSign(APP_SECRET, params);
+    params.sign = iopSign(appSecret(), params);
 
     const res = await fetch(IOP_ENDPOINT, {
       method: 'POST',
@@ -778,7 +780,7 @@ export async function searchAliProductsByApi(
       pageSize: String(ALI_SEARCH_PAGE_SIZE),
       sortBy: mapAliSearchSort(frontendSort),
     };
-    params.sign = iopSign(APP_SECRET, params);
+    params.sign = iopSign(appSecret(), params);
 
     const res = await fetch(IOP_ENDPOINT, {
       method: 'POST',
@@ -849,7 +851,7 @@ export async function searchAliByImageApi(imageUrl: string): Promise<AliSearchRe
       target_language: 'DE',
       product_cnt: '20',
     };
-    params.sign = iopSign(APP_SECRET, params);
+    params.sign = iopSign(appSecret(), params);
 
     const res = await fetch(IOP_ENDPOINT, {
       method: 'POST',

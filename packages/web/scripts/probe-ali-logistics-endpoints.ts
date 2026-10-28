@@ -9,11 +9,12 @@
 //
 // Aufruf (aus packages/web/): bun --env-file=<repo>/.env scripts/probe-ali-logistics-endpoints.ts
 
+import { requireEnvSecret } from '../src/shared/env-secret';
 import * as crypto from 'crypto';
 import { ensureFreshAliToken, getAliAccessToken } from '../src/api/aliexpress-api';
 
 const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
-const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
+const APP_SECRET = requireEnvSecret('ALIEXPRESS_APP_SECRET'); // K-016: kein Klartext-Fallback
 const IOP_ENDPOINT = 'https://api-sg.aliexpress.com/sync';
 
 function iopSign(secret: string, params: Record<string, string>): string {
