@@ -1,6 +1,7 @@
 // AliExpress URL Scraper — DS API (primary, instant) + Playwright fallback + HTML fallbacks
 // Priority: 1) AliExpress DS API (aliexpress.ds.product.get) → 2) Playwright → 3) HTML
 
+import { requireEnvSecret } from '../shared/env-secret';
 import { getFreightCost } from './aliexpress-api';
 
 // Attribut-Namen die NICHT als Varianten-Gruppe gespeichert werden sollen
@@ -163,7 +164,7 @@ export function formatGpsrText(gpsr: GpsrInfo): string {
 async function fetchDsApiRaw(productId: string): Promise<{ raw: Record<string, unknown>; accessToken: string } | null> {
   const { createHash } = await import('node:crypto');
   const APP_KEY = process.env.ALIEXPRESS_APP_KEY || '535690';
-  const APP_SECRET = process.env.ALIEXPRESS_APP_SECRET || 'Yc9AMgAmeQUB2Kc7hXsZ8qZoXtjOJWkW';
+  const APP_SECRET = requireEnvSecret('ALIEXPRESS_APP_SECRET'); // K-016: kein Klartext-Fallback
   const IOP_EP = 'https://api-sg.aliexpress.com/sync';
 
   // Access Token aus DB/ENV holen
