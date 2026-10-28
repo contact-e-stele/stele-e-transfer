@@ -8,7 +8,9 @@ import { activeCheckoutFactor } from './checkout-factor';
 import {
   profitAtSellPrice, evaluateTargetDisplay, isChinaOriginForVariant,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
+  effectiveProfitFloor, profitFloorFor,
 } from './pricing';
+import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPriceEntry } from './variant-resolver';
 
 export interface ProfitProduct {
   id: number;
@@ -29,13 +31,53 @@ export interface ProfitProduct {
 // buyPrice/isChinaOrigin (Multi-Rabatt 18.10.2026): EK und Herkunft, mit denen gerechnet wurde — für die Mehrstück-Rechnung in volume-discount.ts
 export interface ProfitRow { label: string; profit: number; skuId?: string; sellPrice: number; profitWithoutFactor?: number; buyPrice?: number; isChinaOrigin?: boolean }
 
+// K-014 Schritt 2 (Kalkulator 28.10.2026): Varianten, die NICHT ins "Erwartet"/den Preisalarm zählen — nicht bei eBay angeboten
+// (keine Kombination der eBay-Gruppe passt, Zuordnung wie VariantRaise: entryMatchesCombo) oder ohne eigenen Verkaufspreis.
+// Sie werden grau angezeigt, nie mit product.sellPrice gerechnet (vorher: 119 "Erwartet −5,33" aus 500PCs @ 14,95).
+export type ExcludedReason = 'nicht bei eBay' | 'ohne eigenen VK' | 'Dublette mit altem VK';
+export interface ExcludedVariant { skuId: string; label: string; reason: ExcludedReason; storedSellPrice: number | null }
+
+function parseGroups(v: unknown): VariantGroup[] {
+  let g: unknown = v;
+  if (typeof g === 'string') { try { g = JSON.parse(g); } catch { g = []; } }
+  return Array.isArray(g) ? (g as VariantGroup[]).filter(x => x && typeof x.name === 'string' && Array.isArray(x.values) && x.values.length > 0) : [];
+}
+
+/** Rein: teilt die Varianten-Einträge in "gelistet mit eigenem VK" (zählt) und ausgeschlossene (grau). */
+export function classifyListedVariants<T extends { skuId: string; attrs?: Record<string, string>; price: number; ebayPrice?: number; displayValues?: Record<string, string> }>(
+  variants: unknown, entries: T[], variantSellPricesJson: string | null | undefined,
+): { counted: Array<{ entry: T; sellPrice: number }>; excluded: ExcludedVariant[] } {
+  const combos = buildCombinations(parseGroups(variants));
+  const stored = parseVariantSellPrices(variantSellPricesJson ?? null);
+  const counted: Array<{ entry: T; sellPrice: number }> = [];
+  const excluded: ExcludedVariant[] = [];
+  const matched: Array<{ e: T; label: string; combo: number; own: number | null; source: string }> = [];
+  for (const e of entries) {
+    if (typeof e.price !== 'number' || e.price <= 0) continue;
+    const label = Object.values(e.attrs ?? {}).join(' / ') || `…${String(e.skuId).slice(-6)}`;
+    const r = resolveVariantSellPrice(e.skuId, stored, e);
+    const combo = combos.findIndex(c => entryMatchesCombo(c, e as unknown as VariantPriceEntry));
+    if (combo < 0) { excluded.push({ skuId: e.skuId, label, reason: 'nicht bei eBay', storedSellPrice: r.sellPrice }); continue; }
+    if (r.sellPrice == null) { excluded.push({ skuId: e.skuId, label, reason: 'ohne eigenen VK', storedSellPrice: null }); continue; }
+    matched.push({ e, label, combo, own: r.sellPrice, source: r.source });
+  }
+  // Dubletten (mehrere AliExpress-Einträge für dieselbe eBay-Variante): hat einer einen aktuellen VK aus variantSellPrices, zählen alte
+  // Einträge, die nur noch den früheren ebayPrice tragen, nicht (Live-Fund 28.10. stele-189 L/Green: alter ebayPrice 16,95 ↔ eBay 18,95).
+  const comboHasColumn = new Set(matched.filter(m => m.source === 'column').map(m => m.combo));
+  for (const m of matched) {
+    if (m.source !== 'column' && comboHasColumn.has(m.combo)) { excluded.push({ skuId: m.e.skuId, label: m.label, reason: 'Dublette mit altem VK', storedSellPrice: m.own }); continue; }
+    counted.push({ entry: m.e, sellPrice: m.own as number });
+  }
+  return { counted, excluded };
+}
+
 export function productTarget(p: Pick<ProfitProduct, 'targetMarginEur'>): number {
   return p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
 }
 
 // Gewinn beim heutigen VK je Variante (Varianten-Produkt: variant_sell_prices → alter ebayPrice → Produkt-VK) bzw. je
 // Einzelartikel. Formel v2 über profitAtSellPrice. Zeilen ohne VK oder ohne Einkaufspreis fehlen (nichts geraten).
-export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVariant: boolean } {
+export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVariant: boolean; excluded: ExcludedVariant[] } {
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const checkoutFactor = activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt); // K-005
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China.
@@ -51,19 +93,31 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
   try { entries = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { entries = []; }
   const isVariant = isVariantProduct(p.variants, p.variantPrices);
   const rows: ProfitRow[] = [];
+  let excluded: ExcludedVariant[] = [];
   if (isVariant) {
-    const stored = parseVariantSellPrices(p.variantSellPrices);
-    for (const v of entries) {
-      if (typeof v.price !== 'number' || v.price <= 0) continue;
-      const sell = resolveVariantSellPrice(v.skuId, stored, v).sellPrice ?? p.sellPrice;
-      if (sell == null) continue;
+    // K-014: nur bei eBay angebotene Varianten mit eigenem VK — kein Rückfall auf product.sellPrice (der gilt nur für Einzelartikel).
+    const cls = classifyListedVariants(p.variants, entries, p.variantSellPrices);
+    excluded = cls.excluded;
+    for (const { entry: v, sellPrice: sell } of cls.counted) {
       const label = Object.values(v.attrs ?? {}).join(' / ') || `…${v.skuId.slice(-6)}`;
       rows.push({ label, profit: profitAt(sell, v.price, v.attrs), skuId: v.skuId, sellPrice: sell, profitWithoutFactor: profitRaw(sell, v.price, v.attrs), buyPrice: v.price, isChinaOrigin: isChinaOriginForVariant(v.attrs, p.shipsFrom) });
     }
   } else if (p.sellPrice && p.buyPrice) {
     rows.push({ label: '', profit: profitAt(p.sellPrice, p.buyPrice), sellPrice: p.sellPrice, profitWithoutFactor: profitRaw(p.sellPrice, p.buyPrice), buyPrice: p.buyPrice, isChinaOrigin: isChinaOriginForVariant(undefined, p.shipsFrom) });
   }
-  return { rows, isVariant };
+  return { rows, isVariant, excluded };
+}
+
+// K-014 Schritt 2: Preisalarm für Varianten-Produkte = schlechteste GELISTETE Variante mit IHREM VK unter dem Boden (wie die Anzeige).
+// Gehaltene Varianten (K-008) zählen nicht. Keine zählende Variante → kein Alarm (nichts geraten).
+export function variantPriceAlarm(p: ProfitProduct, heldSkuIds?: ReadonlySet<string>): { isAlarm: boolean; worstProfit: number | null; worstProfitWithoutFactor: number | null; lossWithoutFactor: boolean; excluded: ExcludedVariant[] } {
+  const { rows, excluded } = productProfitRows(p);
+  const use = rows.filter(r => !(r.skuId && heldSkuIds?.has(r.skuId)));
+  if (use.length === 0) return { isAlarm: false, worstProfit: null, worstProfitWithoutFactor: null, lossWithoutFactor: false, excluded };
+  const worstProfit = Math.min(...use.map(r => r.profit));
+  const worstProfitWithoutFactor = Math.min(...use.map(r => r.profitWithoutFactor ?? r.profit));
+  const floor = effectiveProfitFloor(profitFloorFor(productTarget(p)));
+  return { isAlarm: worstProfit < floor - 1e-9, worstProfit, worstProfitWithoutFactor, lossWithoutFactor: worstProfitWithoutFactor < -1e-9 && worstProfit > worstProfitWithoutFactor + 1e-9, excluded };
 }
 
 export interface TierChangePreview {

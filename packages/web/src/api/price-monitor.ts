@@ -18,6 +18,7 @@ import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
 import { getPriceHolds, releasePriceHolds } from './price-holds';
 import { getAutoPriceExclusions } from './auto-price-exclusions';
+import { variantPriceAlarm } from '../shared/target-margin-bulk';
 import { isPriceJump, priceJumpMessage, type AutoPriceExclusions } from '../shared/price-jump';
 import { isProductPriceLocked, setPriceLock } from './price-locks';
 import { autoAlignUpward, type AlignRow } from './auto-align';
@@ -1075,18 +1076,12 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // (s. evaluatePriceAlarm() in shared/pricing.ts): Alarm ist ab jetzt ausschließlich
         // "aktueller VK liegt unter der Zielmarge", nicht mehr jede Abweichung nach oben ODER unten.
         const pricesChangedEnough = safePrice != null && (product.sellPrice == null || Math.abs(safePrice - product.sellPrice) >= ALERT_THRESHOLD);
-        const margin = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
         // K-008: gehaltene Varianten (Gewinn ≥ 0,90 €) zählen nicht für den Alarm und werden nicht angehoben; < 0,90 € → Halten aufheben.
         const hold = resolvePriceHolds({ ...product, shipsFrom: shipsFromEff, variantPrices: freshVariantPricesJson }, priceHolds[String(product.id)]);
         if (hold.releaseKeys.length > 0) await releasePriceHolds(product.id, hold.rows.filter(r => r.state === 'release'));
-        const alarmRes = evaluatePriceAlarm({
-          currentSellPrice: product.sellPrice,
-          variants: rows.filter(r => !hold.heldKeys.has(r.skuId)).map(r => ({ buyPrice: r.buyPrice, isChinaOrigin: r.isChinaOrigin })),
-          isChinaOrigin: isChina,
-          ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-          vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
-          targetMarginEur: margin, checkoutFactor,
-        });
+        // K-014 Schritt 2 (Kalkulator 28.10.2026): Alarm nur über bei eBay angebotene Varianten, jede mit IHREM VK (variantSellPrices) —
+        // vorher jede AliExpress-Variante mit product.sellPrice (bei 45 Varianten-Produkten dauerhaft an, z. B. 119: −17,80 €).
+        const alarmRes = variantPriceAlarm({ ...product, shipsFrom: shipsFromEff, variantPrices: freshVariantPricesJson }, hold.heldKeys);
         if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
         const alarm = alarmRes.isAlarm
           // A-015: eine mehrdeutige neue SKU (nichts geraten, nicht angehängt) heißt, dass frische Preise dieser Variante NICHT übernommen wurden —

@@ -1809,7 +1809,10 @@ export default function Produkte() {
                 const minP = Math.min(...vp.map(v => v.price));
                 // A-017: "eBay" und "Gewinn" je Variante aus derselben Funktion wie "Erwartet" (productProfitRows, Formel v2) — keine eigene
                 // Formel-Kopie mehr (vorher 13 % + 0,45 €, ohne Versand/Einfuhrabgaben, feste Grenze 1,6 €).
-                const profitRowsBySku = new Map(productProfitRows(product).rows.filter(r => r.skuId).map(r => [r.skuId as string, r]));
+                const profitInfo = productProfitRows(product);
+                const profitRowsBySku = new Map(profitInfo.rows.filter(r => r.skuId).map(r => [r.skuId as string, r]));
+                // K-014 Schritt 2: nicht bei eBay / ohne eigenen VK → grau, ohne VK-/Gewinnzahl (gespeicherte Werte bleiben in der DB)
+                const excludedBySku = new Map(profitInfo.excluded.map(x => [x.skuId, x.reason]));
                 const variantTarget = productTarget(product);
                 return (
                   <div style={{ marginTop: 8 }}>
@@ -1836,13 +1839,15 @@ export default function Produkte() {
                               const ebayP = pr?.sellPrice;
                               const profit = pr ? pr.profit : null;
                               const profitLevel = profit !== null ? evaluateTargetDisplay(variantTarget, profit).level : null;
+                              const excludedReason = excludedBySku.get(v.skuId);
                               return (
-                              <tr key={v.skuId} style={{ background: v.price === minP ? "#F0FDF4" : i%2===0 ? "#fff" : "#FAFAFA" }}>
+                              <tr key={v.skuId} title={excludedReason ? `Zählt nicht für „Erwartet“ und den Preisalarm: ${excludedReason}` : undefined}
+                                style={{ background: v.price === minP ? "#F0FDF4" : i%2===0 ? "#fff" : "#FAFAFA", opacity: excludedReason ? 0.55 : 1 }}>
                                 {Object.entries(v.attrs).filter(([k]) => k.toLowerCase() !== 'ships from' && k.toLowerCase() !== 'ships_from' && k.toLowerCase() !== 'versandland').map(([k, val]) => <td key={k} style={{ padding:"6px 10px", color:"#0F172A", borderBottom:"1px solid #F1F5F9" }}>{String(val)}</td>)}
                                 <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color: v.price === minP ? "#16A34A" : "#1D4ED8", borderBottom:"1px solid #F1F5F9" }}>
                                   {v.price.toFixed(2)} €{v.price === minP && <span style={{fontSize:9,color:"#16A34A"}}> ▼</span>}
                                 </td>
-                                {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", color:"#0F172A", borderBottom:"1px solid #F1F5F9", fontWeight:600 }}>{ebayP ? `${ebayP.toFixed(2)} €` : "–"}</td>}
+                                {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", color: excludedReason ? "#94A3B8" : "#0F172A", borderBottom:"1px solid #F1F5F9", fontWeight:600, fontSize: excludedReason ? 10 : undefined }}>{excludedReason ?? (ebayP ? `${ebayP.toFixed(2)} €` : "–")}</td>}
                                 {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", borderBottom:"1px solid #F1F5F9", fontWeight:700, color: profitLevel === null ? "#94A3B8" : TARGET_LEVEL_STYLE[profitLevel].color }}>
                                   {profit !== null ? `${profit >= 0 ? "+" : ""}${profit.toFixed(2)} €` : "–"}
                                 </td>}

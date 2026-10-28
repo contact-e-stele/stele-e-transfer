@@ -56,7 +56,7 @@ export function TargetBadge({ product, isLive, onChange }: {
   const [pending, setPending] = useState<{ tier: number; plan: TierPlan } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const target = productTarget(product);
-  const { rows, isVariant } = productProfitRows(product);
+  const { rows, isVariant, excluded } = productProfitRows(product);
 
   const worst = rows.length > 0 ? Math.min(...rows.map(r => r.profit)) : null;
   const display = worst != null ? evaluateTargetDisplay(target, worst) : null;
@@ -162,7 +162,7 @@ export function TargetBadge({ product, isLive, onChange }: {
             title={`Boden dieser Stufe: ${fmt(display.floorEur)} € — rot = darunter (Preis anheben), gelb = unter dem Ziel`}
             style={{ fontSize: 11, background: style.bg, color: style.color, padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}
           >
-            Ziel {fmt(display.targetEur)} € · Erwartet {fmt(display.expectedEur)} €{isVariant ? " (schlechteste Variante)" : ""}
+            Ziel {fmt(display.targetEur)} € · Erwartet {fmt(display.expectedEur)} €{isVariant ? " (schlechteste Variante bei eBay)" : ""}
           </span>
         )}
         {lossWithoutFactor && worstRaw != null && (
@@ -250,7 +250,7 @@ export function TargetBadge({ product, isLive, onChange }: {
       {isLive && <EbayPriceCheck productId={product.id} />}
       <MultiRabattPanel productId={product.id} isLive={!!isLive} />
 
-      {isVariant && rows.length > 0 && (
+      {isVariant && (rows.length > 0 || excluded.length > 0) && (
         <details style={{ marginTop: 4 }}>
           <summary style={{ fontSize: 10, color: "#64748B", cursor: "pointer" }}>je Variante</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 2 }}>
@@ -265,6 +265,12 @@ export function TargetBadge({ product, isLive, onChange }: {
                 </span>
               );
             })}
+            {/* K-014 Schritt 2: nicht bei eBay angebotene Varianten / ohne eigenen VK — grau, ohne Gewinnzahl, zählen nicht ins "Erwartet" */}
+            {excluded.map((x, i) => (
+              <span key={`x${i}`} style={{ fontSize: 10, color: "#94A3B8" }} title="Zählt nicht für „Erwartet“ und den Preisalarm">
+                {x.label}: {x.reason}
+              </span>
+            ))}
           </div>
         </details>
       )}

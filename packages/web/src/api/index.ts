@@ -3031,7 +3031,10 @@ const app = new Hono()
       const { getPriceHolds } = await import('./price-holds');
       const { resolvePriceHolds } = await import('../shared/price-hold');
       const holdHere = resolvePriceHolds({ ...old, buyPrice: body.buyPrice }, (await getPriceHolds().catch((): Awaited<ReturnType<typeof getPriceHolds>> => ({})))[String(id)]);
-      const priceChanged = !holdHere.allHeld && evaluatePriceAlarm({
+      // K-014 Schritt 2: Varianten-Produkte → Alarm nur über gelistete Varianten mit eigenem VK (wie Anzeige und Preisprüfung).
+      const { variantPriceAlarm } = await import('../shared/target-margin-bulk');
+      const { isVariantProduct } = await import('../shared/variant-product');
+      const priceChanged = isVariantProduct(old.variants, old.variantPrices) ? variantPriceAlarm(old, holdHere.heldKeys).isAlarm : !holdHere.allHeld && evaluatePriceAlarm({
         currentSellPrice: old.sellPrice,
         variants: [{ buyPrice: body.buyPrice }],
         isChinaOrigin: isChinaShipping(old.shipsFrom),
@@ -3895,7 +3898,10 @@ const app = new Hono()
             // K-008: alles gehalten (Gewinn ≥ 0,90 €) → kein Alarm, kein Anheben; < 0,90 € → Halten aufheben (Hinweis), wie bisher.
             const hold = resolvePriceHolds({ ...product, buyPrice: newPrice }, priceHolds[String(product.id)]);
             if (hold.releaseKeys.length > 0) await releasePriceHolds(product.id, hold.rows.filter(r => r.state === 'release'));
-            const alarmRes = evaluatePriceAlarm({
+            // K-014 Schritt 2: Varianten-Produkte → Alarm nur über gelistete Varianten mit eigenem VK (gespeicherte variantPrices).
+            const { variantPriceAlarm } = await import('../shared/target-margin-bulk');
+            const { isVariantProduct } = await import('../shared/variant-product');
+            const alarmRes = isVariantProduct(product.variants, product.variantPrices) ? variantPriceAlarm(product, hold.heldKeys) : evaluatePriceAlarm({
               currentSellPrice: product.sellPrice,
               variants: [{ buyPrice: newPrice }],
               isChinaOrigin: isChinaShipping(product.shipsFrom),
