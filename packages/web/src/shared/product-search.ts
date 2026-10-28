@@ -16,3 +16,13 @@ export function matchesProductSearch(p: SearchableProduct, search: string): bool
   if (num && Number(num[1]) === p.id) return true;
   return (p.generatedTitle ?? "").toLowerCase().includes(q) || (p.title ?? "").toLowerCase().includes(q);
 }
+
+/** Import-Tab „Bereits importiert“ (Inhaber 28.10.2026): Link in den Produkte-Tab mit vorausgefüllter Suche. */
+export function produkteSearchHref(productId: number): string {
+  return `/produkte?suche=stele-${productId}`;
+}
+
+/** Produkte-Tab: Suchbegriff aus "?suche=…" (leer, wenn nicht gesetzt). */
+export function searchFromQuery(query: string): string {
+  return (new URLSearchParams(query).get("suche") ?? "").trim().slice(0, 100);
+}

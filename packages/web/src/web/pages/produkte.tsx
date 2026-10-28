@@ -14,7 +14,7 @@ import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { productProfitRows, productTarget } from "../../shared/target-margin-bulk";
-import { matchesProductSearch } from "../../shared/product-search";
+import { matchesProductSearch, searchFromQuery } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
 import { ProductDataPanel } from "../components/product-data-panel";
@@ -951,8 +951,9 @@ export default function Produkte() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [showListed, setShowListed] = useState(false);
+  // Import-Tab „Im Produkte-Tab öffnen“ (28.10.2026): ?suche=stele-<Nr> vorausfüllen und Live-Listings mit anzeigen.
+  const [search, setSearch] = useState(() => searchFromQuery(typeof window !== "undefined" ? window.location.search : ""));
+  const [showListed, setShowListed] = useState(() => searchFromQuery(typeof window !== "undefined" ? window.location.search : "") !== "");
   const [checkingPrice, setCheckingPrice] = useState<number | null>(null);
   const [refreshingStock, setRefreshingStock] = useState<number | null>(null);
   const [stockRefreshMsg, setStockRefreshMsg] = useState<{ id: number; text: string } | null>(null);

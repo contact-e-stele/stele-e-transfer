@@ -4343,6 +4343,7 @@ app.get('/products/check-duplicate', async (c) => {
       title: schema.products.title,
       generatedTitle: schema.products.generatedTitle,
       ebayStatus: schema.products.ebayStatus,
+      ebayListingId: schema.products.ebayListingId,
       createdAt: schema.products.createdAt,
     }).from(schema.products)
       .where(or(

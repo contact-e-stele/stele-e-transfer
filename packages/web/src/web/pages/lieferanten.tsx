@@ -14,6 +14,8 @@ import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
+import { produkteSearchHref } from "../../shared/product-search";
+import { useLocation } from "wouter";
 import { planVolumeDiscount } from "../../shared/volume-discount";
 import { MultiRabattTable, useMultiRabattRule } from "../components/multi-rabatt";
 import { pruneRemovedVariantEntries, maxVariantsError, countVariantCombinations, MAX_VARIANT_COMBINATIONS } from "../../shared/variant-cleanup";
@@ -328,9 +330,10 @@ export default function Lieferanten() {
   // P-31: Duplikat-Warnung vor dem Import
   const [duplicateWarning, setDuplicateWarning] = useState<{
     productId: string;
-    product: { id: number; title: string; generatedTitle: string; ebayStatus: string | null; createdAt: string | null };
+    product: { id: number; title: string; generatedTitle: string; ebayStatus: string | null; ebayListingId?: string | null; createdAt: string | null };
   } | null>(null);
   const [duplicateChecking, setDuplicateChecking] = useState(false);
+  const [, navigateTo] = useLocation();
 
   // P-82: Shop-Kategorie beim Import auswählen — echte Kategorien des eigenen eBay-Shops (kein
   // Freitext, Aufgabe 3). "" = keine Kategorie gewählt → Aufgabe 5: wird dann gar nicht gespeichert
@@ -662,7 +665,7 @@ export default function Lieferanten() {
       const data = await safeJson<{
         exists: boolean;
         productId: string | null;
-        product?: { id: number; title: string; generatedTitle: string; ebayStatus: string | null; createdAt: string | null };
+        product?: { id: number; title: string; generatedTitle: string; ebayStatus: string | null; ebayListingId?: string | null; createdAt: string | null };
       }>(`/api/products/check-duplicate?url=${encodeURIComponent(url)}`);
       if (data.exists && data.productId && data.product) {
         setDuplicateChecking(false);
@@ -1111,7 +1114,8 @@ export default function Lieferanten() {
                   <span style={{ fontSize: 16, lineHeight: "20px" }}>⚠️</span>
                   <div style={{ flex: 1 }}>
                     <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#92400E" }}>
-                      Bereits importiert
+                      Bereits importiert als{" "}
+                      <span style={{ fontFamily: "monospace", fontSize: 14, background: "#FEF3C7", padding: "1px 6px", borderRadius: 6 }}>stele-{duplicateWarning.product.id}</span>
                     </p>
                     <p style={{ margin: "2px 0 0", fontSize: 12, color: "#78350F" }}>
                       „{duplicateWarning.product.generatedTitle || duplicateWarning.product.title}"
@@ -1120,7 +1124,31 @@ export default function Lieferanten() {
                     </p>
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {/* Inhaber 28.10.2026: gleich sehen, wo das Produkt steht — Produkte-Tab mit Suche „stele-<Nr>“, eBay-Angebot */}
+                  <button
+                    onClick={() => navigateTo(produkteSearchHref(duplicateWarning.product.id))}
+                    style={{
+                      padding: "7px 12px", borderRadius: 8, border: "1.5px solid #FF6B00",
+                      background: "#FF6B00", color: "#fff", fontWeight: 700, fontSize: 12,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    Im Produkte-Tab öffnen
+                  </button>
+                  {duplicateWarning.product.ebayListingId && (
+                    <a
+                      href={`https://www.ebay.de/itm/${duplicateWarning.product.ebayListingId}`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{
+                        padding: "7px 12px", borderRadius: 8, border: "1.5px solid #F59E0B",
+                        background: "#fff", color: "#92400E", fontWeight: 700, fontSize: 12,
+                        textDecoration: "none", fontFamily: "inherit",
+                      }}
+                    >
+                      eBay-Angebot {duplicateWarning.product.ebayListingId}
+                    </a>
+                  )}
                   <button
                     onClick={handleImportAnyway}
                     style={{

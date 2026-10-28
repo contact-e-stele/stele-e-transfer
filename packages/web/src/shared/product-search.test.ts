@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { matchesProductSearch } from "./product-search";
+import { matchesProductSearch, produkteSearchHref, searchFromQuery } from "./product-search";
 
 const p71 = { id: 71, title: "Non-stick BBQ Grill Mat", generatedTitle: "Grillmatte antihaft" };
 const p171 = { id: 171, title: "Other", generatedTitle: "Anderes Produkt" };
@@ -29,5 +29,20 @@ describe("matchesProductSearch", () => {
   });
   test("Zahl im Titel wird weiter gefunden", () => {
     expect(matchesProductSearch(p205, "11")).toBe(true);
+  });
+});
+
+describe('Import-Tab → Produkte-Tab (28.10.2026)', () => {
+  test('Link und Rücklesen ergeben dieselbe Suche, die genau das Produkt trifft', () => {
+    const href = produkteSearchHref(207);
+    expect(href).toBe('/produkte?suche=stele-207');
+    const q = searchFromQuery(href.slice(href.indexOf('?')));
+    expect(q).toBe('stele-207');
+    expect(matchesProductSearch({ id: 207, title: 'x', generatedTitle: 'y' }, q)).toBe(true);
+    expect(matchesProductSearch({ id: 20, title: 'x', generatedTitle: 'y' }, q)).toBe(false);
+  });
+  test('ohne Parameter leer', () => {
+    expect(searchFromQuery('')).toBe('');
+    expect(searchFromQuery('?foo=1')).toBe('');
   });
 });
