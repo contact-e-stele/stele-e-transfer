@@ -94,7 +94,10 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
   });
 
   test('nach der Übernahme zeigt die Gewinn-Spalte (productProfitRows) exakt den Plan-Gewinn — dieselbe Funktion wie "Erwartet"', () => {
-    const stored = { ...stele218, variantSellPrices: storePatchForPlan(stele218, plan).variantSellPrices! };
+    // K-014 Schritt 2: "Erwartet" zählt nur bei eBay angebotene Varianten — die Fixture-Gruppen oben nennen nur die Farbe 6x8cm (2 Kombinationen);
+    // live hat stele-218 alle 2 Größen × 9 Maße = 18 Kombinationen. Für diesen Test daher die vollständigen eBay-Gruppen.
+    const fullGroups = JSON.stringify([{ name: 'Size', values: ['200PCS', '100PCS'] }, { name: 'Color', values: [...new Set(E.map(e => e[2]))] }]);
+    const stored = { ...stele218, variants: fullGroups, variantSellPrices: storePatchForPlan(stele218, plan).variantSellPrices! };
     const rows = productProfitRows(stored).rows;
     expect(rows).toHaveLength(18);
     rows.forEach((r, i) => {

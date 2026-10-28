@@ -17,6 +17,8 @@ const p95: ProfitProduct = {
   id: 95, variants: '[{"name":"Set","values":["6pcs set"]},{"name":"Stk.","values":["10ml x 6pcs"]}]', targetMarginEur: 2, shipsFrom: null, adRate: 5,
   sellPrice: 15.95, buyPrice: 8.99,
   variantPrices: JSON.stringify([{ skuId: '12000056840616727', attrs: { Color: '6pcs set', 'Net Contents': '10ml x 6pcs', 'Ships From': 'Germany' }, price: 8.99, stock: 17 }]),
+  // K-014 Schritt 2: Varianten zählen nur mit eigenem VK (kein Rückfall auf sellPrice mehr) — VK der einen Variante = 15,95 wie bisher.
+  variantSellPrices: JSON.stringify({ '12000056840616727': 15.95 }),
 }; // K-004: Variante "Ships From: Germany" = EU → K = 8,99 (kein Versand, keine Einfuhr) → Gewinn 2,8069 (vorher fälschlich 0,8169)
 const pGrenze = single(1, 13.45, 3.15, true);               // Gewinn 1,1819 (13,45×0,762−0,357−8,71) — K-006: über B−0,10 (1,10), unter C−0,10 (1,20)
 const pYellow = single(2, 13.95, 3.15, true);               // Gewinn 1,5629
@@ -44,10 +46,12 @@ describe('productProfitRows', () => {
     expect(r.rows[1].profit).toBeCloseTo(0.6849, 4);
   });
 
-  test('ohne gespeicherten VK je Variante greift der Produkt-VK; ohne VK/EK keine Zeile (nichts geraten)', () => {
+  // K-014 Schritt 2 (Kalkulator 28.10.2026): vorher griff hier der Produkt-VK (14,95) — genau der Falschalarm von stele-119.
+  // Jetzt: Varianten ohne eigenen VK zählen nicht (grau "ohne eigenen VK"); Einzelartikel unverändert.
+  test('ohne gespeicherten VK je Variante: KEINE Zeile, Variante als "ohne eigenen VK" ausgeschlossen; ohne VK/EK keine Zeile', () => {
     const ohneMap = productProfitRows({ ...p119, variantSellPrices: null });
-    expect(ohneMap.rows).toHaveLength(2);
-    expect(ohneMap.rows[0].profit).toBeCloseTo(2.3249, 4); // 14,95 € Produkt-VK bei Ware 3,15 €: 14,95 × 0,762 − 0,357 − 9,067 (A-014-Bericht: "Gewinn heute 2,32")
+    expect(ohneMap.rows).toEqual([]);
+    expect(ohneMap.excluded.map(x => [x.label, x.reason])).toEqual([['100PCS', 'ohne eigenen VK'], ['200PCS', 'ohne eigenen VK']]);
     expect(productProfitRows(pOhneVk).rows).toEqual([]);
   });
 });
