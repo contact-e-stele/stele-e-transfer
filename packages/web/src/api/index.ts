@@ -3,7 +3,7 @@ import { cors } from "hono/cors"
 import { isAliOrderIdNotTracking, ALI_ORDER_ID_AS_TRACKING_ERROR } from '../shared/tracking-guard';
 import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
 import { sentPricesToPatch } from '../shared/sent-prices';
-import { cleanGeneratedTitle } from '../shared/title-clean';
+import { cleanGeneratedTitle, keepImportTitle } from '../shared/title-clean';
 import { earUmlageFor, evaluateElectricGate, suggestElectric, weeeLineForListing, parseElectricPatch, parseElectricSettingsBody } from '../shared/electric';
 import { getElectricSettings, setElectricSettings } from './electric-settings';
 import { electricSalesCsv } from './electric-export';
@@ -2453,9 +2453,10 @@ const app = new Hono()
       const rawTitle = body.generatedTitle ?? body.title;
 
       // OFFEN 009: Ein im Import-Tab bereits erzeugter/bearbeiteter Titel wird NICHT erneut von der KI umgeschrieben (sonst konnte eine
-      // Handkorrektur verloren gehen bzw. Fremdtext entstehen) — nur bereinigt. Ohne generatedTitle wie bisher erzeugen.
+      // Handkorrektur verloren gehen bzw. Fremdtext entstehen) — nur bereinigt. Live-Fund 28.10. (stele-245 englisch): das gilt NUR mit
+      // titleFinal (Titel im Import-Tab bearbeitet oder per KI erzeugt); der unberührte AliExpress-Rohtitel geht wie vor #225 an die KI.
       const [germanTitle, generatedDescription] = await Promise.all([
-        body.generatedTitle?.trim() ? Promise.resolve(cleanGeneratedTitle(body.generatedTitle)) : generateGermanTitle(rawTitle, specs),
+        keepImportTitle(body as { generatedTitle?: unknown; titleFinal?: unknown }) ? Promise.resolve(cleanGeneratedTitle(body.generatedTitle as string)) : generateGermanTitle(rawTitle, specs),
         generateDescriptionWithGemini(rawTitle, specs, body.description ?? '', 3, body.variantContents),
       ]);
       console.log(`[Import] Titel: "${germanTitle}" | Beschreibung generiert`);

@@ -15,3 +15,10 @@ export function cleanGeneratedTitle(raw: string): string {
   }
   return t.replace(/\s{2,}/g, ' ').slice(0, 80).trim();
 }
+
+// Live-Fund 28.10.2026 (stele-245 mit englischem Titel bei eBay): seit OFFEN 009 (#225) wurde JEDER mitgeschickte generatedTitle nur
+// bereinigt — der Import-Tab schickt aber immer den gekürzten AliExpress-Rohtitel (buildTitle), wenn niemand den Titel angefasst hat.
+// Darum: nur einen im Import-Tab BEARBEITETEN oder per KI erzeugten Titel behalten (titleFinal), sonst wie vor #225 die KI erzeugen lassen.
+export function keepImportTitle(body: { generatedTitle?: unknown; titleFinal?: unknown }): boolean {
+  return body.titleFinal === true && typeof body.generatedTitle === 'string' && body.generatedTitle.trim() !== '';
+}

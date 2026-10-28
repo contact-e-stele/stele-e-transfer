@@ -257,6 +257,8 @@ export default function Lieferanten() {
   const [copiedTitle, setCopiedTitle] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [editableTitle, setEditableTitle] = useState("");
+  // Live-Fund 28.10.2026 (stele-245): true nur, wenn der Titel hier bearbeitet oder per KI erzeugt wurde — sonst erzeugt der Server den deutschen Titel.
+  const [titleFinal, setTitleFinal] = useState(false);
   const [editableHtml, setEditableHtml] = useState("");
 
   const [ebayPrice, setEbayPrice] = useState("");
@@ -591,6 +593,7 @@ export default function Lieferanten() {
       const h = buildHTML(data, "light", t);
       setResult({ title: t, html: h });
       setEditableTitle(t);
+      setTitleFinal(false);
       setEditableHtml(""); // Leer lassen — User generiert Beschreibung manuell per KI
       setGpsrOverrides(emptyOverrides()); // neues Produkt → keine Handeingaben vom vorigen mitnehmen
       // GPSR auto-fill: wenn AliExpress GPSR-Daten liefert, direkt ins Textfeld setzen
@@ -693,6 +696,7 @@ export default function Lieferanten() {
     const h2 = buildHTML(fp, "light");
     setResult({ title: t2, html: h2 });
     setEditableTitle(t2);
+    setTitleFinal(false);
     setEditableHtml(""); // Leer lassen — User generiert Beschreibung manuell per KI
     const p = parsePrice(fp.price);
     if (p > 0) setBuyPrice(p.toFixed(2));
@@ -717,6 +721,7 @@ export default function Lieferanten() {
           sourceUrl: urlInput || "manual",
           title: product.title,
           generatedTitle: editableTitle,
+          titleFinal,
           htmlDescription: editableHtml,
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           // Punkt C (25.10.2026): Merkmale selbst mitspeichern — bisher nur als bullets, products.specs blieb NULL → eBay ohne Merkmale
@@ -1538,7 +1543,7 @@ export default function Lieferanten() {
               </div>
               <textarea
                 value={editableTitle}
-                onChange={e => setEditableTitle(e.target.value)}
+                onChange={e => { setEditableTitle(e.target.value); setTitleFinal(true); }}
                 rows={2}
                 style={{
                   width: "100%", background: "#F8FAFC", borderRadius: 10, padding: "12px 14px",
@@ -1694,6 +1699,7 @@ export default function Lieferanten() {
                     const finalTitle = titleData?.title?.trim() || editableTitle;
                     if (titleData?.title?.trim()) {
                       setEditableTitle(titleData.title.trim());
+                      setTitleFinal(true);
                     }
                     if (!res.ok || data.error) {
                       setRawGenError(data.error || 'Fehler beim Generieren');
