@@ -3838,7 +3838,15 @@ const app = new Hono()
         const { getPriceHolds, releasePriceHolds } = await import('./price-holds');
         const { resolvePriceHolds } = await import('../shared/price-hold');
         const priceHolds = await getPriceHolds().catch((): Awaited<ReturnType<typeof getPriceHolds>> => ({}));
+        // OFFEN 010: Ausnahmeliste wie der automatische Lauf; nicht lesbar → kein Produkt bei eBay ändern (alle überspringen).
+        const exclusions = await (await import('./auto-price-exclusions')).getAutoPriceExclusions().catch(() => null);
+        const { isPriceJump, priceJumpMessage } = await import('../shared/price-jump');
         for (const product of all) {
+          if (!exclusions || exclusions[String(product.id)]) {
+            job.results.push({ id: product.id, title: product.generatedTitle, status: 'skipped' });
+            job.done++;
+            continue;
+          }
           const url = product.sourceUrl || product.amazonUrl;
           if (!url || url === 'manual' || !url.includes('aliexpress')) {
             job.results.push({ id: product.id, title: product.generatedTitle, status: 'skipped' });
@@ -3898,7 +3906,9 @@ const app = new Hono()
             if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
             const alarm = !hold.allHeld && alarmRes.isAlarm;
             const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
-            const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
+            const jump = decision.action === 'raise' && isPriceJump(product.sellPrice, decision.price); // OFFEN 010: > 15 % nie automatisch
+            if (jump) console.warn(`[check-all-prices] ⚠️ ${priceJumpMessage(product.id, `stele-${product.id}`, product.sellPrice as number, decision.price)}`);
+            const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise' && !jump;
             // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): vorher hier eine reine
             // Quellpreis-Diff (Math.abs(alter EK − neuer EK) > 0,01€) — feuerte bei JEDER
             // AliExpress-Preisschwankung, unabhängig davon, ob die Marge betroffen war (Root
@@ -4674,6 +4684,51 @@ app.post('/products/:id/variant-dedupe', async (c) => {
     console.error('[variant-dedupe apply]', e);
     return c.json({ error: String(e) }, 500);
   }
+});
+
+// OFFEN 010 Schritt 1: Ausnahmeliste "Preisprüfung ändert bei eBay nichts" (app_settings, kein eBay-Aufruf).
+app.get('/auto-price-excluded', async (c) => {
+  try { const { getAutoPriceExclusions } = await import('./auto-price-exclusions'); return c.json({ excluded: await getAutoPriceExclusions() }, 200); }
+  catch (e) { return c.json({ error: String(e) }, 500); }
+});
+app.post('/auto-price-excluded', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { productId?: unknown; excluded?: unknown; note?: unknown };
+  if (!Number.isInteger(body.productId) || typeof body.excluded !== 'boolean') return c.json({ error: 'productId (Zahl) und excluded (true/false) nötig' }, 400);
+  try {
+    const { setAutoPriceExclusion } = await import('./auto-price-exclusions');
+    const all = await setAutoPriceExclusion(body.productId as number, body.excluded, typeof body.note === 'string' ? body.note.slice(0, 200) : null);
+    console.log(`[OFFEN 010] Ausnahmeliste: stele-${body.productId} ${body.excluded ? 'AUSGENOMMEN' : 'wieder frei'}`);
+    return c.json({ ok: true, excluded: all }, 200);
+  } catch (e) { return c.json({ error: String(e) }, 500); }
+});
+
+// OFFEN 010 Schritt 2: Varianten-Namen (attrs) je skuId aus AliExpress (DS-API) übernehmen. Standard Vorschau; {confirm:true} schreibt NUR
+// attrs in variantPrices (EK, Lager, Verkaufspreise unverändert), nichts an eBay.
+app.post('/products/:id/ali-attrs-sync', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const body = await c.req.json().catch(() => ({})) as { confirm?: unknown };
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const aliId = product.sourceUrl?.match(/\/item\/(\d+)\.html/)?.[1] ?? product.aliexpressItemId ?? null;
+    if (!aliId) return c.json({ error: 'keine AliExpress-Artikelnummer' }, 422);
+    await ensureFreshAliToken();
+    const token = await getAliAccessToken();
+    if (!token) return c.json({ error: 'AliExpress nicht verbunden' }, 503);
+    const ali = await getAliProductByApi(aliId, token);
+    if (!ali || !Array.isArray(ali.variantPrices) || ali.variantPrices.length === 0) return c.json({ error: 'AliExpress-Varianten nicht lesbar' }, 502);
+    let stored: Array<{ skuId?: string; attrs?: Record<string, string>; displayValues?: unknown }> = [];
+    try { const p = product.variantPrices ? JSON.parse(product.variantPrices) : []; stored = Array.isArray(p) ? p : []; } catch { stored = []; }
+    const { planAliAttrsSync, applyAliAttrsSync } = await import('../shared/ali-attrs-sync');
+    const plan = planAliAttrsSync(stored, ali.variantPrices as Array<{ skuId?: string; attrs?: Record<string, string> }>);
+    if (body.confirm !== true || plan.changes.length === 0) return c.json({ mode: 'preview', ...plan }, 200);
+    const next = applyAliAttrsSync(stored, plan);
+    await db.update(schema.products).set({ variantPrices: JSON.stringify(next), updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
+    console.log(`[OFFEN 010] stele-${id} Namen aus AliExpress übernommen: ${plan.changes.map(x => `${x.skuId} ${JSON.stringify(x.before)} → ${JSON.stringify(x.after)}`).join(' | ')}`);
+    return c.json({ mode: 'apply', ...plan }, 200);
+  } catch (e) { return c.json({ error: String(e) }, 500); }
 });
 
 app.post('/products/:id/sell-prices-from-ebay', async (c) => {

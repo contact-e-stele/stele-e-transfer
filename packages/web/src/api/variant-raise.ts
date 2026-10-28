@@ -6,6 +6,7 @@
 // Bewusst ohne direkte DB-/eBay-Importe: Senden/Speichern/Log kommen als `deps` (Grundgesetz Regel 2 — mit Mocks testbar).
 import { planTierReprice, type RepriceProduct, type TierPlanRow } from '../shared/tier-reprice';
 import { profitFloorFor, effectiveProfitFloor, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { isPriceJump, priceJumpMessage } from '../shared/price-jump';
 
 export interface VariantRaiseProduct extends RepriceProduct {
   targetMarginEur: number | null;
@@ -46,23 +47,27 @@ export interface VariantRaiseDeps {
 }
 
 export type VariantRaiseStatus = 'disabled' | 'not_live' | 'nothing' | 'ambiguous' | 'sent' | 'partial' | 'failed' | 'error';
-export interface VariantRaiseOutcome { status: VariantRaiseStatus; raises: VariantRaise[]; sentSkuIds: string[] }
+export interface VariantRaiseOutcome { status: VariantRaiseStatus; raises: VariantRaise[]; sentSkuIds: string[]; jumps?: VariantRaise[] }
 
 const fmt = (n: number) => n.toFixed(2);
 
 export async function runVariantRaise(product: VariantRaiseProduct, deps: VariantRaiseDeps): Promise<VariantRaiseOutcome> {
   const live = product.ebayStatus === 'listed' && !!product.ebayListingId;
   if (!live) return { status: 'not_live', raises: [], sentSkuIds: [] };
-  const raises = planVariantRaises(product, deps.heldSkuIds);
+  const planned = planVariantRaises(product, deps.heldSkuIds);
   for (const k of deps.heldSkuIds ?? []) deps.log(`[K-008] stele-${product.id} Variante ${k}: Preis gehalten — nicht angehoben`);
-  if (raises.length === 0) return { status: 'nothing', raises, sentSkuIds: [] };
+  // OFFEN 010: Anhebung um mehr als 15 % nie automatisch senden — Meldung "PREISSPRUNG", nichts gesendet/gespeichert.
+  const jumps = planned.filter(r => isPriceJump(r.oldSell, r.newSell));
+  for (const r of jumps) deps.log(`[VariantRaise] ⚠️ ${priceJumpMessage(product.id, `${r.label || r.skuId} (skuId ${r.skuId})`, r.oldSell, r.newSell)}`);
+  const raises = planned.filter(r => !jumps.includes(r));
+  if (raises.length === 0) return { status: 'nothing', raises, sentSkuIds: [], jumps };
 
   const describe = (r: VariantRaise) => `${r.label || r.skuId} (skuId ${r.skuId}): ${fmt(r.oldSell)} → ${fmt(r.newSell)} € (EK ${fmt(r.ware)}, Gewinn ${fmt(r.oldProfit)} → ${fmt(r.newProfit)} €)`;
 
   // Schalter AUS: nur beobachten (Log), 0 Sende-/Speicher-Aufrufe.
   if (!deps.enabled) {
     for (const r of raises) deps.log(`[VariantRaise AUS] stele-${product.id} würde anheben: ${describe(r)}`);
-    return { status: 'disabled', raises, sentSkuIds: [] };
+    return { status: 'disabled', raises, sentSkuIds: [], jumps };
   }
 
   try {
@@ -82,7 +87,7 @@ export async function runVariantRaise(product: VariantRaiseProduct, deps: Varian
     const updates: Record<string, number> = {};
     for (const r of raises) if (okIds.has(r.skuId)) updates[r.skuId] = r.newSell;
     await deps.store(updates);
-    return { status: okIds.size === raises.length ? 'sent' : 'partial', raises, sentSkuIds: [...okIds] };
+    return { status: okIds.size === raises.length ? 'sent' : 'partial', raises, sentSkuIds: [...okIds], jumps };
   } catch (e) {
     deps.log(`[VariantRaise] stele-${product.id}: Fehler — ${String(e)} (App-Preise nicht gespeichert, eBay-Stand ggf. teilweise geändert, bitte prüfen)`);
     return { status: 'error', raises, sentSkuIds: [] };

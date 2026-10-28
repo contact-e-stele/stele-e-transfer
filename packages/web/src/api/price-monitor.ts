@@ -17,6 +17,8 @@ import { earUmlageFor } from '../shared/electric';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
 import { getPriceHolds, releasePriceHolds } from './price-holds';
+import { getAutoPriceExclusions } from './auto-price-exclusions';
+import { isPriceJump, priceJumpMessage, type AutoPriceExclusions } from '../shared/price-jump';
 import { isProductPriceLocked, setPriceLock } from './price-locks';
 import { autoAlignUpward, type AlignRow } from './auto-align';
 import { readOfferPrice, readEbaySellPrices, applyEbayPrices } from './ebay-price-readback';
@@ -530,6 +532,7 @@ export async function raiseSingleWithStoredBuyPrice(product: typeof schema.produ
     const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
     const decision = applyRaiseOnly(product.sellPrice, raw, alarm);
     if (decision.action !== 'raise' || !AUTO_PRICE_WRITE_ENABLED) return;
+    if (isPriceJump(product.sellPrice, decision.price)) { console.warn(`[PriceMonitor] ⚠️ ${priceJumpMessage(product.id, `stele-${product.id}`, product.sellPrice, decision.price)}`); return; } // OFFEN 010
     const token = await getAccessToken();
     const res = await updateOfferPriceBySku(`stele-${product.id}`, decision.price, token, fetch, true);
     if (res.ok && !res.skipped) {
@@ -865,6 +868,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
   // K-008: "Preis halten" einmal je Lauf laden (app_settings). Fehler → ohne Halten weiter (Verhalten wie bisher).
   let priceHolds: PriceHolds = {};
   try { priceHolds = await getPriceHolds(); } catch (e) { console.warn('[K-008] Halten nicht lesbar — Lauf ohne Halten:', e); }
+  // OFFEN 010: Ausnahmeliste laden. Nicht lesbar → in diesem Lauf wird KEIN Produkt geprüft (sicherer Weg: lieber ein Lauf aus als 119 ungeschützt).
+  let excluded: AutoPriceExclusions = {};
+  let exclusionsUnreadable = false;
+  try { excluded = await getAutoPriceExclusions(); } catch (e) { exclusionsUnreadable = true; console.warn('[OFFEN 010] Ausnahmeliste nicht lesbar — in diesem Lauf keine Anhebung bei eBay:', e); }
 
   // Hilfsfunktion: ein Produkt prüfen
   async function checkOne(product: typeof products[0]): Promise<void> {
@@ -873,6 +880,11 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
 
     let calculatedSellPrice: number | undefined;
 
+    // OFFEN 010: ausgenommene Produkte (z. B. stele-119 bis "119 frei") komplett überspringen — kein Angleichen, keine Übernahme, kein Upload.
+    if (excluded[String(product.id)] || exclusionsUnreadable) {
+      console.log(`[PriceMonitor] stele-${product.id}: ${exclusionsUnreadable ? 'Ausnahmeliste nicht lesbar' : `ausgenommen (seit ${excluded[String(product.id)].at}${excluded[String(product.id)].note ? `, ${excluded[String(product.id)].note}` : ''})`} — übersprungen, nichts an eBay`);
+      return;
+    }
     try {
       checked++;
       // Inhaber 24.10.2026: Sperre bei HÖHEREM eBay-Preis automatisch lösen und App-Preise übernehmen, BEVOR geprüft/angehoben wird.
@@ -1149,7 +1161,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
       const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
       calculatedSellPrice = decision.price;
-      const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise';
+      // OFFEN 010: Anhebung > 15 % nie automatisch — Meldung PREISSPRUNG, weder gespeichert noch gesendet.
+      const jump = decision.action === 'raise' && isPriceJump(product.sellPrice, decision.price);
+      if (jump) console.warn(`[PriceMonitor] ⚠️ ${priceJumpMessage(product.id, `stele-${product.id}`, product.sellPrice as number, decision.price)}`);
+      const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise' && !jump;
       // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): priceChanged (= "Preisalarm" im
       // Produkte-Tab) entkoppelt von der Anheben-Entscheidung (decision.action) — die blieb vorher
       // auch bei einer Erst-Setzung (kein bisheriger Preis, isInitialPrice=true) 'raise' und hätte

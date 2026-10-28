@@ -157,7 +157,8 @@ describe('runVariantRaise — Schalter, Senden, Speichern, Log', () => {
   });
 
   test('teilweise Erfolg: nur die tatsächlich gesendete Variante wird gespeichert; Fehler/übersprungene geloggt', async () => {
-    const p = product119({ variantSellPrices: JSON.stringify({ v100a: 11.95 }) }); // zwei Anhebungen: v100a (14,45) und v200 (16,45)
+    // OFFEN 010: alter VK 12,95 statt 11,95 — 11,95 → 14,45 wäre +21 % und fiele jetzt unter die Preissprung-Grenze (15 %).
+    const p = product119({ variantSellPrices: JSON.stringify({ v100a: 12.95 }) }); // zwei Anhebungen: v100a (14,45) und v200 (16,45)
     const { deps, stored, logs } = makeDeps({
       send: async (raises): Promise<VariantSendResult> => ({ resolved: true, results: raises.map(r => r.skuId === 'v200' ? { skuId: r.skuId, ok: true } : { skuId: r.skuId, ok: true, skipped: 'Live-Preis 14.95 € ist schon ≥ neuer Preis (nie senken)' }) }),
     });
@@ -298,3 +299,15 @@ describe('sendVariantRaises / updateOfferPriceBySku (raise-only) mit gemocktem e
     expect(puts).toHaveLength(1);
   });
 });
+
+describe('OFFEN 010: Preissprung über 15 % wird nie automatisch gesendet', () => {
+  test('v100a 11,95 → 14,45 (+21 %) = PREISSPRUNG, nur v200 (14,95 → 16,45, +10 %) wird gesendet', async () => {
+    const { deps, sentRaises, stored, logs } = makeDeps();
+    const o = await runVariantRaise(product119({ variantSellPrices: JSON.stringify({ v100a: 11.95 }) }), deps);
+    expect(o.jumps?.map(r => r.skuId)).toEqual(['v100a']);
+    expect(sentRaises[0]?.map(r => r.skuId)).toEqual(['v200']);
+    expect(stored[0]).toEqual({ v200: 16.45 });
+    expect(logs.some(l => l.includes('PREISSPRUNG stele-119') && l.includes('v100a') && l.includes('11.95 → 14.45'))).toBe(true);
+  });
+});
+
