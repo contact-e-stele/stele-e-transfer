@@ -22,6 +22,7 @@ export async function applySpecAspectsToListing(input: {
   productId: number; specs: Record<string, string>; token: string; baseUrl: string; confirm: boolean;
   itemSkus: string[];                                       // Varianten-SKUs der Gruppe; leer = Einzelangebot stele-<id>
   getCategoryAspects: (categoryId: string) => Promise<CategoryAspectDef[] | null>;
+  getFallbackCategoryId?: () => Promise<string | null>;  // Live 28.10.: 23 Angebote liefern Offer GET 200 ohne categoryId → Kategorie aus GetItem
   prepareItem?: (item: Record<string, unknown>) => void;    // gleiche Bereinigung wie andere Item-PUTs (BrandMPN, Gewicht 0)
   fetchFn?: typeof fetch;
 }): Promise<{ categoryId: string | null; rows: LiveAspectRow[]; error?: string }> {
@@ -37,10 +38,14 @@ export async function applySpecAspectsToListing(input: {
   const tried: string[] = [];
   for (const sku of [...itemSkus.slice(0, 10)]) {
     const o = await f(`${input.baseUrl}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`, { headers: h });
-    tried.push(`${sku}:${o.status}`);
     const oj = o.ok ? await o.json() as { offers?: Array<{ categoryId?: string }> } : null;
+    tried.push(`${sku}:${o.status}/${oj?.offers?.length ?? 0} Offer`);
     categoryId = oj?.offers?.find(x => x.categoryId)?.categoryId ?? null;
     if (categoryId) break;
+  }
+  if (!categoryId && input.getFallbackCategoryId) {
+    categoryId = await input.getFallbackCategoryId().catch(() => null);
+    tried.push(`GetItem:${categoryId ?? 'keine'}`);
   }
   if (!categoryId) return { categoryId: null, rows: [], error: `Kategorie nicht lesbar (Offer GET ${tried.join(', ')})` };
   const category = await input.getCategoryAspects(categoryId);
@@ -71,4 +76,9 @@ export async function applySpecAspectsToListing(input: {
     rows.push({ target: t.target, added, written: true, verified: Object.entries(added).every(([k, v]) => ba[k]?.includes(v)) });
   }
   return { categoryId, rows };
+}
+
+/** Rein: Kategorie-ID aus einer GetItem-Antwort (Trading API, PrimaryCategory). */
+export function parsePrimaryCategoryId(xml: string): string | null {
+  return /<PrimaryCategory>\s*<CategoryID>(\d+)<\/CategoryID>/.exec(xml)?.[1] ?? null;
 }

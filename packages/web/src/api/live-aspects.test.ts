@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applySpecAspectsToListing, aspectAdditions } from './live-aspects';
+import { applySpecAspectsToListing, aspectAdditions, parsePrimaryCategoryId } from './live-aspects';
 import type { CategoryAspectDef } from '../shared/spec-aspects';
 
 const CAT: CategoryAspectDef[] = [
@@ -76,5 +76,34 @@ describe('C2 Nachtrag: erste SKU ohne Offer (Live 27.10., stele-121/127)', () =>
     const r = await applySpecAspectsToListing({ productId: 127, specs: { Origin: 'Mainland China' }, token: 't', baseUrl: 'https://x', confirm: false, itemSkus: ['A', 'B'], getCategoryAspects: async () => CAT, fetchFn: f });
     expect(r.categoryId).toBe('777');
     expect(r.error).toBeUndefined();
+  });
+});
+
+describe('Nachtrag 28.10.: Offer ohne categoryId → Kategorie aus GetItem', () => {
+  const offerOhneKat = (store: Record<string, Record<string, unknown>>) => (async (url: string, init?: RequestInit) => {
+    if (url.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'O1' }] }), { status: 200 });
+    const key = decodeURIComponent(url.split('/').pop()!);
+    if (init?.method === 'PUT') { store[key] = JSON.parse(String(init.body)); return new Response(null, { status: 204 }); }
+    return new Response(JSON.stringify(store[key] ?? {}), { status: store[key] ? 200 : 404 });
+  }) as unknown as typeof fetch;
+
+  test('parsePrimaryCategoryId liest PrimaryCategory, nicht SecondaryCategory', () => {
+    const xml = '<Item><SecondaryCategory><CategoryID>111</CategoryID></SecondaryCategory><PrimaryCategory>\n  <CategoryID>179723</CategoryID>\n  <CategoryName>Fußpflege</CategoryName></PrimaryCategory></Item>';
+    expect(parsePrimaryCategoryId(xml)).toBe('179723');
+    expect(parsePrimaryCategoryId('<Item></Item>')).toBeNull();
+  });
+
+  test('ohne categoryId im Offer: Fallback liefert Kategorie, Vorschau zeigt Ergänzung', async () => {
+    const store: Record<string, Record<string, unknown>> = { 'stele-148': { product: { aspects: { Marke: ['Markenlos'] } } } };
+    const r = await applySpecAspectsToListing({ productId: 148, specs: { Origin: 'Mainland China' }, token: 't', baseUrl: 'https://x', confirm: false, itemSkus: [],
+      getCategoryAspects: async () => CAT, getFallbackCategoryId: async () => '179723', fetchFn: offerOhneKat(store) });
+    expect(r.categoryId).toBe('179723');
+    expect(r.rows).toEqual([{ target: 'stele-148', added: { 'Herstellungsland und -region': 'China' }, written: false }]);
+  });
+
+  test('ohne Fallback: Fehlertext nennt die Offer-Anzahl', async () => {
+    const r = await applySpecAspectsToListing({ productId: 148, specs: { Origin: 'Mainland China' }, token: 't', baseUrl: 'https://x', confirm: true, itemSkus: [],
+      getCategoryAspects: async () => CAT, fetchFn: offerOhneKat({}) });
+    expect(r.error).toBe('Kategorie nicht lesbar (Offer GET stele-148:200/1 Offer)');
   });
 });
