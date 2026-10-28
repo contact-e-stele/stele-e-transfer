@@ -4418,6 +4418,12 @@ async function merkmaleLiveForProduct(id: number, confirm: boolean) {
   const itemSkus = await getInventoryItemGroupSkus(`stele-${id}-GROUP`, token).catch(() => [] as string[]);
   const r = await applySpecAspectsToListing({ productId: id, specs, token, baseUrl: EBAY_API_BASE_URL, confirm, itemSkus,
     getCategoryAspects: (cat) => getRawAspectsForCategory(cat),
+    getFallbackCategoryId: async () => {
+      const { getItemBuyerPricesXml } = await import('./ebay');
+      const { parsePrimaryCategoryId } = await import('./live-aspects');
+      const g = await getItemBuyerPricesXml(product.ebayListingId as string);
+      return g.httpStatus === 200 ? parsePrimaryCategoryId(g.xml) : null;
+    },
     prepareItem: (item) => { if (item.product) item.product = sanitizeItemProductForPut(item.product as Record<string, unknown>); stripZeroWeight(item); } });
   console.log(`[Merkmale live] stele-${id} ${confirm ? 'apply' : 'preview'}: Kat ${r.categoryId} ${r.error ?? ''} ${JSON.stringify(r.rows)}`);
   return { productId: id, ...r };
