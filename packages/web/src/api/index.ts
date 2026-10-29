@@ -3215,11 +3215,38 @@ const app = new Hono()
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
-      await db.update(schema.products).set({
-        sellPrice: body.sellPrice,
-        updatedAt: new Date().toISOString(),
-      }).where(eq(schema.products.id, id));
-      return c.json({ ok: true }, 200);
+      // OFFEN 014: Bei NICHT gelisteten Varianten-Produkten den Artikel-VK auf die bei eBay angebotenen Varianten übernehmen
+      // (nie unter deren Formel-Mindestpreis), sonst rechnet die Karte mit altem ebayPrice weiter (234/235 "Erwartet −1,12 / −0,50").
+      const [prod] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+      if (!prod) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+      const patch: Partial<typeof schema.products.$inferInsert> = { sellPrice: body.sellPrice, updatedAt: new Date().toISOString() };
+      let variantsSet: Array<{ skuId: string; label: string; from: number | null; to: number }> = [];
+      let variantsBelowMin: Array<{ skuId: string; label: string; minSell: number }> = [];
+      const { isVariantProduct } = await import('../shared/variant-product');
+      if (prod.ebayStatus !== 'listed' && isVariantProduct(prod.variants, prod.variantPrices)) {
+        const { planArticleVkToVariants } = await import('../shared/article-vk-variants');
+        const { parseVariantGroupsJson } = await import('./price-monitor');
+        const { serializeVariantSellPrices, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+        const { activeCheckoutFactor } = await import('../shared/checkout-factor');
+        let entries: Array<{ skuId: string; attrs?: Record<string, string>; displayValues?: Record<string, string>; price: number }> = [];
+        try { const pv = prod.variantPrices ? JSON.parse(prod.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+        const plan = planArticleVkToVariants({
+          sellPrice: body.sellPrice, groups: parseVariantGroupsJson(prod.variants), entries, variantSellPricesJson: prod.variantSellPrices,
+          shipsFrom: prod.shipsFrom, adRatePercent: prod.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+          targetMarginEur: prod.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+          checkoutFactor: activeCheckoutFactor(prod.aliCheckoutFactor, prod.aliCheckoutFactorAt),
+        });
+        if (plan.set.length > 0) {
+          patch.variantSellPrices = serializeVariantSellPrices(Object.entries(plan.variantSellPrices).map(([skuId, sellPrice]) => ({ skuId, sellPrice })));
+        }
+        variantsSet = plan.set;
+        variantsBelowMin = plan.belowMin;
+      }
+      await db.update(schema.products).set(patch).where(eq(schema.products.id, id));
+      if (variantsSet.length > 0 || variantsBelowMin.length > 0) {
+        console.log(`[Artikel-VK→Varianten] stele-${id}: ${variantsSet.map(v => `${v.label} ${v.from ?? '–'}→${v.to}`).join(', ') || '–'}${variantsBelowMin.length ? ` · unter Mindestpreis, nicht gesetzt: ${variantsBelowMin.map(v => `${v.label} (min ${v.minSell})`).join(', ')}` : ''}`);
+      }
+      return c.json({ ok: true, variantsSet, variantsBelowMin }, 200);
     } catch (e) {
       return c.json({ error: 'DB Fehler' }, 503);
     }
