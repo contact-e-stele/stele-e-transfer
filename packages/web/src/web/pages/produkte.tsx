@@ -1130,6 +1130,26 @@ export default function Produkte() {
     }
   };
 
+  // Inhaber 29.10.2026 „Extra-Knopf“: Pflichtmerkmale vor dem Listen prüfen (nur lesen, nichts an eBay).
+  const [precheck, setPrecheck] = useState<{ id: number; busy?: boolean; ok?: boolean; msg?: string } | null>(null);
+  const checkAspects = async (product: Product) => {
+    setPrecheck({ id: product.id, busy: true });
+    try {
+      const res = await fetch(`/api/products/${product.id}/aspect-precheck`);
+      const d = await res.json() as { ok?: boolean; missing?: string[]; editable?: string[]; error?: string };
+      if (d.ok) { setPrecheck({ id: product.id, ok: true, msg: "Alle eBay-Pflichtmerkmale vorhanden ✓" }); return; }
+      if (!d.missing) { setPrecheck({ id: product.id, ok: false, msg: d.error ?? "Prüfung fehlgeschlagen" }); return; }
+      const msg = `Fehlt: ${d.missing.join(", ")} — bitte unten auswählen.`;
+      setPrecheck({ id: product.id, ok: false, msg });
+      // Auswahlfelder wie nach einem Listen-Fehler zeigen (nur in der Ansicht, gespeichert wird erst beim Auswählen).
+      if (d.editable && d.editable.length > 0) {
+        setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayError: `Pflichtmerkmale fehlen: ${d.missing!.join(", ")}`, ebayMissingAspect: d.editable!.join(", ") } : p));
+      }
+    } catch (e) {
+      setPrecheck({ id: product.id, ok: false, msg: e instanceof Error ? e.message : "Netzwerkfehler" });
+    }
+  };
+
   const listOnEbay = async (product: Product, confirmUnknownStock = false) => {
     setListingProduct(product.id);
     setListingResult(null);
@@ -1713,6 +1733,23 @@ export default function Produkte() {
                       <span style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>{stockRefreshMsg.text}</span>
                     )}
                   </>
+                )}
+                {product.ebayStatus !== "listed" && (
+                  <button
+                    onClick={() => checkAspects(product)}
+                    disabled={precheck?.id === product.id && precheck.busy}
+                    title="Prüft bei eBay, ob alle Pflichtmerkmale vorhanden sind — sendet nichts"
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "6px 10px", borderRadius: 8, background: "#F8FAFC", color: "#0F172A",
+                      fontSize: 11, fontWeight: 700, border: "1px solid #CBD5E1", cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    {precheck?.id === product.id && precheck.busy ? "Prüfe…" : "Pflichtmerkmale prüfen"}
+                  </button>
+                )}
+                {precheck?.id === product.id && !precheck.busy && precheck.msg && (
+                  <span style={{ fontSize: 11, fontWeight: 600, color: precheck.ok ? "#16A34A" : "#DC2626" }}>{precheck.msg}</span>
                 )}
                 {product.ebayStatus !== "listed" && (
                   <button
