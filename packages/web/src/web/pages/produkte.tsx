@@ -1072,11 +1072,18 @@ export default function Produkte() {
   const saveSellPrice = async (productId: number) => {
     const price = parseFloat(priceInput.replace(",", "."));
     if (isNaN(price) || price <= 0) return;
-    await fetch(`/api/products/${productId}/sellprice`, {
+    const res = await fetch(`/api/products/${productId}/sellprice`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sellPrice: price }),
     });
+    // OFFEN 014: Varianten unter Mindestpreis wurden nicht übernommen → sichtbar machen.
+    try {
+      const data = await res.json() as { variantsBelowMin?: Array<{ label: string; minSell: number }> };
+      if (data.variantsBelowMin && data.variantsBelowMin.length > 0) {
+        alert("Nicht auf alle Varianten übernommen (unter Mindestpreis):\n" + data.variantsBelowMin.map(v => `– ${v.label}: mind. ${v.minSell.toFixed(2).replace(".", ",")} €`).join("\n"));
+      }
+    } catch { /* Antwort ohne JSON: nichts anzeigen */ }
     setEditingPrice(null);
     setPriceInput("");
     load();
