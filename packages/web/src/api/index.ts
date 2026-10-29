@@ -4801,6 +4801,71 @@ app.post('/products/:id/sell-prices-from-ebay', async (c) => {
   }
 });
 
+// OFFEN 013 Schritt 5 (stele-220): Varianten-VK von Hand setzen (ÜBER dem Formelpreis erlaubt, nie darunter) und an eBay senden.
+// Ohne confirm: nur Vorschau (alt → neu, Mindestpreis, Gewinn mit/ohne Kassen-Faktor). Mit {confirm:true}: senden, speichern, Log.
+// Sperren: K-011-Preissperre, Ausnahmeliste Preisprüfung, Regeln aus shared/manual-variant-prices.ts.
+app.post('/products/:id/manual-variant-prices', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: { prices?: unknown; confirm?: unknown } = {};
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+  if (!body.prices || typeof body.prices !== 'object' || Array.isArray(body.prices)) return c.json({ error: '"prices" fehlt ({ skuId: Preis })' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (product.ebayStatus !== 'listed' || !product.ebayListingId) return c.json({ error: 'Produkt ist nicht live bei eBay gelistet' }, 422);
+    const { isVariantProduct } = await import('../shared/variant-product');
+    if (!isVariantProduct(product.variants, product.variantPrices)) return c.json({ error: 'Kein Varianten-Produkt' }, 422);
+    const { parseVariantSellPrices, serializeVariantSellPrices, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+    const { activeCheckoutFactor } = await import('../shared/checkout-factor');
+    const { planManualVariantPrices } = await import('../shared/manual-variant-prices');
+    type Raw = { skuId?: string; price?: number; attrs?: Record<string, string>; displayValues?: Record<string, string> };
+    let raw: Raw[] = [];
+    try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; raw = Array.isArray(pv) ? pv : []; } catch { raw = []; }
+    const label = (r: Raw) => Object.values(r.displayValues ?? r.attrs ?? {}).filter(Boolean).join(' / ') || r.skuId || '?';
+    const entries = raw.filter(r => r.skuId && typeof r.price === 'number').map(r => ({
+      skuId: r.skuId as string, price: r.price as number, label: label(r), isChinaOrigin: isChinaOriginForVariant(r.attrs, product.shipsFrom),
+    }));
+    const currentSell = parseVariantSellPrices(product.variantSellPrices);
+    const requested: Record<string, number> = {};
+    for (const [k, v] of Object.entries(body.prices as Record<string, unknown>)) requested[k] = typeof v === 'number' ? v : parseFloat(String(v));
+    const plan = planManualVariantPrices({
+      productId: id, entries, currentSell, requested,
+      adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
+      targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
+      checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt),
+    });
+    if (!plan.ok) return c.json({ error: plan.errors.join(' · '), errors: plan.errors }, 400);
+    if (body.confirm !== true) return c.json({ mode: 'preview', rows: plan.rows }, 200);
+
+    const { isProductPriceLocked } = await import('./price-locks');
+    if (await isProductPriceLocked(id)) return c.json({ error: 'K-011-Preissperre aktiv (Käuferpreis ≠ Angebotsdaten) — erst angleichen, dann senden' }, 409);
+
+    // Senden: alle Varianten mit VK (neu oder bisher), damit jede echte eBay-SKU ihren Preis bekommt.
+    const next: Record<string, number> = { ...currentSell };
+    for (const r of plan.rows) next[r.skuId] = r.newSell;
+    const sendRows = raw.filter(r => r.skuId && next[r.skuId] != null).map(r => ({
+      skuId: r.skuId as string, attrs: r.attrs ?? {}, buyPrice: r.price ?? 0, correctSellPrice: next[r.skuId as string], displayValues: r.displayValues,
+    }));
+    const { updateEbayVariantPricesIndividually, parseVariantGroupsJson } = await import('./price-monitor');
+    const res = await updateEbayVariantPricesIndividually(id, parseVariantGroupsJson(product.variants), sendRows);
+    if (!res.ok || res.updatedCount === 0) {
+      console.warn(`[Manuelle VK] stele-${id}: eBay nicht aktualisiert`, res.errors);
+      return c.json({ error: 'eBay nicht aktualisiert: ' + (res.errors.join(' · ') || 'unbekannt') + ' — App unverändert', updatedCount: res.updatedCount }, 502);
+    }
+    await db.update(schema.products).set({
+      variantSellPrices: serializeVariantSellPrices(Object.entries(next).map(([skuId, sellPrice]) => ({ skuId, sellPrice }))),
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.products.id, id));
+    console.log(`[Manuelle VK] stele-${id}: ${plan.rows.map(r => `${r.label} ${r.oldSell ?? '–'}→${r.newSell}`).join(', ')} · eBay ${res.updatedCount} SKU(s)`);
+    return c.json({ mode: 'sent', rows: plan.rows, updatedCount: res.updatedCount, warnings: res.errors }, 200);
+  } catch (e) {
+    console.error('[manual-variant-prices]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // K-011: Sperren lesen (für die Warnung "eBay-Preise uneinheitlich" in Listings/Produkte).
 app.get('/ebay-price-locks', async (c) => {
   try { const { getPriceLocks } = await import('./price-locks'); return c.json({ locks: await getPriceLocks() }, 200); }
