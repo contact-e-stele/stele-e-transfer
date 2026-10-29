@@ -745,6 +745,13 @@ const app = new Hono()
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
+      // OFFEN 013 Regel 6a: Verknüpfung NUR lösen, wenn eBay das Ende bestätigt hat (oder das Angebot
+      // nachweislich schon beendet war). Vorher wurde auch bei eBay-Fehler entknüpft ("warning").
+      const { shouldUnlinkAfterEnd } = await import('../shared/listing-guard');
+      if (!shouldUnlinkAfterEnd({ ok, error })) {
+        console.warn('[eBay EndItem] nicht bestätigt, Verknüpfung bleibt', itemId, error);
+        return c.json({ error: `eBay hat das Beenden nicht bestätigt: ${error ?? 'Fehler'} — in der App wurde nichts geändert.` }, 502);
+      }
       const dbProduct = await db.select().from(schema.products)
         .where(eq(schema.products.ebayListingId, itemId)).get();
       if (dbProduct) {
@@ -752,10 +759,8 @@ const app = new Hono()
           ebayListingId: null, ebayStatus: 'none', ebayError: null
         }).where(eq(schema.products.ebayListingId, itemId));
       }
-
-      if (!ok) {
-        return c.json({ warning: error }, 200);
-      }
+      delete (globalThis as Record<string, unknown>)['ebay_listings']; // OFFEN 013: Listings-Cache sofort verwerfen
+      console.log('[eBay EndItem] beendet', itemId, dbProduct ? `entknüpft stele-${dbProduct.id}` : 'ohne App-Produkt', ok ? '' : `(war schon beendet: ${error})`);
       return c.json({ ok: true }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
@@ -1688,7 +1693,8 @@ const app = new Hono()
       for (const itemId of body.itemIds) {
         try {
           const { ok, error } = await endListing(itemId, token);
-          if (!ok) {
+          const { shouldUnlinkAfterEnd } = await import('../shared/listing-guard');
+          if (!shouldUnlinkAfterEnd({ ok, error })) {
             results.push({ itemId, ok: false, error });
           } else {
             await db.update(schema.products).set({ ebayListingId: null, ebayStatus: 'none', ebayError: null })
@@ -1700,6 +1706,7 @@ const app = new Hono()
         }
         await new Promise(r => setTimeout(r, 400));
       }
+      delete (globalThis as Record<string, unknown>)['ebay_listings']; // OFFEN 013: Listings-Cache sofort verwerfen
       return c.json({ results }, 200);
     } catch (e) {
       return c.json({ error: String(e) }, 500);
@@ -2846,6 +2853,26 @@ const app = new Hono()
         for (const w of variantWarnings) console.warn(`[ebay/list] Produkt ${product.id}: ${w}`);
       }
 
+      // OFFEN 013 Regel 6b: auch ohne App-Verknüpfung nicht doppelt listen — frisch bei eBay nachsehen, ob für
+      // stele-<id>… oder dieselbe AliExpress-Nr schon ein aktives Angebot läuft. Ist eBay nicht lesbar: abbrechen.
+      // Steht bewusst direkt vor listOnEbay: alle lokalen Sperren (Elektro, Bestand, Bilder, GPSR, Varianten) kommen zuerst, ohne eBay-Aufruf.
+      {
+        const { findActiveListingConflict } = await import('../shared/listing-guard');
+        let active: import('./ebay').EbaySellerListing[];
+        try {
+          active = await getAllSellerListings();
+          (globalThis as Record<string, unknown>)['ebay_listings'] = { ts: Date.now(), data: active };
+        } catch (e) {
+          return c.json({ error: `Aktive eBay-Angebote nicht lesbar (${e instanceof Error ? e.message : String(e)}) — zur Sicherheit nicht gelistet, bitte erneut versuchen.` }, 502);
+        }
+        const others = await db.select({ id: schema.products.id, ebayListingId: schema.products.ebayListingId, ebayStatus: schema.products.ebayStatus, sourceUrl: schema.products.sourceUrl }).from(schema.products).all();
+        const conflict = findActiveListingConflict({ id: product.id, sourceUrl: product.sourceUrl }, active, others);
+        if (conflict) {
+          console.warn('[eBay list] abgebrochen, aktives Angebot vorhanden', product.id, conflict.itemId, conflict.reason);
+          return c.json({ error: conflict.message, conflictItemId: conflict.itemId }, 409);
+        }
+      }
+
       // A-021: die an eBay gesendeten Preise einsammeln (OUT-Array, von ebay.ts beim Anlegen der Offers gefüllt) — gespeichert wird erst nach
       // erfolgreichem listOnEbay (s. unten), nie vorher.
       const sentPrices: SentListingPrice[] = [];
@@ -2901,6 +2928,7 @@ const app = new Hono()
         ? await import('./multi-rabatt').then(m => m.sendMultiRabattForNewListing(body.productId))
         : null;
 
+      delete (globalThis as Record<string, unknown>)['ebay_listings']; // OFFEN 013: Listings-Cache sofort verwerfen (sonst bis 10 Min. altes Bild)
       return c.json({ listingId, success: true, warnings: variantWarnings, ...(multiRabatt ? { multiRabatt } : {}) }, 200);
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
@@ -3272,18 +3300,19 @@ const app = new Hono()
       const token = await getAccessToken();
       const { ok, error } = await endListing(product.ebayListingId, token);
 
-      // DB Status zurücksetzen
+      // OFFEN 013 Regel 6a: nur bei bestätigtem Ende (oder nachweislich schon beendet) zurücksetzen.
+      const { shouldUnlinkAfterEnd } = await import('../shared/listing-guard');
+      if (!shouldUnlinkAfterEnd({ ok, error })) {
+        console.warn('[eBay EndItem] nicht bestätigt, Verknüpfung bleibt', product.ebayListingId, error);
+        return c.json({ error: `eBay hat das Beenden nicht bestätigt: ${error ?? 'Fehler'} — in der App wurde nichts geändert.` }, 502);
+      }
       await db.update(schema.products).set({
         ebayListingId: null,
         ebayStatus: 'none',
         ebayError: null,
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, id));
-
-      if (!ok) {
-        // Auch bei eBay-Fehler DB zurücksetzen — Listing war evtl. schon abgelaufen
-        console.warn('[eBay EndItem]', error);
-      }
+      delete (globalThis as Record<string, unknown>)['ebay_listings']; // OFFEN 013: Listings-Cache sofort verwerfen
 
       return c.json({ ok: true }, 200);
     } catch (e) {
