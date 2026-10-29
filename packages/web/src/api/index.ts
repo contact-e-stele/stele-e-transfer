@@ -2723,20 +2723,12 @@ const app = new Hono()
       const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
 
       // Varianten parsen
-      const variantGroups: Array<{ name: string; values: string[] }> = (() => {
-        try {
-          const parsed = JSON.parse(product.variants ?? '[]');
-          if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && 'name' in parsed[0]) {
-            return parsed as Array<{ name: string; values: string[] }>;
-          }
-        } catch { /* ignore */ }
-        return [];
-      })();
+      // Pflichtmerkmal-Knopf: Parsing an EINER Stelle (shared/aspect-precheck-input.ts), gleiche Eingaben wie GET /products/:id/aspect-precheck.
+      const { parseVariantGroupsForListing, parseSpecsForListing, parseManualAspects, titleSourcesFor } = await import('../shared/aspect-precheck-input');
+      const variantGroups: Array<{ name: string; values: string[] }> = parseVariantGroupsForListing(product.variants);
 
       // Specs parsen für dynamische eBay Aspekte
-      const specs: Record<string, string> = (() => {
-        try { return JSON.parse(product.specs ?? '{}') as Record<string, string>; } catch { return {}; }
-      })();
+      const specs: Record<string, string> = parseSpecsForListing(product.specs);
 
       // variantPrices für pro-Variante Preise — ebayPrice wird hier (Punkt 3, P-27/P-28-
       // Konsolidierung) für jede Variante mit bekanntem Einkaufspreis frisch über die zentrale
@@ -2776,15 +2768,13 @@ const app = new Hono()
 
       // P-88: manuell nachgetragene Pflichtfelder (aus einem vorherigen fehlgeschlagenen Versuch)
       const manualAspects: Record<string, string> | undefined = (() => {
-        try {
-          const parsed = product.manualAspects ? JSON.parse(product.manualAspects) as Record<string, string> : undefined;
-          return parsed && Object.keys(parsed).length > 0 ? parsed : undefined;
-        } catch { return undefined; }
+        const parsed = parseManualAspects(product.manualAspects);
+        return Object.keys(parsed).length > 0 ? parsed : undefined;
       })();
 
       // P-88 1b Korrektur: title UND generatedTitle unabhängig als Farb-Quelle für die
       // Pflichtmerkmal-Befüllung — ein Farbwort kann in nur einer der beiden Fassungen stehen.
-      const titleSources = [product.title, product.generatedTitle].filter((t): t is string => !!t);
+      const titleSources = titleSourcesFor(product);
 
       // P-88 Schritt 1e — Korrektur (20.09.2026): Vorab-Prüfung ALLER Pflichtmerkmale der Kategorie
       // VOR jedem eBay-Aufruf. Zwei getrennte Blockier-Fälle: (1) ein Pflichtmerkmal hat wirklich
@@ -4865,6 +4855,31 @@ app.post('/products/:id/sell-prices-from-ebay', async (c) => {
     return c.json({ mode: 'apply', written: true, changed: [{ skuId: null, from: product.sellPrice, to: price }], rows: rb.rows, ...lock }, 200);
   } catch (e) {
     console.error('[sell-prices-from-ebay]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// OFFEN 015 Schritt 6 / Inhaber 29.10. „Extra-Knopf“: Pflichtmerkmale VOR dem Listen prüfen — NUR LESEN (eBay-Taxonomie), nichts wird
+// gespeichert oder an eBay gesendet. Gleiche Prüfung wie POST /ebay/list (findUnresolvedRequiredAspects, gleiche Eingaben aus
+// shared/aspect-precheck-input.ts).
+app.get('/products/:id/aspect-precheck', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
+    const { aspectPrecheckInput } = await import('../shared/aspect-precheck-input');
+    const inp = aspectPrecheckInput(product);
+    const precheck = await findUnresolvedRequiredAspects(inp.specs, categoryId, inp.manualAspects, inp.variantAttrsList, inp.variantGroups, inp.titleSources);
+    if (precheck.fetchFailed) {
+      const fetchError = getLastAspectFetchError(categoryId);
+      return c.json({ ok: false, categoryId, fetchFailed: true, error: `eBay-Pflichtmerkmale nicht abrufbar${fetchError ? ` (${fetchError})` : ''}` }, 502);
+    }
+    return c.json({ ok: precheck.unresolved.length === 0, categoryId, categoryFromProduct: !!product.ebayCategory, missing: precheck.unresolved, editable: filterEditableAspectNames(precheck.unresolved) }, 200);
+  } catch (e) {
+    console.error('[aspect-precheck]', e);
     return c.json({ error: String(e) }, 500);
   }
 });
