@@ -2172,6 +2172,7 @@ export interface EbaySellerListing {
   listingType: string;
   startTime: string;
   endTime: string;
+  watchCount?: number; // OFFEN 013: Beobachter (GetSellerList IncludeWatchCount) — für die zweite Bestätigung vor "Ende"
 }
 
 // ─── Listing Titel/Beschreibung live auf eBay ändern (ReviseItem Trading API) ──
@@ -2675,9 +2676,11 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
     <PageNumber>${page}</PageNumber>
   </Pagination>
   <GranularityLevel>Fine</GranularityLevel>
+  <IncludeWatchCount>true</IncludeWatchCount>
   <OutputSelector>ItemID</OutputSelector>
   <OutputSelector>Title</OutputSelector>
   <OutputSelector>SKU</OutputSelector>
+  <OutputSelector>WatchCount</OutputSelector>
   <OutputSelector>SellingStatus</OutputSelector>
   <OutputSelector>Quantity</OutputSelector>
   <OutputSelector>QuantitySold</OutputSelector>
@@ -2722,9 +2725,11 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
       const listingType = get('ListingType') || 'FixedPriceItem';
       const startTime = get('StartTime') || '';
       const endTime = get('EndTime') || '';
+      const watchRaw = get('WatchCount');
+      const watchCount = watchRaw ? parseInt(watchRaw, 10) : undefined;
 
       if (itemId) {
-        results.push({ itemId, title, sku, currentPrice: price, currency, quantity, quantitySold, imageUrl, viewItemUrl, listingType, startTime, endTime });
+        results.push({ itemId, title, sku, currentPrice: price, currency, quantity, quantitySold, imageUrl, viewItemUrl, listingType, startTime, endTime, watchCount });
         count++;
       }
     }

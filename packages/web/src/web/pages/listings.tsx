@@ -16,6 +16,7 @@ import { MARGIN_TIERS } from "../../shared/constants";
 import { usePriceHolds } from "../lib/price-holds-store";
 import { adRateOptions, adRateLabel, AD_RATE_OPTIONS } from "../../shared/ad-rate-options";
 import { previewTierChange, isListedWithin, compareStartTimeDesc, BULK_TARGET_MARGIN_MAX } from "../../shared/target-margin-bulk";
+import { endConfirmSteps } from "../../shared/listing-guard";
 
 interface EbayListing {
   itemId: string;
@@ -30,6 +31,7 @@ interface EbayListing {
   listingType: string;
   startTime: string;
   endTime: string;
+  watchCount?: number; // OFFEN 013
   appProduct: {
     id: number;
     ebayListingId: string;
@@ -453,15 +455,20 @@ export default function Listings() {
   };
 
   const handleEnd = async (itemId: string) => {
-    if (!confirm("eBay Listing wirklich beenden?")) return;
+    // OFFEN 013 Regel 6c: bei Verkäufen/Beobachtern eine zweite Bestätigung mit den Zahlen.
+    const listing = listings.find(l => l.itemId === itemId);
+    for (const step of endConfirmSteps({ itemId, title: listing?.title, quantitySold: listing?.quantitySold, watchCount: listing?.watchCount })) {
+      if (!confirm(step)) return;
+    }
     setEndingId(itemId);
     try {
       const res = await fetch(`/api/ebay/listings/${itemId}`, { method: "DELETE" });
       const data = await res.json() as { ok?: boolean; warning?: string; error?: string };
-      if (data.ok || data.warning) {
+      // OFFEN 013 Regel 6a: nur bei bestätigtem Ende aus der Liste nehmen (früher auch bei "warning").
+      if (data.ok) {
         setListings(prev => prev.filter(l => l.itemId !== itemId));
       } else {
-        alert(data.error ?? "Fehler beim Beenden");
+        alert(data.error ?? data.warning ?? "Fehler beim Beenden");
       }
     } finally {
       setEndingId(null);
@@ -539,6 +546,12 @@ export default function Listings() {
 
   const handleBulkEnd = () => {
     if (!confirm(`${selected.size} Listings wirklich beenden?`)) return;
+    // OFFEN 013 Regel 6c: Angebote mit Verkäufen/Beobachtern einzeln nennen und zweite Bestätigung verlangen.
+    const risky = listings.filter(l => selected.has(l.itemId) && ((l.quantitySold ?? 0) > 0 || (l.watchCount ?? 0) > 0));
+    if (risky.length > 0) {
+      const lines = risky.slice(0, 15).map(l => `– #${l.itemId}: ${l.quantitySold}× verkauft, ${l.watchCount ?? 0} Beobachter`).join("\n");
+      if (!confirm(`ACHTUNG: ${risky.length} der Angebote haben Verkäufe oder Beobachter:\n\n${lines}${risky.length > 15 ? "\n…" : ""}\n\nVerkaufshistorie und Beobachter gehen beim Beenden verloren. Wirklich endgültig beenden?`)) return;
+    }
     runBulk("/api/ebay/listings/bulk/end", {});
   };
   const handleBulkAdRate = () => runBulk("/api/ebay/listings/bulk/adrate", { ratePercent: bulkAdRate });
@@ -1596,6 +1609,9 @@ export default function Listings() {
                     }}>
                       <Tag size={10} /> {listing.quantitySold}× verkauft
                     </span>
+                    {(listing.watchCount ?? 0) > 0 && (
+                      <span style={{ fontSize: 11, color: "#0EA5E9", fontWeight: 600 }}>{listing.watchCount} Beobachter</span>
+                    )}
 
                     {/* Verknüpfungs-Badge */}
                     <span style={{
