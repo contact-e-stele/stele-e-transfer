@@ -987,7 +987,10 @@ export default function Produkte() {
   const [priceJobError, setPriceJobError] = useState("");
 
   const load = async () => {
-    setLoading(true);
+    // OFFEN 017: Beim Nachladen (z. B. nach "Bei eBay listen") die Liste NICHT ausblenden — sonst fällt die Seite zusammen,
+    // springt nach oben, und der nächste Tipp (Handy/Touch) trifft die Kopfleiste (→ Listings-Tab, Suchfilter weg).
+    // Den Lade-Zustand gibt es nur noch beim ersten Laden (noch keine Produkte).
+    setLoading(prev => prev || products.length === 0);
     setError("");
     try {
       const data = await safeJson<Product[]>("/api/products");
@@ -2104,7 +2107,9 @@ export default function Produkte() {
                 </select>
               </div>
 
-              {product.ebayError && !listingResult && (
+              {/* OFFEN 017: vorher "!listingResult" → nach JEDEM Listen-Versuch (egal welches Produkt) verschwand der Fehlerblock samt
+                  Pflichtfeld-Auswahl, bis die Seite neu geladen wurde. Jetzt nur ausblenden, wenn DIESES Produkt gerade erfolgreich gelistet wurde. */}
+              {product.ebayError && !(listingResult?.id === product.id && listingResult.success) && (
                 <div style={{ fontSize: 11, color: "#DC2626", background: "#FEF2F2", padding: "6px 10px", borderRadius: 6, marginTop: 8 }}>
                   {product.ebayError.slice(0, 120)}
                   {parseMissingAspectNames(product.ebayMissingAspect).map(name => (
@@ -2124,7 +2129,7 @@ export default function Produkte() {
                           ...p,
                           manualAspects: JSON.stringify(manualAspects),
                           ...(stillMissing.length === 0
-                            ? { ebayMissingAspect: null, ebayError: null, ebayStatus: 'none' as const }
+                            ? { ebayMissingAspect: null, ebayError: null, ebayStatus: (p.ebayListingId ? 'listed' : 'none') as Product['ebayStatus'] }
                             : { ebayMissingAspect: stillMissing.join(', ') }),
                         };
                       }))}
@@ -2132,8 +2137,9 @@ export default function Produkte() {
                   ))}
                   <button
                     onClick={async () => {
-                      await fetch(`/api/products/${product.id}/reset-error`, { method: 'POST' });
-                      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayStatus: 'none', ebayError: null, ebayMissingAspect: null } : p));
+                      const r = await fetch(`/api/products/${product.id}/reset-error`, { method: 'POST' });
+                      const d = await r.json().catch(() => ({})) as { ebayStatus?: 'listed' | 'none' };
+                      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ebayStatus: d.ebayStatus ?? (p.ebayListingId ? 'listed' : 'none'), ebayError: null, ebayMissingAspect: null } : p));
                     }}
                     style={{ display: 'block', marginTop: 6, padding: '3px 10px', fontSize: 11, background: '#DC2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
                   >

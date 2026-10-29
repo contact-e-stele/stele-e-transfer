@@ -1966,7 +1966,7 @@ const app = new Hono()
   .post('/products/:id/link-listing', async (c) => {
     try {
       const id = Number(c.req.param('id'));
-      const body = await c.req.json().catch(() => null) as { listingId?: unknown } | null;
+      const body = await c.req.json().catch(() => null) as { listingId?: unknown; multiRabatt?: unknown } | null;
       const listingId = typeof body?.listingId === 'string' && /^\d{9,15}$/.test(body.listingId) ? body.listingId : null;
       if (!Number.isInteger(id) || id <= 0 || !listingId) return c.json({ ok: false, error: 'Produkt-ID und listingId (eBay-Artikelnummer) sind Pflicht' }, 400);
       const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
@@ -1984,6 +1984,11 @@ const app = new Hono()
       await db.update(schema.products).set({ ebayListingId: listingId, ebayStatus: 'listed', ebayError: null, ebayMissingAspect: null, updatedAt: new Date().toISOString() })
         .where(eq(schema.products.id, id));
       console.log(`[Verknüpfen] stele-${id} ↔ eBay ${listingId} (SKU ${check.itemSku}, Varianten ${check.variantSkus.join(', ') || '–'})`);
+      // OFFEN 017: Wiederverknüpfen derselben eBay-Nr (App-Status war nur verloren) oder ausdrücklich multiRabatt:false → nichts an eBay senden.
+      if (product.ebayListingId === listingId || body?.multiRabatt === false) {
+        console.log(`[Verknüpfen] stele-${id}: ohne Multi-Rabatt (${product.ebayListingId === listingId ? 'Wiederverknüpfen derselben Nr' : 'multiRabatt:false'})`);
+        return c.json({ ok: true, check, multiRabatt: null }, 200);
+      }
       const multiRabatt = await import('./multi-rabatt').then(m => m.sendMultiRabattForNewListing(id));
       return c.json({ ok: true, check, multiRabatt }, 200);
     } catch (e) {
@@ -3681,7 +3686,7 @@ const app = new Hono()
         // er nur einen Teil ab, bleiben die restlichen Namen stehen. Vorher blieb ebayMissingAspect/
         // ebayError nach dem Speichern stehen, bis der Nutzer separat auf "Fehler zurücksetzen"
         // klickte (wirkte wie eine Attrappe, s. task.md P-88).
-        const [current] = await db.select({ ebayMissingAspect: schema.products.ebayMissingAspect })
+        const [current] = await db.select({ ebayMissingAspect: schema.products.ebayMissingAspect, ebayStatus: schema.products.ebayStatus, ebayListingId: schema.products.ebayListingId })
           .from(schema.products).where(eq(schema.products.id, id));
         const missingNames = parseMissingAspectNames(current?.ebayMissingAspect);
         if (missingNames.length > 0) {
@@ -3689,7 +3694,9 @@ const app = new Hono()
           if (stillMissing.length === 0) {
             allowed.ebayMissingAspect = null;
             allowed.ebayError = null;
-            allowed.ebayStatus = 'none';
+            // OFFEN 017: mit eBay-Nr bleibt 'listed' (nie blind 'none').
+            const { statusAfterErrorCleared } = await import('../shared/listing-status-guard');
+            allowed.ebayStatus = current ? statusAfterErrorCleared(current) : 'none';
           } else if (stillMissing.length < missingNames.length) {
             allowed.ebayMissingAspect = stillMissing.join(', ');
           }
@@ -3733,13 +3740,18 @@ const app = new Hono()
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
       });
+      // OFFEN 017: ein Produkt mit eBay-Nr bleibt 'listed' (vorher blind 'none' → stele-243 "Nicht gelistet" trotz aktivem Angebot).
+      const [cur] = await db.select({ ebayStatus: schema.products.ebayStatus, ebayListingId: schema.products.ebayListingId }).from(schema.products).where(eq(schema.products.id, id));
+      if (!cur) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+      const { statusAfterErrorCleared } = await import('../shared/listing-status-guard');
+      const ebayStatus = statusAfterErrorCleared(cur);
       await db.update(schema.products).set({
-        ebayStatus: 'none',
+        ebayStatus,
         ebayError: null,
         ebayMissingAspect: null,
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.products.id, id));
-      return c.json({ ok: true }, 200);
+      return c.json({ ok: true, ebayStatus }, 200);
     } catch (e) {
       return c.json({ error: 'DB Fehler' }, 503);
     }
