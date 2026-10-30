@@ -269,3 +269,32 @@ describe('A-023: Dubletten in variantPrices beim Senden (stele-119)', () => {
     expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ '12000050569622128': 15.95, '12000050569622129': 13.95 });
   });
 });
+
+// Inhaber 30.10.2026 „B ja“ (Live-Fund stele-234 06:12): eBay bietet nur Brown an, GRAY/green sind verwaiste AliExpress-Einträge.
+// eBay setzte 1 Preis → vorher „1 von 3 … App-Preise NICHT gespeichert“. Jetzt zählt nur die angebotene Zeile.
+describe('Verwaiste (nicht angebotene) Varianten zählen beim Senden nicht als Fehler', () => {
+  const p234 = (over: Partial<TierRepriceProductRow> = {}) => live({
+    id: 234, buyPrice: 8.69, variants: JSON.stringify([{ name: 'Varianten', values: ['Brown'] }]),
+    variantPrices: JSON.stringify([
+      { skuId: '12000056068050014', attrs: { Color: 'Brown' }, price: 8.69 },
+      { skuId: '12000056068050015', attrs: { Color: 'GRAY' }, price: 8.89 },
+      { skuId: '12000056068050016', attrs: { Color: 'green' }, price: 8.89 },
+    ]),
+    variantSellPrices: JSON.stringify({ '12000056068050014': 22.45, '12000056068050015': 22.45, '12000056068050016': 22.45 }),
+    ...over,
+  });
+  test('1 von 1 angebotenen gesendet → sent, App-Preise gespeichert', async () => {
+    deps.sendVariants = async () => { calls.sendVariants++; return { ok: true, updatedCount: 1, errors: [] }; };
+    const [r] = await runTierReprice(new Map([[234, p234()]]), { productIds: [234], targetMarginEur: 1, mode: 'apply', confirm: true, sendToEbay: true }, deps);
+    expect(r.status).toBe('sent');
+    expect(r.plan?.rows).toHaveLength(3);
+    expect(calls.store).toBe(1);
+  });
+  test('angebotene Zeile NICHT gesendet (0) → weiterhin send_failed, nichts gespeichert', async () => {
+    deps.sendVariants = async () => { calls.sendVariants++; return { ok: true, updatedCount: 0, errors: [] }; };
+    const [r] = await runTierReprice(new Map([[234, p234()]]), { productIds: [234], targetMarginEur: 1, mode: 'apply', confirm: true, sendToEbay: true }, deps);
+    expect(r.status).toBe('send_failed');
+    expect(r.error).toContain('0 von 1 angebotenen');
+    expect(calls.store).toBe(0);
+  });
+});

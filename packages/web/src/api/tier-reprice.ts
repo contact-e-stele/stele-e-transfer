@@ -2,7 +2,7 @@
 // Schreibende kommt als `deps` herein (index.ts verdrahtet die echten Funktionen), damit die Regel "kein eBay-Aufruf ohne
 // ausdrückliches Senden" mit Mocks testbar ist (Grundgesetz Regel 2). Entscheidungslogik: shared/tier-reprice.ts.
 import {
-  planTierReprice, storePatchForPlan, decideTierRepriceAction, compareExpected,
+  planTierReprice, storePatchForPlan, decideTierRepriceAction, compareExpected, offeredPlanRowCount,
   type RepriceProduct, type TierPlan, type TierRepriceMode, type ExpectedPrices,
 } from '../shared/tier-reprice';
 
@@ -104,11 +104,13 @@ async function runOne(
       try { res = await deps.sendVariants(id, parseGroups(row.variants), sendRows); } catch (e) {
         return { ...base, status: 'send_failed', plan, sentCount: 0, error: 'Senden an eBay fehlgeschlagen: ' + String(e) + ' — App-Preise NICHT gespeichert (eBay-Stand unklar, bitte prüfen).' };
       }
-      // VOLLER Erfolg heißt: keine Fehlermeldung UND jede Plan-Zeile wurde tatsächlich an eine reale eBay-Variante gesendet.
-      if (!res.ok || res.errors.length > 0 || res.updatedCount !== plan.rows.length) {
+      // VOLLER Erfolg heißt: keine Fehlermeldung UND jede bei eBay ANGEBOTENE Plan-Zeile wurde tatsächlich gesendet. Verwaiste Zeilen
+      // (nicht bei eBay angeboten, z. B. stele-234 GRAY/green) zählen nicht mit — Inhaber 30.10.2026 „B ja“.
+      const offered = offeredPlanRowCount(plan, parseGroups(row.variants));
+      if (!res.ok || res.errors.length > 0 || res.updatedCount !== offered) {
         return {
           ...base, status: 'send_failed', plan, sentCount: res.updatedCount,
-          error: `${res.updatedCount} von ${plan.rows.length} Varianten-Preisen an eBay gesetzt${res.errors.length > 0 ? ': ' + res.errors.join(' | ') : ' (nicht jede Plan-Variante hat eine passende eBay-SKU)'} — App-Preise NICHT gespeichert. Teilweise gesendete Preise stehen auf eBay: im Produkte-Tab prüfen.`,
+          error: `${res.updatedCount} von ${offered} angebotenen Varianten-Preisen an eBay gesetzt${res.errors.length > 0 ? ': ' + res.errors.join(' | ') : ' (nicht jede Plan-Variante hat eine passende eBay-SKU)'} — App-Preise NICHT gespeichert. Teilweise gesendete Preise stehen auf eBay: im Produkte-Tab prüfen.`,
         };
       }
       try { await deps.store(id, stored); } catch (e) {

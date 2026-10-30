@@ -9,7 +9,7 @@ import { MARGIN_TIERS } from './constants';
 import { isVariantProduct } from './variant-product';
 import { collapseDuplicateEntries } from './variant-dedupe';
 import { earUmlageFor } from './electric';
-import type { VariantGroup } from './variant-resolver';
+import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPriceEntry } from './variant-resolver';
 import { activeCheckoutFactor } from './checkout-factor';
 import {
   computeMinSellPrice, profitAtSellPrice, isChinaOriginForVariant, parseVariantSellPrices, resolveVariantSellPrice,
@@ -185,4 +185,13 @@ export function decideTierRepriceAction(input: { mode: TierRepriceMode; confirm:
   if (!input.isLive) return { action: 'store_only' };
   if (!input.sendToEbay) return { action: 'rejected', error: 'Live gelistet: Preise nur mit sendToEbay:true (ausdrückliches Senden an eBay) — sonst nur das Ziel setzen' };
   return { action: 'store_and_send' };
+}
+
+// Inhaber 30.10.2026 „B ja“ (Live-Fund stele-234): Plan-Zeilen, die bei eBay gar nicht angeboten werden (verwaiste AliExpress-Einträge,
+// passen auf keine Kombination aus product.variants), bekommen beim Senden keine eBay-SKU. Sie dürfen den Erfolg nicht verhindern —
+// „voller Erfolg“ heißt: jede ANGEBOTENE Zeile wurde gesendet. Ohne Gruppen (Einzelartikel/alte Daten): alle Zeilen gelten als angeboten.
+export function offeredPlanRowCount(plan: TierPlan, groups: VariantGroup[]): number {
+  if (!plan.isVariant || groups.length === 0) return plan.rows.length;
+  const combos = buildCombinations(groups);
+  return plan.rows.filter(r => combos.some(c => entryMatchesCombo(c, { skuId: r.skuId ?? '', attrs: r.attrs ?? {}, displayValues: r.displayValues, price: r.ware } as VariantPriceEntry))).length;
 }
