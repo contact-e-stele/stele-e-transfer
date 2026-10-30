@@ -1441,6 +1441,9 @@ export function classifySourceUnavailability(status: number, bodyText: string, d
     'item is no longer available',
     'product is no longer available',
     'this item is no longer for sale',
+    // Live-Fund 30.10.2026 stele-150/229 (de.aliexpress.com, Wortlaut: "Leider ist dieser Artikel an Ihrem Standort derzeit
+    // nicht verfügbar.") — deutsches Gegenstück zum ersten Marker; vorher nicht erkannt, Angebote liefen weiter.
+    'an ihrem standort derzeit nicht verfügbar',
   ];
   const matched = UNAVAILABLE_MARKERS.find(m => text.includes(m));
   if (matched) {
