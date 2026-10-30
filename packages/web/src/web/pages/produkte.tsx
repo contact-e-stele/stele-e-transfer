@@ -25,6 +25,10 @@ import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions } from "../compon
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 import { matchesTileFilter, type ProductTileFilter } from "../../shared/product-tile-filter";
+import { allVisibleSelected, dedupeVerdict, priceCheckUrl, selectedVisible, toggleAllVisible, toggleOne, type DedupePreviewLite, type DedupeVerdict } from "../../shared/bulk-selection";
+
+type BulkRow = { id: number; ok?: boolean; text: string };
+type BulkDedupeRow = { id: number; verdict: DedupeVerdict; before?: number; after?: number; changes: number; stillAmbiguous: number; error?: string; applied?: boolean; applyText?: string };
 
 interface VariantGroup {
   name: string;
@@ -1006,9 +1010,10 @@ export default function Produkte() {
   useEffect(() => { load(); }, []);
 
   // Preis aktualisieren (scrape erneut)
-  const checkPrice = async (product: Product) => {
-    const url = product.sourceUrl || product.amazonUrl;
-    if (!url || url === "manual") return;
+  // Liefert ein kurzes Ergebnis (für die Sammel-Prüfung); der Einzel-Knopf ignoriert es wie bisher.
+  const checkPrice = async (product: Product, opts: { reload?: boolean } = {}): Promise<{ ok: boolean; text: string }> => {
+    const url = priceCheckUrl(product);
+    if (!url) return { ok: false, text: "keine AliExpress-URL" };
     setCheckingPrice(product.id);
     try {
       const res = await fetch("/api/aliexpress/scrape", {
@@ -1020,17 +1025,69 @@ export default function Produkte() {
       if (data.price) {
         const newPrice = parseFloat(data.price.replace(/[^0-9.]/g, ""));
         if (!isNaN(newPrice) && newPrice > 0) {
-          await fetch(`/api/products/${product.id}/price`, {
+          const r = await fetch(`/api/products/${product.id}/price`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ buyPrice: newPrice }),
           });
-          load();
+          if (opts.reload !== false) load();
+          return r.ok ? { ok: true, text: `EK ${newPrice.toFixed(2).replace(".", ",")} € übernommen` } : { ok: false, text: `Speichern fehlgeschlagen (HTTP ${r.status})` };
         }
       }
-    } catch { /* ignore */ } finally {
+      return { ok: false, text: data.error ? String(data.error) : "kein Preis von AliExpress" };
+    } catch (e) {
+      return { ok: false, text: String(e) };
+    } finally {
       setCheckingPrice(null);
     }
+  };
+
+  // Sammel-Aktionen (Inhaber 30.10.2026): nur App, nichts an eBay.
+  const runBulkPriceCheck = async (ids: number[]) => {
+    setBulkBusy(true); setBulkDedupe(null);
+    const rows: BulkRow[] = ids.map(id => ({ id, text: "wartet …" }));
+    setBulkRows([...rows]);
+    for (let i = 0; i < ids.length; i++) {
+      const p = products.find(x => x.id === ids[i]);
+      rows[i] = { id: ids[i], text: "prüft …" }; setBulkRows([...rows]);
+      const r = p ? await checkPrice(p, { reload: false }) : { ok: false, text: "nicht gefunden" };
+      rows[i] = { id: ids[i], ok: r.ok, text: r.text }; setBulkRows([...rows]);
+    }
+    await load();
+    setBulkBusy(false);
+  };
+  const runBulkDedupePreview = async (ids: number[]) => {
+    setBulkBusy(true); setBulkRows(null);
+    const out: BulkDedupeRow[] = [];
+    for (const id of ids) {
+      try {
+        const r = await fetch(`/api/products/${id}/variant-dedupe`);
+        const d = await r.json().catch(() => ({})) as DedupePreviewLite;
+        out.push({ id, verdict: dedupeVerdict(d, r.ok), before: d.before, after: d.after, changes: d.changes?.length ?? 0, stillAmbiguous: d.stillAmbiguous?.length ?? 0, error: d.error });
+      } catch (e) {
+        out.push({ id, verdict: "error", changes: 0, stillAmbiguous: 0, error: String(e) });
+      }
+      setBulkDedupe([...out]);
+    }
+    setBulkBusy(false);
+  };
+  const runBulkDedupeApply = async () => {
+    if (!bulkDedupe) return;
+    setBulkBusy(true);
+    const next = [...bulkDedupe];
+    for (let i = 0; i < next.length; i++) {
+      if (next[i].verdict !== "fixable") continue;
+      try {
+        const r = await fetch(`/api/products/${next[i].id}/variant-dedupe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+        const d = await r.json().catch(() => ({})) as { written?: boolean; before?: number; after?: number; error?: string; reason?: string };
+        next[i] = { ...next[i], applied: r.ok && d.written === true, applyText: r.ok && d.written ? `bereinigt: ${d.before} → ${d.after} Einträge` : String(d.error ?? d.reason ?? "nichts geschrieben") };
+      } catch (e) {
+        next[i] = { ...next[i], applied: false, applyText: String(e) };
+      }
+      setBulkDedupe([...next]);
+    }
+    await load();
+    setBulkBusy(false);
   };
 
   // Lagerbestand pro Variante aktualisieren (getrennt von checkPrice — reine Bestandsdaten,
@@ -1133,6 +1190,10 @@ export default function Produkte() {
 
   // Inhaber 29.10.2026 „Extra-Knopf“: Pflichtmerkmale vor dem Listen prüfen (nur lesen, nichts an eBay).
   const [tileFilter, setTileFilter] = useState<ProductTileFilter>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkRows, setBulkRows] = useState<BulkRow[] | null>(null);
+  const [bulkDedupe, setBulkDedupe] = useState<BulkDedupeRow[] | null>(null);
   const [precheck, setPrecheck] = useState<{ id: number; busy?: boolean; ok?: boolean; msg?: string } | null>(null);
   const checkAspects = async (product: Product) => {
     setPrecheck({ id: product.id, busy: true });
@@ -1521,6 +1582,69 @@ export default function Produkte() {
           </div>
         )}
 
+        {/* Sammel-Aktionen (Inhaber 30.10.2026): Auswahl gilt nur für die sichtbare Liste; nur App, nichts an eBay. */}
+        {!loading && filtered.length > 0 && (() => {
+          const visibleIds = filtered.map(p => p.id);
+          const sel = selectedVisible(selected, visibleIds);
+          const btn = { fontSize: 12, padding: "5px 10px", borderRadius: 8, border: "1px solid #CBD5E1", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 } as const;
+          const name = (id: number) => products.find(p => p.id === id)?.title?.slice(0, 40) ?? "";
+          return (
+            <div style={{ marginBottom: 10, padding: 10, borderRadius: 12, background: "#F8FAFC", border: "1px solid #E2E8F0", fontSize: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer", fontWeight: 600 }}>
+                  <input type="checkbox" checked={allVisibleSelected(selected, visibleIds)} onChange={() => setSelected(prev => toggleAllVisible(prev, visibleIds))} />
+                  Alle auswählen ({visibleIds.length})
+                </label>
+                <span style={{ color: "#64748B" }}>{sel.length} ausgewählt</span>
+                <button disabled={bulkBusy || sel.length === 0} style={{ ...btn, opacity: bulkBusy || sel.length === 0 ? 0.5 : 1 }}
+                  title="AliExpress-Preis je Produkt neu lesen und EK in der App speichern — nichts an eBay"
+                  onClick={() => runBulkPriceCheck(sel)}>Preise prüfen ({sel.length})</button>
+                <button disabled={bulkBusy || sel.length === 0} style={{ ...btn, opacity: bulkBusy || sel.length === 0 ? 0.5 : 1 }}
+                  title="Varianten-Dubletten je Produkt anzeigen — bereinigt wird erst nach dem zweiten Knopf"
+                  onClick={() => runBulkDedupePreview(sel)}>Dubletten prüfen ({sel.length})</button>
+                {bulkBusy && <span style={{ color: "#64748B" }}>läuft …</span>}
+              </div>
+              {bulkRows && (
+                <div style={{ marginTop: 8 }}>
+                  {bulkRows.map(r => (
+                    <div key={r.id} style={{ color: r.ok === true ? "#16A34A" : r.ok === false ? "#DC2626" : "#64748B" }}>
+                      stele-{r.id} {name(r.id)}: {r.text}
+                    </div>
+                  ))}
+                  {!bulkBusy && <button style={{ ...btn, marginTop: 6 }} onClick={() => setBulkRows(null)}>Schließen</button>}
+                </div>
+              )}
+              {bulkDedupe && (() => {
+                const fixable = bulkDedupe.filter(d => d.verdict === "fixable" && d.applied === undefined).length;
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    {bulkDedupe.map(d => (
+                      <div key={d.id} style={{ color: d.applied === true ? "#16A34A" : d.verdict === "fixable" ? "#B45309" : d.verdict === "clean" ? "#64748B" : "#DC2626" }}>
+                        stele-{d.id} {name(d.id)}: {
+                          d.applyText ?? (d.verdict === "clean" ? "keine Dubletten"
+                            : d.verdict === "fixable" ? `${d.changes} Dublette(n) — ${d.before} → ${d.after} Einträge`
+                            : d.verdict === "blocked" ? `${d.changes} Dublette(n), danach noch ${d.stillAmbiguous} mehrdeutig — wird nicht angefasst`
+                            : `Fehler: ${d.error ?? "unbekannt"}`)
+                        }
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                      {fixable > 0 && !bulkBusy && (
+                        <button style={{ ...btn, background: "#B45309", color: "#fff", border: "none" }}
+                          title="Nur App (variantPrices) — nichts an eBay"
+                          onClick={() => { if (window.confirm(`Dubletten bei ${fixable} Produkt(en) bereinigen? Nur App, nichts an eBay.`)) runBulkDedupeApply(); }}>
+                          Bereinigen ({fixable})
+                        </button>
+                      )}
+                      {!bulkBusy && <button style={btn} onClick={() => setBulkDedupe(null)}>Schließen</button>}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
+
         {/* Suche */}
         <div style={{ position: "relative", marginBottom: 10 }}>
           <Search size={16} color="#94A3B8" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
@@ -1596,6 +1720,8 @@ export default function Produkte() {
                 : product.priceChanged ? "1.5px solid #FCD34D" : "1.5px solid transparent",
             }}>
               <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <input type="checkbox" aria-label={`stele-${product.id} auswählen`} checked={selected.has(product.id)}
+                  onChange={() => setSelected(prev => toggleOne(prev, product.id))} style={{ marginTop: 4, flexShrink: 0, cursor: "pointer" }} />
                 {/* Thumbnail */}
                 {thumb && (
                   <img src={thumb} alt="" style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flexShrink: 0, background: "#F8FAFC" }} />
