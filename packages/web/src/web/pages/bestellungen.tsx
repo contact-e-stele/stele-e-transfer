@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { ebayOrderDetailsUrl } from "../../shared/ebay-order-link";
 import { addressCopyParts } from "../../shared/address-copy";
-import { ebayReturnDetailsUrl, returnIdsByOrderId } from "../../shared/ebay-return-link";
+import { ebayReturnDetailsUrl, hasReturn, returnIdsByOrderId } from "../../shared/ebay-return-link";
 import type { JSX } from "react";
 import {
   Package, RefreshCw, Loader, Search, Truck, CheckCircle, Clock,
@@ -70,7 +70,7 @@ interface Order {
 // universellen Fallback "OTHER" zurück.
 const CARRIER_OPTIONS = ["DHL", "DPD", "GLS", "Hermes", "UPS", "FedEx", "Sonstige / AliExpress Standard"];
 
-type FilterMode = "all" | "open" | "shipped";
+type FilterMode = "all" | "open" | "shipped" | "returns";
 
 function fmtDate(iso: string): string {
   if (!iso) return "—";
@@ -480,6 +480,7 @@ export default function Bestellungen() {
   const filtered = orders.filter(o => {
     if (filter === "open" && isEffectivelyShipped(o)) return false;
     if (filter === "shipped" && !isEffectivelyShipped(o)) return false;
+    if (filter === "returns" && !hasReturn(o.orderId, returnsByOrder)) return false; // Inhaber 30.10.2026: Filter "Retoure"
     if (search) {
       const q = search.toLowerCase();
       const matchesOrderId = o.orderId.toLowerCase().includes(q);
@@ -585,7 +586,7 @@ export default function Bestellungen() {
             />
           </div>
           <div style={{ display: "flex", gap: 4 }}>
-            {([["all", "Alle"], ["open", "Offen"], ["shipped", "Versendet"]] as [FilterMode, string][]).map(([f, label]) => (
+            {([["all", "Alle"], ["open", "Offen"], ["shipped", "Versendet"], ["returns", `Retoure (${orders.filter(o => hasReturn(o.orderId, returnsByOrder)).length})`]] as [FilterMode, string][]).map(([f, label]) => (
               <button key={f} onClick={() => setFilter(f)} style={{
                 padding: "8px 12px", borderRadius: 10, fontSize: 12, fontWeight: 600,
                 border: "1.5px solid " + (filter === f ? "#0EA5E9" : "#E2E8F0"),
