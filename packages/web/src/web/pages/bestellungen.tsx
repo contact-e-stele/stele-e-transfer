@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { ebayOrderDetailsUrl } from "../../shared/ebay-order-link";
+import { addressCopyParts } from "../../shared/address-copy";
 import { ebayReturnDetailsUrl, returnIdsByOrderId } from "../../shared/ebay-return-link";
 import type { JSX } from "react";
 import {
@@ -704,6 +705,20 @@ export default function Bestellungen() {
                   </button>
                 </div>
               )}
+              {/* Für die AliExpress-Bestellung (Inhaber 30.10.2026): Name, Telefon, Adresse einzeln kopieren. */}
+              {order.shippingAddress && (() => {
+                const parts = addressCopyParts(order.shippingAddress);
+                const items: Array<[string, string | null]> = [["Name", parts.name], ["Telefon", parts.phone], ["Adresse", parts.address]];
+                return (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                    {items.filter(([, v]) => v).map(([label, v]) => (
+                      <button key={label} type="button" onClick={() => copyText(v!, label)} style={{ ...miniBtn, display: "inline-flex", alignItems: "center", gap: 3 }} title={v!}>
+                        <Clipboard size={10} /> {label} kopieren
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
 
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "#64748B" }}>
                 <span>Bestellt: {fmtDate(order.orderDate)}</span>
