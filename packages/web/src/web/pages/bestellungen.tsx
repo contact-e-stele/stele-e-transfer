@@ -3,6 +3,7 @@
  * Tracking-Eingabe folgt als nächster Schritt separat.
  */
 import { useState, useEffect, useCallback } from "react";
+import { ebayOrderDetailsUrl } from "../../shared/ebay-order-link";
 import type { JSX } from "react";
 import {
   Package, RefreshCw, Loader, Search, Truck, CheckCircle, Clock,
@@ -612,7 +613,9 @@ export default function Bestellungen() {
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
                 <div>
-                  <div style={{ fontSize: 10, color: "#94A3B8", marginBottom: 2 }}>Bestellnummer: {order.orderId}</div>
+                  <div style={{ fontSize: 10, color: "#94A3B8", marginBottom: 2 }}>Bestellnummer: {ebayOrderDetailsUrl(order.orderId)
+                    ? <a href={ebayOrderDetailsUrl(order.orderId)!} target="_blank" rel="noopener noreferrer" title="Bestellung bei eBay öffnen (neuer Tab)" style={{ color: "#2563EB", textDecoration: "underline" }}>{order.orderId}</a>
+                    : order.orderId}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#475569", fontWeight: 600 }}>
                     <User size={12} /> {order.shippingAddress?.fullName ?? order.buyerUsername}
                   </div>
