@@ -27,6 +27,17 @@ describe('classifySourceUnavailability (reine Klassifikation, kein Netzwerkzugri
     expect(result.reason).toContain('currently unavailable in your location');
   });
 
+  test('deutscher Wortlaut (Live-Fund 30.10.2026 stele-150/229, de.aliexpress.com) gilt als nicht verfügbar', () => {
+    const body = '<html><body>Leider ist dieser Artikel an Ihrem Standort derzeit nicht verfügbar.</body></html>';
+    const result = classifySourceUnavailability(200, body);
+    expect(result.unavailable).toBe(true);
+    expect(result.reason).toContain('an ihrem standort derzeit nicht verfügbar');
+  });
+
+  test('"derzeit nicht verfügbar" allein (z. B. eine Variante) löst NICHT aus', () => {
+    expect(classifySourceUnavailability(200, 'Diese Farbe ist derzeit nicht verfügbar.').unavailable).toBe(false);
+  });
+
   test('Textmarker-Erkennung ist case-insensitiv', () => {
     const body = 'THIS ITEM IS NO LONGER AVAILABLE for purchase.';
     const result = classifySourceUnavailability(200, body);
