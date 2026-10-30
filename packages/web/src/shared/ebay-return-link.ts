@@ -23,3 +23,8 @@ export function returnIdsByOrderId(returns: ReadonlyArray<{ returnId?: string | 
 export function postOrderAuthHeader(token: string): string {
   return `IAF ${token}`;
 }
+
+/** Hat diese Bestellung eine eBay-Rückgabe? (Filter "Retoure" im Bestellungen-Tab, Inhaber 30.10.2026) */
+export function hasReturn(orderId: string | null | undefined, byOrder: Readonly<Record<string, string[]>>): boolean {
+  return (byOrder[(orderId ?? '').trim()]?.length ?? 0) > 0;
+}

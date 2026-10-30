@@ -1,6 +1,6 @@
 // Fixture: Live 30.10.2026 — Rückgabe 5332416921 zu Bestellung 04-15332-43723 (stele-220-GRAY, Grund "Passt nicht").
 import { describe, expect, test } from 'bun:test';
-import { ebayReturnDetailsUrl, postOrderAuthHeader, returnIdsByOrderId } from './ebay-return-link';
+import { ebayReturnDetailsUrl, hasReturn, postOrderAuthHeader, returnIdsByOrderId } from './ebay-return-link';
 
 describe('eBay-Retoure-Link', () => {
   test('Link zur Rückgabe', () => {
@@ -17,5 +17,11 @@ describe('eBay-Retoure-Link', () => {
   });
   test('Post-Order-Header ist IAF, nicht Bearer', () => {
     expect(postOrderAuthHeader('t')).toBe('IAF t');
+  });
+  test('Filter Retoure: nur Bestellungen mit Rückgabe', () => {
+    const map = { '04-15332-43723': ['5332416921'] };
+    expect(hasReturn('04-15332-43723', map)).toBe(true);
+    expect(hasReturn('09-15365-02551', map)).toBe(false);
+    expect(hasReturn(null, map)).toBe(false);
   });
 });
