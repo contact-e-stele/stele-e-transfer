@@ -1,6 +1,7 @@
 // eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
+import { postOrderAuthHeader } from '../shared/ebay-return-link';
 import { fixIdentifierAspects, isValidIdentifierValue } from '../shared/identifier-aspect';
 import { eq } from 'drizzle-orm';
 import { computeMinSellPrice, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
@@ -3401,7 +3402,7 @@ export async function searchReturns(): Promise<EbayReturn[]> {
     `${BASE_URL}/post-order/v2/return/search?limit=50`,
     {
       headers: {
-        'Authorization': `Bearer ${token}`,
+        'Authorization': postOrderAuthHeader(token), // Post-Order verlangt IAF (Live-Fehler 30.10.2026: "401 Bad scheme: Bearer")
         'Accept': 'application/json',
         'X-EBAY-C-MARKETPLACE-ID': 'EBAY_DE',
       },
