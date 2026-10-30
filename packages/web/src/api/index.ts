@@ -2923,8 +2923,13 @@ const app = new Hono()
         ? await import('./multi-rabatt').then(m => m.sendMultiRabattForNewListing(body.productId))
         : null;
 
+      // ENTSCHEIDUNG 018 (Inhaber „W5“, 30.10.2026): neues Angebot mit App-Anzeigensatz > 0 sofort in die Kampagne (je Anzeige genau dieser Satz).
+      // Fehler brechen das Listen nie ab; die Marketing API kennt neue Angebote oft erst nach Minuten → Nachholen (5/10/20/40 Min.).
+      const kampagne = (product.adRate ?? 0) > 0
+        ? await import('./campaign-ads').then(m => m.sendCampaignAdForNewListing(product.id, listingId, product.adRate as number))
+        : null;
       delete (globalThis as Record<string, unknown>)['ebay_listings']; // OFFEN 013: Listings-Cache sofort verwerfen (sonst bis 10 Min. altes Bild)
-      return c.json({ listingId, success: true, warnings: variantWarnings, ...(multiRabatt ? { multiRabatt } : {}) }, 200);
+      return c.json({ listingId, success: true, warnings: variantWarnings, ...(multiRabatt ? { multiRabatt } : {}), ...(kampagne ? { kampagne } : {}) }, 200);
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
       // P-91: lesbare Meldung fürs Frontend statt des rohen eBay-JSON-Blobs
@@ -4880,6 +4885,37 @@ app.get('/products/:id/aspect-precheck', async (c) => {
     return c.json({ ok: precheck.unresolved.length === 0, categoryId, categoryFromProduct: !!product.ebayCategory, missing: precheck.unresolved, editable: filterEditableAspectNames(precheck.unresolved) }, 200);
   } catch (e) {
     console.error('[aspect-precheck]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// OFFEN 018 / ENTSCHEIDUNG 018 (Inhaber „W5“): gelistete Produkte je Anzeige mit festem Satz (Standard 5 %) in die laufende
+// Kosten-pro-Verkauf-Kampagne (Marketing API). Ohne confirm: Vorschau. Mit {confirm:true}: senden, danach products.adRate = Satz
+// NUR für erfolgreich aufgenommene Angebote. Preise werden NICHT geändert.
+app.post('/ebay/campaign-ads', async (c) => {
+  let body: { productIds?: unknown; bidPercentage?: unknown; campaignId?: unknown; confirm?: unknown } = {};
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+  const ids = Array.isArray(body.productIds) ? body.productIds.filter((x): x is number => Number.isInteger(x) && (x as number) > 0) : [];
+  if (ids.length === 0 || ids.length > 30) return c.json({ error: '"productIds" (1–30) fehlt' }, 400);
+  const pct = typeof body.bidPercentage === 'number' ? body.bidPercentage : 5;
+  try {
+    const { bidText } = await import('../shared/campaign-ads');
+    bidText(pct);
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const p = schema.products;
+    const rows = await db.select({ id: p.id, ebayListingId: p.ebayListingId, ebayStatus: p.ebayStatus, adRate: p.adRate }).from(p).where(inArray(p.id, ids)).all();
+    const listed = rows.filter(r => r.ebayStatus === 'listed' && r.ebayListingId);
+    const skipped = ids.filter(id => !listed.some(r => r.id === id));
+    if (body.confirm !== true) return c.json({ mode: 'preview', bidPercentage: pct, send: listed.map(r => ({ productId: r.id, listingId: r.ebayListingId, appAdRate: r.adRate })), skipped }, 200);
+    const { sendCampaignAds } = await import('./campaign-ads');
+    const res = await sendCampaignAds(listed.map(r => r.ebayListingId as string), pct, typeof body.campaignId === 'string' ? body.campaignId : null);
+    const okIds = new Set(res.results.filter(r => r.ok).map(r => r.listingId));
+    for (const r of listed) if (okIds.has(r.ebayListingId as string)) {
+      await db.update(p).set({ adRate: pct, updatedAt: new Date().toISOString() }).where(eq(p.id, r.id));
+    }
+    return c.json({ mode: 'sent', bidPercentage: pct, campaignId: res.campaignId, ok: res.ok, error: res.error, results: res.results.map(x => ({ ...x, productId: listed.find(r => r.ebayListingId === x.listingId)?.id ?? null })), skipped }, res.ok ? 200 : 207);
+  } catch (e) {
+    console.error('[campaign-ads]', e);
     return c.json({ error: String(e) }, 500);
   }
 });
