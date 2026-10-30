@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { ebayOrderDetailsUrl } from "../../shared/ebay-order-link";
+import { ebayReturnDetailsUrl, returnIdsByOrderId } from "../../shared/ebay-return-link";
 import type { JSX } from "react";
 import {
   Package, RefreshCw, Loader, Search, Truck, CheckCircle, Clock,
@@ -374,6 +375,14 @@ export default function Bestellungen() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Retoure an der Bestellung (Inhaber 30.10.2026): Rücksendenummern aus GET /api/ebay/returns, nur lesen. Fehler → einfach keine Anzeige.
+  const [returnsByOrder, setReturnsByOrder] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    fetch("/api/ebay/returns").then(r => r.ok ? r.json() : []).then((d: unknown) => {
+      if (Array.isArray(d)) setReturnsByOrder(returnIdsByOrderId(d as Array<{ returnId?: string; orderId?: string }>));
+    }).catch(() => { /* Retouren nicht lesbar → keine Anzeige */ });
+  }, []);
+
   // Sendungsnummer bei eBay prüfen (18.10.2026): einmal je Seitenaufruf im Hintergrund — liest bei eBay, ob die
   // App-Nummer dort schon hinterlegt ist; Treffer → gelber Hinweis verschwindet. Schreibt NICHTS bei eBay.
   const verifyTracking = useCallback(async (orderIds?: string[]) => {
@@ -615,7 +624,14 @@ export default function Bestellungen() {
                 <div>
                   <div style={{ fontSize: 10, color: "#94A3B8", marginBottom: 2 }}>Bestellnummer: {ebayOrderDetailsUrl(order.orderId)
                     ? <a href={ebayOrderDetailsUrl(order.orderId)!} target="_blank" rel="noopener noreferrer" title="Bestellung bei eBay öffnen (neuer Tab)" style={{ color: "#2563EB", textDecoration: "underline" }}>{order.orderId}</a>
-                    : order.orderId}</div>
+                    : order.orderId}
+                    {(returnsByOrder[order.orderId] ?? []).map(rid => (
+                      <span key={rid} style={{ marginLeft: 10, fontWeight: 700, color: "#B91C1C" }}>
+                        Retoure: {ebayReturnDetailsUrl(rid)
+                          ? <a href={ebayReturnDetailsUrl(rid)!} target="_blank" rel="noopener noreferrer" title="Rückgabe bei eBay öffnen (neuer Tab)" style={{ color: "#B91C1C", textDecoration: "underline" }}>{rid}</a>
+                          : rid}
+                      </span>
+                    ))}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#475569", fontWeight: 600 }}>
                     <User size={12} /> {order.shippingAddress?.fullName ?? order.buyerUsername}
                   </div>
