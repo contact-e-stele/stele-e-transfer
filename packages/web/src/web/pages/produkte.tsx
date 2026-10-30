@@ -24,6 +24,7 @@ import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
 import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions } from "../components/gpsr-fields-editor";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
+import { matchesTileFilter, type ProductTileFilter } from "../../shared/product-tile-filter";
 
 interface VariantGroup {
   name: string;
@@ -1131,6 +1132,7 @@ export default function Produkte() {
   };
 
   // Inhaber 29.10.2026 „Extra-Knopf“: Pflichtmerkmale vor dem Listen prüfen (nur lesen, nichts an eBay).
+  const [tileFilter, setTileFilter] = useState<ProductTileFilter>(null);
   const [precheck, setPrecheck] = useState<{ id: number; busy?: boolean; ok?: boolean; msg?: string } | null>(null);
   const checkAspects = async (product: Product) => {
     setPrecheck({ id: product.id, busy: true });
@@ -1193,6 +1195,8 @@ export default function Produkte() {
   };
 
   const filtered = products.filter(p => {
+    // Kachel-Filter (Inhaber 30.10.2026): aktiv → nur diese Produkte, live gelistete eingeschlossen.
+    if (tileFilter) return matchesTileFilter(p, tileFilter) && matchesProductSearch(p, search);
     if (!showListed && p.ebayStatus === "listed") return false;
     return matchesProductSearch(p, search);
   });
@@ -1489,21 +1493,33 @@ export default function Produkte() {
         {/* Stats */}
         <div className="stele-grid-4" style={{ gap: 10, marginBottom: 20 }}>
           {[
-            { label: "Gesamt", value: stats.total, color: "#8B5CF6", bg: "#F5F3FF" },
-            { label: "eBay aktiv", value: stats.listed, color: "#16A34A", bg: "#F0FDF4" },
-            { label: "Fehler", value: stats.errors, color: "#DC2626", bg: "#FEF2F2" },
+            { label: "Gesamt", value: stats.total, color: "#8B5CF6", bg: "#F5F3FF", filter: null as ProductTileFilter },
+            { label: "eBay aktiv", value: stats.listed, color: "#16A34A", bg: "#F0FDF4", filter: "listed" as ProductTileFilter },
+            { label: "Fehler", value: stats.errors, color: "#DC2626", bg: "#FEF2F2", filter: "error" as ProductTileFilter },
             // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): Tooltip erklärt die korrigierte
             // Bedeutung — Alarm = Verkaufspreis unter Mindestpreis (Marge gefährdet), nicht mehr
             // jede Preisänderung/-abweichung.
-            { label: "Preisalarm", value: stats.priceAlerts, color: "#F59E0B", bg: "#FFFBEB", title: "Verkaufspreis liegt unter dem berechneten Mindestpreis — Marge gefährdet" },
-            { label: "AliExpress nicht verfügbar", value: stats.aliexpressUnavailable, color: "#C2410C", bg: "#FFEDD5" },
+            { label: "Preisalarm", value: stats.priceAlerts, color: "#F59E0B", bg: "#FFFBEB", title: "Verkaufspreis liegt unter dem berechneten Mindestpreis — Marge gefährdet. Klicken: diese Produkte anzeigen", filter: "priceAlert" as ProductTileFilter },
+            { label: "AliExpress nicht verfügbar", value: stats.aliexpressUnavailable, color: "#C2410C", bg: "#FFEDD5", filter: "unavailable" as ProductTileFilter },
           ].map(s => (
-            <div key={s.label} title={s.title} style={{ background: s.bg, borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
+            <div key={s.label} title={s.title ?? (s.filter ? "Klicken: diese Produkte anzeigen" : "Klicken: Filter aufheben")}
+              role="button" tabIndex={0}
+              onClick={() => setTileFilter(prev => (s.filter === null || prev === s.filter) ? null : s.filter)}
+              onKeyDown={e => { if (e.key === "Enter") setTileFilter(prev => (s.filter === null || prev === s.filter) ? null : s.filter); }}
+              style={{ background: s.bg, borderRadius: 14, padding: "14px 10px", textAlign: "center", cursor: "pointer",
+                outline: tileFilter !== null && tileFilter === s.filter ? `2px solid ${s.color}` : "none" }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.value}</div>
               <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
             </div>
           ))}
         </div>
+
+        {tileFilter && (
+          <div style={{ marginBottom: 10, fontSize: 12, fontWeight: 600, color: "#0F172A", display: "flex", gap: 8, alignItems: "center" }}>
+            Filter: {{ listed: "eBay aktiv", error: "Fehler", priceAlert: "Preisalarm", unavailable: "AliExpress nicht verfügbar" }[tileFilter]} ({filtered.length})
+            <button onClick={() => setTileFilter(null)} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 6, border: "1px solid #CBD5E1", background: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Filter aufheben</button>
+          </div>
+        )}
 
         {/* Suche */}
         <div style={{ position: "relative", marginBottom: 10 }}>
