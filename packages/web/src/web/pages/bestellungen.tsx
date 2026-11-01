@@ -627,11 +627,13 @@ export default function Bestellungen() {
                   <div style={{ fontSize: 10, color: "#94A3B8", marginBottom: 2 }}>Bestellnummer: {ebayOrderDetailsUrl(order.orderId)
                     ? <a href={ebayOrderDetailsUrl(order.orderId)!} target="_blank" rel="noopener noreferrer" title="Bestellung bei eBay öffnen (neuer Tab)" style={{ color: "#2563EB", textDecoration: "underline" }}>{order.orderId}</a>
                     : order.orderId}
+                    <button type="button" onClick={() => copyText(order.orderId, "Bestellnummer")} style={{ ...miniBtn, marginLeft: 6 }} title="Bestellnummer kopieren">Kopieren</button>
                     {(returnsByOrder[order.orderId] ?? []).map(rid => (
                       <span key={rid} style={{ marginLeft: 10, fontWeight: 700, color: "#B91C1C" }}>
                         Retoure: {ebayReturnDetailsUrl(rid)
                           ? <a href={ebayReturnDetailsUrl(rid)!} target="_blank" rel="noopener noreferrer" title="Rückgabe bei eBay öffnen (neuer Tab)" style={{ color: "#B91C1C", textDecoration: "underline" }}>{rid}</a>
                           : rid}
+                        <button type="button" onClick={() => copyText(rid, "Rücksendenummer")} style={{ ...miniBtn, marginLeft: 6 }} title="Rücksendenummer kopieren">Kopieren</button>
                       </span>
                     ))}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#475569", fontWeight: 600 }}>
