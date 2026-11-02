@@ -2720,7 +2720,14 @@ const app = new Hono()
     }
 
     try {
-      const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
+      // OFFEN 020: keine feste Ersatz-Kategorie (früher 79720) — ohne eigene Kategorie und ohne Vorschlag wird blockiert.
+      const { resolveListingCategory } = await import('../shared/listing-category');
+      const cat = resolveListingCategory(product.ebayCategory, product.ebayCategory ? null : await suggestCategory(product.generatedTitle ?? product.title).catch(() => null));
+      if (!cat.ok) {
+        await db.update(schema.products).set({ ebayStatus: 'error', ebayError: cat.error, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
+        return c.json({ error: cat.error }, 400);
+      }
+      const categoryId = cat.categoryId;
 
       // Varianten parsen
       // Pflichtmerkmal-Knopf: Parsing an EINER Stelle (shared/aspect-precheck-input.ts), gleiche Eingaben wie GET /products/:id/aspect-precheck.
@@ -2961,8 +2968,10 @@ const app = new Hono()
       const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
       if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
 
-      const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
-      const values = await getAspectAllowedValues(categoryId ?? undefined, aspectName);
+      const { resolveListingCategory } = await import('../shared/listing-category');
+      const cat = resolveListingCategory(product.ebayCategory, product.ebayCategory ? null : await suggestCategory(product.generatedTitle ?? product.title).catch(() => null));
+      if (!cat.ok) return c.json({ error: cat.error }, 400); // OFFEN 020: keine geratene Kategorie (früher 79720)
+      const values = await getAspectAllowedValues(cat.categoryId, aspectName);
       return c.json({ values }, 200);
     } catch (e) {
       return c.json({ error: 'eBay-Anfrage fehlgeschlagen' }, 503);
@@ -4874,7 +4883,10 @@ app.get('/products/:id/aspect-precheck', async (c) => {
     const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
     const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
     if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
-    const categoryId = product.ebayCategory ?? await suggestCategory(product.generatedTitle ?? product.title).catch(() => null) ?? '79720';
+    const { resolveListingCategory } = await import('../shared/listing-category');
+    const cat = resolveListingCategory(product.ebayCategory, product.ebayCategory ? null : await suggestCategory(product.generatedTitle ?? product.title).catch(() => null));
+    if (!cat.ok) return c.json({ ok: false, categoryId: null, categoryFromProduct: false, missing: [], editable: [], error: cat.error }, 200); // OFFEN 020
+    const categoryId = cat.categoryId;
     const { aspectPrecheckInput } = await import('../shared/aspect-precheck-input');
     const inp = aspectPrecheckInput(product);
     const precheck = await findUnresolvedRequiredAspects(inp.specs, categoryId, inp.manualAspects, inp.variantAttrsList, inp.variantGroups, inp.titleSources);

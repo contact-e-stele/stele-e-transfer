@@ -3,6 +3,7 @@
  * Zeigt alle importierten Produkte, Preisänderungen, eBay-Status
  */
 import { useState, useEffect } from "react";
+import { formatMarginDisplay, marginDisplay } from "../../shared/margin-display";
 import { useLocation } from "wouter";
 import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
@@ -157,26 +158,18 @@ function StatusBadge({ status, listingId }: { status: string; listingId: string 
   );
 }
 
-function PriceBadge({ buy, sell }: { buy: number | null; sell: number | null }) {
+function PriceBadge({ buy, sell, shipsFrom, adRate }: { buy: number | null; sell: number | null; shipsFrom?: string | null; adRate?: number | null }) {
   if (!buy && !sell) return null;
-  // Teil 2B (2026-09-10): eigenes 18%-Literal entfernt, nutzt jetzt den real gemessenen,
-  // zentralen Gebührensatz (DEFAULT_PRICING_CONFIG, aktuell 15% + 0,30 €) — dieselbe Quelle wie
-  // alle anderen Preis-Berechnungsstellen.
-  const pricingRates = computeMinSellPrice({
-    buyPrice: 0, isChinaOrigin: false,
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
-    adRatePercent: 0, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
-  });
-  const ebayFee = sell ? sell * pricingRates.baseFeeRateGross + pricingRates.fixedFeeGross : 0;
-  const margin = (buy && sell) ? ((sell - buy - ebayFee) / sell * 100) : null;
+  // OFFEN 020 (02.11.2026): Gewinn je Verkauf nach Formel v2 (zentrale Funktion, Grundgesetz 8) — vorher nur
+  // Gebühr abgezogen, ohne Anzeige, Versand und Einfuhr (zu hohe Prozente, z. B. stele-229).
+  const margin = marginDisplay({ sellPrice: sell, buyPrice: buy, shipsFrom, adRatePercent: adRate });
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
       {buy && <span style={{ fontSize: 11, background: "#FEF3C7", color: "#92400E", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>EK: {buy.toFixed(2)} €</span>}
       {sell && <span style={{ fontSize: 11, background: "#DBEAFE", color: "#1D4ED8", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>VK: {sell.toFixed(2)} €</span>}
       {margin !== null && (
-        <span style={{ fontSize: 11, background: margin > 15 ? "#F0FDF4" : margin > 5 ? "#FEF9C3" : "#FEF2F2", color: margin > 15 ? "#16A34A" : margin > 5 ? "#CA8A04" : "#DC2626", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>
-          {margin > 15 ? <TrendingUp size={10} /> : <TrendingDown size={10} />} {margin.toFixed(1)}%
+        <span title="Gewinn je Verkauf nach Formel v2: VK − (Ware + Versand + Einfuhr) − eBay-Gebühr − Anzeige (inkl. MwSt)" style={{ fontSize: 11, background: margin.tone === "ok" ? "#F0FDF4" : margin.tone === "thin" ? "#FEF9C3" : "#FEF2F2", color: margin.tone === "ok" ? "#16A34A" : margin.tone === "thin" ? "#CA8A04" : "#DC2626", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>
+          {margin.tone === "ok" ? <TrendingUp size={10} /> : <TrendingDown size={10} />} Gewinn {formatMarginDisplay(margin)}
         </span>
       )}
     </div>
@@ -1803,7 +1796,7 @@ export default function Produkte() {
                       <AlertTriangle size={12} /> AliExpress-Quelle nicht verfügbar — neue Quelle muss gesucht werden
                     </div>
                   )}
-                  <PriceBadge buy={product.buyPrice} sell={product.sellPrice} />
+                  <PriceBadge buy={product.buyPrice} sell={product.sellPrice} shipsFrom={product.shipsFrom} adRate={product.adRate} />
                   <TargetBadge
                     product={product}
                     isLive={product.ebayStatus === "listed" && !!product.ebayListingId}

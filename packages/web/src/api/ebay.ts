@@ -1,6 +1,7 @@
 // eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
+import { requireCategoryId } from '../shared/listing-category';
 import { postOrderAuthHeader } from '../shared/ebay-return-link';
 import { fixIdentifierAspects, isValidIdentifierValue } from '../shared/identifier-aspect';
 import { eq } from 'drizzle-orm';
@@ -1325,7 +1326,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
     marketplaceId: 'EBAY_DE',
     format: 'FIXED_PRICE',
     availableQuantity: input.quantity,
-    categoryId: input.categoryId ?? '79720',
+    categoryId: requireCategoryId(input.categoryId), // OFFEN 020: kein stiller Ersatz 79720
     listingDescription: input.description,
     pricingSummary: {
       price: {
@@ -1958,7 +1959,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       marketplaceId: 'EBAY_DE',
       format: 'FIXED_PRICE',
       availableQuantity: offerQuantity,
-      categoryId: input.categoryId ?? '79720',
+      categoryId: requireCategoryId(input.categoryId), // OFFEN 020: kein stiller Ersatz 79720
       listingDescription: input.description,
       pricingSummary: {
         price: { value: varPrice.toFixed(2), currency: 'EUR' },
