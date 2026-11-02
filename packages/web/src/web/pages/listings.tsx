@@ -2,6 +2,7 @@
  * Listings-Tab — alle eBay Listings direkt von eBay + App-DB Match
  */
 import { useState, useEffect, useCallback, useRef } from "react";
+import { formatMarginDisplay, marginDisplay } from "../../shared/margin-display";
 import {
   ShoppingCart, RefreshCw, Loader, CheckCircle, XCircle,
   ExternalLink, Package, TrendingUp, StopCircle, Link2, Link2Off,
@@ -1414,8 +1415,9 @@ export default function Listings() {
         {/* Listings */}
         {!loading && filtered.map(listing => {
           const isLinked = !!listing.appProduct;
-          const margin = isLinked && listing.appProduct!.buyPrice
-            ? ((listing.currentPrice - listing.appProduct!.buyPrice) / listing.currentPrice * 100)
+          // OFFEN 020: Gewinn je Verkauf nach Formel v2 (Gebühren, Anzeige, Versand, Einfuhr) statt (VK − EK) / VK.
+          const margin = isLinked
+            ? marginDisplay({ sellPrice: listing.currentPrice, buyPrice: listing.appProduct!.buyPrice, shipsFrom: listing.appProduct!.shipsFrom, adRatePercent: listing.appProduct!.adRate })
             : null;
           const isEditing = editingPrice === listing.itemId;
           const pRes = priceResult[listing.itemId];
@@ -1522,11 +1524,11 @@ export default function Listings() {
                       <>
                         <span style={{ fontSize: 11, color: "#64748B" }}>EK: {listing.appProduct!.buyPrice.toFixed(2)} €</span>
                         {margin !== null && (
-                          <span style={{
+                          <span title="Gewinn je Verkauf nach Formel v2: VK − (Ware + Versand + Einfuhr) − eBay-Gebühr − Anzeige (inkl. MwSt). Bei Varianten: für diesen VK/EK." style={{
                             fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 2,
-                            color: margin > 15 ? "#16A34A" : margin > 5 ? "#F59E0B" : "#DC2626",
+                            color: margin.tone === "ok" ? "#16A34A" : margin.tone === "thin" ? "#F59E0B" : "#DC2626",
                           }}>
-                            <TrendingUp size={10} /> {margin.toFixed(1)}%
+                            <TrendingUp size={10} /> Gewinn {formatMarginDisplay(margin)}
                           </span>
                         )}
                       </>
