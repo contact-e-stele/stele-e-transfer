@@ -3302,6 +3302,60 @@ const app = new Hono()
     }
   })
 
+  // OFFEN 022 (02.11.2026): "Ausgewählte löschen (n)". confirm fehlt → nur Vorschau (nichts geschrieben).
+  // Sperre: Produkte mit eBay-Angebotsnummer oder Status "listed" werden nie gelöscht. Vorher Sicherung (JSON) nach
+  // Drive APP/STELE-DS-APP/Backups — schlägt die Sicherung fehl, wird NICHTS gelöscht. Kein eBay-Aufruf.
+  .post('/products/bulk-delete', async (c) => {
+    let body: { ids?: unknown; confirm?: unknown } = {};
+    try { body = await c.req.json(); } catch { body = {}; }
+    const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is number => Number.isInteger(x) && (x as number) > 0) : [];
+    if (ids.length === 0) return c.json({ error: 'ids fehlen' }, 400);
+    if (ids.length > 200) return c.json({ error: 'höchstens 200 Produkte je Aufruf' }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const { planBulkDelete, bulkDeleteBackupName } = await import('../shared/bulk-delete');
+      const rows = await db.select().from(schema.products).where(inArray(schema.products.id, ids));
+      const plan = planBulkDelete(ids, rows);
+      const titleOf = (id: number) => { const r = rows.find(x => x.id === id); return (r?.generatedTitle || r?.title || '').slice(0, 80); };
+      const preview = {
+        deletable: plan.deletable.map(id => ({ id, title: titleOf(id) })),
+        blocked: plan.blocked.map(b => ({ ...b, title: titleOf(b.id) })),
+        missing: plan.missing,
+      };
+      if (body.confirm !== true) return c.json({ mode: 'preview', ...preview }, 200);
+      if (plan.deletable.length === 0) return c.json({ mode: 'apply', ...preview, results: [], backup: null }, 200);
+
+      // Sicherung zuerst — ohne Sicherung kein Löschen.
+      const delRows = rows.filter(r => plan.deletable.includes(r.id));
+      const history = await db.select().from(schema.priceHistory).where(inArray(schema.priceHistory.productId, plan.deletable));
+      let backup: { fileId: string; name: string };
+      try {
+        const { findOrCreatePath, uploadToDrive } = await import('./drive');
+        const folderId = await findOrCreatePath(['APP', 'STELE-DS-APP', 'Backups']);
+        const name = bulkDeleteBackupName(new Date(), plan.deletable);
+        const json = JSON.stringify({ deletedAt: new Date().toISOString(), reason: 'OFFEN 022 Ausgewählte löschen', products: delRows, priceHistory: history }, null, 2);
+        const up = await uploadToDrive(Buffer.from(json, 'utf8'), name, 'application/json', folderId);
+        backup = { fileId: up.id, name };
+      } catch (e) {
+        return c.json({ mode: 'apply', ...preview, results: [], backup: null, error: `Sicherung fehlgeschlagen — nichts gelöscht: ${e instanceof Error ? e.message : String(e)}` }, 502);
+      }
+
+      const results: Array<{ id: number; ok: boolean; error?: string }> = [];
+      for (const id of plan.deletable) {
+        try {
+          await db.delete(schema.priceHistory).where(eq(schema.priceHistory.productId, id));
+          await db.delete(schema.products).where(eq(schema.products.id, id));
+          results.push({ id, ok: true });
+        } catch (e) {
+          results.push({ id, ok: false, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      console.log(`[bulk-delete] gelöscht ${results.filter(r => r.ok).map(r => r.id).join(', ')} · gesperrt ${plan.blocked.map(b => b.id).join(', ') || '–'} · Sicherung ${backup.name}`);
+      return c.json({ mode: 'apply', ...preview, results, backup }, 200);
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : 'DB Fehler' }, 503);
+    }
+  })
   .delete('/products/:id', async (c) => {
     const id = parseInt(c.req.param('id'));
     if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
