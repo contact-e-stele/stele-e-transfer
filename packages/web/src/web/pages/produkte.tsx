@@ -1081,7 +1081,27 @@ export default function Produkte() {
     }
     await load();
     setBulkBusy(false);
+  };  const runBulkDeletePreview = async (ids: number[]) => {
+    setBulkBusy(true); setBulkRows(null); setBulkDedupe(null);
+    try {
+      const r = await fetch("/api/products/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+      const d = await r.json().catch(() => ({})) as BulkDeletePreview & { error?: string };
+      setBulkDelete(r.ok ? d : { deletable: [], blocked: [], missing: [], error: d.error ?? `HTTP ${r.status}` });
+    } finally { setBulkBusy(false); }
   };
+  const runBulkDeleteApply = async () => {
+    if (!bulkDelete) return;
+    setBulkBusy(true);
+    try {
+      const ids = bulkDelete.deletable.map(x => x.id);
+      const r = await fetch("/api/products/bulk-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids, confirm: true }) });
+      const d = await r.json().catch(() => ({})) as BulkDeletePreview & { results?: Array<{ id: number; ok: boolean; error?: string }>; backup?: { name: string } | null; error?: string };
+      setBulkDelete({ ...bulkDelete, results: d.results ?? [], backupName: d.backup?.name, error: d.error });
+      setSelected(prev => { const n = new Set(prev); (d.results ?? []).filter(x => x.ok).forEach(x => n.delete(x.id)); return n; });
+      await load();
+    } finally { setBulkBusy(false); }
+  };
+
 
   // Lagerbestand pro Variante aktualisieren (getrennt von checkPrice — reine Bestandsdaten,
   // keine Preislogik). Meldet ehrlich, wie viele Varianten tatsächlich einen Wert bekommen haben.
@@ -1187,6 +1207,9 @@ export default function Produkte() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRow[] | null>(null);
   const [bulkDedupe, setBulkDedupe] = useState<BulkDedupeRow[] | null>(null);
+  // OFFEN 022: Ausgewählte löschen — Vorschau (Bestätigung in der Seite, kein window.confirm) und Ergebnis.
+  type BulkDeletePreview = { deletable: Array<{ id: number; title: string }>; blocked: Array<{ id: number; reason: string; title: string }>; missing: number[] };
+  const [bulkDelete, setBulkDelete] = useState<(BulkDeletePreview & { results?: Array<{ id: number; ok: boolean; error?: string }>; backupName?: string; error?: string }) | null>(null);
   const [precheck, setPrecheck] = useState<{ id: number; busy?: boolean; ok?: boolean; msg?: string } | null>(null);
   const checkAspects = async (product: Product) => {
     setPrecheck({ id: product.id, busy: true });
@@ -1595,8 +1618,34 @@ export default function Produkte() {
                 <button disabled={bulkBusy || sel.length === 0} style={{ ...btn, opacity: bulkBusy || sel.length === 0 ? 0.5 : 1 }}
                   title="Varianten-Dubletten je Produkt anzeigen — bereinigt wird erst nach dem zweiten Knopf"
                   onClick={() => runBulkDedupePreview(sel)}>Dubletten prüfen ({sel.length})</button>
+                <button disabled={bulkBusy || sel.length === 0} style={{ ...btn, background: "#DC2626", color: "#fff", border: "none", opacity: bulkBusy || sel.length === 0 ? 0.5 : 1 }}
+                  title="Ausgewählte Produkte aus der App löschen — noch bei eBay gelistete werden gesperrt; vorher Sicherung nach Drive"
+                  onClick={() => runBulkDeletePreview(sel)}>Ausgewählte löschen ({sel.length})</button>
                 {bulkBusy && <span style={{ color: "#64748B" }}>läuft …</span>}
               </div>
+              {bulkDelete && (
+                <div role="dialog" aria-label="Ausgewählte löschen" style={{ marginTop: 8, padding: 10, borderRadius: 10, border: "1.5px solid #FCA5A5", background: "#FEF2F2" }}>
+                  {bulkDelete.error && <div style={{ color: "#B91C1C", fontWeight: 700 }}>{bulkDelete.error}</div>}
+                  {!bulkDelete.results && (
+                    <>
+                      <div style={{ fontWeight: 700, color: "#991B1B", marginBottom: 4 }}>Diese {bulkDelete.deletable.length} Produkt(e) werden aus der App gelöscht (vorher Sicherung nach Drive):</div>
+                      {bulkDelete.deletable.map(x => <div key={x.id}>stele-{x.id} {x.title}</div>)}
+                    </>
+                  )}
+                  {bulkDelete.blocked.map(x => <div key={x.id} style={{ color: "#B45309" }}>stele-{x.id} {x.title}: gesperrt – {x.reason}</div>)}
+                  {bulkDelete.missing.map(id => <div key={id} style={{ color: "#64748B" }}>stele-{id}: nicht gefunden</div>)}
+                  {bulkDelete.results?.map(r => (
+                    <div key={r.id} style={{ color: r.ok ? "#16A34A" : "#DC2626" }}>stele-{r.id}: {r.ok ? "gelöscht" : `Fehler – ${r.error ?? "unbekannt"}`}</div>
+                  ))}
+                  {bulkDelete.backupName && <div style={{ color: "#475569", marginTop: 4 }}>Sicherung: Drive → APP/STELE-DS-APP/Backups/{bulkDelete.backupName}</div>}
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    {!bulkDelete.results && bulkDelete.deletable.length > 0 && !bulkBusy && (
+                      <button style={{ ...btn, background: "#DC2626", color: "#fff", border: "none" }} onClick={runBulkDeleteApply}>Endgültig löschen ({bulkDelete.deletable.length})</button>
+                    )}
+                    {!bulkBusy && <button style={btn} onClick={() => setBulkDelete(null)}>{bulkDelete.results ? "Schließen" : "Abbrechen"}</button>}
+                  </div>
+                </div>
+              )}
               {bulkRows && (
                 <div style={{ marginTop: 8 }}>
                   {bulkRows.map(r => (
