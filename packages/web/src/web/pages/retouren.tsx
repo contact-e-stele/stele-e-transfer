@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { Clipboard } from "lucide-react";
+import { DEFAULT_RETURN_WORKFLOW_TEMPLATE, buildReturnWorkflowText, type ReturnWorkflowOrder } from "../../shared/return-workflow-template";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,7 +16,12 @@ interface Return {
   amount: number;
   currency: string;
   note?: string;
+  quantity?: number | null; // OFFEN 021: Rückgabemenge laut eBay, falls geliefert
+  deadline?: string | null; // OFFEN 021: eBay-Frist, falls geliefert
 }
+
+// OFFEN 021: gleicher Stil wie die Kopier-Knöpfe im Bestellungen-Tab
+const miniBtn = { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit" } as const;
 
 const STATUS_LABELS: Record<Return["status"], string> = {
   OPEN: "Offen",
@@ -113,11 +120,13 @@ function ReturnCard({
   onStatusChange,
   onNote,
   onRefund,
+  onCopyWorkflow,
 }: {
   ret: Return;
   onStatusChange: (id: string, status: Return["status"]) => void;
   onNote: (id: string, note: string) => void;
   onRefund: (id: string) => void;
+  onCopyWorkflow: (ret: Return) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [note, setNote] = useState(ret.note ?? "");
@@ -146,6 +155,9 @@ function ReturnCard({
           </div>
           <div style={{ fontSize: 11, color: "#64748B", display: "flex", gap: 10, flexWrap: "wrap" }}>
             <span>🛒 #{ret.orderId}</span>
+            <button type="button" onClick={e => { e.stopPropagation(); onCopyWorkflow(ret); }} style={{ ...miniBtn, display: "inline-flex", alignItems: "center", gap: 3 }} title="Retoure-Workflow für diese Rücksendung kopieren (für einen neuen Chat)">
+              <Clipboard size={10} /> Retoure-Workflow kopieren
+            </button>
             <span>👤 {ret.buyerName}</span>
             <span>📅 {date}</span>
           </div>
@@ -301,6 +313,10 @@ export default function Retouren() {
   const [filter, setFilter] = useState<Return["status"] | "ALL">("ALL");
   const [toast, setToast] = useState<string | null>(null);
   const [ebayConnected, setEbayConnected] = useState(false);
+  // OFFEN 021: Bestellungen (dieselbe Quelle wie der Bestellungen-Tab) für Käufer/Artikel/Notiz im Retoure-Workflow.
+  // Nicht ladbar → Platzhalter-Fallback "— in eBay/AliExpress nachsehen".
+  const [orders, setOrders] = useState<ReturnWorkflowOrder[]>([]);
+  const [returnWorkflowTemplate, setReturnWorkflowTemplate] = useState<string>(DEFAULT_RETURN_WORKFLOW_TEMPLATE);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -326,6 +342,27 @@ export default function Retouren() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    fetch("/api/ebay/orders").then(r => r.ok ? r.json() : null)
+      .then((d: { orders?: ReturnWorkflowOrder[] } | null) => { if (Array.isArray(d?.orders)) setOrders(d!.orders!); })
+      .catch(() => { /* ohne Bestellungen → Fallback-Texte */ });
+    fetch("/api/settings/return-workflow-template", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { if ((d as { template?: string }).template) setReturnWorkflowTemplate((d as { template: string }).template); })
+      .catch(() => { /* Fallback bleibt der eingebaute Startinhalt */ });
+  }, []);
+
+  // OFFEN 021: nur lesen + Zwischenablage, keine eBay-/AliExpress-Aktion.
+  const handleCopyWorkflow = async (ret: Return) => {
+    const order = orders.find(o => o.orderId === ret.orderId) ?? null;
+    try {
+      await navigator.clipboard.writeText(buildReturnWorkflowText(order, ret, returnWorkflowTemplate));
+      showToast("Retoure-Workflow kopiert – jetzt in einem NEUEN Chat einfügen");
+    } catch {
+      showToast("Kopieren nicht möglich — Browser erlaubt die Zwischenablage nicht");
+    }
+  };
 
   const saveReturns = (updated: Return[]) => {
     setReturns(updated);
@@ -506,6 +543,7 @@ export default function Retouren() {
             onStatusChange={handleStatusChange}
             onNote={handleNote}
             onRefund={handleRefund}
+            onCopyWorkflow={handleCopyWorkflow}
           />
         ))
       )}

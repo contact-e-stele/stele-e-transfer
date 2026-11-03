@@ -1919,6 +1919,36 @@ const app = new Hono()
       return c.json({ ok: false, error: String(e) }, 500);
     }
   })
+  // ─── OFFEN 021: Editierbare Vorlage für "Retoure-Workflow kopieren" (Bestellungen-/Retouren-Tab) ─
+  // Gleiches Muster wie workflow_template: app_settings, Key "return_workflow_template" (KEINE Migration).
+  // Ohne gespeicherten Eintrag greift der Startinhalt aus shared/return-workflow-template.ts.
+  .get('/settings/return-workflow-template', async (c) => {
+    try {
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const row = await db.select().from(appSettings).where(eq(appSettings.key, 'return_workflow_template')).get();
+      const { DEFAULT_RETURN_WORKFLOW_TEMPLATE } = await import('../shared/return-workflow-template');
+      return c.json({ template: row?.value ?? DEFAULT_RETURN_WORKFLOW_TEMPLATE }, 200);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+  .put('/settings/return-workflow-template', async (c) => {
+    try {
+      const body = await c.req.json() as { template?: string };
+      if (typeof body.template !== 'string' || !body.template.trim()) {
+        return c.json({ error: 'template darf nicht leer sein' }, 400);
+      }
+      const { db } = await import('../db/index');
+      const { appSettings } = await import('../db/schema');
+      const now = new Date().toISOString();
+      await db.insert(appSettings).values({ key: 'return_workflow_template', value: body.template, updatedAt: now })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value: body.template, updatedAt: now } });
+      return c.json({ ok: true }, 200);
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 500);
+    }
+  })
   // ─── P-88 Schritt 1c: nutzerpflegbare Default-Werte für eBay-Pflichtmerkmale ────────────
   // Gespeichert in app_settings (Key "aspect_defaults"), gleiches Muster wie "workflow_template".
   // Ergänzen die hartcodierten ASPECT_DEFAULTS*-Konstanten in ebay.ts (getEffectiveAspectDefaults),

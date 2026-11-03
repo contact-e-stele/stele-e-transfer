@@ -12,6 +12,7 @@ import {
   FileText, Download, User, MapPin, CreditCard, ExternalLink, Clipboard,
 } from "lucide-react";
 import { DEFAULT_WORKFLOW_TEMPLATE, renderWorkflowTemplate } from "../../shared/workflow-template";
+import { DEFAULT_RETURN_WORKFLOW_TEMPLATE, buildReturnWorkflowText, returnsForOrder, type ReturnWorkflowReturn } from "../../shared/return-workflow-template";
 import { remainingLevel, remainingText } from "../../shared/remaining-qty";
 import { carrierFromTrackingNumber } from "../../shared/carrier-guess";
 
@@ -377,11 +378,24 @@ export default function Bestellungen() {
   useEffect(() => { load(); }, [load]);
 
   // Retoure an der Bestellung (Inhaber 30.10.2026): Rücksendenummern aus GET /api/ebay/returns, nur lesen. Fehler → einfach keine Anzeige.
+  // OFFEN 021: zusätzlich die vollen Rückgabe-Objekte (Grund, Status, Betrag …) für "Retoure-Workflow kopieren".
   const [returnsByOrder, setReturnsByOrder] = useState<Record<string, string[]>>({});
+  const [returnsList, setReturnsList] = useState<ReturnWorkflowReturn[]>([]);
   useEffect(() => {
     fetch("/api/ebay/returns").then(r => r.ok ? r.json() : []).then((d: unknown) => {
-      if (Array.isArray(d)) setReturnsByOrder(returnIdsByOrderId(d as Array<{ returnId?: string; orderId?: string }>));
+      if (Array.isArray(d)) {
+        setReturnsByOrder(returnIdsByOrderId(d as Array<{ returnId?: string; orderId?: string }>));
+        setReturnsList(d as ReturnWorkflowReturn[]);
+      }
     }).catch(() => { /* Retouren nicht lesbar → keine Anzeige */ });
+  }, []);
+  // OFFEN 021: zentral im Einstellungen-Tab gepflegte Vorlage "Retoure-Workflow" — Fallback = eingebauter Startinhalt.
+  const [returnWorkflowTemplate, setReturnWorkflowTemplate] = useState<string>(DEFAULT_RETURN_WORKFLOW_TEMPLATE);
+  useEffect(() => {
+    fetch("/api/settings/return-workflow-template", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { if ((d as { template?: string }).template) setReturnWorkflowTemplate((d as { template: string }).template); })
+      .catch(() => { /* Fallback bleibt der eingebaute Startinhalt */ });
   }, []);
 
   // Sendungsnummer bei eBay prüfen (18.10.2026): einmal je Seitenaufruf im Hintergrund — liest bei eBay, ob die
@@ -411,6 +425,14 @@ export default function Bestellungen() {
     catch { showToast("Einfügen nicht möglich — bitte Zugriff auf die Zwischenablage erlauben oder lange tippen → Einfügen"); }
   };
   const miniBtn = { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit" } as const;
+  // OFFEN 021: Retoure-Workflow in die Zwischenablage (nur lesen, keine eBay-/AliExpress-Aktion).
+  const copyReturnWorkflow = async (order: Order, returnId: string) => {
+    const ret = returnsForOrder(order.orderId, returnsList).find(r => r.returnId === returnId) ?? { returnId, orderId: order.orderId };
+    try {
+      await navigator.clipboard.writeText(buildReturnWorkflowText(order, ret, returnWorkflowTemplate));
+      showToast("Retoure-Workflow kopiert – jetzt in einem NEUEN Chat einfügen");
+    } catch { showToast("Kopieren nicht möglich — Browser erlaubt die Zwischenablage nicht"); }
+  };
 
   // P-84: Vorschläge laden — best-effort, bricht die Seite nicht falls Gmail nicht
   // verbunden ist oder der Abgleich fehlschlägt (einfach keine Vorschläge anzeigen).
@@ -634,6 +656,9 @@ export default function Bestellungen() {
                           ? <a href={ebayReturnDetailsUrl(rid)!} target="_blank" rel="noopener noreferrer" title="Rückgabe bei eBay öffnen (neuer Tab)" style={{ color: "#B91C1C", textDecoration: "underline" }}>{rid}</a>
                           : rid}
                         <button type="button" onClick={() => copyText(rid, "Rücksendenummer")} style={{ ...miniBtn, marginLeft: 6 }} title="Rücksendenummer kopieren">Kopieren</button>
+                        <button type="button" onClick={() => copyReturnWorkflow(order, rid)} style={{ ...miniBtn, marginLeft: 6, display: "inline-flex", alignItems: "center", gap: 3 }} title="Retoure-Workflow für diese Rücksendung kopieren (für einen neuen Chat)">
+                          <Clipboard size={10} /> Retoure-Workflow kopieren
+                        </button>
                       </span>
                     ))}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#475569", fontWeight: 600 }}>
