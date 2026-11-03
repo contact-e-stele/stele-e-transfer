@@ -135,3 +135,27 @@ describe('Rückfall + Schnittstellen', () => {
     expect(m).toEqual({ 'Größe': { allowedValues: ['M'], mode: 'SELECTION_ONLY', required: true, variationEnabled: true } });
   });
 });
+
+// OFFEN 026c — live gelesen 03.11.2026 über GET /api/ebay/category-axis-aspects?categoryId=11511 bzw. 105559:
+// "Größe" ist laut Taxonomy FREE_TEXT mit Werteliste; eBay nimmt trotzdem keine freien Größen (ERGEBNIS 019).
+describe('OFFEN 026c: Größen-Liste ist verbindlich, auch wenn Taxonomy FREE_TEXT meldet', () => {
+  const SOCKEN_LIVE = ['2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL', '35-38', '39-42', '43-46', '47-50', '51-54', 'Einheitsgröße', 'UK 4-7', 'UK 7-9', 'UK 9-11', 'UK 10-13', 'UK 13-15', 'US 7-9', 'US 9-11', 'US 10-13', 'US 13-15'];
+  const HANDSCHUH_LIVE = ['XS', 'S', 'M', 'L', 'XL', '2XL', '6', '6,5', '7', '7,5', '8', '8,5', '9', '9,5', '10', '10,5', '11', 'Einheitsgröße'];
+  test('Socken 11511 (FREE_TEXT live): "40-42(26cm)" → Meldung, Vorab-Prüfung stoppt', () => {
+    const [p] = planVariantAxes([{ name: 'Size', values: ['40-42(26cm)', '39-42'] }], { 'Größe': { allowedValues: SOCKEN_LIVE, mode: 'FREE_TEXT', required: true, variationEnabled: true } }, deps);
+    expect(p.values).toEqual(['40-42(26cm)', '39-42']);
+    expect(p.problems).toEqual(["Größe: Wert '40-42(26cm)' nicht in eBays Liste"]);
+  });
+  test('Handschuhe 105559 (FREE_TEXT live): "One Size" → Einheitsgröße, "XXL" → 2XL', () => {
+    const [p] = planVariantAxes([{ name: 'Size', values: ['One Size', 'XXL'] }], { 'Größe': { allowedValues: HANDSCHUH_LIVE, mode: 'FREE_TEXT', required: true, variationEnabled: true } }, deps);
+    expect(p.values).toEqual(['Einheitsgröße', '2XL']);
+    expect(p.problems).toEqual([]);
+  });
+  test('Farbe FREE_TEXT bleibt frei (nur Größen-Merkmale betroffen)', () => {
+    const farben = ['Beige', 'Blau', 'Grau', 'Schwarz'];
+    const [p] = planVariantAxes([{ name: 'Color', values: ['GRAY', 'BLACK'] }], { 'Farbe': { allowedValues: farben, mode: 'FREE_TEXT', required: true, variationEnabled: true } }, deps);
+    expect(p.aspectName).toBe('Farbe');
+    expect(p.values).toEqual(['GRAY', 'BLACK']);
+    expect(p.problems).toEqual([]);
+  });
+});

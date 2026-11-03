@@ -103,7 +103,10 @@ export function matchAllowedValue(value: string, allowed: string[]): { to: strin
 function mapValues(aspectName: string, values: string[], info: CategoryAspectInfo | undefined, colorAxis: boolean, colorOf: PlanDeps['colorOf']) {
   const problems: string[] = [];
   const mapped: ValueMapping[] = [];
-  const list = info?.mode === 'SELECTION_ONLY' ? info.allowedValues : [];
+  // OFFEN 026c (Live-Fund 03.11.): Taxonomy meldet "Größe" in 11511/105559 als FREE_TEXT, eBay lehnt freie Werte beim Listen
+  // trotzdem ab ("no longer support custom values for Größe", ERGEBNIS 019). Für Größen-Merkmale ist eine vorhandene
+  // Werteliste deshalb verbindlich — auch bei FREE_TEXT.
+  const list = info?.mode === 'SELECTION_ONLY' || (SIZE_ASPECT_RE.test(aspectName) && (info?.allowedValues.length ?? 0) > 0) ? info!.allowedValues : [];
   const out = values.map(v => {
     if (!v?.trim()) { problems.push(`${aspectName}: Achsenwert ist leer`); return v; }
     if (list.length === 0) return v; // Freitext (oder unbekannt) → App-Wert unverändert
