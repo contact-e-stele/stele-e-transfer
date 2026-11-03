@@ -60,3 +60,32 @@ export async function sendCampaignAdForNewListing(productId: number, listingId: 
     return { ok: false, campaignId: null, results: [], error: String(e) };
   }
 }
+
+/**
+ * OFFEN 024 NACHTRAG: Angebote aus ALLEN laufenden Kampagnen nehmen, in denen sie beworben sind (bulk_delete_ads_by_listing_id),
+ * danach bei eBay neu ablesen. ok je Angebot nur, wenn es danach in keiner laufenden Kampagne mehr aktiv ist.
+ */
+export async function removeCampaignAds(listingIds: string[]): Promise<{ ok: boolean; results: Array<{ listingId: string; ok: boolean; error: string | null }> }> {
+  const { bulkDeleteAdRequests } = await import('../shared/campaign-ads');
+  if (listingIds.length === 0) return { ok: true, results: [] };
+  const before = await fetchPromotionStatus();
+  const byCampaign = new Map<string, string[]>();
+  for (const id of listingIds) for (const cid of before.promo.get(id)?.campaignIds ?? []) byCampaign.set(cid, [...(byCampaign.get(cid) ?? []), id]);
+  const token = await getMarketingAccessToken();
+  const errors = new Map<string, string>();
+  for (const [cid, ids] of byCampaign) {
+    const r = await postBulk(`/sell/marketing/v1/ad_campaign/${encodeURIComponent(cid)}/bulk_delete_ads_by_listing_id`, bulkDeleteAdRequests(ids), token);
+    const parsed = parseBulkAdResponse(r.json);
+    if (parsed.length === 0) for (const id of ids) errors.set(id, `bulk_delete_ads ${r.status}: ${r.text.slice(0, 200)}`);
+    for (const p of parsed) if (!p.ok && p.error) errors.set(p.listingId, p.error);
+  }
+  const after = await fetchPromotionStatus();
+  const results = listingIds.map(listingId => {
+    const still = after.promo.get(listingId);
+    const ok = !still;
+    const error = ok ? null : (errors.get(listingId) ?? `bei eBay weiterhin beworben (${still?.campaignIds.join(', ')})`);
+    console.log(`[Kampagne] ${listingId} entfernen: ${ok ? 'ok, nicht mehr beworben' : `FEHLER ${error}`}`);
+    return { listingId, ok, error };
+  });
+  return { ok: results.every(r => r.ok), results };
+}

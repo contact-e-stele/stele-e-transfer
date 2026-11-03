@@ -39,3 +39,8 @@ export function parseBulkAdResponse(json: unknown): BulkAdResult[] {
     return { listingId: String(r.listingId ?? ''), ok: errs.length === 0 && status >= 200 && status < 300, alreadyExists, error: msg };
   });
 }
+
+/** OFFEN 024 NACHTRAG: Body für bulk_delete_ads_by_listing_id (Angebot aus der Kampagne nehmen). */
+export function bulkDeleteAdRequests(listingIds: string[]): { requests: Array<{ listingId: string }> } {
+  return { requests: [...new Set(listingIds)].map(listingId => ({ listingId })) };
+}
