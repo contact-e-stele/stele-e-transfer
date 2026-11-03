@@ -3381,7 +3381,7 @@ const app = new Hono()
     try {
       const body = await c.req.json() as { adRate?: number };
       const adRate = typeof body.adRate === 'number' ? body.adRate : parseFloat(String(body.adRate));
-      if (isNaN(adRate) || adRate < 0 || adRate > 20) return c.json({ error: 'Ungültiger Wert (0–20)' }, 400);
+      if (isNaN(adRate) || adRate < 0 || adRate > 5) return c.json({ error: 'Ungültiger Wert (0–5 %, Gesetz 72)' }, 400);
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
