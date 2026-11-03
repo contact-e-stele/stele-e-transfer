@@ -58,3 +58,15 @@ export function planAdRateSwitch(i: AdSwitchInput): AdSwitchRow[] {
     return { ...base, send: true };
   });
 }
+
+/**
+ * Inhaber 03.11.2026 13:14 (Frage 3 "ja"): weicht der Satz bei eBay vom App-Satz ab, wird NICHT umgerechnet — erst Abgleich zeigen.
+ * ebayRate: Satz laut eBay (0 = nicht beworben), null = andere Werbeart als Kosten-pro-Verkauf (unbekannt), undefined = nicht gelesen.
+ * Rückgabe: Sperrgrund oder null (darf umgestellt werden).
+ */
+export function ebayRateBlock(appRate: number, ebayRate: number | null | undefined): string | null {
+  if (ebayRate === undefined) return 'eBay-Werbestatus nicht lesbar — nichts geändert';
+  if (ebayRate === null) return 'bei eBay andere Werbeart als Kosten-pro-Verkauf — erst im Seller Hub prüfen';
+  if (Math.abs(ebayRate - appRate) > 1e-9) return `Abgleich nötig: bei eBay ${ebayRate} %, in der App ${appRate} % — nichts geändert`;
+  return null;
+}

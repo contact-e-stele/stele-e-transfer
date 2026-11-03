@@ -139,6 +139,18 @@ export default function Listings() {
   // adRate inline edit per listing (keyed by appProduct.id)
   const [adRateValues, setAdRateValues] = useState<Record<number, number>>({});
   const [adRateSaving, setAdRateSaving] = useState<number | null>(null);
+  // Werbesatz laut eBay je Angebot (GET /api/ebay/promoted-status, nur lesen) — für den Abweichungs-Hinweis an der Karte.
+  const [ebayPromo, setEbayPromo] = useState<Record<string, { ebayAdRate: number | null; differs: boolean }>>({});
+  const loadEbayPromo = async () => {
+    try {
+      const r = await fetch("/api/ebay/promoted-status");
+      const d = await r.json() as { rows?: Array<{ ebayListingId: string; ebayAdRate: number | null; differs: boolean }> };
+      const m: Record<string, { ebayAdRate: number | null; differs: boolean }> = {};
+      for (const x of d.rows ?? []) m[x.ebayListingId] = { ebayAdRate: x.ebayAdRate, differs: x.differs };
+      setEbayPromo(m);
+    } catch { /* Hinweis fehlt dann einfach */ }
+  };
+  useEffect(() => { void loadEbayPromo(); }, []);
   const [adRateResult, setAdRateResult] = useState<Record<number, { ok?: boolean; err?: string }>>({});
 
   const handleAdRateChange = async (productId: number, newRate: number) => {
@@ -566,13 +578,12 @@ export default function Listings() {
       const data = await res.json().catch(() => ({})) as { results?: AdSwitchResUi[]; skipped?: Array<{ itemId: string; error: string }>; error?: string };
       if (!res.ok || !data.results) { setAdSwitch({ toRate, itemIds, results: [], skipped: [{ itemId: "–", error: data.error ?? `HTTP ${res.status}` }], applied: confirm, retryFromRate, expected }); return; }
       setAdSwitch({ toRate, itemIds, results: data.results, skipped: data.skipped ?? [], applied: confirm, retryFromRate, expected });
-      if (confirm) await load(true);
+      if (confirm) { await load(true); void loadEbayPromo(); }
     } finally { setBulkRunning(false); }
   };
   // 0 % und 5 %: Kampagne + Preise (Vorschau zuerst). Andere Sätze wie bisher.
-  const handleBulkAdRate = () => (bulkAdRate === 0 || bulkAdRate === 5)
-    ? callAdSwitch(bulkAdRate, Array.from(selected), false)
-    : runBulk("/api/ebay/listings/bulk/adrate", { ratePercent: bulkAdRate });
+  // Inhaber 03.11.2026 13:14: alle Sätze über denselben Weg (Kampagne bei eBay + Preise, Vorschau zuerst).
+  const handleBulkAdRate = () => callAdSwitch(bulkAdRate, Array.from(selected), false);
   const applyAdSwitch = () => {
     if (!adSwitch) return;
     const expected: Record<string, number> = {};
@@ -1115,10 +1126,45 @@ export default function Listings() {
           </div>
         )}
 
+        {adSwitch && (
+          <div role="dialog" aria-label="Anzeige-Rate umschalten" style={{ position: "fixed", left: 12, right: 12, bottom: 12, zIndex: 1000, maxWidth: 820, margin: "0 auto", maxHeight: "60vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 12, border: "2px solid #6366F1", boxShadow: "0 10px 30px rgba(15,23,42,0.25)", fontSize: 11 }}>
+            <div style={{ fontWeight: 800, marginBottom: 6, color: "#3730A3" }}>
+              {adSwitch.applied ? "Ergebnis" : "Vorschau"}: Anzeige-Rate → {adSwitch.toRate} % {adSwitch.toRate === 0 ? "(Werbung bei eBay aus, Preise ohne Werbung)" : "(Werbung bei eBay an, Preise mit Werbung)"}
+            </div>
+            {adSwitch.results.map(r => (
+              <div key={r.listingId} style={{ marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, color: r.status === "done" || r.status === "preview" ? "#0F172A" : "#DC2626" }}>
+                  stele-{r.productId} {r.title} · {r.fromRate} % → {r.toRate} % · {r.status === "preview" ? "Vorschau" : r.status === "done" ? "erledigt" : r.status}{r.error ? ` – ${r.error}` : ""}
+                </div>
+                {r.rows.map(row => (
+                  <div key={row.skuId} style={{ color: row.send ? "#334155" : "#B45309" }}>
+                    {row.label}: {row.oldVk.toFixed(2)} → <b>{row.newVk.toFixed(2)} €</b> · Gewinn {row.profitOld.toFixed(2)} → {row.profitNew.toFixed(2)} €{row.send ? "" : ` · ${row.reason ?? "nicht gesetzt"}`}
+                  </div>
+                ))}
+              </div>
+            ))}
+            {adSwitch.skipped.map(s => <div key={s.itemId} style={{ color: "#DC2626" }}>#{s.itemId}: {s.error}</div>)}
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              {!adSwitch.applied && adSwitch.results.some(r => r.status === "preview") && !bulkRunning && (
+                <button onClick={applyAdSwitch} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#4F46E5", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  Preise übernehmen + Werbung {adSwitch.toRate === 0 ? "aus" : `auf ${adSwitch.toRate} %`} ({adSwitch.results.filter(r => r.status === "preview").length})
+                </button>
+              )}
+              {adSwitch.applied && adSwitch.results.some(r => r.status === "prices_failed") && !bulkRunning && (
+                <button onClick={retryAdSwitch} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#B45309", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  Fehlende Preise nachholen (Vorschau)
+                </button>
+              )}
+              {!bulkRunning && <button onClick={() => setAdSwitch(null)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #CBD5E1", background: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{adSwitch.applied ? "Schließen" : "Abbrechen"}</button>}
+            </div>
+          </div>
+        )}
+
         {/* A-016: Margen-Stufe für alle angezeigten (gefilterten) Listings mit App-Produkt setzen. Ändert NUR das Ziel in der App
             (products.target_margin_eur) — kein Preis-PUT an eBay; die Preisprüfung hebt später nur bei Gewinn < Boden an. */}
         {(() => {
           const targets = filtered.filter(l => l.appProduct).map(l => l.appProduct!);
+          const displayedItemIds = filtered.filter(l => l.appProduct).map(l => l.itemId);
           const tooMany = targets.length > BULK_TARGET_MARGIN_MAX;
           const preview = tierPending != null ? previewTierChange(targets, tierPending) : null;
           const tier = tierPending != null ? MARGIN_TIERS.find(t => t.targetEur === tierPending) : null;
@@ -1209,6 +1255,20 @@ export default function Listings() {
                     }}>{t.label} · {fmt(t.targetEur)} €</button>
                 ))}
                 {tooMany && <span style={{ fontSize: 11, color: "#DC2626" }}>Höchstens {BULK_TARGET_MARGIN_MAX} Listings — Filter enger setzen.</span>}
+              </div>
+              {/* Inhaber 03.11.2026 13:14: Anzeige-Rate für alle angezeigten — gleicher Weg wie Karte und Massenaktion (Vorschau, eBay + Preise). */}
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#64748B" }}>
+                  Anzeige für alle angezeigten ({displayedItemIds.length} mit App-Produkt) setzen:
+                </span>
+                {AD_RATE_OPTIONS.map(r => (
+                  <button key={r} type="button" disabled={displayedItemIds.length === 0 || tooMany || bulkRunning}
+                    onClick={() => void callAdSwitch(r, displayedItemIds, false)}
+                    title={r === 0 ? "Werbung bei eBay aus, Preise je Variante umrechnen (Vorschau zuerst)" : `Werbung bei eBay ${r} %, Preise je Variante umrechnen (Vorschau zuerst)`}
+                    style={{ fontSize: 12, fontWeight: 700, padding: "4px 12px", borderRadius: 8, cursor: displayedItemIds.length === 0 || tooMany ? "not-allowed" : "pointer", fontFamily: "inherit", border: "1.5px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A" }}>
+                    {r === 0 ? "0 % (aus)" : `${r} %`}
+                  </button>
+                ))}
               </div>
               {preview && tier && (
                 <div style={{ marginTop: 10, background: preview.red > 0 ? "#FFFBEB" : "#F0FDF4", border: "1px solid " + (preview.red > 0 ? "#FDE68A" : "#BBF7D0"), borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#0F172A" }}>
@@ -1364,7 +1424,7 @@ export default function Listings() {
                 <select value={bulkAdRate} onChange={e => setBulkAdRate(parseFloat(e.target.value))} style={{
                   padding: "7px 10px", fontSize: 12, border: "1.5px solid #C7D2FE", borderRadius: 8, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0F172A",
                 }}>
-                  {AD_RATE_OPTIONS.map(r => <option key={r} value={r}>{r === 0 ? "0 % (aus) – Werbung bei eBay aus + Preise senken" : r === 5 ? "5 % – Werbung bei eBay an + Preise anheben" : `${r}%`}</option>)}
+                  {AD_RATE_OPTIONS.map(r => <option key={r} value={r}>{r === 0 ? "0 % (aus) – Werbung bei eBay aus, Preise umrechnen" : `${r} % – Werbung bei eBay ${r} %, Preise umrechnen`}</option>)}
                 </select>
                 <button onClick={handleBulkAdRate} disabled={bulkRunning} style={{
                   padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366F1", color: "#fff",
@@ -1413,40 +1473,6 @@ export default function Listings() {
                   {bulkRunning && <Loader size={12} style={{ animation: "spin 1s linear infinite" }} />}
                   Für {selected.size} Listings anwenden
                 </button>
-              </div>
-            )}
-
-            {adSwitch && (
-              <div role="dialog" aria-label="Anzeige-Rate umschalten" style={{ marginTop: 10, maxHeight: 420, overflow: "auto", background: "#fff", borderRadius: 8, padding: 10, border: "1.5px solid #C7D2FE", fontSize: 11 }}>
-                <div style={{ fontWeight: 800, marginBottom: 6, color: "#3730A3" }}>
-                  {adSwitch.applied ? "Ergebnis" : "Vorschau"}: Anzeige-Rate → {adSwitch.toRate} % {adSwitch.toRate === 0 ? "(Werbung bei eBay aus, Preise ohne Werbung)" : "(Werbung bei eBay an, Preise mit Werbung)"}
-                </div>
-                {adSwitch.results.map(r => (
-                  <div key={r.listingId} style={{ marginBottom: 8 }}>
-                    <div style={{ fontWeight: 700, color: r.status === "done" || r.status === "preview" ? "#0F172A" : "#DC2626" }}>
-                      stele-{r.productId} {r.title} · {r.fromRate} % → {r.toRate} % · {r.status === "preview" ? "Vorschau" : r.status === "done" ? "erledigt" : r.status}{r.error ? ` – ${r.error}` : ""}
-                    </div>
-                    {r.rows.map(row => (
-                      <div key={row.skuId} style={{ color: row.send ? "#334155" : "#B45309" }}>
-                        {row.label}: {row.oldVk.toFixed(2)} → <b>{row.newVk.toFixed(2)} €</b> · Gewinn {row.profitOld.toFixed(2)} → {row.profitNew.toFixed(2)} €{row.send ? "" : ` · ${row.reason ?? "nicht gesetzt"}`}
-                      </div>
-                    ))}
-                  </div>
-                ))}
-                {adSwitch.skipped.map(s => <div key={s.itemId} style={{ color: "#DC2626" }}>#{s.itemId}: {s.error}</div>)}
-                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                  {!adSwitch.applied && adSwitch.results.some(r => r.status === "preview") && !bulkRunning && (
-                    <button onClick={applyAdSwitch} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#4F46E5", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                      Preise übernehmen + Werbung {adSwitch.toRate === 0 ? "aus" : "an"} ({adSwitch.results.filter(r => r.status === "preview").length})
-                    </button>
-                  )}
-                  {adSwitch.applied && adSwitch.results.some(r => r.status === "prices_failed") && !bulkRunning && (
-                    <button onClick={retryAdSwitch} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#B45309", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                      Fehlende Preise nachholen (Vorschau)
-                    </button>
-                  )}
-                  {!bulkRunning && <button onClick={() => setAdSwitch(null)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #CBD5E1", background: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{adSwitch.applied ? "Schließen" : "Abbrechen"}</button>}
-                </div>
               </div>
             )}
 
@@ -1651,7 +1677,7 @@ export default function Listings() {
                             value={currentRate == null ? "" : String(currentRate)}
                             disabled={saving}
                             title={currentRate == null ? "Nicht gesetzt — gerechnet wird mit 5 %" : currentRate === 0 ? "Keine Anzeige (Angebot nicht beworben)" : `Anzeigensatz ${currentRate} %`}
-                            onChange={e => { if (e.target.value !== "") handleAdRateChange(prodId, parseFloat(e.target.value)); }}
+                            onChange={e => { if (e.target.value !== "") void callAdSwitch(parseFloat(e.target.value), [listing.itemId], false); }}
                             style={{
                               fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6,
                               border: "1.5px solid " + (res?.ok ? "#22C55E" : res?.err ? "#DC2626" : "#FFD700"),
@@ -1665,6 +1691,12 @@ export default function Listings() {
                               <option key={r} value={String(r)}>{adRateLabel(r)}</option>
                             ))}
                           </select>
+                          {(() => {
+                            // Inhaber 03.11. Frage 3: Satz bei eBay sichtbar, wenn er von der App abweicht (dann wird nicht umgerechnet).
+                            const pr = ebayPromo[listing.itemId];
+                            if (!pr || !pr.differs) return null;
+                            return <span title="Werbesatz bei eBay weicht von der App ab — erst abgleichen" style={{ fontSize: 10, fontWeight: 800, color: "#DC2626" }}>eBay: {pr.ebayAdRate == null ? "andere Werbeart" : `${pr.ebayAdRate} %`}</span>;
+                          })()}
                           {saving && <Loader size={9} style={{ animation: "spin 1s linear infinite" }} color="#F59E0B" />}
                           {res?.ok && <CheckCircle size={9} color="#22C55E" />}
                         </span>

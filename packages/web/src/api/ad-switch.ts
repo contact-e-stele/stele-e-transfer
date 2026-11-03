@@ -4,11 +4,13 @@
 //   5 % → 0 %: ERST Werbung bei eBay entfernen (sonst niedrigerer Preis + Werbekosten = Verlust), DANN Preise senken.
 //   0 % → 5 %: ERST Preise anheben, DANN in die Kampagne (sonst Werbekosten auf den alten, niedrigen Preis).
 // Danach adRate in der App, App-Preise = eBay (Rücklesen). Ohne confirm nur Vorschau.
-import { planAdRateSwitch, type AdSwitchRow } from '../shared/ad-rate-switch';
+import { ebayRateBlock, planAdRateSwitch, type AdSwitchRow } from '../shared/ad-rate-switch';
 
 export interface AdSwitchProduct {
   id: number; title: string; ebayListingId: string; adRate: number | null; targetMarginEur: number | null;
   isChinaOrigin: boolean; checkoutFactor: number | null; isVariant: boolean;
+  /** Satz laut eBay (0 = nicht beworben, null = andere Werbeart, undefined = nicht gelesen). Weicht er ab → nichts umstellen. */
+  ebayRate?: number | null;
   groups: Array<{ name: string; values: string[] }>;
   rows: Array<{ skuId: string; label: string; attrs: Record<string, string>; displayValues?: Record<string, string>; buyPrice: number; sellPrice: number }>;
 }
@@ -22,7 +24,7 @@ export interface AdSwitchDeps {
   readback: (productId: number) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export type AdSwitchStatus = 'preview' | 'done' | 'ads_failed' | 'prices_failed' | 'mismatch' | 'unchanged' | 'error';
+export type AdSwitchStatus = 'preview' | 'done' | 'ads_failed' | 'prices_failed' | 'mismatch' | 'unchanged' | 'ebay_differs' | 'error';
 export interface AdSwitchResult {
   productId: number; listingId: string; title: string; fromRate: number; toRate: number;
   status: AdSwitchStatus; rows: AdSwitchRow[]; error?: string; sentCount?: number;
@@ -37,6 +39,12 @@ export async function runAdSwitch(
     const fromRate = p.adRate ?? 5;
     // OFFEN 025: "Fehlende Preise nachholen" — Satz steht schon auf toRate (Werbung ist schon umgestellt), aber einzelne Variantenpreise
     // wurden nicht gesetzt. Gesendet wird NUR, was genau der freigegebenen Vorschau (expected) entspricht und noch nicht gesetzt ist.
+    // Inhaber 03.11. Frage 3: eBay-Satz ≠ App-Satz → erst Abgleich, nichts umrechnen/senden (auch nicht in der Vorschau anbieten).
+    const block = ebayRateBlock(fromRate, p.ebayRate);
+    if (block) {
+      out.push({ productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate, toRate: input.toRate, rows: [], status: 'ebay_differs', error: block });
+      continue;
+    }
     if (input.retryFromRate != null && fromRate === input.toRate) {
       out.push(await retryMissing(p, input.retryFromRate, input.toRate, input.confirm, input.expected ?? {}, deps));
       continue;
