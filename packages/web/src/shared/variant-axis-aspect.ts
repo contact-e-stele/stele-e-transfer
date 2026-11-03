@@ -15,8 +15,8 @@
 // Listen (Kombinationen, Aspekte je Variante, variesBy). Reine Funktion (Grundgesetz 2), Kategorie-Merkmale kommen als
 // Eingabe (Taxonomy getItemAspectsForCategory).
 //
-// Werte werden NUR auf einen Wert aus eBays Liste gesetzt, der eindeutig passt (exakt, ohne Klammerzusatz, Buchstaben-
-// größe XXL=2XL, "One Size"=Einheitsgröße, oder kleinste Spanne, die die AliExpress-Spanne ganz enthält). Kein Raten:
+// Werte werden NUR auf einen GLEICHBEDEUTENDEN Wert aus eBays Liste gesetzt (exakt, ohne Klammerzusatz, Buchstaben-
+// größe XXL=2XL, "One Size"=Einheitsgröße). Keine Spannen-Abbildung (Inhaber 03.11. "C2 ja"). Kein Raten:
 // passt nichts oder ergäben zwei Werte denselben eBay-Wert → Meldung, Wert bleibt unverändert (Grundgesetz 4).
 // Die SKU-/Preis-Zuordnung (variant-resolver) arbeitet weiter mit den App-Werten — betroffen ist nur, was eBay angezeigt wird.
 
@@ -31,7 +31,7 @@ export interface CategoryAspectInfo {
   variationEnabled?: boolean;
 }
 
-export interface ValueMapping { from: string; to: string; how: 'exakt' | 'normalisiert' | 'Spanne' | 'Farbe' }
+export interface ValueMapping { from: string; to: string; how: 'exakt' | 'normalisiert' | 'Farbe' }
 
 export interface AxisPlan {
   groupName: string;    // App-Gruppenname (roh)
@@ -83,20 +83,6 @@ function letterKey(v: string): string {
   return LETTER_ALIASES[s] ?? s;
 }
 
-/** "40-42", "40–42", "40/42", "36,5" → [lo, hi]; sonst null. */
-function parseRange(v: string): [number, number] | null {
-  const s = stripParen(v).replace(/eu/ig, '').replace(/cm/ig, '').trim();
-  const num = '(\\d+(?:[.,]\\d+)?)';
-  const m = s.match(new RegExp(`^${num}\\s*(?:-|–|/|~|bis)\\s*${num}$`, 'i'));
-  const f = (x: string) => parseFloat(x.replace(',', '.'));
-  if (m) {
-    const lo = f(m[1]); const hi = f(m[2]);
-    return lo <= hi ? [lo, hi] : null;
-  }
-  const one = s.match(new RegExp(`^${num}$`));
-  return one ? [f(one[1]), f(one[1])] : null;
-}
-
 /** Einen App-Wert auf genau einen Wert aus eBays Liste abbilden — oder null (kein eindeutiger Treffer). */
 export function matchAllowedValue(value: string, allowed: string[]): { to: string; how: ValueMapping['how'] } | null {
   const v = value.trim();
@@ -110,16 +96,8 @@ export function matchAllowedValue(value: string, allowed: string[]): { to: strin
     if (norm.length > 1) return null;
   }
 
-  const r = parseRange(v);
-  if (!r) return null;
-  const containing = allowed
-    .map(a => ({ a, ar: parseRange(a) }))
-    .filter((x): x is { a: string; ar: [number, number] } => !!x.ar && x.ar[0] <= r[0] && r[1] <= x.ar[1]);
-  if (containing.length === 0) return null;
-  const width = (x: { ar: [number, number] }) => x.ar[1] - x.ar[0];
-  containing.sort((x, y) => width(x) - width(y));
-  if (containing.length > 1 && width(containing[0]) === width(containing[1])) return null; // zwei gleich gute → nicht raten
-  return { to: containing[0].a, how: 'Spanne' };
+  // Inhaber 03.11. "C2 ja": KEINE Spannen-Abbildung (40-42 → 39-42 hieße: Käufer mit 39 bestellt → Retoure).
+  return null;
 }
 
 function mapValues(aspectName: string, values: string[], info: CategoryAspectInfo | undefined, colorAxis: boolean, colorOf: PlanDeps['colorOf']) {

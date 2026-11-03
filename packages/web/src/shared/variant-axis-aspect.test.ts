@@ -13,21 +13,26 @@ describe('Socken (Kat. 11511, stele-248): Größe nur aus eBays Liste', () => {
   const cat: Record<string, CategoryAspectInfo> = {
     'Größe': { allowedValues: SOCKEN_11511_GROESSE, mode: 'SELECTION_ONLY', required: true },
   };
-  test('AliExpress "40-42(26cm)"/"43-45(28cm)" → kleinste umfassende eBay-Spanne 39-42 / 43-46 (wie ERGEBNIS 019 vorgeschlagen)', () => {
+  test('Inhaber "C2 ja": AliExpress "40-42(26cm)"/"43-45(28cm)" wird NICHT auf 39-42/43-46 gesetzt → Meldung, Vorab-Prüfung stoppt', () => {
     const [p] = planVariantAxes([{ name: 'Size', values: ['40-42(26cm)', '43-45(28cm)'] }], cat, deps);
     expect(p.aspectName).toBe('Größe');
-    expect(p.values).toEqual(['39-42', '43-46']);
+    expect(p.values).toEqual(['40-42(26cm)', '43-45(28cm)']);
+    expect(p.mapped).toEqual([]);
+    expect(p.problems).toEqual(["Größe: Wert '40-42(26cm)' nicht in eBays Liste", "Größe: Wert '43-45(28cm)' nicht in eBays Liste"]);
+  });
+  test('REGRESSION: eine Spanne wird NIE auf eine andere eBay-Spanne abgebildet (auch nicht bei voller Enthaltung)', () => {
+    for (const v of ['40-42', '39-41', '36-37', '44-45', '40']) {
+      expect(matchAllowedValue(v, SOCKEN_11511_GROESSE)).toBeNull();
+    }
+  });
+  test('Klammerzusatz ohne Größen-Änderung: "39-42(EU)" → "39-42", "M(EU)" → "M"', () => {
+    const [p] = planVariantAxes([{ name: 'Size', values: ['39-42(EU)', 'M(EU)'] }], cat, deps);
+    expect(p.values).toEqual(['39-42', 'M']);
     expect(p.problems).toEqual([]);
-    expect(p.mapped.map(m => m.how)).toEqual(['Spanne', 'Spanne']);
   });
-  test('Wert passt in keine Spanne → Meldung, Wert bleibt unverändert (kein Raten)', () => {
-    const [p] = planVariantAxes([{ name: 'Size', values: ['37-40'] }], cat, deps);
-    expect(p.values).toEqual(['37-40']);
-    expect(p.problems).toEqual(["Größe: Wert '37-40' nicht in eBays Liste"]);
-  });
-  test('zwei AliExpress-Werte → derselbe eBay-Wert → Meldung (eBay sähe zwei gleiche Varianten)', () => {
-    const [p] = planVariantAxes([{ name: 'Size', values: ['39-40', '41-42'] }], cat, deps);
-    expect(p.problems).toEqual(["Größe: '39-40' und '41-42' ergäben beide '39-42'"]);
+  test('zwei App-Werte → derselbe eBay-Wert → Meldung (eBay sähe zwei gleiche Varianten)', () => {
+    const [p] = planVariantAxes([{ name: 'Size', values: ['XXL', '2XL'] }], cat, deps);
+    expect(p.problems).toEqual(["Größe: 'XXL' und '2XL' ergäben beide '2XL'"]);
   });
   test('Buchstabengrößen: XXL → 2XL, One Size → Einheitsgröße', () => {
     const [p] = planVariantAxes([{ name: 'Size', values: ['M', 'XXL', 'One Size'] }], cat, deps);
@@ -119,15 +124,14 @@ describe('Rückfall + Schnittstellen', () => {
     expect(p.aspectName).toBe('Größe');
     expect(p.values).toEqual(['M', 'L']);
   });
-  test('checkVariantAxisCoverage nutzt denselben Plan: Socken-Größe 40-42(26cm) ist gedeckt', () => {
-    const r = checkVariantAxisCoverage('Größe', { allowedValues: SOCKEN_11511_GROESSE, mode: 'SELECTION_ONLY' }, [{ name: 'Size', values: ['40-42(26cm)'] }]);
-    expect(r).toEqual({ isAxis: true, problems: [] });
+  test('checkVariantAxisCoverage nutzt denselben Plan: Socken-Größe "39-42(EU)" gedeckt, "40-42(26cm)" nicht', () => {
+    const ok = checkVariantAxisCoverage('Größe', { allowedValues: SOCKEN_11511_GROESSE, mode: 'SELECTION_ONLY' }, [{ name: 'Size', values: ['39-42(EU)'] }]);
+    expect(ok).toEqual({ isAxis: true, problems: [] });
+    const nein = checkVariantAxisCoverage('Größe', { allowedValues: SOCKEN_11511_GROESSE, mode: 'SELECTION_ONLY' }, [{ name: 'Size', values: ['40-42(26cm)'] }]);
+    expect(nein).toEqual({ isAxis: true, problems: ["Größe: Wert '40-42(26cm)' nicht in eBays Liste"] });
   });
   test('categoryAspectMap übernimmt aspectEnabledForVariations', () => {
     const m = categoryAspectMap([{ localizedAspectName: 'Größe', aspectConstraint: { aspectRequired: true, aspectMode: 'SELECTION_ONLY', aspectEnabledForVariations: true }, aspectValues: [{ localizedValue: 'M' }] }]);
     expect(m).toEqual({ 'Größe': { allowedValues: ['M'], mode: 'SELECTION_ONLY', required: true, variationEnabled: true } });
-  });
-  test('matchAllowedValue: zwei gleich breite umfassende Spannen → null', () => {
-    expect(matchAllowedValue('40', ['38-41', '39-42'])).toBeNull();
   });
 });

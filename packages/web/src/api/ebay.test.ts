@@ -1281,9 +1281,14 @@ describe('setInventoryItemQuantity (A-048)', () => {
 describe('OFFEN 026 — findUnresolvedRequiredAspects mit Achsen je Kategorie', () => {
   // Kat. 11511 Größe: live gelesen 29.10.2026 (ERGEBNIS 019), Ausschnitt ohne UK/US-Größen.
   const socken = ['2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL', '35-38', '39-42', '43-46', '47-50', '51-54', 'Einheitsgröße'];
-  test('stele-248 Socken: Size 40-42(26cm)/43-45(28cm) gilt als gedeckt (vorher: "Größe: Wert … nicht in eBays Liste")', async () => {
+  test('stele-248 Socken (Inhaber "C2 ja"): Size 40-42(26cm) wird NICHT abgebildet → Vorab-Prüfung stoppt', async () => {
     const fetchFn = (async () => aspectsResponse([{ name: 'Größe', required: true, values: socken, mode: 'SELECTION_ONLY' }])) as unknown as typeof fetch;
     const result = await findUnresolvedRequiredAspects({}, 'CAT-026-SOCKEN', {}, [], [{ name: 'Size', values: ['40-42(26cm)', '43-45(28cm)'] }], undefined, fetchFn, testTokenFn);
+    expect(result).toEqual({ unresolved: ["Größe: Wert '40-42(26cm)' nicht in eBays Liste", "Größe: Wert '43-45(28cm)' nicht in eBays Liste"], fetchFailed: false });
+  });
+  test('Socken mit gleichbedeutenden Werten (39-42 / 43-46) sind gedeckt', async () => {
+    const fetchFn = (async () => aspectsResponse([{ name: 'Größe', required: true, values: socken, mode: 'SELECTION_ONLY' }])) as unknown as typeof fetch;
+    const result = await findUnresolvedRequiredAspects({}, 'CAT-026-SOCKEN2', {}, [], [{ name: 'Size', values: ['39-42', '43-46'] }], undefined, fetchFn, testTokenFn);
     expect(result).toEqual({ unresolved: [], fetchFailed: false });
   });
   test('stele-243 Handschuhe: Achse "Varianten" GRAY/BLACK deckt Pflicht "Farbe" (vorher: "Farbe" fehlt)', async () => {
