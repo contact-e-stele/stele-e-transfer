@@ -46,6 +46,7 @@ import {
   NON_VARIATION_ASPECTS, slugify, resolveVariantEntries,
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
 } from '../shared/variant-resolver';
+import { planVariantAxes, categoryAspectMap, type AxisPlan, type CategoryAspectInfo } from '../shared/variant-axis-aspect';
 
 // P-85 Schritt 2b (20.09.2026): NON_VARIATION_ASPECTS und slugify() leben jetzt in
 // src/shared/variant-resolver.ts (werden dort UND von price-monitor.ts gebraucht — Regel 8, EINE
@@ -613,6 +614,7 @@ type RawAspect = {
     // SELECTION_ONLY lehnt eBay einen Wert außerhalb der Liste tatsächlich ab.
     aspectMode?: 'FREE_TEXT' | 'SELECTION_ONLY';
     itemToAspectCardinality?: 'SINGLE' | 'MULTI';
+    aspectEnabledForVariations?: boolean; // OFFEN 026: darf dieses Merkmal eine Variantenachse sein?
   };
   aspectValues?: Array<{ localizedValue: string }>;
 };
@@ -1111,21 +1113,25 @@ export function checkVariantAxisCoverage(
   info: RequiredAspectInfo,
   variantGroups: VariantGroup[],
 ): VariantAxisCoverage {
-  const group = variantGroups.find(g => mapVariantGroupName(g.name) === name);
-  if (!group) return { isAxis: false, problems: [] };
+  // OFFEN 026: dieselbe Achsen-Planung wie Vorab-Prüfung und Listen (planAxes), hier nur mit diesem einen Pflichtmerkmal.
+  const plan = planAxes(variantGroups, { [name]: { ...info, required: true } }).find(p => p.aspectName === name);
+  return plan ? { isAxis: true, problems: plan.problems } : { isAxis: false, problems: [] };
+}
 
-  const trustList = info.mode === 'SELECTION_ONLY' ? info.allowedValues : [];
-  const problems: string[] = [];
-  for (const v of group.values) {
-    if (!v?.trim()) {
-      problems.push(`${name}: Achsenwert ist leer`);
-      continue;
-    }
-    if (!isAspectValueTrusted(v, trustList, false)) {
-      problems.push(`${name}: Wert '${v}' nicht in eBays Liste`);
-    }
-  }
-  return { isAxis: true, problems };
+// OFFEN 026: Achsen-Plan je Kategorie (Name + Werte für eBay) — EINE Stelle für Vorab-Prüfung und Listen.
+export function planAxes(groups: VariantGroup[], category: Record<string, CategoryAspectInfo> | null): AxisPlan[] {
+  return planVariantAxes(groups, category, { baseName: mapVariantGroupName, colorOf: v => findColorInTitle(v) });
+}
+
+// OFFEN 026: alle Merkmale der Kategorie (auch nicht-Pflicht, mit aspectEnabledForVariations) — null = Abruf fehlgeschlagen.
+export async function getCategoryAxisAspects(
+  categoryId: string | undefined,
+  fetchFn: typeof fetch = fetch,
+  getTokenFn: () => Promise<string> = getAppToken,
+): Promise<Record<string, CategoryAspectInfo> | null> {
+  if (!categoryId) return null;
+  const raw = await getRawAspectsForCategory(categoryId, fetchFn, getTokenFn);
+  return raw ? categoryAspectMap(raw) : null;
 }
 
 // P-88 Nacharbeit Punkt 2 (20.09.2026): welche Einträge aus AspectPreCheckResult.unresolved sind
@@ -1167,17 +1173,22 @@ export async function findUnresolvedRequiredAspects(
     if (titleColor) effectiveSpecsAspects['Farbe'] = titleColor;
   }
 
+  // OFFEN 026: Achsen je Kategorie planen (Name + Werte) — derselbe Plan wie in listOnEbayWithVariants.
+  const category = await getCategoryAxisAspects(categoryId, fetchFn, getTokenFn);
+  const axisPlan = planAxes(variantGroups, category ?? Object.fromEntries(Object.entries(required).map(([n, i]) => [n, { ...i, required: true }])));
+
   const unresolved: string[] = [];
-  for (const [name, info] of Object.entries(required)) {
+  for (const [name] of Object.entries(required)) {
     if (IDENTIFIER_ASPECT_NAMES.has(name)) continue; // hat einen eigenen, immer greifenden Fallback (EAN/"Nicht zutreffend")
 
-    const axisCheck = checkVariantAxisCoverage(name, info, variantGroups);
-    if (axisCheck.isAxis) {
+    const axis = axisPlan.find(p => p.aspectName === name);
+    if (axis) {
       // wird pro Variante einzeln gesetzt (s. listOnEbayWithVariants) — nicht über
       // resolveRequiredAspect (Basis-Aspekte) prüfen, sonst fälschliche Lücken-Meldung
-      unresolved.push(...axisCheck.problems);
+      unresolved.push(...axis.problems);
       continue;
     }
+    const info = required[name];
 
     const resolution = await resolveRequiredAspect(name, info, effectiveSpecsAspects, categoryId, manualAspects);
     if (resolution.value === null) unresolved.push(name);
@@ -1519,14 +1530,15 @@ export async function postOfferWithTypeFallback(
   return second;
 }
 
-function buildCombinations(groups: VariantGroup[]): Record<string, string>[] {
-  // Kartesisches Produkt aller Varianten-Gruppen
+function buildCombinations(plan: AxisPlan[]): Record<string, string>[] {
+  // Kartesisches Produkt aller Varianten-Gruppen — OFFEN 026: Merkmalsname + Wert aus dem Achsen-Plan (je Kategorie),
+  // gleiche Reihenfolge wie die rohen Gruppen (resolveVariantEntries) → identischer Index = dieselbe Kombination.
   const result: Record<string, string>[] = [{}];
-  for (const group of groups) {
+  for (const axis of plan) {
     const next: Record<string, string>[] = [];
     for (const combo of result) {
-      for (const value of group.values) {
-        next.push({ ...combo, [mapVariantGroupName(group.name)]: value });
+      for (const value of axis.values) {
+        next.push({ ...combo, [axis.aspectName]: value });
       }
     }
     result.splice(0, result.length, ...next);
@@ -1781,7 +1793,12 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   const token = await getAccessToken();
   const maxVariantQuantity = await getMaxVariantQuantity();
   const groups = input.variantGroups ?? [];
-  const combos = buildCombinations(groups);
+  // OFFEN 026: Achsen-Namen/-Werte je Kategorie (Abruf fehlgeschlagen → feste Tabelle, Werte unverändert = bisher).
+  const axisPlan = planAxes(groups, await getCategoryAxisAspects(input.categoryId).catch(() => null));
+  for (const a of axisPlan) {
+    if (a.renamedFrom || a.mapped.length) console.log(`[eBay] OFFEN 026 Achse "${a.groupName}" → "${a.aspectName}"${a.mapped.length ? ': ' + a.mapped.map(m => `${m.from}→${m.to}`).join(', ') : ''}`);
+  }
+  const combos = buildCombinations(axisPlan);
   const groupSku = `${input.sku}-GROUP`;
 
   // P-85 Schritt 2b (20.09.2026): EINE exakte Zuordnung Kombination→SKU/Preis/Bild statt der
@@ -1812,7 +1829,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 
   // Varianten-Aspekt-Namen (gemappt) — diese dürfen NICHT in baseAspects stecken
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler
-  const variantAspectNames = new Set(groups.map(g => mapVariantGroupName(g.name)));
+  const variantAspectNames = new Set(axisPlan.map(a => a.aspectName));
 
   // baseAspects ohne Varianten-Aspekte und ohne Blacklist (für Items und Gruppe)
   const baseAspectsFiltered = Object.fromEntries(
@@ -1830,7 +1847,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     // Varianten-Aspekte: gefilterte Basis-Aspekte + spezifischer Kombo-Wert (1 Wert pro Variante)
     const variantAspects = {
       ...baseAspectsFiltered,
-      ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [mapVariantGroupName(k), [v]])),
+      ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [k, [v]])), // combo-Keys sind schon eBay-Namen (Achsen-Plan)
     };
     // P-89: dieselben Aspekte (inkl. EAN-Sentinel aus P-71) auch für den weiter unten erstellten
     // Offer mitnehmen — nur ins Inventory Item zu schreiben reicht nicht, eBay validiert beim
@@ -1876,7 +1893,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 
   // 2. Inventory Item Group erstellen
   // eBay erwartet: variationInformation mit variantSKUs + variantAspectName
-  const mappedGroupNames = groups.map(g => mapVariantGroupName(g.name));
+  const mappedGroupNames = axisPlan.map(a => a.aspectName);
   const groupBody = {
     inventoryItemGroupKey: groupSku,
     title: input.title,
@@ -1890,9 +1907,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
     variantSKUs: variantSkus,
     variesBy: {
       aspectsImageVariesBy: mappedGroupNames.slice(0, 1), // erstes Attribut für Bildwechsel
-      specifications: groups.map(g => ({
-        name: mapVariantGroupName(g.name),
-        values: g.values,
+      specifications: axisPlan.map(a => ({
+        name: a.aspectName,
+        values: a.values,
       })),
     },
   };

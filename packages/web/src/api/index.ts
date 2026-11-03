@@ -5135,6 +5135,31 @@ app.get('/products/:id/aspect-precheck', async (c) => {
   }
 });
 
+// OFFEN 026: NUR LESEN (eBay-Taxonomie) — Merkmale einer Kategorie, die für Variantenachsen zählen (Pflicht, Größe/Size, Farbe),
+// mit Modus, Variation-fähig und erlaubten Werten. Ohne Kategorie-ID mit ?title=… über eBays Kategorievorschlag. Nichts wird gespeichert.
+app.get('/ebay/category-axis-aspects', async (c) => {
+  try {
+    let categoryId = (c.req.query('categoryId') ?? '').trim();
+    const title = (c.req.query('title') ?? '').trim();
+    if (!/^\d+$/.test(categoryId)) {
+      if (!title) return c.json({ error: 'categoryId (Zahl) oder title fehlt' }, 400);
+      const s = await suggestCategory(title).catch(() => null);
+      if (!s) return c.json({ error: 'eBay-Kategorievorschlag leer' }, 502);
+      categoryId = s;
+    }
+    const { getCategoryAxisAspects } = await import('./ebay');
+    const map = await getCategoryAxisAspects(categoryId);
+    if (!map) return c.json({ ok: false, categoryId, error: `eBay-Merkmale nicht abrufbar${getLastAspectFetchError(categoryId) ? ` (${getLastAspectFetchError(categoryId)})` : ''}` }, 502);
+    const aspects = Object.entries(map)
+      .filter(([n, a]) => a.required || /größe|size|farbe/i.test(n))
+      .map(([name, a]) => ({ name, required: !!a.required, mode: a.mode ?? null, variationEnabled: a.variationEnabled ?? null, values: a.allowedValues }));
+    return c.json({ ok: true, categoryId, aspects }, 200);
+  } catch (e) {
+    console.error('[category-axis-aspects]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // OFFEN 018 / ENTSCHEIDUNG 018 (Inhaber „W5“): gelistete Produkte je Anzeige mit festem Satz (Standard 5 %) in die laufende
 // Kosten-pro-Verkauf-Kampagne (Marketing API). Ohne confirm: Vorschau. Mit {confirm:true}: senden, danach products.adRate = Satz
 // NUR für erfolgreich aufgenommene Angebote. Preise werden NICHT geändert.
