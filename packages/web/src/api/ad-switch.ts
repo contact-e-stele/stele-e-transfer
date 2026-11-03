@@ -30,11 +30,17 @@ export interface AdSwitchResult {
 
 /** expected: skuId → neuer VK aus der Vorschau, die der Inhaber gesehen hat. Weicht die Neuberechnung ab → nichts senden. */
 export async function runAdSwitch(
-  products: AdSwitchProduct[], input: { toRate: number; confirm: boolean; expected?: Record<string, number> }, deps: AdSwitchDeps,
+  products: AdSwitchProduct[], input: { toRate: number; confirm: boolean; expected?: Record<string, number>; retryFromRate?: number }, deps: AdSwitchDeps,
 ): Promise<AdSwitchResult[]> {
   const out: AdSwitchResult[] = [];
   for (const p of products) {
     const fromRate = p.adRate ?? 5;
+    // OFFEN 025: "Fehlende Preise nachholen" — Satz steht schon auf toRate (Werbung ist schon umgestellt), aber einzelne Variantenpreise
+    // wurden nicht gesetzt. Gesendet wird NUR, was genau der freigegebenen Vorschau (expected) entspricht und noch nicht gesetzt ist.
+    if (input.retryFromRate != null && fromRate === input.toRate) {
+      out.push(await retryMissing(p, input.retryFromRate, input.toRate, input.confirm, input.expected ?? {}, deps));
+      continue;
+    }
     const rows = planAdRateSwitch({ fromRate, toRate: input.toRate, rows: p.rows, isChinaOrigin: p.isChinaOrigin, checkoutFactor: p.checkoutFactor, targetMarginEur: p.targetMarginEur });
     const base = { productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate, toRate: input.toRate, rows };
     if (!input.confirm) { out.push({ ...base, status: 'preview' }); continue; }
@@ -89,4 +95,43 @@ export async function runAdSwitch(
     }
   }
   return out;
+}
+
+/** Zeilen fürs Nachholen: geplant ab dem FRÜHEREN Satz; senden nur, wenn noch alter Preis UND neuer Preis = freigegebene Vorschau. */
+export function planRetryRows(rows: AdSwitchRow[], expected: Record<string, number>): AdSwitchRow[] {
+  return rows.map(r => {
+    const exp = expected[r.skuId];
+    if (exp == null) return { ...r, send: false, reason: 'nicht in der freigegebenen Vorschau' };
+    if (Math.abs(r.oldVk - exp) < 0.005) return { ...r, newVk: r.oldVk, send: false, reason: 'schon gesetzt' };
+    if (Math.abs(r.newVk - exp) > 0.004) return { ...r, send: false, reason: `passt nicht zur Freigabe (${exp.toFixed(2)})` };
+    return r.send ? r : { ...r, send: false };
+  });
+}
+
+async function retryMissing(p: AdSwitchProduct, retryFromRate: number, toRate: number, confirm: boolean, expected: Record<string, number>, deps: AdSwitchDeps): Promise<AdSwitchResult> {
+  const planned = planAdRateSwitch({ fromRate: retryFromRate, toRate, rows: p.rows, isChinaOrigin: p.isChinaOrigin, checkoutFactor: p.checkoutFactor, targetMarginEur: p.targetMarginEur });
+  const rows = planRetryRows(planned, expected);
+  const base = { productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate: retryFromRate, toRate, rows };
+  if (!confirm) return { ...base, status: 'preview' };
+  const toSend = rows.filter(r => r.send);
+  if (toSend.length === 0) return { ...base, status: 'unchanged', error: 'nichts nachzuholen' };
+  try {
+    let sent = 0; let error: string | undefined; let ok = true;
+    if (p.isVariant) {
+      const vrows = p.rows.map(r => {
+        const plan = rows.find(x => x.skuId === r.skuId)!;
+        return { skuId: r.skuId, attrs: r.attrs, displayValues: r.displayValues, buyPrice: r.buyPrice, correctSellPrice: plan.send ? plan.newVk : r.sellPrice };
+      });
+      const res = await deps.sendVariants(p.id, p.groups, vrows);
+      sent = res.updatedCount; ok = res.ok && res.errors.length === 0; error = res.errors.join(' · ') || undefined;
+    } else {
+      const res = await deps.sendSingle(p.id, p.ebayListingId, toSend[0].newVk);
+      sent = res.ok ? 1 : 0; ok = res.ok; error = res.error;
+    }
+    const rb = await deps.readback(p.id);
+    if (!ok) return { ...base, status: 'prices_failed', sentCount: sent, error: `Nachholen nicht vollständig: ${error ?? ''}` };
+    return { ...base, status: 'done', sentCount: sent, error: rb.ok ? undefined : `App-Preise nicht von eBay übernommen: ${rb.error ?? ''}` };
+  } catch (e) {
+    return { ...base, status: 'error', error: String(e) };
+  }
 }

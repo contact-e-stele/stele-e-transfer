@@ -71,3 +71,42 @@ describe('Anzeige-Rate umschalten – Reihenfolge (OFFEN 024)', () => {
     expect(m.calls).toEqual([]);
   });
 });
+
+// OFFEN 025: stele-123 nach dem Lauf 03.11. 08:43 (Live gelesen 08:5x): 4 Preise gesetzt, 200PCS 36,95 und 20PCS 16,95 nicht.
+// Freigabe-Tabelle: 200PCS 34,95, 20PCS 15,95. Nachholen darf NUR diese zwei senden und die schon gesenkten NICHT erneut senken.
+const p123now = (): AdSwitchProduct => ({
+  id: 123, title: 'Spritzbeutel', ebayListingId: '198601076435', adRate: 0, targetMarginEur: 2, isChinaOrigin: true, checkoutFactor: null, isVariant: true,
+  groups: [{ name: 'Menge', values: ['10PCS', '20PCS', '30PCS', '50PCS', '100PCS', '200PCS'] }],
+  rows: [
+    { skuId: '264', label: '10PCS', attrs: {}, buyPrice: 2.09, sellPrice: 14.95 },
+    { skuId: '265', label: '20PCS', attrs: {}, buyPrice: 2.69, sellPrice: 16.95 },
+    { skuId: '266', label: '30PCS', attrs: {}, buyPrice: 4.19, sellPrice: 17.95 },
+    { skuId: '267', label: '50PCS', attrs: {}, buyPrice: 6.09, sellPrice: 19.95 },
+    { skuId: '268', label: '100PCS', attrs: {}, buyPrice: 11.79, sellPrice: 24.95 },
+    { skuId: '269', label: '200PCS', attrs: {}, buyPrice: 20.39, sellPrice: 36.95 },
+  ],
+});
+const freigabe123 = { '264': 14.95, '265': 15.95, '266': 17.95, '267': 19.95, '268': 24.95, '269': 34.95 };
+
+describe('Fehlende Preise nachholen (OFFEN 025)', () => {
+  test('Vorschau: nur 20PCS 15,95 und 200PCS 34,95, der Rest "schon gesetzt"', async () => {
+    const m = mocks();
+    const [r] = await runAdSwitch([p123now()], { toRate: 0, confirm: false, expected: freigabe123, retryFromRate: 5 }, m.deps);
+    expect(r.status).toBe('preview');
+    expect(r.rows.filter(x => x.send).map(x => [x.label, x.newVk])).toEqual([['20PCS', 15.95], ['200PCS', 34.95]]);
+    expect(r.rows.filter(x => !x.send).every(x => x.reason === 'schon gesetzt')).toBe(true);
+    expect(m.calls).toEqual([]);
+  });
+  test('Ausführen: sendet alte Preise unverändert mit, keine Werbe-Änderung, dann Rücklesen', async () => {
+    const m = mocks();
+    const [r] = await runAdSwitch([p123now()], { toRate: 0, confirm: true, expected: freigabe123, retryFromRate: 5 }, m.deps);
+    expect(r.status).toBe('done');
+    expect(m.calls).toEqual(['send 123 14.95,15.95,17.95,19.95,24.95,34.95', 'readback 123']);
+  });
+  test('ohne Freigabe-Preis für eine SKU wird sie nicht gesendet', async () => {
+    const m = mocks();
+    const { '269': _, ...ohne200 } = freigabe123;
+    const [r] = await runAdSwitch([p123now()], { toRate: 0, confirm: false, expected: ohne200, retryFromRate: 5 }, m.deps);
+    expect(r.rows.find(x => x.label === '200PCS')!.send).toBe(false);
+  });
+});

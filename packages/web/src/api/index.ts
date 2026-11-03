@@ -1748,7 +1748,7 @@ const app = new Hono()
   // OFFEN 024 NACHTRAG (Inhaber 03.11.2026): Anzeige-Rate 5 % ↔ 0 % — Kampagne bei eBay + Preise je Variante (× 0,762 / 0,8215, ,95 aufgerundet).
   // Ohne confirm: nur Vorschau. Reihenfolge und Sperren: api/ad-switch.ts. K-011-gesperrte Produkte werden nicht angefasst.
   .post('/ebay/listings/ad-switch', async (c) => {
-    let body: { itemIds?: unknown; toRate?: unknown; confirm?: unknown; expected?: unknown } = {};
+    let body: { itemIds?: unknown; toRate?: unknown; confirm?: unknown; expected?: unknown; retryFromRate?: unknown } = {};
     try { body = await c.req.json(); } catch { body = {}; }
     const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(String).filter(x => /^\d+$/.test(x)) : [];
     const toRate = body.toRate === 0 || body.toRate === 5 ? body.toRate : null;
@@ -1785,7 +1785,10 @@ const app = new Hono()
         });
       }
       const cookie = c.req.header('Cookie') ?? '';
-      const results = await runAdSwitch(products, { toRate, confirm: body.confirm === true, expected }, {
+      // OFFEN 025: Nachholen nur mit freigegebener Vorschau (expected) — sonst würde ein schon gesenkter Preis erneut gesenkt.
+      const retryFromRate = body.retryFromRate === 0 || body.retryFromRate === 5 ? body.retryFromRate : undefined;
+      if (retryFromRate != null && !expected) return c.json({ error: 'Nachholen nur mit expected (freigegebene Preise je SKU)' }, 400);
+      const results = await runAdSwitch(products, { toRate, confirm: body.confirm === true, expected, retryFromRate }, {
         removeAds: ids => removeCampaignAds(ids),
         addAds: (ids, pct) => sendCampaignAds(ids, pct),
         sendVariants: (id, groups, vrows) => updateEbayVariantPricesIndividually(id, groups, vrows),

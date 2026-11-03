@@ -286,15 +286,15 @@ export async function updateEbayVariantPricesIndividually(
       }
       const price = match.entry.price;
       if (price == null) continue;
-      const { ok } = await updateOfferPriceBySku(sku, price, token);
+      const { ok, error: putError } = await updateOfferPriceBySku(sku, price, token);
       if (ok) {
         updatedCount++;
         console.log(`[PriceMonitor] ${productId}: Variante ${sku} → ${price.toFixed(2)}€`);
       } else {
-        console.warn(`[PriceMonitor] ${productId}: Preis für ${sku} konnte nicht auf ${price.toFixed(2)}€ gesetzt werden`);
+        console.warn(`[PriceMonitor] ${productId}: Preis für ${sku} konnte nicht auf ${price.toFixed(2)}€ gesetzt werden: ${putError ?? '(kein Text)'}`);
         // A-017: einzelne fehlgeschlagene PUTs sichtbar machen (ok bleibt "mindestens eine aktualisiert"), damit der Aufrufer
-        // "alles gesendet" von "teilweise" unterscheiden kann.
-        errors.push(`${sku}: Preis konnte nicht auf ${price.toFixed(2)}€ gesetzt werden`);
+        // "alles gesendet" von "teilweise" unterscheiden kann. OFFEN 025: eBay-Fehlertext wörtlich mitgeben (vorher verschluckt).
+        errors.push(`${sku}: Preis konnte nicht auf ${price.toFixed(2)}€ gesetzt werden${putError ? ` — eBay: ${putError.slice(0, 300)}` : ''}`);
       }
     }
     return { ok: updatedCount > 0, updatedCount, errors };
