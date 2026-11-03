@@ -12,11 +12,14 @@ describe('K-009 Auswahl Anzeigensatz', () => {
   });
   test('null wird als "—" gezeigt, nicht als 5 %', () => {
     expect(adRateLabel(null)).toBe('—');
-    expect(adRateOptions(null)).toEqual([0, 2, 3, 5, 8, 10]);
+    expect(adRateOptions(null)).toEqual([0, 2, 3, 5]);
   });
   test('gespeicherter Sonderwert bleibt sichtbar (4 % → eigene Option)', () => {
-    expect(adRateOptions(4)).toEqual([0, 2, 3, 4, 5, 8, 10]);
-    expect(adRateOptions(5)).toEqual([0, 2, 3, 5, 8, 10]);
+    expect(adRateOptions(4)).toEqual([0, 2, 3, 4, 5]);
+    expect(adRateOptions(5)).toEqual([0, 2, 3, 5]);
+    // Gesetz 72 (03.11.2026): 8 % / 10 % nicht mehr wählbar
+    expect(adRateOptions(5)).not.toContain(8);
+    expect(adRateOptions(5)).not.toContain(10);
   });
 });
 

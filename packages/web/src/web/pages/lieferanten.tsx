@@ -1852,7 +1852,7 @@ export default function Lieferanten() {
                       cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
                     }}
                   >Keine Anzeige</button>
-                  {[2, 3, 5, 8, 10].map(rate => (
+                  {[2, 3, 5].map(rate => ( // Gesetz 72: höchstens 5 % (03.11.2026)
                     <button
                       key={rate}
                       onClick={() => { setAdRate(rate); localStorage.setItem("stele_ad_rate", String(rate)); }}
@@ -1868,21 +1868,21 @@ export default function Lieferanten() {
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 11, color: "#94A3B8", fontWeight: 600 }}>Eigener:</span>
                     <input
-                      type="number" min="0" max="20" step="0.5"
-                      value={![0, 2, 3, 5, 8, 10].includes(adRate) ? adRate : ""}
+                      type="number" min="0" max="5" step="0.5"
+                      value={![0, 2, 3, 5].includes(adRate) ? adRate : ""}
                       placeholder="z.B. 7"
                       onChange={e => {
                         const v = parseFloat(e.target.value);
-                        if (!isNaN(v) && v >= 0 && v <= 20) {
+                        if (!isNaN(v) && v >= 0 && v <= 5) {
                           setAdRate(v);
                           localStorage.setItem("stele_ad_rate", String(v));
                         }
                       }}
                       style={{
                         width: 64, padding: "7px 10px", fontSize: 13, fontWeight: 600,
-                        border: `2px solid ${![0, 2, 3, 5, 8, 10].includes(adRate) ? "#FFD700" : "#E2E8F0"}`,
+                        border: `2px solid ${![0, 2, 3, 5].includes(adRate) ? "#FFD700" : "#E2E8F0"}`,
                         borderRadius: 8, outline: "none", fontFamily: "inherit",
-                        background: ![0, 2, 3, 5, 8, 10].includes(adRate) ? "#FFF8DC" : "#F8FAFC",
+                        background: ![0, 2, 3, 5].includes(adRate) ? "#FFF8DC" : "#F8FAFC",
                         color: "#0F172A",
                       }}
                     />
