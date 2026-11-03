@@ -89,6 +89,11 @@ Das präzisiert den Abschnitt "Immer manuell bestätigen lassen" weiter unten: D
 Offenlegung und das Benennen aller Risiken bleiben Pflicht — die *Wartezeit* auf eine Freigabe
 entfällt. Quelle: Archiv-Dokument "Preis-Fundament Teil 2C, 2D und 3" (13.09.2026), Abschnitt 6.
 
+**14. Merge nur mit Aufsichts-Freigabe (Inhaber 03.11.2026 08:42, gilt ab sofort).**
+Kein PR wird gemergt, bevor im Postfach-Ordner das Dokument **"AUFSICHT FREIGABE PR <Nr>"** liegt UND der Inhaber im Chat
+"ja" geschrieben hat. Beides ist Pflicht. Claude meldet bei jedem PR, ob das Freigabe-Dokument schon vorliegt.
+Ergänzt Regel 13 (der Inhaber mergt selbst) — die Prüfung durch 0 Aufsicht kommt jetzt VOR den Merge.
+
 **Archiv:** Grundgesetz und alle Funde liegen zusätzlich im Google-Drive-Ordner
 "stele-e-transfer – Bug-Analyse" (Dokument "GRUNDGESETZ Arbeitsweise + Teil 3B …", 13.09.2026).
 Dort nachschlagen, bevor etwas erneut untersucht wird.
