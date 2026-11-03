@@ -4888,6 +4888,74 @@ app.post('/products/:id/variant-dedupe', async (c) => {
   }
 });
 
+// OFFEN 023: Varianten-Texte auf Deutsch (shared/variant-text-de.ts). GET = Vorschau (schreibt nichts). POST {confirm:true, groups,
+// expectedVariants} = speichert NUR in der App (products.variants + variantPrices[].displayValues, bei gelisteten Produkten zusätzlich
+// der SKU-Anker ebaySku) — nichts an eBay. Ein eBay-Sendeweg ist bewusst NICHT gebaut: laut eBay-Doku lässt sich der Text eines
+// Variantenwerts in einem laufenden Angebot nicht ändern (nur Variante löschen + neu anlegen; mit Verkäufen nicht löschbar), s. PR.
+const VARIANT_TEXT_EBAY_NOTE = 'Nur App: bei eBay bleiben die bisherigen Variantenwerte, bis das Angebot neu gelistet wird (eBay erlaubt kein Umbenennen von Variantenwerten in laufenden Angeboten). Die eBay-SKU bleibt gleich.';
+async function variantTextLoad(id: number) {
+  const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+  const [row] = await db.select({ id: schema.products.id, variants: schema.products.variants, variantPrices: schema.products.variantPrices, ebayListingId: schema.products.ebayListingId })
+    .from(schema.products).where(eq(schema.products.id, id)).limit(1);
+  if (!row) return null;
+  const { parseVariantGroupsJson } = await import('./price-monitor');
+  const groups = parseVariantGroupsJson(row.variants);
+  let entries: VariantPriceEntry[] = [];
+  try { const pv = row.variantPrices ? JSON.parse(row.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+  return { db, schema, row, groups, entries, listed: !!row.ebayListingId };
+}
+app.get('/products/:id/variant-texts', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const r = await variantTextLoad(id);
+    if (!r) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const { planVariantTexts, applyVariantRename } = await import('../shared/variant-text-de');
+    const { resolveVariantEntries } = await import('../shared/variant-resolver');
+    const plan = planVariantTexts(r.groups);
+    const proposed = plan.groups.map(g => ({ name: g.name.value, values: g.values.map(v => v.value) }));
+    const before = resolveVariantEntries(id, r.groups, r.entries);
+    const applied = applyVariantRename(id, r.groups, proposed, r.entries, { pinSku: r.listed });
+    const after = applied.ok ? resolveVariantEntries(id, applied.variants, applied.entries) : [];
+    const skuPreview = before.map((b, i) => ({ before: b.displayValues, after: after[i]?.displayValues ?? null, skuBefore: b.sku, skuAfter: after[i]?.sku ?? null, skuIdBefore: b.entry?.skuId ?? null, skuIdAfter: after[i]?.entry?.skuId ?? null }));
+    return c.json({ mode: 'preview', productId: id, listed: r.listed, expectedVariants: r.row.variants, ...plan, applyError: applied.ok ? null : applied.error, skuPreview, ebaySend: { built: false, note: VARIANT_TEXT_EBAY_NOTE } }, 200);
+  } catch (e) {
+    console.error('[variant-texts]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+app.post('/products/:id/variant-texts', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const body = await c.req.json().catch(() => ({})) as { confirm?: unknown; groups?: unknown; expectedVariants?: unknown };
+  if (body.confirm !== true) return c.json({ error: 'confirm: true fehlt — es wird nichts geschrieben' }, 400);
+  const groupsOk = Array.isArray(body.groups) && (body.groups as unknown[]).every(g => g && typeof (g as { name?: unknown }).name === 'string'
+    && Array.isArray((g as { values?: unknown }).values) && ((g as { values: unknown[] }).values).every(v => typeof v === 'string'));
+  if (!groupsOk) return c.json({ error: 'groups fehlt oder ungültig' }, 400);
+  try {
+    const r = await variantTextLoad(id);
+    if (!r) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (typeof body.expectedVariants !== 'string' || body.expectedVariants !== (r.row.variants ?? '')) {
+      return c.json({ written: false, error: 'Varianten wurden seit der Vorschau geändert — nichts geschrieben, bitte erneut prüfen' }, 409);
+    }
+    const { applyVariantRename } = await import('../shared/variant-text-de');
+    const applied = applyVariantRename(id, r.groups, body.groups as Array<{ name: string; values: string[] }>, r.entries, { pinSku: r.listed });
+    if (!applied.ok) return c.json({ written: false, error: applied.error }, 422);
+    const { and } = await import('drizzle-orm');
+    const res = await r.db.update(r.schema.products)
+      .set({ variants: JSON.stringify(applied.variants), variantPrices: JSON.stringify(applied.entries), updatedAt: new Date().toISOString() })
+      .where(and(eq(r.schema.products.id, id), eq(r.schema.products.variants, r.row.variants ?? ''), eq(r.schema.products.variantPrices, r.row.variantPrices ?? '')));
+    if ((res as { rowsAffected?: number }).rowsAffected !== 1) {
+      return c.json({ written: false, error: 'Produkt hat sich seit dem Lesen geändert (z. B. Preisprüfung lief parallel) — nichts geschrieben, bitte erneut prüfen' }, 409);
+    }
+    console.log(`[OFFEN 023] stele-${id}: Varianten-Texte übernommen (nur App). Anker: ${applied.pinned.map(p => `${p.skuId}=${p.sku}`).join(', ') || '—'}; unverändert: ${applied.untouched.join(', ') || '—'}`);
+    return c.json({ written: true, listed: r.listed, pinned: applied.pinned, untouched: applied.untouched, ebayNote: r.listed ? VARIANT_TEXT_EBAY_NOTE : null }, 200);
+  } catch (e) {
+    console.error('[variant-texts apply]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // OFFEN 010 Schritt 1: Ausnahmeliste "Preisprüfung ändert bei eBay nichts" (app_settings, kein eBay-Aufruf).
 app.get('/auto-price-excluded', async (c) => {
   try { const { getAutoPriceExclusions } = await import('./auto-price-exclusions'); return c.json({ excluded: await getAutoPriceExclusions() }, 200); }

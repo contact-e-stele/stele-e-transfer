@@ -19,6 +19,7 @@ import { matchesProductSearch, searchFromQuery } from "../../shared/product-sear
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
 import { ProductDataPanel } from "../components/product-data-panel";
+import { VariantTextPanel } from "../components/variant-text-panel";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
@@ -1207,6 +1208,8 @@ export default function Produkte() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRow[] | null>(null);
   const [bulkDedupe, setBulkDedupe] = useState<BulkDedupeRow[] | null>(null);
+  // OFFEN 023: Varianten-Texte prüfen (Original → Deutsch), Auswahl wird beim Öffnen festgehalten.
+  const [variantTextIds, setVariantTextIds] = useState<number[] | null>(null);
   // OFFEN 022: Ausgewählte löschen — Vorschau (Bestätigung in der Seite, kein window.confirm) und Ergebnis.
   type BulkDeletePreview = { deletable: Array<{ id: number; title: string }>; blocked: Array<{ id: number; reason: string; title: string }>; missing: number[] };
   const [bulkDelete, setBulkDelete] = useState<(BulkDeletePreview & { results?: Array<{ id: number; ok: boolean; error?: string }>; backupName?: string; error?: string }) | null>(null);
@@ -1618,6 +1621,9 @@ export default function Produkte() {
                 <button disabled={bulkBusy || sel.length === 0} style={{ ...btn, opacity: bulkBusy || sel.length === 0 ? 0.5 : 1 }}
                   title="Varianten-Dubletten je Produkt anzeigen — bereinigt wird erst nach dem zweiten Knopf"
                   onClick={() => runBulkDedupePreview(sel)}>Dubletten prüfen ({sel.length})</button>
+                <button disabled={bulkBusy || sel.length === 0} style={{ ...btn, opacity: bulkBusy || sel.length === 0 ? 0.5 : 1 }}
+                  title="Englische Variantenwerte je Produkt mit deutschem Vorschlag anzeigen — gespeichert wird erst nach „Übernehmen“, nur in der App"
+                  onClick={() => { setBulkRows(null); setBulkDedupe(null); setBulkDelete(null); setVariantTextIds([...sel]); }}>Varianten-Texte prüfen ({sel.length})</button>
                 <button disabled={bulkBusy || sel.length === 0} style={{ ...btn, background: "#DC2626", color: "#fff", border: "none", opacity: bulkBusy || sel.length === 0 ? 0.5 : 1 }}
                   title="Ausgewählte Produkte aus der App löschen — noch bei eBay gelistete werden gesperrt; vorher Sicherung nach Drive"
                   onClick={() => runBulkDeletePreview(sel)}>Ausgewählte löschen ({sel.length})</button>
@@ -1645,6 +1651,9 @@ export default function Produkte() {
                     {!bulkBusy && <button style={btn} onClick={() => setBulkDelete(null)}>{bulkDelete.results ? "Schließen" : "Abbrechen"}</button>}
                   </div>
                 </div>
+              )}
+              {variantTextIds && (
+                <VariantTextPanel ids={variantTextIds} name={name} onClose={() => setVariantTextIds(null)} onSaved={() => { void load(); }} />
               )}
               {bulkRows && (
                 <div style={{ marginTop: 8 }}>

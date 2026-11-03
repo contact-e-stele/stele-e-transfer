@@ -40,6 +40,13 @@ export interface VariantPriceEntry {
   // Wird NUR beim Umbenennen geschrieben (syncDisplayValuesOnRename) — kein Migrations-Feld,
   // bestehende variantPrices-JSON-Spalte, unbekannte Einträge haben es einfach nicht gesetzt.
   displayValues?: Record<string, string>;
+  // OFFEN 023 (03.11.2026): SKU-Anker. eBay vergibt die Varianten-SKU beim Listen aus den damaligen Anzeigewerten
+  // (stele-{id}-{slugify(Werte)}) und eine SKU ist danach nicht mehr änderbar. Wird ein Anzeigewert eines LIVE-Angebots
+  // umbenannt (z. B. "GRAY" → "Grau"), würde die neu berechnete SKU (stele-12-GRAU) die echte eBay-SKU (stele-12-GRAY)
+  // nicht mehr treffen — Preis-Anhebung, Mengen-Lauf und Bestellungs-EK verlören die Zuordnung. Deshalb wird beim
+  // Umbenennen eines gelisteten Produkts die bisherige SKU hier festgeschrieben; der Resolver nimmt sie vor der berechneten.
+  // Kein Migrations-Feld (bestehende variantPrices-JSON-Spalte); fehlt es, ist das Verhalten exakt wie vorher.
+  ebaySku?: string;
 }
 
 export interface ResolvedVariantEntry {
@@ -104,6 +111,11 @@ export function entryMatchesCombo(combo: Record<string, string>, entry: VariantP
   return Object.values(combo).every(v => attrsVals.includes(norm(v)));
 }
 
+// Die EINE Stelle, an der aus einer Kombination die berechnete SKU entsteht (Listing, Preis-Update, Bestellungen, Anker).
+export function comboSku(productId: number, combo: Record<string, string>): string {
+  return `stele-${productId}-${Object.values(combo).map(slugify).filter(Boolean).join('-')}`;
+}
+
 function comboLabel(combo: Record<string, string>): string {
   return Object.entries(combo).map(([k, v]) => `${k}=${v}`).join(', ');
 }
@@ -122,13 +134,13 @@ export function resolveVariantEntries(
   const results: ResolvedVariant[] = [];
 
   for (const combo of combos) {
-    const sku = `stele-${productId}-${Object.values(combo).map(slugify).filter(Boolean).join('-')}`;
+    const computedSku = comboSku(productId, combo);
     const label = comboLabel(combo);
     const matches = variantPrices.filter(e => entryMatchesCombo(combo, e));
 
     if (matches.length === 0) {
       results.push({
-        displayValues: combo, sku, entry: null,
+        displayValues: combo, sku: computedSku, entry: null,
         error: `Kein variantPrices-Eintrag für Anzeigewert(e) "${label}" (Produkt ${productId}) gefunden.`,
       });
       continue;
@@ -137,12 +149,14 @@ export function resolveVariantEntries(
       const skuIds = matches.map(m => m.skuId ?? '?').join(', ');
       const eks = matches.map(m => m.price != null ? m.price.toFixed(2) : '—').join(', ');
       results.push({
-        displayValues: combo, sku, entry: null,
+        displayValues: combo, sku: computedSku, entry: null,
         error: `Mehrdeutig: ${matches.length} variantPrices-Einträge passen auf Anzeigewert(e) "${label}" (Produkt ${productId}) — skuIds: ${skuIds}, EK: ${eks}.`,
       });
       continue;
     }
     const m = matches[0];
+    // OFFEN 023: festgeschriebene eBay-SKU (SKU-Anker) hat Vorrang vor der aus den (evtl. umbenannten) Anzeigewerten berechneten.
+    const sku = m.ebaySku && m.ebaySku.trim() ? m.ebaySku.trim() : computedSku;
     if (!m.skuId) {
       results.push({
         displayValues: combo, sku, entry: null,
@@ -162,6 +176,25 @@ export function resolveVariantEntries(
       entry: { skuId: m.skuId, price: m.price, ebayPrice: m.ebayPrice, stock: m.stock, imageUrl: m.imageUrl },
       error: null,
     });
+  }
+
+  // OFFEN 023: ein SKU-Anker darf nie mit einer anderen Kombination auf dieselbe SKU fallen (z. B. Anker "stele-1-GRAY" für
+  // "Grau" und eine neue Kombination "Gray") — sonst ginge ein Preis/eine Menge an die falsche Variante. Harter Fehler für alle
+  // Beteiligten, nichts geraten. Bewusst NUR wenn ein Anker beteiligt ist: bestehende Kollisionen ohne Anker (z. B. slugify kürzt
+  // auf 20 Zeichen) verhalten sich exakt wie vorher.
+  const anchoredSkus = new Set<string>();
+  const okBySku = new Map<string, number>();
+  for (const r of results) {
+    if (r.error) continue;
+    okBySku.set(r.sku, (okBySku.get(r.sku) ?? 0) + 1);
+    const src = variantPrices.find(e => e.skuId === r.entry?.skuId && entryMatchesCombo(r.displayValues, e));
+    if (src?.ebaySku && src.ebaySku.trim()) anchoredSkus.add(r.sku);
+  }
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (!r.error && anchoredSkus.has(r.sku) && (okBySku.get(r.sku) ?? 0) > 1) {
+      results[i] = { ...r, entry: null, error: `SKU ${r.sku} doppelt (Produkt ${productId}, Anzeigewert(e) "${comboLabel(r.displayValues)}") — SKU-Anker prüfen.` };
+    }
   }
 
   return results;

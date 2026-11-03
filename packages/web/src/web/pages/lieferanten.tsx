@@ -14,6 +14,7 @@ import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
 import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
+import { applyVariantRename, findDuplicateValues, renameContentKeys, translatedGroups, translateGroupName, translateVariantValue, valueKey } from "../../shared/variant-text-de";
 import { produkteSearchHref } from "../../shared/product-search";
 import { useLocation } from "wouter";
 import { planVolumeDiscount } from "../../shared/volume-discount";
@@ -253,6 +254,9 @@ export default function Lieferanten() {
   const [editedVariants, setEditedVariants] = useState<Array<{ name: string; values: string[] }>>([]);
   // Lieferumfang je SET-Wert: { "SET1": "10 kleine + 10 große + Bohrer", ... }
   const [variantContents, setVariantContents] = useState<Record<string, string>>({});
+  // OFFEN 023: deutsche Variantentexte — Hand-Eingaben je Gruppe / je (Gruppe, Originalwert); sonst gilt der Tabellen-Vorschlag.
+  const [deNames, setDeNames] = useState<Record<string, string>>({});
+  const [deValues, setDeValues] = useState<Record<string, string>>({});
 
   const [copiedTitle, setCopiedTitle] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
@@ -525,6 +529,10 @@ export default function Lieferanten() {
   const packedVariantPrices = (product?.variantPrices ?? []).map(e => setPackQty(e, packQtys[e.skuId] ?? 1));
   const prunedVariants = pruneRemovedVariantEntries(groupsOrig, groupsNow, packedVariantPrices);
   const variantCount = countVariantCombinations(groupsNow);
+  // OFFEN 023: gespeichert werden die deutschen Texte; attrs (AliExpress) bleiben, Zuordnung über displayValues (applyVariantRename).
+  const groupsDe = translatedGroups(groupsNow, deNames, deValues);
+  const deDuplicates = findDuplicateValues(groupsDe);
+  const deEmpty = groupsDe.some(g => !g.name.trim() || g.values.some(v => !v.trim()));
   const variantLimitError = product ? maxVariantsError(groupsNow, importRules.maxVariants) : null;
   // R1 Sterne-Sperre (OFFEN 006): Speichern erst ab importRules.minRating Sternen; fehlt die Bewertung → gesperrt.
   const ratingCheck = product ? ratingGate(product.rating, product.reviewCount, importRules.minRating) : { ok: true, reason: null };
@@ -644,6 +652,7 @@ export default function Lieferanten() {
       setPreselect(pre.rows.length > 0 || pre.reason ? pre : null);
       setPackQtys({}); setSinglePack(1); // OFFEN 007: neues Produkt → Packmenge zurück auf 1
       setEditedVariants(pre.applied ? pre.groups : startGroups);
+      setDeNames({}); setDeValues({}); // OFFEN 023: neues Produkt → Vorschläge neu
       setEditingVariant({});
       // Preis vorausfüllen
       const p = parsePrice(data.price);
@@ -709,6 +718,18 @@ export default function Lieferanten() {
     if (gpsrBlocked) return; // A-040: GPSR-Sperre gilt auch mit Override (Server prüft zusätzlich, 422)
     if (variantLimitError) return; // höchstens 5 Varianten (Server prüft zusätzlich, 422)
     if (ratingBlocked) return; // Sterne-Sperre (Server prüft zusätzlich, 422)
+    // OFFEN 023: Original → Deutsch als reine Umbenennung auf die fertige Zuordnung (skuId/attrs bleiben, displayValues = Deutsch).
+    const baseEntries = syncDisplayValuesOnRename(
+      0,
+      (product.variants ?? []).filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
+      groupsNow,
+      prunedVariants.kept,
+    ).map(v => ({
+      ...v,
+      ebayPrice: v.skuId ? (parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined) : undefined,
+    }));
+    const deRename = applyVariantRename(0, groupsNow, groupsDe, baseEntries, { pinSku: false });
+    if (!deRename.ok) { setSaveResult({ error: `Varianten auf Deutsch: ${deRename.error}` }); return; }
     setSaveLoading(true);
     setSaveResult(null);
     try {
@@ -726,24 +747,17 @@ export default function Lieferanten() {
           bullets: Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`),
           // Punkt C (25.10.2026): Merkmale selbst mitspeichern — bisher nur als bullets, products.specs blieb NULL → eBay ohne Merkmale
           specs: product.specs && Object.keys(product.specs).length > 0 ? product.specs : undefined,
-          variants: editedVariants
-            .filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
+          // OFFEN 023: deutsche Gruppen/Werte (Vorschau im Varianten-Kasten, editierbar); ohne Änderung identisch mit groupsNow.
+          variants: deRename.variants,
           // P-85 Schritt 2b: hat die Nutzerin während des Imports einen Anzeigewert umbenannt
           // (editedVariants weicht vom ursprünglichen Scrape product.variants ab), wird die
           // explizite displayValues-Zuordnung gleich mitgespeichert — sonst verliert die spätere
           // Preis-/SKU-Zuordnung (ebay.ts/price-monitor.ts) die Verbindung zum
           // AliExpress-Original. productId hier bewusst 0 (Produkt existiert noch nicht) — fließt
           // nicht in die zurückgegebenen displayValues ein, nur in ein hier ungenutztes sku-Feld.
-          variantPrices: syncDisplayValuesOnRename(
-            0,
-            (product.variants ?? []).filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
-            editedVariants.filter(g => g.values.length > 0 && !isSkipVariantGroup(g.name)),
-            prunedVariants.kept,
-          ).map(v => ({
-            ...v,
-            ebayPrice: v.skuId ? (parseFloat((variantEbayPrices[v.skuId] ?? "").replace(",", ".")) || undefined) : undefined,
-          })),
-          variantContents: Object.keys(variantContents).length > 0 ? variantContents : undefined,
+          // OFFEN 023: baseEntries = bisherige Zuordnung (syncDisplayValuesOnRename, P-85) + eBay-Preise; danach die Umbenennung auf Deutsch.
+          variantPrices: deRename.entries,
+          variantContents: Object.keys(variantContents).length > 0 ? renameContentKeys(variantContents, groupsNow, deRename.variants) : undefined,
           gpsrRaw: gpsrHersteller.trim() || undefined,
           // A-010: NUR was hier wirklich eingegeben/gewählt wurde; den Rest füllt der Server aus dem Rohtext (überschreibt so nie Hand-Pflege in der DB)
           ...overridesToFlat(gpsrOverrides),
@@ -2288,6 +2302,33 @@ export default function Lieferanten() {
               {variantLimitError && (
                 <div style={{marginBottom:12,padding:'8px 10px',borderRadius:8,background:'#FEF2F2',border:'1px solid #FCA5A5',color:'#991B1B',fontSize:12}}>
                   <b>Zu viele Varianten:</b> {variantLimitError} Mit dem × an den Werten löschen. Speichern und Einstellen sind gesperrt.
+                </div>
+              )}
+              {product && groupsNow.length > 0 && (
+                <div style={{marginBottom:12,padding:'8px 10px',borderRadius:8,background:'#F8FAFC',border:'1px solid #E2E8F0',fontSize:12}}>
+                  <div style={{fontWeight:700,marginBottom:4}}>Varianten auf Deutsch (so wird gespeichert)</div>
+                  <div style={{color:'#64748B',marginBottom:4}}>Original → Vorschlag. Felder sind änderbar. „unbekannt“ = nicht in der Tabelle, Wert bleibt wie er ist, bitte selbst eintragen.</div>
+                  {groupsNow.map(g => {
+                    const gName = translateGroupName(g.name);
+                    return (
+                      <div key={g.name} style={{marginBottom:4}}>
+                        <div>Gruppe: <span style={{color:'#64748B'}}>{g.name}</span> → <input value={deNames[g.name] ?? gName.value} onChange={e => setDeNames(prev => ({...prev, [g.name]: e.target.value}))} style={{fontSize:12,padding:'2px 6px',border:'1px solid #CBD5E1',borderRadius:6}} />
+                          {gName.unknownWords.length > 0 && deNames[g.name] == null && <span style={{color:'#B45309'}}> unbekannt: {gName.unknownWords.join(', ')}</span>}</div>
+                        {g.values.map(v => {
+                          const t = translateVariantValue(v);
+                          const k = valueKey(g.name, v);
+                          return (
+                            <div key={k} style={{marginLeft:12}}>
+                              <span style={{color:'#64748B'}}>{v}</span> → <input value={deValues[k] ?? t.value} onChange={e => setDeValues(prev => ({...prev, [k]: e.target.value}))} style={{fontSize:12,padding:'2px 6px',border:'1px solid #CBD5E1',borderRadius:6}} />
+                              {t.unknownWords.length > 0 && deValues[k] == null && <span style={{color:'#B45309'}}> unbekannt: {t.unknownWords.join(', ')}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                  {deDuplicates.length > 0 && <div style={{color:'#B91C1C',fontWeight:700}}>Doppelte Werte — Speichern gesperrt: {deDuplicates.join('; ')}</div>}
+                  {deEmpty && <div style={{color:'#B91C1C',fontWeight:700}}>Leerer Name/Wert — Speichern gesperrt.</div>}
                 </div>
               )}
               {prunedVariants.renamedAndRemoved && (
