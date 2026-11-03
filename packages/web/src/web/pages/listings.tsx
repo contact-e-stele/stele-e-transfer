@@ -353,6 +353,10 @@ export default function Listings() {
   const [bulkPriceMode, setBulkPriceMode] = useState<"percent" | "fixed" | "set">("percent");
   const [bulkPriceValue, setBulkPriceValue] = useState("");
   const [bulkAdRate, setBulkAdRate] = useState(5);
+  // OFFEN 024 NACHTRAG: Anzeige-Rate 5 % ↔ 0 % mit Kampagne bei eBay + Preisvorschau je Variante (Bestätigung in der Seite).
+  type AdSwitchRowUi = { skuId: string; label: string; oldVk: number; newVk: number; profitOld: number; profitNew: number; send: boolean; reason?: string };
+  type AdSwitchResUi = { productId: number; listingId: string; title: string; fromRate: number; toRate: number; status: string; rows: AdSwitchRowUi[]; error?: string };
+  const [adSwitch, setAdSwitch] = useState<{ toRate: number; itemIds: string[]; results: AdSwitchResUi[]; skipped: Array<{ itemId: string; error: string }>; applied: boolean } | null>(null);
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkResults, setBulkResults] = useState<Array<{ itemId: string; ok: boolean; error?: string; oldPrice?: number; newPrice?: number }>>([]);
@@ -555,7 +559,26 @@ export default function Listings() {
     }
     runBulk("/api/ebay/listings/bulk/end", {});
   };
-  const handleBulkAdRate = () => runBulk("/api/ebay/listings/bulk/adrate", { ratePercent: bulkAdRate });
+  const callAdSwitch = async (toRate: number, itemIds: string[], confirm: boolean, expected?: Record<string, number>) => {
+    setBulkRunning(true);
+    try {
+      const res = await fetch("/api/ebay/listings/ad-switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemIds, toRate, confirm, expected }) });
+      const data = await res.json().catch(() => ({})) as { results?: AdSwitchResUi[]; skipped?: Array<{ itemId: string; error: string }>; error?: string };
+      if (!res.ok || !data.results) { setAdSwitch({ toRate, itemIds, results: [], skipped: [{ itemId: "–", error: data.error ?? `HTTP ${res.status}` }], applied: confirm }); return; }
+      setAdSwitch({ toRate, itemIds, results: data.results, skipped: data.skipped ?? [], applied: confirm });
+      if (confirm) await load(true);
+    } finally { setBulkRunning(false); }
+  };
+  // 0 % und 5 %: Kampagne + Preise (Vorschau zuerst). Andere Sätze wie bisher.
+  const handleBulkAdRate = () => (bulkAdRate === 0 || bulkAdRate === 5)
+    ? callAdSwitch(bulkAdRate, Array.from(selected), false)
+    : runBulk("/api/ebay/listings/bulk/adrate", { ratePercent: bulkAdRate });
+  const applyAdSwitch = () => {
+    if (!adSwitch) return;
+    const expected: Record<string, number> = {};
+    for (const r of adSwitch.results) for (const row of r.rows) if (row.send) expected[row.skuId] = row.newVk;
+    void callAdSwitch(adSwitch.toRate, adSwitch.results.filter(r => r.status === "preview").map(r => r.listingId), true, expected);
+  };
   const handleBulkCategory = () => {
     if (!bulkCategoryId.trim()) return;
     runBulk("/api/ebay/listings/bulk/category", { categoryId: bulkCategoryId.trim() });
@@ -1331,7 +1354,7 @@ export default function Listings() {
                 <select value={bulkAdRate} onChange={e => setBulkAdRate(parseFloat(e.target.value))} style={{
                   padding: "7px 10px", fontSize: 12, border: "1.5px solid #C7D2FE", borderRadius: 8, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0F172A",
                 }}>
-                  {AD_RATE_OPTIONS.map(r => <option key={r} value={r}>{r === 0 ? "0 % (aus) – nur App, nichts an eBay" : `${r}%`}</option>)}
+                  {AD_RATE_OPTIONS.map(r => <option key={r} value={r}>{r === 0 ? "0 % (aus) – Werbung bei eBay aus + Preise senken" : r === 5 ? "5 % – Werbung bei eBay an + Preise anheben" : `${r}%`}</option>)}
                 </select>
                 <button onClick={handleBulkAdRate} disabled={bulkRunning} style={{
                   padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366F1", color: "#fff",
@@ -1380,6 +1403,35 @@ export default function Listings() {
                   {bulkRunning && <Loader size={12} style={{ animation: "spin 1s linear infinite" }} />}
                   Für {selected.size} Listings anwenden
                 </button>
+              </div>
+            )}
+
+            {adSwitch && (
+              <div role="dialog" aria-label="Anzeige-Rate umschalten" style={{ marginTop: 10, maxHeight: 420, overflow: "auto", background: "#fff", borderRadius: 8, padding: 10, border: "1.5px solid #C7D2FE", fontSize: 11 }}>
+                <div style={{ fontWeight: 800, marginBottom: 6, color: "#3730A3" }}>
+                  {adSwitch.applied ? "Ergebnis" : "Vorschau"}: Anzeige-Rate → {adSwitch.toRate} % {adSwitch.toRate === 0 ? "(Werbung bei eBay aus, Preise ohne Werbung)" : "(Werbung bei eBay an, Preise mit Werbung)"}
+                </div>
+                {adSwitch.results.map(r => (
+                  <div key={r.listingId} style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 700, color: r.status === "done" || r.status === "preview" ? "#0F172A" : "#DC2626" }}>
+                      stele-{r.productId} {r.title} · {r.fromRate} % → {r.toRate} % · {r.status === "preview" ? "Vorschau" : r.status === "done" ? "erledigt" : r.status}{r.error ? ` – ${r.error}` : ""}
+                    </div>
+                    {r.rows.map(row => (
+                      <div key={row.skuId} style={{ color: row.send ? "#334155" : "#B45309" }}>
+                        {row.label}: {row.oldVk.toFixed(2)} → <b>{row.newVk.toFixed(2)} €</b> · Gewinn {row.profitOld.toFixed(2)} → {row.profitNew.toFixed(2)} €{row.send ? "" : ` · ${row.reason ?? "nicht gesetzt"}`}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {adSwitch.skipped.map(s => <div key={s.itemId} style={{ color: "#DC2626" }}>#{s.itemId}: {s.error}</div>)}
+                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                  {!adSwitch.applied && adSwitch.results.some(r => r.status === "preview") && !bulkRunning && (
+                    <button onClick={applyAdSwitch} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#4F46E5", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      Preise übernehmen + Werbung {adSwitch.toRate === 0 ? "aus" : "an"} ({adSwitch.results.filter(r => r.status === "preview").length})
+                    </button>
+                  )}
+                  {!bulkRunning && <button onClick={() => setAdSwitch(null)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #CBD5E1", background: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{adSwitch.applied ? "Schließen" : "Abbrechen"}</button>}
+                </div>
               </div>
             )}
 

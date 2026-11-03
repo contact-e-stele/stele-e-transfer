@@ -36,3 +36,10 @@ describe('Kampagne 5 % (OFFEN 018)', () => {
     ]);
   });
 });
+
+import { bulkDeleteAdRequests } from './campaign-ads';
+describe('OFFEN 024: Angebot aus Kampagne nehmen', () => {
+  test('bulk_delete Body ohne Doppelte', () => {
+    expect(bulkDeleteAdRequests(['198725803587', '198725803587', '198601075438'])).toEqual({ requests: [{ listingId: '198725803587' }, { listingId: '198601075438' }] });
+  });
+});

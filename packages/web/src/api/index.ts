@@ -1745,6 +1745,74 @@ const app = new Hono()
     }
   })
 
+  // OFFEN 024 NACHTRAG (Inhaber 03.11.2026): Anzeige-Rate 5 % ↔ 0 % — Kampagne bei eBay + Preise je Variante (× 0,762 / 0,8215, ,95 aufgerundet).
+  // Ohne confirm: nur Vorschau. Reihenfolge und Sperren: api/ad-switch.ts. K-011-gesperrte Produkte werden nicht angefasst.
+  .post('/ebay/listings/ad-switch', async (c) => {
+    let body: { itemIds?: unknown; toRate?: unknown; confirm?: unknown; expected?: unknown } = {};
+    try { body = await c.req.json(); } catch { body = {}; }
+    const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(String).filter(x => /^\d+$/.test(x)) : [];
+    const toRate = body.toRate === 0 || body.toRate === 5 ? body.toRate : null;
+    if (itemIds.length === 0) return c.json({ error: 'itemIds fehlen' }, 400);
+    if (toRate == null) return c.json({ error: 'toRate muss 0 oder 5 sein' }, 400);
+    const expected = body.expected && typeof body.expected === 'object' ? body.expected as Record<string, number> : undefined;
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const rows = await db.select().from(schema.products).where(inArray(schema.products.ebayListingId, itemIds));
+      const { isVariantProduct } = await import('../shared/variant-product');
+      const { parseVariantSellPrices, isChinaShipping } = await import('../shared/pricing');
+      const { activeCheckoutFactor } = await import('../shared/checkout-factor');
+      const { parseVariantGroupsJson, updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
+      const { isProductPriceLocked } = await import('./price-locks');
+      const { runAdSwitch } = await import('./ad-switch');
+      const { removeCampaignAds, sendCampaignAds } = await import('./campaign-ads');
+      const products: import('./ad-switch').AdSwitchProduct[] = [];
+      const skipped: Array<{ itemId: string; error: string }> = [];
+      for (const itemId of itemIds) {
+        const p = rows.find(r => r.ebayListingId === itemId);
+        if (!p || p.ebayStatus !== 'listed') { skipped.push({ itemId, error: 'kein gelistetes App-Produkt zu diesem Angebot' }); continue; }
+        if (body.confirm === true && await isProductPriceLocked(p.id)) { skipped.push({ itemId, error: `stele-${p.id}: K-011 Sperre (eBay-Preise uneinheitlich) — erst "eBay-Preise prüfen"` }); continue; }
+        const isVariant = isVariantProduct(p.variants, p.variantPrices);
+        let entries: Array<{ skuId: string; attrs?: Record<string, string>; displayValues?: Record<string, string>; price: number }> = [];
+        try { const pv = p.variantPrices ? JSON.parse(p.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+        const vsp = parseVariantSellPrices(p.variantSellPrices);
+        const prodRows = isVariant
+          ? entries.filter(e => vsp[e.skuId] != null).map(e => ({ skuId: e.skuId, label: Object.values(e.displayValues ?? e.attrs ?? {}).join(' / ') || e.skuId, attrs: e.attrs ?? {}, displayValues: e.displayValues, buyPrice: e.price, sellPrice: vsp[e.skuId] }))
+          : [{ skuId: 'einzel', label: 'Einzelartikel', attrs: {}, buyPrice: p.buyPrice ?? 0, sellPrice: p.sellPrice ?? 0 }];
+        products.push({
+          id: p.id, title: (p.generatedTitle || p.title || '').slice(0, 80), ebayListingId: itemId, adRate: p.adRate, targetMarginEur: p.targetMarginEur,
+          isChinaOrigin: isChinaShipping(p.shipsFrom), checkoutFactor: activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt), isVariant,
+          groups: parseVariantGroupsJson(p.variants), rows: prodRows,
+        });
+      }
+      const cookie = c.req.header('Cookie') ?? '';
+      const results = await runAdSwitch(products, { toRate, confirm: body.confirm === true, expected }, {
+        removeAds: ids => removeCampaignAds(ids),
+        addAds: (ids, pct) => sendCampaignAds(ids, pct),
+        sendVariants: (id, groups, vrows) => updateEbayVariantPricesIndividually(id, groups, vrows),
+        sendSingle: async (id, listingId, price) => {
+          if (await updateEbayPriceInventory(id, price)) return { ok: true };
+          const t = await updateEbayPriceTrading(listingId, price);
+          return { ok: t.ok, error: t.error };
+        },
+        storeAdRate: async (id, rate) => { await db.update(schema.products).set({ adRate: rate, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id)); },
+        // App-Preise = eBay: dieselbe Route wie der Knopf "eBay-Preise prüfen → übernehmen" (eine Stelle, Grundgesetz 8).
+        readback: async id => {
+          const r = await app.request(`/api/products/${id}/sell-prices-from-ebay`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ apply: true, confirm: true }) });
+          const d = await r.json().catch(() => ({})) as { written?: boolean; error?: string };
+          return { ok: r.ok && d.written !== false, error: d.error };
+        },
+      });
+      if (body.confirm === true) {
+        delete (globalThis as Record<string, unknown>)['ebay_listings'];
+        for (const r of results) console.log(`[Anzeige-Umschaltung] stele-${r.productId} ${r.fromRate}→${r.toRate} %: ${r.status}${r.error ? ' – ' + r.error : ''} · ${r.rows.filter(x => x.send).map(x => `${x.label} ${x.oldVk}→${x.newVk}`).join(', ')}`);
+      }
+      return c.json({ toRate, confirm: body.confirm === true, results, skipped }, 200);
+    } catch (e) {
+      console.error('[ad-switch]', e);
+      return c.json({ error: String(e) }, 500);
+    }
+  })
+
   .post('/ebay/listings/bulk/category', async (c) => {
     try {
       const body = await c.req.json() as { itemIds: string[]; categoryId: string };
