@@ -356,7 +356,7 @@ export default function Listings() {
   // OFFEN 024 NACHTRAG: Anzeige-Rate 5 % ↔ 0 % mit Kampagne bei eBay + Preisvorschau je Variante (Bestätigung in der Seite).
   type AdSwitchRowUi = { skuId: string; label: string; oldVk: number; newVk: number; profitOld: number; profitNew: number; send: boolean; reason?: string };
   type AdSwitchResUi = { productId: number; listingId: string; title: string; fromRate: number; toRate: number; status: string; rows: AdSwitchRowUi[]; error?: string };
-  const [adSwitch, setAdSwitch] = useState<{ toRate: number; itemIds: string[]; results: AdSwitchResUi[]; skipped: Array<{ itemId: string; error: string }>; applied: boolean } | null>(null);
+  const [adSwitch, setAdSwitch] = useState<{ toRate: number; itemIds: string[]; results: AdSwitchResUi[]; skipped: Array<{ itemId: string; error: string }>; applied: boolean; retryFromRate?: number; expected?: Record<string, number> } | null>(null);
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkResults, setBulkResults] = useState<Array<{ itemId: string; ok: boolean; error?: string; oldPrice?: number; newPrice?: number }>>([]);
@@ -559,13 +559,13 @@ export default function Listings() {
     }
     runBulk("/api/ebay/listings/bulk/end", {});
   };
-  const callAdSwitch = async (toRate: number, itemIds: string[], confirm: boolean, expected?: Record<string, number>) => {
+  const callAdSwitch = async (toRate: number, itemIds: string[], confirm: boolean, expected?: Record<string, number>, retryFromRate?: number) => {
     setBulkRunning(true);
     try {
-      const res = await fetch("/api/ebay/listings/ad-switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemIds, toRate, confirm, expected }) });
+      const res = await fetch("/api/ebay/listings/ad-switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemIds, toRate, confirm, expected, retryFromRate }) });
       const data = await res.json().catch(() => ({})) as { results?: AdSwitchResUi[]; skipped?: Array<{ itemId: string; error: string }>; error?: string };
-      if (!res.ok || !data.results) { setAdSwitch({ toRate, itemIds, results: [], skipped: [{ itemId: "–", error: data.error ?? `HTTP ${res.status}` }], applied: confirm }); return; }
-      setAdSwitch({ toRate, itemIds, results: data.results, skipped: data.skipped ?? [], applied: confirm });
+      if (!res.ok || !data.results) { setAdSwitch({ toRate, itemIds, results: [], skipped: [{ itemId: "–", error: data.error ?? `HTTP ${res.status}` }], applied: confirm, retryFromRate, expected }); return; }
+      setAdSwitch({ toRate, itemIds, results: data.results, skipped: data.skipped ?? [], applied: confirm, retryFromRate, expected });
       if (confirm) await load(true);
     } finally { setBulkRunning(false); }
   };
@@ -577,7 +577,17 @@ export default function Listings() {
     if (!adSwitch) return;
     const expected: Record<string, number> = {};
     for (const r of adSwitch.results) for (const row of r.rows) if (row.send) expected[row.skuId] = row.newVk;
-    void callAdSwitch(adSwitch.toRate, adSwitch.results.filter(r => r.status === "preview").map(r => r.listingId), true, expected);
+    // Beim Nachholen gilt die ursprünglich freigegebene Vorschau (gemerkt), nicht die neu berechnete.
+    void callAdSwitch(adSwitch.toRate, adSwitch.results.filter(r => r.status === "preview").map(r => r.listingId), true, adSwitch.retryFromRate != null ? adSwitch.expected : expected, adSwitch.retryFromRate);
+  };
+  // OFFEN 025: nach "prices_failed" die fehlenden Preise nachholen — Vorschau zuerst, gesendet wird nur die freigegebene Vorschau.
+  const retryAdSwitch = () => {
+    if (!adSwitch) return;
+    const failed = adSwitch.results.filter(r => r.status === "prices_failed");
+    if (failed.length === 0) return;
+    const expected: Record<string, number> = { ...(adSwitch.expected ?? {}) };
+    for (const r of failed) for (const row of r.rows) if (row.send && expected[row.skuId] == null) expected[row.skuId] = row.newVk;
+    void callAdSwitch(adSwitch.toRate, failed.map(r => r.listingId), false, expected, failed[0].fromRate);
   };
   const handleBulkCategory = () => {
     if (!bulkCategoryId.trim()) return;
@@ -1428,6 +1438,11 @@ export default function Listings() {
                   {!adSwitch.applied && adSwitch.results.some(r => r.status === "preview") && !bulkRunning && (
                     <button onClick={applyAdSwitch} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#4F46E5", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                       Preise übernehmen + Werbung {adSwitch.toRate === 0 ? "aus" : "an"} ({adSwitch.results.filter(r => r.status === "preview").length})
+                    </button>
+                  )}
+                  {adSwitch.applied && adSwitch.results.some(r => r.status === "prices_failed") && !bulkRunning && (
+                    <button onClick={retryAdSwitch} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#B45309", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      Fehlende Preise nachholen (Vorschau)
                     </button>
                   )}
                   {!bulkRunning && <button onClick={() => setAdSwitch(null)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #CBD5E1", background: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{adSwitch.applied ? "Schließen" : "Abbrechen"}</button>}
