@@ -61,3 +61,15 @@ describe('Anzeige-Rate 5 % → 0 % (OFFEN 024)', () => {
     expect(r.send).toBe(true);
   });
 });
+
+import { ebayRateCheck } from './ad-rate-switch';
+describe('Abgleich eBay ↔ App (Inhaber 03.11.2026 13:19: App ist maßgeblich)', () => {
+  test('gleich → frei, kein Abgleich', () => { expect(ebayRateCheck(5, 5)).toEqual({ block: null, differs: false, note: null }); });
+  test('abweichend → NICHT gesperrt, eBay wird angeglichen', () => {
+    expect(ebayRateCheck(0, 5)).toEqual({ block: null, differs: true, note: 'Abgleich: bei eBay 5 %, in der App 0 % — eBay wird mit angeglichen' });
+  });
+  test('unbekannte Werbeart / nicht lesbar → gesperrt', () => {
+    expect(ebayRateCheck(5, null).block).toContain('andere Werbeart');
+    expect(ebayRateCheck(5, undefined).block).toContain('nicht lesbar');
+  });
+});

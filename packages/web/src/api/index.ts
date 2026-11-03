@@ -1751,9 +1751,11 @@ const app = new Hono()
     let body: { itemIds?: unknown; toRate?: unknown; confirm?: unknown; expected?: unknown; retryFromRate?: unknown } = {};
     try { body = await c.req.json(); } catch { body = {}; }
     const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(String).filter(x => /^\d+$/.test(x)) : [];
-    const toRate = body.toRate === 0 || body.toRate === 5 ? body.toRate : null;
+    const { AD_RATE_OPTIONS } = await import('../shared/ad-rate-options');
+    // Inhaber 03.11.2026 13:14: alle Sätze 0/2/3/5/8/10 % über denselben Weg (Kampagne bei eBay + Preise).
+    const toRate = typeof body.toRate === 'number' && AD_RATE_OPTIONS.includes(body.toRate) ? body.toRate : null;
     if (itemIds.length === 0) return c.json({ error: 'itemIds fehlen' }, 400);
-    if (toRate == null) return c.json({ error: 'toRate muss 0 oder 5 sein' }, 400);
+    if (toRate == null) return c.json({ error: `toRate muss einer von ${AD_RATE_OPTIONS.join('/')} sein` }, 400);
     const expected = body.expected && typeof body.expected === 'object' ? body.expected as Record<string, number> : undefined;
     try {
       const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
@@ -1765,6 +1767,15 @@ const app = new Hono()
       const { isProductPriceLocked } = await import('./price-locks');
       const { runAdSwitch } = await import('./ad-switch');
       const { removeCampaignAds, sendCampaignAds } = await import('./campaign-ads');
+      // Inhaber 03.11. Frage 3: eBay-Werbestatus lesen. Nicht lesbar → Vorschau zeigt Sperre, Ausführen sendet nichts.
+      let promo: Map<string, { kind: string; ratePercent?: number }> | null = null;
+      try { promo = (await (await import('./ebay')).fetchPromotionStatus()).promo as Map<string, { kind: string; ratePercent?: number }>; } catch (e) { console.warn('[ad-switch] Werbestatus nicht lesbar', e); }
+      const ebayRateOf = (itemId: string): number | null | undefined => {
+        if (!promo) return undefined;
+        const pr = promo.get(itemId);
+        if (!pr || pr.kind === 'NONE') return 0;
+        return pr.kind === 'CPS' && typeof pr.ratePercent === 'number' ? pr.ratePercent : null;
+      };
       const products: import('./ad-switch').AdSwitchProduct[] = [];
       const skipped: Array<{ itemId: string; error: string }> = [];
       for (const itemId of itemIds) {
@@ -1781,12 +1792,12 @@ const app = new Hono()
         products.push({
           id: p.id, title: (p.generatedTitle || p.title || '').slice(0, 80), ebayListingId: itemId, adRate: p.adRate, targetMarginEur: p.targetMarginEur,
           isChinaOrigin: isChinaShipping(p.shipsFrom), checkoutFactor: activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt), isVariant,
-          groups: parseVariantGroupsJson(p.variants), rows: prodRows,
+          groups: parseVariantGroupsJson(p.variants), rows: prodRows, ebayRate: ebayRateOf(itemId),
         });
       }
       const cookie = c.req.header('Cookie') ?? '';
       // OFFEN 025: Nachholen nur mit freigegebener Vorschau (expected) — sonst würde ein schon gesenkter Preis erneut gesenkt.
-      const retryFromRate = body.retryFromRate === 0 || body.retryFromRate === 5 ? body.retryFromRate : undefined;
+      const retryFromRate = typeof body.retryFromRate === 'number' && AD_RATE_OPTIONS.includes(body.retryFromRate) ? body.retryFromRate : undefined;
       if (retryFromRate != null && !expected) return c.json({ error: 'Nachholen nur mit expected (freigegebene Preise je SKU)' }, 400);
       const results = await runAdSwitch(products, { toRate, confirm: body.confirm === true, expected, retryFromRate }, {
         removeAds: ids => removeCampaignAds(ids),

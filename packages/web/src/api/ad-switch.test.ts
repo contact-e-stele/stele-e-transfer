@@ -8,7 +8,7 @@ beforeAll(() => { before = aliEinfuhrEur(); setAliEinfuhrEur(5.95); });
 afterAll(() => setAliEinfuhrEur(before));
 
 const p227 = (adRate: number, sell = 18.95): AdSwitchProduct => ({
-  id: 227, title: 'Grey', ebayListingId: '198725803587', adRate, targetMarginEur: 1, isChinaOrigin: true, checkoutFactor: null, isVariant: true,
+  id: 227, title: 'Grey', ebayListingId: '198725803587', adRate, ebayRate: adRate, targetMarginEur: 1, isChinaOrigin: true, checkoutFactor: null, isVariant: true,
   groups: [{ name: 'Color', values: ['Grey'] }],
   rows: [{ skuId: '12000038172369013', label: 'Grey', attrs: { Color: 'Grey' }, buyPrice: 4.99, sellPrice: sell }],
 });
@@ -75,7 +75,7 @@ describe('Anzeige-Rate umschalten – Reihenfolge (OFFEN 024)', () => {
 // OFFEN 025: stele-123 nach dem Lauf 03.11. 08:43 (Live gelesen 08:5x): 4 Preise gesetzt, 200PCS 36,95 und 20PCS 16,95 nicht.
 // Freigabe-Tabelle: 200PCS 34,95, 20PCS 15,95. Nachholen darf NUR diese zwei senden und die schon gesenkten NICHT erneut senken.
 const p123now = (): AdSwitchProduct => ({
-  id: 123, title: 'Spritzbeutel', ebayListingId: '198601076435', adRate: 0, targetMarginEur: 2, isChinaOrigin: true, checkoutFactor: null, isVariant: true,
+  id: 123, title: 'Spritzbeutel', ebayListingId: '198601076435', adRate: 0, ebayRate: 0, targetMarginEur: 2, isChinaOrigin: true, checkoutFactor: null, isVariant: true,
   groups: [{ name: 'Menge', values: ['10PCS', '20PCS', '30PCS', '50PCS', '100PCS', '200PCS'] }],
   rows: [
     { skuId: '264', label: '10PCS', attrs: {}, buyPrice: 2.09, sellPrice: 14.95 },
@@ -108,5 +108,49 @@ describe('Fehlende Preise nachholen (OFFEN 025)', () => {
     const { '269': _, ...ohne200 } = freigabe123;
     const [r] = await runAdSwitch([p123now()], { toRate: 0, confirm: false, expected: ohne200, retryFromRate: 5 }, m.deps);
     expect(r.rows.find(x => x.label === '200PCS')!.send).toBe(false);
+  });
+});
+
+describe('Alle Sätze + Abgleich (Inhaber 03.11.2026 13:14)', () => {
+  test('5 → 3: Satz runter → erst Kampagne auf 3 %, dann Preis', async () => {
+    const m = mocks();
+    // 22,45 × 0,762 / 0,7858 = 21,77 → 21,95 (bun)
+    const [r] = await runAdSwitch([p227(5, 22.45)], { toRate: 3, confirm: true }, m.deps);
+    expect(r.status).toBe('done');
+    expect(m.calls).toEqual(['addAds 198725803587 3', 'adRate 227 3', 'send 227 21.95', 'readback 227']);
+  });
+  test('0 → 3: Satz rauf → erst Preis 18,95, dann Kampagne 3 %', async () => {
+    const m = mocks();
+    const [r] = await runAdSwitch([p227(0, 17.95)], { toRate: 3, confirm: true }, m.deps);
+    expect(r.status).toBe('done');
+    expect(m.calls).toEqual(['send 227 18.95', 'addAds 198725803587 3', 'adRate 227 3', 'readback 227']);
+  });
+  test('eBay 5 %, App 0 %, Wahl 3 %: Preise rechnen vom App-Satz (0 → 3), eBay wird mit auf 3 % gesetzt', async () => {
+    const m = mocks();
+    const [r] = await runAdSwitch([{ ...p227(0, 17.95), ebayRate: 5 }], { toRate: 3, confirm: true }, m.deps);
+    expect(r.status).toBe('done');
+    expect(r.note).toBe('Abgleich: bei eBay 5 %, in der App 0 % — eBay wird mit angeglichen');
+    expect(m.calls).toEqual(['send 227 18.95', 'addAds 198725803587 3', 'adRate 227 3', 'readback 227']);
+  });
+  test('reiner Abgleich: App 0 %, eBay 5 %, Wahl 0 % → nur Werbung bei eBay entfernen, keine Preise', async () => {
+    const m = mocks();
+    const [pv] = await runAdSwitch([{ ...p227(0, 17.95), ebayRate: 5 }], { toRate: 0, confirm: false }, m.deps);
+    expect(pv.status).toBe('preview');
+    expect(pv.rows).toEqual([]);
+    const [r] = await runAdSwitch([{ ...p227(0, 17.95), ebayRate: 5 }], { toRate: 0, confirm: true }, m.deps);
+    expect(r.status).toBe('done');
+    expect(m.calls).toEqual(['removeAds 198725803587']);
+  });
+  test('reiner Abgleich: App 5 %, eBay 0 %, Wahl 5 % → nur in Kampagne 5 %', async () => {
+    const m = mocks();
+    const [r] = await runAdSwitch([{ ...p227(5), ebayRate: 0 }], { toRate: 5, confirm: true }, m.deps);
+    expect(r.status).toBe('done');
+    expect(m.calls).toEqual(['addAds 198725803587 5']);
+  });
+  test('Werbestatus nicht lesbar → nichts gesendet', async () => {
+    const m = mocks();
+    const [r] = await runAdSwitch([{ ...p227(5), ebayRate: undefined }], { toRate: 0, confirm: true }, m.deps);
+    expect(r.status).toBe('ebay_differs');
+    expect(m.calls).toEqual([]);
   });
 });
