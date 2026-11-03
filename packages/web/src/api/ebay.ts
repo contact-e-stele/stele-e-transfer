@@ -3308,6 +3308,10 @@ export interface EbayReturn {
   createdAt: string;
   amount: number;
   currency: string;
+  // OFFEN 021 (nur lesen): Rückgabemenge und eBay-Antwortfrist, falls die Suche sie liefert — sonst null
+  // (Feldpfade laut Post-Order-ReturnSummary; im Live-Listenformat noch nicht gegengeprüft, daher tolerant).
+  quantity: number | null;
+  deadline: string | null;
 }
 
 // Bekannte Rückgabegründe (summary.creationInfo.reason) — unbekannte Werte werden
@@ -3373,6 +3377,7 @@ interface RawReturnMember {
     item?: { itemId?: string; transactionId?: string; returnQuantity?: number; itemTitle?: string };
   };
   itemDetail?: { itemPicUrl?: string };
+  sellerResponseDue?: { activityDue?: string; respondByDate?: { value?: string } };
   sellerTotalRefund?: { estimatedRefundAmount?: { value?: string; currency?: string }; actualRefundAmount?: { value?: string; currency?: string } };
   buyerTotalRefund?: { estimatedRefundAmount?: { value?: string; currency?: string }; actualRefundAmount?: { value?: string; currency?: string } };
 }
@@ -3394,6 +3399,8 @@ function mapRawReturn(r: RawReturnMember): EbayReturn {
     createdAt: r.creationDate ?? r.creationInfo?.creationDate ?? new Date().toISOString(),
     amount: parseFloat(chosenAmount?.value ?? '0'),
     currency: chosenAmount?.currency ?? 'EUR',
+    quantity: typeof r.creationInfo?.item?.returnQuantity === 'number' ? r.creationInfo.item.returnQuantity : null,
+    deadline: r.sellerResponseDue?.respondByDate?.value ?? null,
   };
 }
 

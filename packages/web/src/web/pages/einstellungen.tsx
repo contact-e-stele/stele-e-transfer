@@ -56,6 +56,37 @@ export default function Einstellungen() {
 
   useEffect(() => { loadWorkflowTemplate(); }, [loadWorkflowTemplate]);
 
+  // OFFEN 021: zentral gespeicherte, editierbare Vorlage für "Retoure-Workflow kopieren"
+  const [returnTemplate, setReturnTemplate] = useState<string>("");
+  const [returnTemplateLoading, setReturnTemplateLoading] = useState(true);
+  const [savingReturnTemplate, setSavingReturnTemplate] = useState(false);
+  const [returnTemplateMsg, setReturnTemplateMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/settings/return-workflow-template", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setReturnTemplate((d as { template?: string }).template ?? ""))
+      .catch(() => setReturnTemplateMsg({ ok: false, text: "Laden fehlgeschlagen — Netzwerkfehler" }))
+      .finally(() => setReturnTemplateLoading(false));
+  }, []);
+  const handleSaveReturnTemplate = async () => {
+    setSavingReturnTemplate(true);
+    setReturnTemplateMsg(null);
+    try {
+      const r = await fetch("/api/settings/return-workflow-template", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ template: returnTemplate }),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      setReturnTemplateMsg(d.ok ? { ok: true, text: "Gespeichert ✓" } : { ok: false, text: d.error || "Speichern fehlgeschlagen" });
+    } catch {
+      setReturnTemplateMsg({ ok: false, text: "Netzwerkfehler beim Speichern" });
+    } finally {
+      setSavingReturnTemplate(false);
+    }
+  };
+
   const handleSaveWorkflowTemplate = async () => {
     setSavingTemplate(true);
     setTemplateMsg(null);
@@ -559,6 +590,57 @@ export default function Einstellungen() {
               {templateMsg && (
                 <span style={{ fontSize: 12, fontWeight: 600, color: templateMsg.ok ? "#16A34A" : "#DC2626" }}>
                   {templateMsg.text}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* OFFEN 021: Retoure-Workflow-Text */}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>↩️</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Retoure-Workflow</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 8px" }}>
+          Text, den der Knopf "Retoure-Workflow kopieren" (Bestellungen-Tab neben "Retoure: …" und Retouren-Tab je Fall) verwendet. Ist die Rückgabe bei eBay schon geschlossen/erstattet, steht ganz oben automatisch ein Warnhinweis.
+        </p>
+        <p style={{ fontSize: 12, color: "#64748B", margin: "0 0 10px" }}>
+          Platzhalter: {["jetzt", "returnId", "orderId", "buyerUsername", "buyerName", "reason", "items", "sku", "qty", "amount", "deadline", "aliOrderId", "buyPrice", "tracking", "carrier"].map((k, i) => <span key={k}>{i > 0 ? ", " : ""}<code>{`{{${k}}}`}</code></span>)} — fehlt ein Wert, steht dort "— in eBay/AliExpress nachsehen".
+        </p>
+        <p style={{ fontSize: 12, color: "#B45309", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "6px 10px", margin: "0 0 10px" }}>
+          ⚠️ Feste Regel bei Änderungen (auch für Claude Code): neue Version immer gegen die vorherige vergleichen, nur ergänzen/verbessern, nie bestehende Punkte einfach löschen. Grundstruktur erhalten.
+        </p>
+        {returnTemplateLoading ? (
+          <span style={{ fontSize: 13, color: "#94A3B8" }}>Lade…</span>
+        ) : (
+          <>
+            <textarea
+              value={returnTemplate}
+              onChange={e => setReturnTemplate(e.target.value)}
+              rows={16}
+              style={{
+                width: "100%", boxSizing: "border-box", fontFamily: "ui-monospace, monospace",
+                fontSize: 12.5, lineHeight: 1.5, padding: 10, borderRadius: 8,
+                border: "1px solid #E2E8F0", color: "#1E293B", resize: "vertical",
+              }}
+            />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+              <button
+                onClick={handleSaveReturnTemplate}
+                disabled={savingReturnTemplate}
+                style={{
+                  padding: "8px 16px", borderRadius: 8, background: "#1E293B", color: "#fff",
+                  fontWeight: 700, fontSize: 13, border: "none", cursor: savingReturnTemplate ? "default" : "pointer",
+                  opacity: savingReturnTemplate ? 0.6 : 1,
+                }}
+              >
+                {savingReturnTemplate ? "Speichere…" : "Speichern"}
+              </button>
+              {returnTemplateMsg && (
+                <span style={{ fontSize: 12, fontWeight: 600, color: returnTemplateMsg.ok ? "#16A34A" : "#DC2626" }}>
+                  {returnTemplateMsg.text}
                 </span>
               )}
             </div>
