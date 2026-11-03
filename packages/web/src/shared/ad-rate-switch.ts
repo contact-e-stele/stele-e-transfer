@@ -60,13 +60,14 @@ export function planAdRateSwitch(i: AdSwitchInput): AdSwitchRow[] {
 }
 
 /**
- * Inhaber 03.11.2026 13:14 (Frage 3 "ja"): weicht der Satz bei eBay vom App-Satz ab, wird NICHT umgerechnet — erst Abgleich zeigen.
- * ebayRate: Satz laut eBay (0 = nicht beworben), null = andere Werbeart als Kosten-pro-Verkauf (unbekannt), undefined = nicht gelesen.
- * Rückgabe: Sperrgrund oder null (darf umgestellt werden).
+ * Abgleich eBay ↔ App (Inhaber 03.11.2026 13:19: "wenn das in der App steht, muss es auch bei eBay so stehen").
+ * Die App ist maßgeblich: weicht der Satz bei eBay ab, wird eBay beim Umstellen mit angeglichen (Preise rechnen vom App-Satz).
+ * ebayRate: Satz laut eBay (0 = nicht beworben), null = andere Werbeart als Kosten-pro-Verkauf, undefined = nicht gelesen.
+ * block: nur bei unbekannter Werbeart oder nicht lesbarem Status → dann nichts ändern.
  */
-export function ebayRateBlock(appRate: number, ebayRate: number | null | undefined): string | null {
-  if (ebayRate === undefined) return 'eBay-Werbestatus nicht lesbar — nichts geändert';
-  if (ebayRate === null) return 'bei eBay andere Werbeart als Kosten-pro-Verkauf — erst im Seller Hub prüfen';
-  if (Math.abs(ebayRate - appRate) > 1e-9) return `Abgleich nötig: bei eBay ${ebayRate} %, in der App ${appRate} % — nichts geändert`;
-  return null;
+export function ebayRateCheck(appRate: number, ebayRate: number | null | undefined): { block: string | null; differs: boolean; note: string | null } {
+  if (ebayRate === undefined) return { block: 'eBay-Werbestatus nicht lesbar — nichts geändert', differs: false, note: null };
+  if (ebayRate === null) return { block: 'bei eBay andere Werbeart als Kosten-pro-Verkauf — erst im Seller Hub prüfen', differs: false, note: null };
+  const differs = Math.abs(ebayRate - appRate) > 1e-9;
+  return { block: null, differs, note: differs ? `Abgleich: bei eBay ${ebayRate} %, in der App ${appRate} % — eBay wird mit angeglichen` : null };
 }

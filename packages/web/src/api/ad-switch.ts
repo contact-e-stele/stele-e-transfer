@@ -4,12 +4,12 @@
 //   5 % → 0 %: ERST Werbung bei eBay entfernen (sonst niedrigerer Preis + Werbekosten = Verlust), DANN Preise senken.
 //   0 % → 5 %: ERST Preise anheben, DANN in die Kampagne (sonst Werbekosten auf den alten, niedrigen Preis).
 // Danach adRate in der App, App-Preise = eBay (Rücklesen). Ohne confirm nur Vorschau.
-import { ebayRateBlock, planAdRateSwitch, type AdSwitchRow } from '../shared/ad-rate-switch';
+import { ebayRateCheck, planAdRateSwitch, type AdSwitchRow } from '../shared/ad-rate-switch';
 
 export interface AdSwitchProduct {
   id: number; title: string; ebayListingId: string; adRate: number | null; targetMarginEur: number | null;
   isChinaOrigin: boolean; checkoutFactor: number | null; isVariant: boolean;
-  /** Satz laut eBay (0 = nicht beworben, null = andere Werbeart, undefined = nicht gelesen). Weicht er ab → nichts umstellen. */
+  /** Satz laut eBay (0 = nicht beworben, null = andere Werbeart, undefined = nicht gelesen). Weicht er ab → eBay wird an die App angeglichen. */
   ebayRate?: number | null;
   groups: Array<{ name: string; values: string[] }>;
   rows: Array<{ skuId: string; label: string; attrs: Record<string, string>; displayValues?: Record<string, string>; buyPrice: number; sellPrice: number }>;
@@ -28,6 +28,8 @@ export type AdSwitchStatus = 'preview' | 'done' | 'ads_failed' | 'prices_failed'
 export interface AdSwitchResult {
   productId: number; listingId: string; title: string; fromRate: number; toRate: number;
   status: AdSwitchStatus; rows: AdSwitchRow[]; error?: string; sentCount?: number;
+  /** Abgleich-Hinweis: eBay-Satz wich von der App ab und wird (bzw. wurde) angeglichen. */
+  note?: string;
 }
 
 /** expected: skuId → neuer VK aus der Vorschau, die der Inhaber gesehen hat. Weicht die Neuberechnung ab → nichts senden. */
@@ -39,10 +41,15 @@ export async function runAdSwitch(
     const fromRate = p.adRate ?? 5;
     // OFFEN 025: "Fehlende Preise nachholen" — Satz steht schon auf toRate (Werbung ist schon umgestellt), aber einzelne Variantenpreise
     // wurden nicht gesetzt. Gesendet wird NUR, was genau der freigegebenen Vorschau (expected) entspricht und noch nicht gesetzt ist.
-    // Inhaber 03.11. Frage 3: eBay-Satz ≠ App-Satz → erst Abgleich, nichts umrechnen/senden (auch nicht in der Vorschau anbieten).
-    const block = ebayRateBlock(fromRate, p.ebayRate);
-    if (block) {
-      out.push({ productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate, toRate: input.toRate, rows: [], status: 'ebay_differs', error: block });
+    // Abgleich (Inhaber 03.11. 13:19): App ist maßgeblich. Abweichender eBay-Satz wird angeglichen; nur unbekannte Werbeart / nicht lesbar sperrt.
+    const chk = ebayRateCheck(fromRate, p.ebayRate);
+    if (chk.block) {
+      out.push({ productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate, toRate: input.toRate, rows: [], status: 'ebay_differs', error: chk.block });
+      continue;
+    }
+    // Gleicher Satz gewählt, eBay weicht ab → reiner Abgleich: nur Werbung bei eBay auf den App-Satz, Preise bleiben.
+    if (chk.differs && fromRate === input.toRate && input.retryFromRate == null) {
+      out.push(await alignOnly(p, input.toRate, input.confirm, chk.note!, deps));
       continue;
     }
     if (input.retryFromRate != null && fromRate === input.toRate) {
@@ -50,7 +57,7 @@ export async function runAdSwitch(
       continue;
     }
     const rows = planAdRateSwitch({ fromRate, toRate: input.toRate, rows: p.rows, isChinaOrigin: p.isChinaOrigin, checkoutFactor: p.checkoutFactor, targetMarginEur: p.targetMarginEur });
-    const base = { productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate, toRate: input.toRate, rows };
+    const base = { productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate, toRate: input.toRate, rows, ...(chk.note ? { note: chk.note } : {}) };
     if (!input.confirm) { out.push({ ...base, status: 'preview' }); continue; }
     if (fromRate === input.toRate) { out.push({ ...base, status: 'unchanged', error: `steht schon auf ${input.toRate} %` }); continue; }
     if (input.expected) {
@@ -139,6 +146,20 @@ async function retryMissing(p: AdSwitchProduct, retryFromRate: number, toRate: n
     const rb = await deps.readback(p.id);
     if (!ok) return { ...base, status: 'prices_failed', sentCount: sent, error: `Nachholen nicht vollständig: ${error ?? ''}` };
     return { ...base, status: 'done', sentCount: sent, error: rb.ok ? undefined : `App-Preise nicht von eBay übernommen: ${rb.error ?? ''}` };
+  } catch (e) {
+    return { ...base, status: 'error', error: String(e) };
+  }
+}
+
+/** Nur eBay-Werbung an den App-Satz angleichen (keine Preisänderung), danach nichts weiter — die App war schon richtig. */
+async function alignOnly(p: AdSwitchProduct, rate: number, confirm: boolean, note: string, deps: AdSwitchDeps): Promise<AdSwitchResult> {
+  const base = { productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate: rate, toRate: rate, rows: [] as AdSwitchRow[], note };
+  if (!confirm) return { ...base, status: 'preview' };
+  try {
+    const r = rate === 0 ? await deps.removeAds([p.ebayListingId]) : await deps.addAds([p.ebayListingId], rate);
+    const mine = r.results.find(x => x.listingId === p.ebayListingId);
+    if (r.ok && mine?.ok !== false) return { ...base, status: 'done' };
+    return { ...base, status: 'ads_failed', error: `Abgleich bei eBay nicht gelungen: ${mine?.error ?? ('error' in r ? (r as { error?: string }).error : null) ?? 'unbekannt'}` };
   } catch (e) {
     return { ...base, status: 'error', error: String(e) };
   }

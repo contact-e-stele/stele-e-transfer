@@ -367,7 +367,7 @@ export default function Listings() {
   const [bulkAdRate, setBulkAdRate] = useState(5);
   // OFFEN 024 NACHTRAG: Anzeige-Rate 5 % ↔ 0 % mit Kampagne bei eBay + Preisvorschau je Variante (Bestätigung in der Seite).
   type AdSwitchRowUi = { skuId: string; label: string; oldVk: number; newVk: number; profitOld: number; profitNew: number; send: boolean; reason?: string };
-  type AdSwitchResUi = { productId: number; listingId: string; title: string; fromRate: number; toRate: number; status: string; rows: AdSwitchRowUi[]; error?: string };
+  type AdSwitchResUi = { productId: number; listingId: string; title: string; fromRate: number; toRate: number; status: string; rows: AdSwitchRowUi[]; error?: string; note?: string };
   const [adSwitch, setAdSwitch] = useState<{ toRate: number; itemIds: string[]; results: AdSwitchResUi[]; skipped: Array<{ itemId: string; error: string }>; applied: boolean; retryFromRate?: number; expected?: Record<string, number> } | null>(null);
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [bulkRunning, setBulkRunning] = useState(false);
@@ -1136,6 +1136,7 @@ export default function Listings() {
                 <div style={{ fontWeight: 700, color: r.status === "done" || r.status === "preview" ? "#0F172A" : "#DC2626" }}>
                   stele-{r.productId} {r.title} · {r.fromRate} % → {r.toRate} % · {r.status === "preview" ? "Vorschau" : r.status === "done" ? "erledigt" : r.status}{r.error ? ` – ${r.error}` : ""}
                 </div>
+                {r.note && <div style={{ color: "#B45309", fontWeight: 700 }}>⚠ {r.note}{r.rows.length === 0 ? " (nur Werbung, Preise bleiben)" : ""}</div>}
                 {r.rows.map(row => (
                   <div key={row.skuId} style={{ color: row.send ? "#334155" : "#B45309" }}>
                     {row.label}: {row.oldVk.toFixed(2)} → <b>{row.newVk.toFixed(2)} €</b> · Gewinn {row.profitOld.toFixed(2)} → {row.profitNew.toFixed(2)} €{row.send ? "" : ` · ${row.reason ?? "nicht gesetzt"}`}
@@ -1269,6 +1270,20 @@ export default function Listings() {
                     {r === 0 ? "0 % (aus)" : `${r} %`}
                   </button>
                 ))}
+                {(() => {
+                  // Abgleich (Inhaber 03.11. 13:19): angezeigte Angebote, deren eBay-Satz von der App abweicht → eBay an die App angleichen.
+                  const diff = filtered.filter(l => l.appProduct && ebayPromo[l.itemId]?.differs && ebayPromo[l.itemId]?.ebayAdRate != null);
+                  if (diff.length === 0) return null;
+                  const byRate = new Map<number, string[]>();
+                  for (const l of diff) { const rate = l.appProduct!.adRate ?? 5; byRate.set(rate, [...(byRate.get(rate) ?? []), l.itemId]); }
+                  return [...byRate.entries()].map(([rate, ids]) => (
+                    <button key={`align-${rate}`} type="button" disabled={bulkRunning} onClick={() => void callAdSwitch(rate, ids, false)}
+                      title="Werbesatz bei eBay weicht von der App ab — eBay auf den App-Satz setzen (Preise bleiben), Vorschau zuerst"
+                      style={{ fontSize: 12, fontWeight: 700, padding: "4px 12px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", border: "1.5px solid #FCA5A5", background: "#FEF2F2", color: "#B91C1C" }}>
+                      eBay an App angleichen: {ids.length} × {rate === 0 ? "0 % (aus)" : `${rate} %`}
+                    </button>
+                  ));
+                })()}
               </div>
               {preview && tier && (
                 <div style={{ marginTop: 10, background: preview.red > 0 ? "#FFFBEB" : "#F0FDF4", border: "1px solid " + (preview.red > 0 ? "#FDE68A" : "#BBF7D0"), borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#0F172A" }}>
@@ -1695,7 +1710,14 @@ export default function Listings() {
                             // Inhaber 03.11. Frage 3: Satz bei eBay sichtbar, wenn er von der App abweicht (dann wird nicht umgerechnet).
                             const pr = ebayPromo[listing.itemId];
                             if (!pr || !pr.differs) return null;
-                            return <span title="Werbesatz bei eBay weicht von der App ab — erst abgleichen" style={{ fontSize: 10, fontWeight: 800, color: "#DC2626" }}>eBay: {pr.ebayAdRate == null ? "andere Werbeart" : `${pr.ebayAdRate} %`}</span>;
+                            return (
+                              <button type="button" disabled={pr.ebayAdRate == null || currentRate == null}
+                                onClick={() => { if (currentRate != null) void callAdSwitch(currentRate, [listing.itemId], false); }}
+                                title="Werbesatz bei eBay weicht von der App ab — klicken: eBay an die App angleichen (Vorschau zuerst)"
+                                style={{ fontSize: 10, fontWeight: 800, color: "#DC2626", background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: 6, padding: "1px 6px", cursor: "pointer", fontFamily: "inherit" }}>
+                                eBay: {pr.ebayAdRate == null ? "andere Werbeart" : `${pr.ebayAdRate} %`} → angleichen
+                              </button>
+                            );
                           })()}
                           {saving && <Loader size={9} style={{ animation: "spin 1s linear infinite" }} color="#F59E0B" />}
                           {res?.ok && <CheckCircle size={9} color="#22C55E" />}

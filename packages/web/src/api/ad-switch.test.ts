@@ -125,13 +125,27 @@ describe('Alle Sätze + Abgleich (Inhaber 03.11.2026 13:14)', () => {
     expect(r.status).toBe('done');
     expect(m.calls).toEqual(['send 227 18.95', 'addAds 198725803587 3', 'adRate 227 3', 'readback 227']);
   });
-  test('eBay 5 %, App 0 % → ebay_differs, nichts gesendet, keine Vorschau-Zeilen', async () => {
+  test('eBay 5 %, App 0 %, Wahl 3 %: Preise rechnen vom App-Satz (0 → 3), eBay wird mit auf 3 % gesetzt', async () => {
     const m = mocks();
     const [r] = await runAdSwitch([{ ...p227(0, 17.95), ebayRate: 5 }], { toRate: 3, confirm: true }, m.deps);
-    expect(r.status).toBe('ebay_differs');
-    expect(r.error).toContain('bei eBay 5 %, in der App 0 %');
-    expect(r.rows).toEqual([]);
-    expect(m.calls).toEqual([]);
+    expect(r.status).toBe('done');
+    expect(r.note).toBe('Abgleich: bei eBay 5 %, in der App 0 % — eBay wird mit angeglichen');
+    expect(m.calls).toEqual(['send 227 18.95', 'addAds 198725803587 3', 'adRate 227 3', 'readback 227']);
+  });
+  test('reiner Abgleich: App 0 %, eBay 5 %, Wahl 0 % → nur Werbung bei eBay entfernen, keine Preise', async () => {
+    const m = mocks();
+    const [pv] = await runAdSwitch([{ ...p227(0, 17.95), ebayRate: 5 }], { toRate: 0, confirm: false }, m.deps);
+    expect(pv.status).toBe('preview');
+    expect(pv.rows).toEqual([]);
+    const [r] = await runAdSwitch([{ ...p227(0, 17.95), ebayRate: 5 }], { toRate: 0, confirm: true }, m.deps);
+    expect(r.status).toBe('done');
+    expect(m.calls).toEqual(['removeAds 198725803587']);
+  });
+  test('reiner Abgleich: App 5 %, eBay 0 %, Wahl 5 % → nur in Kampagne 5 %', async () => {
+    const m = mocks();
+    const [r] = await runAdSwitch([{ ...p227(5), ebayRate: 0 }], { toRate: 5, confirm: true }, m.deps);
+    expect(r.status).toBe('done');
+    expect(m.calls).toEqual(['addAds 198725803587 5']);
   });
   test('Werbestatus nicht lesbar → nichts gesendet', async () => {
     const m = mocks();
