@@ -1,6 +1,7 @@
 import { aliEinfuhrEur } from "../../shared/constants";
 import { useState, useEffect, useCallback } from "react";
 import { ElectricSettingsCard } from "../components/electric-panel";
+import { OriginPolicyCard } from "../components/origin-policy-panel";
 
 interface AliStatus {
   connected: boolean;
@@ -839,6 +840,9 @@ export default function Einstellungen() {
           Mehrere Stück desselben Artikels zahlen die Einfuhr nur einmal.
         </p>
       </div>
+
+      {/* OFFEN 030 Weg B: Versandrichtlinien "Versand aus China" / "Versand aus EU-Lager" per Knopf anlegen */}
+      <OriginPolicyCard />
 
       {/* A-029 (P-E01): Elektro Kat. 5 */}
       <ElectricSettingsCard />

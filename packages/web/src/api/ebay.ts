@@ -47,6 +47,7 @@ import {
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
 } from '../shared/variant-resolver';
 import { planVariantAxes, categoryAspectMap, type AxisPlan, type CategoryAspectInfo } from '../shared/variant-axis-aspect';
+import { parseFulfillmentPolicies, buildFulfillmentPolicyBody, type FulfillmentPolicyInfo, type CreatePolicyRequest } from '../shared/fulfillment-policy';
 
 // P-85 Schritt 2b (20.09.2026): NON_VARIATION_ASPECTS und slugify() leben jetzt in
 // src/shared/variant-resolver.ts (werden dort UND von price-monitor.ts gebraucht — Regel 8, EINE
@@ -311,6 +312,39 @@ export async function getBusinessPolicies(): Promise<PolicyCache> {
 
   policyCache = { fulfillmentPolicyId, paymentPolicyId, returnPolicyId, fetchedAt: Date.now() };
   return policyCache;
+}
+
+// ─── OFFEN 030 Weg B: Versandrichtlinien je Herkunft lesen / per Knopf anlegen ──────────────────────
+
+/** NUR LESEN: alle Versandrichtlinien des Kontos (EBAY_DE). Wirft bei Fehler. */
+export async function fetchFulfillmentPolicies(fetchFn: typeof fetch = fetch, token?: string): Promise<FulfillmentPolicyInfo[]> {
+  const t = token ?? await getAccessToken();
+  const res = await fetchFn(`${BASE_URL}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_DE`, {
+    headers: { 'Authorization': `Bearer ${t}`, 'Accept-Language': 'de-DE' },
+  });
+  if (!res.ok) throw new Error(`fulfillment_policy lesen: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  return parseFulfillmentPolicies(await res.json());
+}
+
+/**
+ * SCHREIBT ins eBay-Konto (Account API createFulfillmentPolicy). Nur vom Knopf aus aufrufen — die Prüfung
+ * (checkCreatePolicyRequest: Bearbeitungszeit Pflicht, Service erlaubt, Name noch nicht vorhanden) macht der Aufrufer davor.
+ */
+export async function createFulfillmentPolicy(req: CreatePolicyRequest, fetchFn: typeof fetch = fetch, token?: string): Promise<{ fulfillmentPolicyId: string; name: string }> {
+  const t = token ?? await getAccessToken();
+  const body = buildFulfillmentPolicyBody(req);
+  const res = await fetchFn(`${BASE_URL}/sell/account/v1/fulfillment_policy`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE', 'Accept-Language': 'de-DE' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Versandrichtlinie "${body.name}" anlegen: ${res.status} ${text.slice(0, 400)}`);
+  let id = '';
+  try { id = String((JSON.parse(text) as { fulfillmentPolicyId?: unknown }).fulfillmentPolicyId ?? ''); } catch { /* leer */ }
+  if (!id) throw new Error(`Versandrichtlinie "${body.name}": eBay hat keine ID zurückgegeben (${res.status}) — bitte im Seller Hub nachsehen, bevor erneut gedrückt wird.`);
+  console.log(`[eBay] OFFEN 030 Weg B: Versandrichtlinie angelegt "${body.name}" ${id} (Bearbeitung ${req.handlingDays} Tage, ${req.serviceCode})`);
+  return { fulfillmentPolicyId: id, name: body.name };
 }
 
 // ─── Fulfillment Policy per Handling-Zeit ─────────────────────────────────────
