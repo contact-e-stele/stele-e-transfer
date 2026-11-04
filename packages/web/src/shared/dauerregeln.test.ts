@@ -138,7 +138,7 @@ describe('Ende-zu-Ende Regel 1–4: Ausgabe des heutigen Generators (buildProduc
   });
 });
 
-describe('P71-C: Generator mit gpsrRaw — 5 Tabs, 0 Verstöße, kein @/http/alicdn', () => {
+describe('P71-C: Generator mit gpsrRaw — 4 Reiter + Fußzeile (NACHTRAG 029), 0 Verstöße, kein @/http/alicdn', () => {
   it('buildProductDescriptionForEbay erzeugt den Tab Produktsicherheit (nur Hinweis) und bleibt sauber', () => {
     const { html, violations } = buildProductDescriptionForEbay({
       title: 'Frischhaltedose Edelstahl 3er Set',
@@ -152,7 +152,7 @@ describe('P71-C: Generator mit gpsrRaw — 5 Tabs, 0 Verstöße, kein @/http/ali
     });
     expect(violations).toEqual([]);
     expect(summarizeDescriptionViolations(html).total).toBe(0);
-    for (const label of ['Beschreibung', 'Versand &amp; Retouren', 'Impressum', 'AGB', 'Produktsicherheit']) {
+    for (const label of ['Beschreibung', 'Impressum', 'AGB', 'Produktsicherheit']) {
       expect(html).toContain(`>${label}</label>`);
     }
     expect(html).toContain(GPSR_DESCRIPTION_NOTICE);

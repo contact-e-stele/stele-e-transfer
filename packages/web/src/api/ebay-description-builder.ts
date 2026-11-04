@@ -11,6 +11,7 @@ import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '.
 import { neutralizeGpsrTab } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { TEXT_VERSION_MARKER, type ReturnTerms } from '../shared/shipping-return-text';
+import { listingOrigin, deliveryTimeFor, type DeliveryTimes, type ListingOrigin } from '../shared/listing-origin';
 
 export interface ProductDescriptionFields {
   title: string;
@@ -24,15 +25,33 @@ export interface ProductDescriptionFields {
   bullets?: string | null;         // JSON array
   images?: string | null;          // JSON array
   gpsrRaw?: string | null;         // nur als Schalter für den Tab Produktsicherheit (Inhalt: GPSR_DESCRIPTION_NOTICE)
+  shipsFrom?: string | null;       // OFFEN 030: Herkunft → Lieferzeit in der Fußzeile
+}
+
+// OFFEN 029/030: was die Beschreibung von außen braucht (eBay-Rücknahme-Richtlinie, Lieferzeiten je Herkunft aus den Einstellungen).
+export interface DescriptionContext {
+  returnTerms?: ReturnTerms | null;
+  deliveryTimes?: DeliveryTimes;
 }
 
 export interface BuiltProductDescription {
   html: string;
   violations: DescriptionComplianceViolation[];
+  origin?: ListingOrigin; // OFFEN 030: Herkunft des Angebots (mixed → Listen gesperrt)
 }
 
-// OFFEN 029: returnTerms = Rücknahme-Richtlinie des Angebots (fehlt/null → neutraler Rückgabe-Satz in der Vorlage).
-export function buildProductDescriptionForEbay(product: ProductDescriptionFields, returnTerms?: ReturnTerms | null): BuiltProductDescription {
+/** OFFEN 030: Herkunft aus shipsFrom + Varianten-Merkmal "Ships From" (variantPrices[].attrs). */
+export function originOfProduct(product: Pick<ProductDescriptionFields, 'shipsFrom' | 'variantPrices'>): ListingOrigin {
+  let attrs: Array<Record<string, string> | null> = [];
+  try {
+    const parsed = JSON.parse(product.variantPrices ?? '[]');
+    if (Array.isArray(parsed)) attrs = parsed.map((v: { attrs?: Record<string, string> }) => (v && typeof v.attrs === 'object' ? v.attrs : null));
+  } catch { /* ignore */ }
+  return listingOrigin(product.shipsFrom, attrs);
+}
+
+export function buildProductDescriptionForEbay(product: ProductDescriptionFields, ctx: DescriptionContext = {}): BuiltProductDescription {
+  const origin = originOfProduct(product);
   const variantGroupsParsed: Array<{ name: string; values: string[] }> = (() => {
     try {
       const parsed = JSON.parse(product.variants ?? '[]');
@@ -74,19 +93,20 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
     bullets: bulletsParsed.length > 0 ? bulletsParsed : undefined,
     images: images.filter(u => u.startsWith('http')).slice(0, 3),
     gpsrRaw: product.gpsrRaw ?? undefined,
-    returnTerms: returnTerms ?? null,
+    returnTerms: ctx.returnTerms ?? null,
+    deliveryTime: deliveryTimeFor(origin, ctx.deliveryTimes),
   };
 
   const html = neutralizeGpsrTab(buildEbayHTMLLight(templateProduct));
   const violations = findDescriptionComplianceViolations(html);
-  return { html, violations };
+  return { html, violations, origin };
 }
 
 // P71-C Teil 2: Beschreibung fürs Erst-Listing (/ebay/list). Eine gespeicherte Vorlage wird nur
 // übernommen, wenn sie nach neutralizeGpsrTab keine Dauerregel-Verstöße hat — sonst (z. B. alte
 // Vorlage mit E-Mail im Impressum) wird sie aus den aktuellen Produktfeldern neu gebaut. Ein
 // Verstoß bleibt nur, wenn auch der Neubau verstößt. Reine Funktion, damit ohne DB testbar.
-export function resolveListingDescription(product: ProductDescriptionFields, storedHtml: string | null | undefined, returnTerms?: ReturnTerms | null): BuiltProductDescription {
+export function resolveListingDescription(product: ProductDescriptionFields, storedHtml: string | null | undefined, ctx: DescriptionContext = {}): BuiltProductDescription {
   const rawHtml = storedHtml ?? '';
   const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
   // Tab 5 (Produktsicherheit) gehört immer dazu: eine ältere gespeicherte Vorlage ohne ihn wird neu gebaut.
@@ -96,7 +116,19 @@ export function resolveListingDescription(product: ProductDescriptionFields, sto
   if (isFullTemplate && hasTab5 && hasCurrentTexts) {
     const html = neutralizeGpsrTab(rawHtml);
     const violations = findDescriptionComplianceViolations(html);
-    if (violations.length === 0) return { html, violations };
+    // OFFEN 030: gespeicherte Vorlage nur übernehmen, wenn ihre Lieferzeit zur aktuellen Herkunft passt (sonst neu bauen)
+    const fresh = buildProductDescriptionForEbay(product, ctx);
+    if (violations.length === 0 && sameFooter(html, fresh.html)) return { html, violations, origin: fresh.origin };
+    return fresh;
   }
-  return buildProductDescriptionForEbay(product, returnTerms);
+  return buildProductDescriptionForEbay(product, ctx);
+}
+
+function footerOf(html: string): string | null {
+  const m = html.match(/Versand &amp; R&uuml;ckgabe: [^<]*/);
+  return m ? m[0] : null;
+}
+/** Fußzeile (Lieferzeit + Rückgabe) der gespeicherten Vorlage = frisch berechnete? */
+function sameFooter(stored: string, fresh: string): boolean {
+  return footerOf(stored) !== null && footerOf(stored) === footerOf(fresh);
 }

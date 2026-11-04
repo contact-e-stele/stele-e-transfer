@@ -29,8 +29,8 @@ const THIRD_PARTY_SNIPPETS = [
   "whatsapp",
 ];
 
-// P71-C (30.09.2026, Vorgabe Inhaber): Vorlage wieder mit 5 Tabs (Beschreibung, Versand & Retouren,
-// Impressum, AGB, Produktsicherheit) — aber ohne E-Mail, Telefonnummer und Link im Text.
+// P71-C (30.09.2026, Vorgabe Inhaber): Vorlage mit Reitern; seit NACHTRAG 029 (Inhaber 04.11. "A ja") ohne Reiter
+// "Versand & Retouren" (jetzt Fußzeile): Beschreibung, Impressum, AGB, Produktsicherheit — aber ohne E-Mail, Telefonnummer und Link im Text.
 describe("buildEbayHTML (dark) — Verstoß-Reparatur Phase 2 + Grundsatzkonform (2026-09-28)", () => {
   const BUILD = buildEbayHTML;
   const html = BUILD(productWithThirdPartyContact);
@@ -46,16 +46,16 @@ describe("buildEbayHTML (dark) — Verstoß-Reparatur Phase 2 + Grundsatzkonform
     }
   });
 
-  it("P71-C: alle 5 Tabs vorhanden (Beschreibung, Versand & Retouren, Impressum, AGB, Produktsicherheit)", () => {
+  it("NACHTRAG 029: alle 4 Reiter vorhanden (Beschreibung, Impressum, AGB, Produktsicherheit)", () => {
     const withGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: "Hersteller: Foo Ltd" });
-    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+    for (const label of ["Beschreibung", "Impressum", "AGB", "Produktsicherheit"]) {
       expect(withGpsr).toContain(`>${label}</label>`);
     }
   });
 
   it("P71-C Teil 2: Vorlage OHNE gpsrRaw hat trotzdem alle 5 Tabs (Produktsicherheit immer) inkl. CSS für Tab 5", () => {
     const noGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: null });
-    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+    for (const label of ["Beschreibung", "Impressum", "AGB", "Produktsicherheit"]) {
       expect(noGpsr).toContain(`>${label}</label>`);
     }
     expect(noGpsr).toContain('id="stet-t5"');
@@ -73,10 +73,11 @@ describe("buildEbayHTML (dark) — Verstoß-Reparatur Phase 2 + Grundsatzkonform
     expect(html).toContain("Wir nehmen nicht an Streitbeilegungsverfahren teil.");
   });
 
-  it("P71-C: Versandinformationen und Kachel KOSTENLOSER VERSAND wieder da, ohne Amazon Logistik", () => {
-    expect(html).toContain("Versandinformationen");
-    expect(html).toContain("KOSTENLOSER VERSAND");
-    expect(html).toContain("Retouren &amp; R&uuml;ckgabe");
+  // NACHTRAG 029 (Inhaber 04.11. "A ja"): Reiter "Versand & Retouren" und Kacheln ersetzt durch EINE Fußzeile.
+  it("NACHTRAG 029: Versand & Rückgabe als eine Fußzeile, kein Reiter/keine Kachel, ohne Amazon Logistik", () => {
+    expect(html).toContain("Versand &amp; R&uuml;ckgabe:");
+    expect(html).not.toContain(">Versand &amp; Retouren</label>");
+    expect(html).not.toContain("KOSTENLOSER VERSAND");
     expect(html).not.toContain("Amazon Logistik");
   });
 });
@@ -96,16 +97,16 @@ describe("buildEbayHTMLLight — Verstoß-Reparatur Phase 2 + Grundsatzkonform (
     }
   });
 
-  it("P71-C: alle 5 Tabs vorhanden (Beschreibung, Versand & Retouren, Impressum, AGB, Produktsicherheit)", () => {
+  it("NACHTRAG 029: alle 4 Reiter vorhanden (Beschreibung, Impressum, AGB, Produktsicherheit)", () => {
     const withGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: "Hersteller: Foo Ltd" });
-    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+    for (const label of ["Beschreibung", "Impressum", "AGB", "Produktsicherheit"]) {
       expect(withGpsr).toContain(`>${label}</label>`);
     }
   });
 
   it("P71-C Teil 2: Vorlage OHNE gpsrRaw hat trotzdem alle 5 Tabs (Produktsicherheit immer) inkl. CSS für Tab 5", () => {
     const noGpsr = BUILD({ ...productWithThirdPartyContact, gpsrRaw: null });
-    for (const label of ["Beschreibung", "Versand &amp; Retouren", "Impressum", "AGB", "Produktsicherheit"]) {
+    for (const label of ["Beschreibung", "Impressum", "AGB", "Produktsicherheit"]) {
       expect(noGpsr).toContain(`>${label}</label>`);
     }
     expect(noGpsr).toContain('id="stet-l5"');
@@ -123,10 +124,11 @@ describe("buildEbayHTMLLight — Verstoß-Reparatur Phase 2 + Grundsatzkonform (
     expect(html).toContain("Wir nehmen nicht an Streitbeilegungsverfahren teil.");
   });
 
-  it("P71-C: Versandinformationen und Kachel KOSTENLOSER VERSAND wieder da, ohne Amazon Logistik", () => {
-    expect(html).toContain("Versandinformationen");
-    expect(html).toContain("KOSTENLOSER VERSAND");
-    expect(html).toContain("Retouren &amp; R&uuml;ckgabe");
+  // NACHTRAG 029 (Inhaber 04.11. "A ja"): Reiter "Versand & Retouren" und Kacheln ersetzt durch EINE Fußzeile.
+  it("NACHTRAG 029: Versand & Rückgabe als eine Fußzeile, kein Reiter/keine Kachel, ohne Amazon Logistik", () => {
+    expect(html).toContain("Versand &amp; R&uuml;ckgabe:");
+    expect(html).not.toContain(">Versand &amp; Retouren</label>");
+    expect(html).not.toContain("KOSTENLOSER VERSAND");
     expect(html).not.toContain("Amazon Logistik");
   });
 });
@@ -167,10 +169,10 @@ describe("Regressionsschutz — unauffälliges Produkt bleibt unverändert nutzb
     images: ["https://ae01.alicdn.com/kf/example2.jpg"],
   };
 
-  it("erzeugt weiterhin eine vollständige Vorlage (Beschreibung, Versand & Retouren)", () => {
+  it("erzeugt weiterhin eine vollständige Vorlage (Beschreibung + Fußzeile Versand & Rückgabe)", () => {
     const html = buildEbayHTMLLight(cleanProduct);
     expect(html).toContain("Beschreibung");
-    expect(html).toContain("Retouren");
+    expect(html).toContain("Versand &amp; R&uuml;ckgabe:");
     expect(html).toContain("Praktisches Set für Küche und Aufbewahrung");
   });
 });

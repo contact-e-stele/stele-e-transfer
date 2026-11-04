@@ -421,6 +421,19 @@ async function scrapeAmazon(url: string): Promise<{
   return null;
 }
 
+// OFFEN 030: Lieferzeiten je Herkunft aus app_settings (fehlt → Startwerte: nur China 7–12 Werktage).
+async function loadDeliveryTimes() {
+  const { parseDeliveryTimes } = await import('../shared/listing-origin');
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'delivery_times')).get();
+    return parseDeliveryTimes(row?.value ?? null);
+  } catch {
+    return parseDeliveryTimes(null);
+  }
+}
+
 const app = new Hono()
   .basePath('api')
   .use(cors({ origin: (origin) => origin ?? '*', credentials: true }))
@@ -1226,6 +1239,7 @@ const app = new Hono()
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
         getReturnTerms: async () => (await import('./ebay')).fetchReturnTerms(), // OFFEN 029
+        getDeliveryTimes: loadDeliveryTimes, // OFFEN 030
       });
       if (!outcome.ok) {
         return c.json({ error: outcome.error, ...(outcome.violations ? { violations: outcome.violations } : {}) }, outcome.httpStatus);
@@ -1261,6 +1275,7 @@ const app = new Hono()
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
         getReturnTerms: async () => (await import('./ebay')).fetchReturnTerms(), // OFFEN 029
+        getDeliveryTimes: loadDeliveryTimes, // OFFEN 030
       });
       return c.json({ results }, 200);
     } catch (e) {
@@ -2816,7 +2831,14 @@ const app = new Hono()
     // neu gebaut (P71-C Teil 2) — Fehler nur, wenn auch der Neubau verstößt. Dieselbe Rechenstelle
     // wie der Beschreibungs-Nachzieh-Weg (GRUNDGESETZ Regel 8).
     const { fetchReturnTerms } = await import('./ebay');
-    const listingDescription = resolveListingDescription(product, product.htmlDescription, await fetchReturnTerms()); // OFFEN 029
+    const listingDescription = resolveListingDescription(product, product.htmlDescription, { returnTerms: await fetchReturnTerms(), deliveryTimes: await loadDeliveryTimes() }); // OFFEN 029/030
+    // OFFEN 030 Punkt 1c / Gesetzbuch Nr 114: ein Angebot = ein Versandort. Gemischte Herkunft → nicht listen.
+    const { mixedOriginError } = await import('../shared/listing-origin');
+    const originError = listingDescription.origin ? mixedOriginError(listingDescription.origin) : null;
+    if (originError) {
+      await db.update(schema.products).set({ ebayStatus: 'error', ebayError: originError, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
+      return c.json({ error: originError }, 422);
+    }
     // A-029: bei bestätigtem Elektro (Sperre oben bestanden) die WEEE-Reg.-Nr. als reine Textzeile — ohne Link/URL/E-Mail.
     const weeeLine = weeeLineForListing(product, electricSettings.weeeRegNr);
     const fullDescription = weeeLine ? `${listingDescription.html}<p>${weeeLine}</p>` : listingDescription.html;
@@ -5135,6 +5157,34 @@ app.get('/products/:id/aspect-precheck', async (c) => {
   } catch (e) {
     console.error('[aspect-precheck]', e);
     return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ─── OFFEN 030: Lieferzeiten je Herkunft (app_settings "delivery_times", KEINE Migration) ───────────
+// Nur China hat einen Startwert (7–12 Werktage, Inhaber 09:00). EU/Deutschland bleiben leer, bis ein echter Wert
+// eingetragen ist — dann zeigt die Fußzeile den neutralen Satz (Inhaber 17:45: keine geratene Zahl).
+app.get('/settings/delivery-times', async (c) => {
+  try {
+    return c.json({ times: await loadDeliveryTimes() }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+app.put('/settings/delivery-times', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as { times?: Record<string, unknown> };
+    const { parseDeliveryTimes } = await import('../shared/listing-origin');
+    const raw = JSON.stringify(body.times ?? {});
+    const parsed = parseDeliveryTimes(raw);
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const now = new Date().toISOString();
+    const value = JSON.stringify(parsed);
+    await db.insert(appSettings).values({ key: 'delivery_times', value, updatedAt: now })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+    return c.json({ ok: true, times: parsed }, 200);
+  } catch (e) {
+    return c.json({ ok: false, error: String(e) }, 500);
   }
 });
 
