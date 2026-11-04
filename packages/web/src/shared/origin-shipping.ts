@@ -15,8 +15,9 @@
 
 import { deliveryTimeFor, mixedOriginError, type DeliveryTimes, type ListingOrigin } from './listing-origin';
 
-export const POLICY_NAME_CN = 'Versand aus China';
-export const POLICY_NAME_EU = 'Versand aus EU-Lager';
+// Namen + Lesen der Versandrichtlinien: EINE Stelle in shared/fulfillment-policy.ts (auch vom Knopf Weg B, PR #268, genutzt).
+import { POLICY_NAME_CN, POLICY_NAME_EU, parseFulfillmentPolicies, type FulfillmentPolicyInfo } from './fulfillment-policy';
+export { POLICY_NAME_CN, POLICY_NAME_EU, parseFulfillmentPolicies, type FulfillmentPolicyInfo };
 
 /** Ländername (wie AliExpress "Ships From" ihn liefert) → ISO-2. Nur Länder, die isEuShipFrom kennt, plus China. */
 const COUNTRY_ISO: Array<[RegExp, string]> = [
@@ -129,36 +130,6 @@ export function locationCreateBody(spec: LocationSpec) {
 }
 
 // ─── Versandrichtlinien (nur lesen) ───────────────────────────────────────────
-
-export interface FulfillmentPolicyInfo {
-  id: string;
-  name: string;
-  handlingDays: number | null;
-  services: string[];        // shippingServiceCode je Service
-  freeShipping: boolean;     // alle Services kostenlos
-}
-
-/** GET /sell/account/v1/fulfillment_policy?marketplace_id=EBAY_DE → Liste. */
-export function parseFulfillmentPolicies(json: unknown): FulfillmentPolicyInfo[] {
-  const list = (json as { fulfillmentPolicies?: unknown })?.fulfillmentPolicies;
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((p: Record<string, unknown>) => {
-    const id = typeof p.fulfillmentPolicyId === 'string' ? p.fulfillmentPolicyId : null;
-    if (!id) return [];
-    const ht = p.handlingTime as { value?: unknown; unit?: unknown } | undefined;
-    const handlingDays = typeof ht?.value === 'number' && (ht.unit === 'DAY' || ht.unit === 'BUSINESS_DAY' || ht.unit === undefined) ? ht.value : null;
-    const services: Array<{ code: string; free: boolean }> = [];
-    for (const o of (Array.isArray(p.shippingOptions) ? p.shippingOptions : []) as Array<{ shippingServices?: Array<Record<string, unknown>> }>) {
-      for (const s of o.shippingServices ?? []) {
-        const code = typeof s.shippingServiceCode === 'string' ? s.shippingServiceCode : '';
-        const cost = (s.shippingCost as { value?: unknown } | undefined)?.value;
-        const free = s.freeShipping === true || (cost !== undefined && Number(cost) === 0);
-        if (code) services.push({ code, free });
-      }
-    }
-    return [{ id, name: typeof p.name === 'string' ? p.name : '', handlingDays, services: services.map(s => s.code), freeShipping: services.length > 0 && services.every(s => s.free) }];
-  });
-}
 
 export function policyNameFor(origin: ListingOrigin): string | null {
   if (origin.mixed) return null;
