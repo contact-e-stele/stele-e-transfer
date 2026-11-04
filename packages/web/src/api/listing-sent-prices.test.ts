@@ -49,6 +49,8 @@ const offerBodies = () => calls.filter(c => c.method === 'POST' && /\/sell\/inve
 const baseInput = {
   title: 'Test Hängematte', description: '<p>Beschreibung</p>', quantity: 3, condition: 'NEW' as const, imageUrls: ['https://i.ebayimg.com/a.jpg'],
   categoryId: '57920', adRate: 5, shipsFrom: 'China', targetMarginEur: 2,
+  // OFFEN 030 Teil 2: Lagerort + Versandrichtlinie je Herkunft sind Pflicht beim Listen
+  originShipping: { location: { key: 'CN-Shenzhen', name: 'Versand aus China (Shenzhen)', country: 'CN', city: 'Shenzhen', stateOrProvince: 'Guangdong', estimated: true }, fulfillmentPolicyId: 'FP-CN' },
   // Pflicht für Varianten-Listings (buildRegulatoryBlock): EU-verantwortliche Person (Test-Fixture)
   gpsr: {
     eu: { name: 'Muster EU SARL', address: '12 Rue de Test', postalCode: '75017', city: 'Paris', country: 'FR', email: 'eu@example.fr', phone: null },

@@ -15,7 +15,8 @@ import { resolveEuImportFields, resolveMfrImportFields, resolveMfrUpdateFields, 
 import { findForeignEmails } from '../shared/gpsr-description';
 import { gpsrCompleteGate, gpsrGateMessage, gpsrFinalFields, GPSR_IMPORT_BLOCKED_PREFIX, GPSR_LISTING_BLOCKED_PREFIX } from '../shared/gpsr-import-gate';
 import { findDescriptionComplianceViolations, checkOutgoingListingText, formatComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
-import { resolveListingDescription } from './ebay-description-builder';
+import { resolveListingDescription, originOfProduct } from './ebay-description-builder';
+import { deliveryTimeFor } from '../shared/listing-origin';
 import { scrapeAliExpressUrl, backfillVariantImages, fetchPageVariantPrices } from './aliexpress';
 import { getAliExpressOAuthUrl, exchangeAliCodeForToken, refreshAliToken, getAliProductByApi, getAliAccessToken, saveAliTokens, ensureFreshAliToken } from './aliexpress-api';
 import { getDriveOAuthUrl, handleDriveCallback, isDriveConnected, verifyFileSignature } from './drive';
@@ -431,6 +432,19 @@ async function loadDeliveryTimes() {
     return parseDeliveryTimes(row?.value ?? null);
   } catch {
     return parseDeliveryTimes(null);
+  }
+}
+
+// OFFEN 030 Teil 2: Lagerorte je Herkunft aus app_settings "origin_locations" (KEINE Migration). Fehlt → nur China-Standardort.
+async function loadOriginLocations() {
+  const { parseOriginLocations } = await import('../shared/origin-shipping');
+  try {
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const row = await db.select().from(appSettings).where(eq(appSettings.key, 'origin_locations')).get();
+    return parseOriginLocations(row?.value ?? null);
+  } catch {
+    return parseOriginLocations(null);
   }
 }
 
@@ -2992,6 +3006,22 @@ const app = new Hono()
         for (const w of variantWarnings) console.warn(`[ebay/list] Produkt ${product.id}: ${w}`);
       }
 
+      // OFFEN 030 Teil 2: Lagerort + Versandrichtlinie je Herkunft. Rot (keine/gemischte Herkunft, kein Lagerort, Richtlinie fehlt
+      // oder Konto nicht lesbar) → nicht listen. Die Richtlinie wird nur GELESEN, nie angelegt.
+      let originShipping: import('./ebay').OriginShipping;
+      {
+        const { originAmpel } = await import('../shared/origin-shipping');
+        const { fetchFulfillmentPolicies } = await import('./ebay');
+        const policies = await fetchFulfillmentPolicies().catch((e) => { console.warn('[ebay/list] OFFEN 030 Richtlinien nicht lesbar:', e instanceof Error ? e.message : String(e)); return null; });
+        const ampel = originAmpel({ origin: listingDescription.origin ?? originOfProduct(product), locations: await loadOriginLocations(), policies, deliveryTimes: await loadDeliveryTimes() });
+        if (ampel.blockError || !ampel.location || !ampel.policy) {
+          const msg = ampel.blockError ?? ampel.standortText;
+          await db.update(schema.products).set({ ebayStatus: 'error', ebayError: msg, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, body.productId));
+          return c.json({ error: msg, ampel: { standort: ampel.standort, text: ampel.standortText } }, 422);
+        }
+        originShipping = { location: ampel.location, fulfillmentPolicyId: ampel.policy.id };
+      }
+
       // OFFEN 013 Regel 6b: auch ohne App-Verknüpfung nicht doppelt listen — frisch bei eBay nachsehen, ob für
       // stele-<id>… oder dieselbe AliExpress-Nr schon ein aktives Angebot läuft. Ist eBay nicht lesbar: abbrechen.
       // Steht bewusst direkt vor listOnEbay: alle lokalen Sperren (Elektro, Bestand, Bilder, GPSR, Varianten) kommen zuerst, ohne eBay-Aufruf.
@@ -3047,6 +3077,7 @@ const app = new Hono()
         // P-82 Aufgabe 4/5: nur mitgeben, wenn am Produkt hinterlegt — buildStoreCategoryBlock()
         // (ebay.ts) sendet storeCategoryNames dann komplett gar nicht mit, kein "Sonstiges"-Fallback.
         storeCategoryName: product.storeCategoryName ?? undefined,
+        originShipping, // OFFEN 030 Teil 2
       });
 
       // A-021: frischen Stand von variant_sell_prices lesen (das Listing dauert; Preisprüfung/Stufenwechsel könnten inzwischen geschrieben haben)
@@ -3073,7 +3104,12 @@ const app = new Hono()
         ? await import('./campaign-ads').then(m => m.sendCampaignAdForNewListing(product.id, listingId, product.adRate as number))
         : null;
       delete (globalThis as Record<string, unknown>)['ebay_listings']; // OFFEN 013: Listings-Cache sofort verwerfen (sonst bis 10 Min. altes Bild)
-      return c.json({ listingId, success: true, warnings: variantWarnings, ...(multiRabatt ? { multiRabatt } : {}), ...(kampagne ? { kampagne } : {}) }, 200);
+      // OFFEN 030 NACHTRAG Punkt 2: eBays Lieferschätzung nach dem Listen zurücklesen und mit der Fußzeile vergleichen (nur lesen).
+      // Rot sperrt dieses schon gelistete Angebot nicht nachträglich — es steht in der Antwort und im Produkte-Tab (Ampel).
+      const deliveryCheck = await import('./ebay').then(m => m.readDeliveryEstimate(listingId)).catch(() => null)
+        .then(async est => (await import('../shared/origin-shipping')).compareDeliveryEstimate(deliveryTimeFor(listingDescription.origin ?? originOfProduct(product), await loadDeliveryTimes()), est, new Date().toISOString()));
+      if (deliveryCheck.color !== 'green') console.warn(`[ebay/list] OFFEN 030 Lieferzeit stele-${product.id}: ${deliveryCheck.color} — ${deliveryCheck.text}`);
+      return c.json({ listingId, success: true, warnings: variantWarnings, deliveryCheck, ...(multiRabatt ? { multiRabatt } : {}), ...(kampagne ? { kampagne } : {}) }, 200);
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
       // P-91: lesbare Meldung fürs Frontend statt des rohen eBay-JSON-Blobs
@@ -5185,6 +5221,103 @@ app.put('/settings/delivery-times', async (c) => {
     return c.json({ ok: true, times: parsed }, 200);
   } catch (e) {
     return c.json({ ok: false, error: String(e) }, 500);
+  }
+});
+
+// ─── OFFEN 030 Teil 2: Lagerorte je Herkunft (app_settings "origin_locations", KEINE Migration) ─────────────
+// Nur Orte, die der Lieferant wirklich nennt. China ohne Eintrag → Standardort Shenzhen, Guangdong ("Ort geschätzt", OFFEN 030 1b).
+app.get('/settings/origin-locations', async (c) => {
+  try {
+    return c.json({ locations: await loadOriginLocations() }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+app.put('/settings/origin-locations', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as { locations?: Record<string, unknown> };
+    const { parseOriginLocations } = await import('../shared/origin-shipping');
+    const parsed = parseOriginLocations(JSON.stringify(body.locations ?? {}));
+    const { db } = await import('../db/index');
+    const { appSettings } = await import('../db/schema');
+    const now = new Date().toISOString();
+    const value = JSON.stringify(parsed);
+    await db.insert(appSettings).values({ key: 'origin_locations', value, updatedAt: now })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+    return c.json({ ok: true, locations: parsed }, 200);
+  } catch (e) {
+    return c.json({ ok: false, error: String(e) }, 500);
+  }
+});
+
+// OFFEN 030 Teil 2 + ANTWORT AUFSICHT 21:30 Punkt 3b: NUR LESEN — Versandrichtlinien des Kontos und welche je Herkunft zugeordnet würde.
+app.get('/ebay/fulfillment-policies', async (c) => {
+  try {
+    const { fetchFulfillmentPolicies } = await import('./ebay');
+    const { resolveFulfillmentPolicy, POLICY_NAME_CN, POLICY_NAME_EU } = await import('../shared/origin-shipping');
+    const policies = await fetchFulfillmentPolicies();
+    const cn = resolveFulfillmentPolicy({ kind: 'CN', label: 'China', mixed: false, perVariant: [] }, policies);
+    const eu = resolveFulfillmentPolicy({ kind: 'EU', label: 'Poland', mixed: false, perVariant: [] }, policies);
+    return c.json({
+      policies,
+      mapping: {
+        CN: cn.ok ? { name: POLICY_NAME_CN, id: cn.value.id } : { name: POLICY_NAME_CN, error: cn.error },
+        EU: eu.ok ? { name: POLICY_NAME_EU, id: eu.value.id } : { name: POLICY_NAME_EU, error: eu.error },
+      },
+    }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 502);
+  }
+});
+
+// OFFEN 030 Punkt 5 + NACHTRAG Punkt 3: Ampel Standort/Lieferzeit für EIN Produkt. NUR LESEN (Offer, Richtlinien, Browse-Schätzung).
+app.get('/ebay/origin-check/:id', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'id fehlt' }, 400);
+  try {
+    const { db } = await import('../db/index');
+    const schema = await import('../db/schema');
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const { originAmpel, compareDeliveryEstimate } = await import('../shared/origin-shipping');
+    const { fetchFulfillmentPolicies, readOfferShipping, readDeliveryEstimate } = await import('./ebay');
+    const origin = originOfProduct(product);
+    const deliveryTimes = await loadDeliveryTimes();
+    const policies = await fetchFulfillmentPolicies().catch(() => null);
+    const listed = !!product.ebayListingId;
+    const live = listed ? await readOfferShipping(product.variants && product.variants !== '[]' ? `stele-${id}-GROUP` : `stele-${id}`).catch(() => null) : null;
+    const ampel = originAmpel({ origin, locations: await loadOriginLocations(), policies, deliveryTimes, live });
+    const estimate = listed ? await readDeliveryEstimate(product.ebayListingId!).catch(() => null) : null;
+    const lieferzeit = listed
+      ? compareDeliveryEstimate(deliveryTimeFor(origin, deliveryTimes), estimate, new Date().toISOString())
+      : { color: 'grey' as const, footer: null, ebay: null, text: 'noch nicht gelistet — eBay-Schätzung erst nach dem Listen' };
+    return c.json({ productId: id, herkunft: origin.mixed ? 'gemischt' : (origin.label || 'unbekannt'), live, standort: ampel.standort, standortText: ampel.standortText, blockError: ampel.blockError, deliveryTime: ampel.deliveryTime, lieferzeit }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// OFFEN 030 Punkt 4a: Bestandsliste der Live-Angebote — stele-Nr · heutiger Lagerort/Richtlinie (gelesen) · Herkunft · neuer Lagerort/Richtlinie.
+// NUR LESEN. Umgestellt wird hier nichts (erst nach "ja Standort Bestand").
+app.get('/ebay/origin-inventory', async (c) => {
+  try {
+    const { db } = await import('../db/index');
+    const schema = await import('../db/schema');
+    const { inventoryRow } = await import('../shared/origin-shipping');
+    const { fetchFulfillmentPolicies, readOfferShipping, getAllSellerListings } = await import('./ebay');
+    const [listings, policies, locations] = await Promise.all([getAllSellerListings(), fetchFulfillmentPolicies(), loadOriginLocations()]);
+    const products = await db.select({ id: schema.products.id, ebayListingId: schema.products.ebayListingId, shipsFrom: schema.products.shipsFrom, variantPrices: schema.products.variantPrices }).from(schema.products).all();
+    const byItem = new Map(products.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
+    const rows = [];
+    for (const l of listings) {
+      const p = byItem.get(l.itemId);
+      if (!p) { rows.push({ steleNr: '–', itemId: l.itemId, herkunft: 'nicht in der App', heuteLagerort: 'nicht gelesen', neuerLagerort: '–', heuteRichtlinie: 'nicht gelesen', neueRichtlinie: '–', umstellungNoetig: null }); continue; }
+      const live = await readOfferShipping(l.sku || `stele-${p.id}`).catch(() => null);
+      rows.push(inventoryRow({ productId: p.id, itemId: l.itemId, origin: originOfProduct(p), locations, policies, live }));
+    }
+    return c.json({ total: rows.length, rows }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 502);
   }
 });
 

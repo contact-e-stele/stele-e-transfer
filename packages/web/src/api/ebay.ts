@@ -47,6 +47,7 @@ import {
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
 } from '../shared/variant-resolver';
 import { parseReturnPolicy, type ReturnTerms } from '../shared/shipping-return-text';
+import { locationCreateBody, parseFulfillmentPolicies, parseBrowseDeliveryEstimate, type LocationSpec, type FulfillmentPolicyInfo, type DeliveryEstimate } from '../shared/origin-shipping';
 import { planVariantAxes, categoryAspectMap, type AxisPlan, type CategoryAspectInfo } from '../shared/variant-axis-aspect';
 
 // P-85 Schritt 2b (20.09.2026): NON_VARIATION_ASPECTS und slugify() leben jetzt in
@@ -335,57 +336,86 @@ export async function fetchReturnTerms(fetchFn: typeof fetch = fetch): Promise<R
   }
 }
 
-// ─── Fulfillment Policy per Handling-Zeit ─────────────────────────────────────
-// Sucht eine bestehende Policy mit passender Handling-Zeit oder erstellt eine neue.
-// Wird verwendet wenn handlingTimeDays explizit gesetzt ist.
-async function getOrCreateFulfillmentPolicy(days: number, token: string): Promise<string> {
-  // Bestehende Policies abrufen
-  const res = await fetch(`${BASE_URL}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_DE`, {
-    headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' },
+// ─── Fulfillment Policy per Handling-Zeit — ENTFERNT (OFFEN 030 Teil 2, 04.11.2026) ─────────────────────
+// getOrCreateFulfillmentPolicy() legte beim Listen still eine neue Versandrichtlinie im Konto an ("Stele <n>d Handling",
+// Versandservice DE_DHLPaket), sobald handlingTimeDays keiner vorhandenen Richtlinie entsprach (live: "Stele 7d Handling"
+// 293957339014, "Stele 5d Handling" 294010673014). Ersetzt durch: Richtlinie je Herkunft wird nur GELESEN
+// (fetchFulfillmentPolicies + shared/origin-shipping.ts resolveFulfillmentPolicy). Die App legt keine Richtlinie an.
+
+// ─── OFFEN 030 Teil 2: Lagerort / Versandrichtlinie je Herkunft ──────────────────────────────────────
+
+export interface OriginShipping { location: LocationSpec; fulfillmentPolicyId: string }
+
+/** Ohne aufgelöste Herkunft wird nicht gelistet (OFFEN 030 2b) — letzte Sicherung, falls ein Aufrufer sie vergisst. */
+export function requireOriginShipping(input: { originShipping?: OriginShipping }): OriginShipping {
+  if (!input.originShipping) throw new Error('Lagerort/Versandrichtlinie je Herkunft fehlt — ohne Herkunft wird nicht gelistet (OFFEN 030).');
+  return input.originShipping;
+}
+
+/** NUR LESEN: alle Versandrichtlinien des Kontos (EBAY_DE). Wirft bei Fehler (Aufrufer sperrt dann das Listen). */
+export async function fetchFulfillmentPolicies(fetchFn: typeof fetch = fetch, token?: string): Promise<FulfillmentPolicyInfo[]> {
+  const t = token ?? await getAccessToken();
+  const res = await fetchFn(`${BASE_URL}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_DE`, {
+    headers: { 'Authorization': `Bearer ${t}`, 'Accept-Language': 'de-DE' },
   });
-  if (res.ok) {
-    const data = await res.json() as { fulfillmentPolicies?: Array<{ fulfillmentPolicyId: string; handlingTime?: { value: number } }> };
-    const match = data.fulfillmentPolicies?.find(p => p.handlingTime?.value === days);
-    if (match) {
-      console.log(`[eBay] Fulfillment Policy gefunden: ${match.fulfillmentPolicyId} (${days} Tage)`);
-      return match.fulfillmentPolicyId;
-    }
-  }
-  // Neue Policy erstellen
-  const createRes = await fetch(`${BASE_URL}/sell/account/v1/fulfillment_policy`, {
+  if (!res.ok) throw new Error(`fulfillment_policy lesen: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  return parseFulfillmentPolicies(await res.json());
+}
+
+/**
+ * Lagerort je Herkunft: vorhanden → nichts tun; fehlt (404) → anlegen (eBay-Schreibvorgang, NUR beim Listen).
+ * Andere Lesefehler → werfen (nicht blind anlegen).
+ */
+export async function ensureInventoryLocation(spec: LocationSpec, fetchFn: typeof fetch = fetch, token?: string): Promise<'exists' | 'created'> {
+  const t = token ?? await getAccessToken();
+  const url = `${BASE_URL}/sell/inventory/v1/location/${encodeURIComponent(spec.key)}`;
+  const check = await fetchFn(url, { headers: { 'Authorization': `Bearer ${t}` } });
+  if (check.ok) return 'exists';
+  if (check.status !== 404) throw new Error(`Lagerort ${spec.key} lesen: ${check.status} ${(await check.text()).slice(0, 200)}`);
+  const res = await fetchFn(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Accept-Language': 'de-DE',
-    },
-    body: JSON.stringify({
-      name: `Stele ${days}d Handling`,
-      marketplaceId: 'EBAY_DE',
-      categoryTypes: [{ name: 'ALL_EXCLUDING_MOTORS_VEHICLES' }],
-      handlingTime: { value: days, unit: 'DAY' },
-      shippingOptions: [{
-        optionType: 'DOMESTIC',
-        costType: 'FLAT_RATE',
-        shippingServices: [{
-          shippingServiceCode: 'DE_DHLPaket',
-          buyerResponsibleForShipping: false,
-          shippingCost: { value: '0.00', currency: 'EUR' },
-        }],
-      }],
-      globalShipping: false,
-      pickupDropOff: false,
-    }),
+    headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' },
+    body: JSON.stringify(locationCreateBody(spec)),
   });
-  if (!createRes.ok) {
-    const txt = await createRes.text();
-    console.error(`[eBay] Fulfillment Policy erstellen fehlgeschlagen: ${createRes.status} ${txt}`);
-    // Fallback auf env policy
-    return process.env.EBAY_FULFILLMENT_POLICY_ID ?? '276306574014';
+  if (!res.ok && res.status !== 204) throw new Error(`Lagerort ${spec.key} anlegen: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  console.log(`[eBay] OFFEN 030 Lagerort angelegt: ${spec.key} (${spec.city}, ${spec.country}${spec.estimated ? ', Ort geschätzt' : ''})`);
+  return 'created';
+}
+
+/** NUR LESEN: Lagerort + Versandrichtlinie eines Live-Angebots (bei "-GROUP" über die erste Varianten-SKU). null = nicht lesbar. */
+export async function readOfferShipping(sku: string, fetchFn: typeof fetch = fetch, token?: string): Promise<{ merchantLocationKey: string | null; fulfillmentPolicyId: string | null } | null> {
+  const t = token ?? await getAccessToken();
+  let offerSku = sku;
+  if (sku.endsWith('-GROUP')) {
+    const skus = await getInventoryItemGroupSkus(sku, t, fetchFn).catch(() => [] as string[]);
+    if (!skus.length) return null;
+    offerSku = skus[0];
   }
-  const created = await createRes.json() as { fulfillmentPolicyId: string };
-  console.log(`[eBay] Neue Fulfillment Policy erstellt: ${created.fulfillmentPolicyId} (${days} Tage)`);
-  return created.fulfillmentPolicyId;
+  const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(offerSku)}&marketplace_id=EBAY_DE`, { headers: { 'Authorization': `Bearer ${t}` } });
+  if (!res.ok) return null;
+  const data = await res.json() as { offers?: Array<{ merchantLocationKey?: string; listingPolicies?: { fulfillmentPolicyId?: string } }> };
+  const o = data.offers?.[0];
+  if (!o) return null;
+  return { merchantLocationKey: o.merchantLocationKey ?? null, fulfillmentPolicyId: o.listingPolicies?.fulfillmentPolicyId ?? null };
+}
+
+/**
+ * NUR LESEN: eBays Lieferschätzung eines Angebots (Browse API, App-Token, Käufer-PLZ 65205 wie auf der Artikelseite geprüft).
+ * Varianten-Angebote: get_item_by_legacy_id verlangt eine Variante → Fallback get_items_by_item_group (erste Variante).
+ */
+export async function readDeliveryEstimate(itemId: string, fetchFn: typeof fetch = fetch, appToken?: string): Promise<DeliveryEstimate | null> {
+  const t = appToken ?? await getAppToken();
+  const headers = { 'Authorization': `Bearer ${t}`, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_DE', 'X-EBAY-C-ENDUSERCTX': 'contextualLocation=country%3DDE%2Czip%3D65205' };
+  const one = await fetchFn(`${BASE_URL}/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${encodeURIComponent(itemId)}`, { headers });
+  if (one.ok) return parseBrowseDeliveryEstimate(await one.json());
+  const grp = await fetchFn(`${BASE_URL}/buy/browse/v1/item/get_items_by_item_group?item_group_id=${encodeURIComponent(itemId)}`, { headers });
+  if (!grp.ok) return null;
+  const data = await grp.json() as { items?: unknown[] };
+  for (const it of data.items ?? []) {
+    const est = parseBrowseDeliveryEstimate(it);
+    if (est) return est;
+  }
+  return null;
 }
 
 // ─── Inventory Item erstellen ──────────────────────────────────────────────────
@@ -430,7 +460,9 @@ export interface EbayListingInput {
                           // werden können statt auf den rohen Einkaufspreis zu fallen
   shipsFrom?: string;     // Versandland — für Zoll-Berechnung im selben Fallback
   targetMarginEur?: number; // Teil 2C: product.targetMarginEur — für denselben Fallback (fehlt, wenn nicht gesetzt: globaler Default)
-  handlingTimeDays?: number; // Bearbeitungszeit in Tagen (Standard: 10)
+  handlingTimeDays?: number; // OFFEN 030 Teil 2: nicht mehr ausgewertet — die Bearbeitungszeit steht in der Versandrichtlinie je Herkunft
+  // OFFEN 030 Teil 2: Lagerort + Versandrichtlinie je Herkunft, aufgelöst in index.ts über shared/origin-shipping.ts. Pflicht beim Listen.
+  originShipping?: OriginShipping;
   gpsr?: ResolvedGpsr;  // Paket 3: EU-Person + Hersteller aus resolveGpsrForListing() — Pflicht beim Listing, kein Stele-Fallback mehr
   manualAspects?: Record<string, string>; // P-88: vom Nutzer manuell nachgetragene Pflichtfelder (überschreiben Auto-Heal)
   // P-88 1b Korrektur (20.09.2026): title UND generatedTitle unabhängig nach Farbe durchsuchen
@@ -1263,60 +1295,6 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
   }
 }
 
-// ─── Merchant Location sicherstellen ─────────────────────────────────────────
-
-let locationEnsured = false;
-
-async function ensureMerchantLocation(): Promise<void> {
-  if (locationEnsured) return;
-  const token = await getAccessToken();
-
-  // Erst prüfen ob Location schon existiert
-  const checkRes = await fetch(`${BASE_URL}/sell/inventory/v1/location/default`, {
-    headers: { 'Authorization': `Bearer ${token}` },
-  });
-  if (checkRes.ok) {
-    console.log('[eBay] Merchant location "default" already exists');
-    locationEnsured = true;
-    return;
-  }
-
-  // Anlegen
-  const body = {
-    location: {
-      address: {
-        addressLine1: 'Am Hochfeld 47',
-        city: 'Wiesbaden',
-        stateOrProvince: 'Hessen',
-        postalCode: '65205',
-        country: 'DE',
-      },
-    },
-    locationTypes: ['WAREHOUSE'],
-    name: 'Stele E-Transfer Lager',
-    merchantLocationStatus: 'ENABLED',
-  };
-
-  const res = await fetch(`${BASE_URL}/sell/inventory/v1/location/default`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Content-Language': 'de-DE',
-    },
-    body: JSON.stringify(body),
-  });
-
-  const resText = await res.text();
-  const alreadyExists = res.status === 409 || resText.includes('already exists') || res.status === 204;
-  if (!res.ok && !alreadyExists) {
-    console.error('[eBay] ensureMerchantLocation failed:', res.status, resText);
-    // Nicht werfen — weiter versuchen, eBay wirft ggf. seinen eigenen Fehler
-  } else {
-    console.log('[eBay] Merchant location "default" created/confirmed:', res.status);
-  }
-  locationEnsured = true;
-}
 
 // ─── Offer erstellen ──────────────────────────────────────────────────────────
 
@@ -1345,10 +1323,9 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   if (locked) throw new Error(locked);
   const token = await getAccessToken();
   const policies = await getBusinessPolicies();
-  // Wenn handlingTimeDays explizit gesetzt → eigene Policy verwenden
-  const fulfillmentPolicyId = input.handlingTimeDays != null
-    ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
-    : policies.fulfillmentPolicyId;
+  // OFFEN 030 Teil 2: Lagerort + Versandrichtlinie je Herkunft (vom Aufrufer aufgelöst), nie mehr 'default'/Handling-Zeit.
+  const shipping = requireOriginShipping(input);
+  const fulfillmentPolicyId = shipping.fulfillmentPolicyId;
   const aspects = await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
@@ -1367,7 +1344,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
         currency: 'EUR',
       },
     },
-    merchantLocationKey: 'default',
+    merchantLocationKey: shipping.location.key,
     listingPolicies: {
       fulfillmentPolicyId: fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
@@ -1956,10 +1933,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Bei Variation Listings: Offer wird pro einzelnem Inventory Item SKU erstellt (NICHT für den Group-Key)
   // eBay verknüpft automatisch alle Offers mit der Group beim publish
   const policies = await getBusinessPolicies();
-  // Wenn handlingTimeDays explizit gesetzt → eigene Policy verwenden
-  const varFulfillmentPolicyId = input.handlingTimeDays != null
-    ? await getOrCreateFulfillmentPolicy(input.handlingTimeDays, token)
-    : policies.fulfillmentPolicyId;
+  // OFFEN 030 Teil 2: Lagerort + Versandrichtlinie je Herkunft (vom Aufrufer aufgelöst), nie mehr 'default'/Handling-Zeit.
+  const varShipping = requireOriginShipping(input);
+  const varFulfillmentPolicyId = varShipping.fulfillmentPolicyId;
 
   const regulatory = buildRegulatoryBlock(input.gpsr);
 
@@ -2003,7 +1979,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
       pricingSummary: {
         price: { value: varPrice.toFixed(2), currency: 'EUR' },
       },
-      merchantLocationKey: 'default',
+      merchantLocationKey: varShipping.location.key,
       listingPolicies: {
         fulfillmentPolicyId: varFulfillmentPolicyId,
         paymentPolicyId: policies.paymentPolicyId,
@@ -2121,8 +2097,8 @@ export async function listOnEbay(input: EbayListingInput): Promise<string> {
   if (locked) throw new Error(locked);
   const blocked = outgoingTextBlockError(input.title, input.description);
   if (blocked) throw new Error(blocked);
-  // Merchant Location sicherstellen (wird nur einmal pro Server-Start ausgeführt)
-  await ensureMerchantLocation();
+  // OFFEN 030 Teil 2: Lagerort je Herkunft sicherstellen (statt immer 'default' Wiesbaden). Ohne aufgelöste Herkunft: nicht listen.
+  await ensureInventoryLocation(requireOriginShipping(input).location);
 
   const hasVariants = input.variantGroups && input.variantGroups.length > 0 &&
     input.variantGroups.some(g => g.values.length > 0);
