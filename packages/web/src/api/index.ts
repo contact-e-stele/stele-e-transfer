@@ -5135,6 +5135,40 @@ app.get('/products/:id/aspect-precheck', async (c) => {
   }
 });
 
+// ─── OFFEN 030 Weg B (ENTSCHEIDUNG Inhaber 04.11.2026 21:56): 2 Versandrichtlinien je Herkunft per Knopf ──────────
+// GET = nur lesen (gibt es "Versand aus China" / "Versand aus EU-Lager" schon?). POST = SCHREIBT ins eBay-Konto, nur mit
+// confirm: true, Bearbeitungszeit Pflicht (kein Standard), Service aus der erlaubten Liste, nie doppelt, nie überschreiben.
+app.get('/ebay/origin-policies', async (c) => {
+  try {
+    const { fetchFulfillmentPolicies } = await import('./ebay');
+    const fp = await import('../shared/fulfillment-policy');
+    const policies = await fetchFulfillmentPolicies();
+    const status = (['CN', 'EU'] as const).map(origin => {
+      const hits = fp.policiesNamed(fp.policyName(origin), policies);
+      return { origin, name: fp.policyName(origin), existing: hits, services: fp.servicesFor(origin) };
+    });
+    return c.json({ status, allowedHandlingDays: fp.ALLOWED_HANDLING_DAYS }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 502);
+  }
+});
+app.post('/ebay/origin-policies/create', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+    if (body.confirm !== true) return c.json({ ok: false, error: 'Nicht bestätigt (confirm: true fehlt) — nichts angelegt.' }, 400);
+    const { fetchFulfillmentPolicies, createFulfillmentPolicy } = await import('./ebay');
+    const { checkCreatePolicyRequest } = await import('../shared/fulfillment-policy');
+    // Frisch lesen, damit ein zweiter Klick / ein paralleler Klick nie eine Dublette anlegt.
+    const existing = await fetchFulfillmentPolicies();
+    const checked = checkCreatePolicyRequest(body, existing);
+    if (!checked.ok) return c.json({ ok: false, error: checked.error }, 400);
+    const created = await createFulfillmentPolicy(checked.value);
+    return c.json({ ok: true, ...created, handlingDays: checked.value.handlingDays, serviceCode: checked.value.serviceCode }, 200);
+  } catch (e) {
+    return c.json({ ok: false, error: String(e instanceof Error ? e.message : e) }, 502);
+  }
+});
+
 // OFFEN 026: NUR LESEN (eBay-Taxonomie) — Merkmale einer Kategorie, die für Variantenachsen zählen (Pflicht, Größe/Size, Farbe),
 // mit Modus, Variation-fähig und erlaubten Werten. Ohne Kategorie-ID mit ?title=… über eBays Kategorievorschlag. Nichts wird gespeichert.
 app.get('/ebay/category-axis-aspects', async (c) => {
