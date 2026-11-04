@@ -47,6 +47,7 @@ import {
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
 } from '../shared/variant-resolver';
 import { parseReturnPolicy, type ReturnTerms } from '../shared/shipping-return-text';
+import { buildFulfillmentPolicyBody, type CreatePolicyRequest } from '../shared/fulfillment-policy';
 import { locationCreateBody, parseFulfillmentPolicies, parseBrowseDeliveryEstimate, type LocationSpec, type FulfillmentPolicyInfo, type DeliveryEstimate } from '../shared/origin-shipping';
 import { planVariantAxes, categoryAspectMap, type AxisPlan, type CategoryAspectInfo } from '../shared/variant-axis-aspect';
 
@@ -360,6 +361,27 @@ export async function fetchFulfillmentPolicies(fetchFn: typeof fetch = fetch, to
   });
   if (!res.ok) throw new Error(`fulfillment_policy lesen: ${res.status} ${(await res.text()).slice(0, 200)}`);
   return parseFulfillmentPolicies(await res.json());
+}
+
+/**
+ * SCHREIBT ins eBay-Konto (Account API createFulfillmentPolicy). Nur vom Knopf aus aufrufen — die Prüfung
+ * (checkCreatePolicyRequest: Bearbeitungszeit Pflicht, Service erlaubt, Name noch nicht vorhanden) macht der Aufrufer davor.
+ */
+export async function createFulfillmentPolicy(req: CreatePolicyRequest, fetchFn: typeof fetch = fetch, token?: string): Promise<{ fulfillmentPolicyId: string; name: string }> {
+  const t = token ?? await getAccessToken();
+  const body = buildFulfillmentPolicyBody(req);
+  const res = await fetchFn(`${BASE_URL}/sell/account/v1/fulfillment_policy`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE', 'Accept-Language': 'de-DE' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Versandrichtlinie "${body.name}" anlegen: ${res.status} ${text.slice(0, 400)}`);
+  let id = '';
+  try { id = String((JSON.parse(text) as { fulfillmentPolicyId?: unknown }).fulfillmentPolicyId ?? ''); } catch { /* leer */ }
+  if (!id) throw new Error(`Versandrichtlinie "${body.name}": eBay hat keine ID zurückgegeben (${res.status}) — bitte im Seller Hub nachsehen, bevor erneut gedrückt wird.`);
+  console.log(`[eBay] OFFEN 030 Weg B: Versandrichtlinie angelegt "${body.name}" ${id} (Bearbeitung ${req.handlingDays} Tage, ${req.serviceCode})`);
+  return { fulfillmentPolicyId: id, name: body.name };
 }
 
 /**
