@@ -1225,6 +1225,7 @@ const app = new Hono()
         updateProductDescription: async (id, htmlDescription) => {
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
+        getReturnTerms: async () => (await import('./ebay')).fetchReturnTerms(), // OFFEN 029
       });
       if (!outcome.ok) {
         return c.json({ error: outcome.error, ...(outcome.violations ? { violations: outcome.violations } : {}) }, outcome.httpStatus);
@@ -1259,6 +1260,7 @@ const app = new Hono()
         updateProductDescription: async (id, htmlDescription) => {
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
+        getReturnTerms: async () => (await import('./ebay')).fetchReturnTerms(), // OFFEN 029
       });
       return c.json({ results }, 200);
     } catch (e) {
@@ -2813,7 +2815,8 @@ const app = new Hono()
     // Verstöße (z. B. alte Vorlage mit E-Mail), wird sie über buildProductDescriptionForEbay()
     // neu gebaut (P71-C Teil 2) — Fehler nur, wenn auch der Neubau verstößt. Dieselbe Rechenstelle
     // wie der Beschreibungs-Nachzieh-Weg (GRUNDGESETZ Regel 8).
-    const listingDescription = resolveListingDescription(product, product.htmlDescription);
+    const { fetchReturnTerms } = await import('./ebay');
+    const listingDescription = resolveListingDescription(product, product.htmlDescription, await fetchReturnTerms()); // OFFEN 029
     // A-029: bei bestätigtem Elektro (Sperre oben bestanden) die WEEE-Reg.-Nr. als reine Textzeile — ohne Link/URL/E-Mail.
     const weeeLine = weeeLineForListing(product, electricSettings.weeeRegNr);
     const fullDescription = weeeLine ? `${listingDescription.html}<p>${weeeLine}</p>` : listingDescription.html;

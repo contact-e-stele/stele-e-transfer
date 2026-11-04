@@ -1,6 +1,7 @@
 // P71-C Teil 2: /ebay/list baut eine gespeicherte Vorlage mit Dauerregel-Verstößen neu statt abzubrechen.
 import { describe, expect, test } from 'bun:test';
 import { resolveListingDescription, type ProductDescriptionFields } from './ebay-description-builder';
+import { TEXT_VERSION_MARKER } from '../shared/shipping-return-text';
 
 const product: ProductDescriptionFields = {
   title: 'Frischhaltedose Edelstahl 3er Set',
@@ -11,7 +12,9 @@ const product: ProductDescriptionFields = {
 };
 // Alte Vorlage (Marker wie in der echten) mit E-Mail im Impressum
 const OLD_TEMPLATE_WITH_EMAIL = '<div class="stet-l-tabs">STELE-E-TRANSFER <p>Impressum: contact@stele-e-transfer.com</p></div>';
-const CLEAN_TEMPLATE = '<div class="stet-l-tabs">STELE-E-TRANSFER <input id="stet-l5"/><p>Sauber</p></div>';
+// OFFEN 029: "sauber" heißt jetzt auch: aktuelle Versand-/Rückgabe-Texte (Textmarke vorhanden).
+const CLEAN_TEMPLATE = `<div class="stet-l-tabs">STELE-E-TRANSFER ${TEXT_VERSION_MARKER}<input id="stet-l5"/><p>Sauber</p></div>`;
+const CLEAN_TEMPLATE_OLD_TEXTS = '<div class="stet-l-tabs">STELE-E-TRANSFER <input id="stet-l5"/><p>Lieferzeit 3–10 Werktage</p></div>';
 const CLEAN_TEMPLATE_WITHOUT_TAB5 = '<div class="stet-l-tabs">STELE-E-TRANSFER <p>Sauber, aber nur 4 Tabs</p></div>';
 
 describe('resolveListingDescription', () => {
@@ -26,6 +29,12 @@ describe('resolveListingDescription', () => {
     const r = resolveListingDescription(product, CLEAN_TEMPLATE);
     expect(r.html).toBe(CLEAN_TEMPLATE);
     expect(r.violations).toEqual([]);
+  });
+
+  test('OFFEN 029: saubere Vorlage mit ALTEN Texten (ohne Textmarke) wird neu gebaut', () => {
+    const r = resolveListingDescription(product, CLEAN_TEMPLATE_OLD_TEXTS);
+    expect(r.html).not.toBe(CLEAN_TEMPLATE_OLD_TEXTS);
+    expect(r.html).not.toContain('3–10');
   });
 
   test('saubere gespeicherte Vorlage OHNE Tab 5 wird neu gebaut (5 Tabs immer)', () => {

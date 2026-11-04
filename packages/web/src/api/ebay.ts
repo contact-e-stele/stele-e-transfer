@@ -46,6 +46,7 @@ import {
   NON_VARIATION_ASPECTS, slugify, resolveVariantEntries,
   type VariantGroup as SharedVariantGroup, type VariantPriceEntry, type ResolvedVariantEntry,
 } from '../shared/variant-resolver';
+import { parseReturnPolicy, type ReturnTerms } from '../shared/shipping-return-text';
 import { planVariantAxes, categoryAspectMap, type AxisPlan, type CategoryAspectInfo } from '../shared/variant-axis-aspect';
 
 // P-85 Schritt 2b (20.09.2026): NON_VARIATION_ASPECTS und slugify() leben jetzt in
@@ -311,6 +312,27 @@ export async function getBusinessPolicies(): Promise<PolicyCache> {
 
   policyCache = { fulfillmentPolicyId, paymentPolicyId, returnPolicyId, fetchedAt: Date.now() };
   return policyCache;
+}
+
+// OFFEN 029: Rücknahme-Richtlinie des Angebots lesen (Frist, wer den Rückversand zahlt) — Quelle für den Rückgabe-Text der
+// Beschreibung, damit sie der eBay-Anzeige nie widerspricht. null bei jedem Fehler (Vorlage nimmt dann den neutralen Satz).
+let returnTermsCache: { id: string; terms: ReturnTerms | null; fetchedAt: number } | null = null;
+export async function fetchReturnTerms(fetchFn: typeof fetch = fetch): Promise<ReturnTerms | null> {
+  try {
+    const { returnPolicyId } = await getBusinessPolicies();
+    if (returnTermsCache && returnTermsCache.id === returnPolicyId && Date.now() - returnTermsCache.fetchedAt < 3_600_000) return returnTermsCache.terms;
+    const token = await getAccessToken();
+    const res = await fetchFn(`${BASE_URL}/sell/account/v1/return_policy/${encodeURIComponent(returnPolicyId)}`, {
+      headers: { 'Authorization': `Bearer ${token}`, 'Accept-Language': 'de-DE' },
+    });
+    if (!res.ok) { console.log(`[eBay] return_policy ${returnPolicyId}: ${res.status}`); return null; }
+    const terms = parseReturnPolicy(await res.json());
+    returnTermsCache = { id: returnPolicyId, terms, fetchedAt: Date.now() };
+    return terms;
+  } catch (e) {
+    console.log(`[eBay] return_policy nicht lesbar: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
 }
 
 // ─── Fulfillment Policy per Handling-Zeit ─────────────────────────────────────

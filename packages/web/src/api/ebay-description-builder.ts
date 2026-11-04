@@ -10,6 +10,7 @@
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { neutralizeGpsrTab } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
+import { TEXT_VERSION_MARKER, type ReturnTerms } from '../shared/shipping-return-text';
 
 export interface ProductDescriptionFields {
   title: string;
@@ -30,7 +31,8 @@ export interface BuiltProductDescription {
   violations: DescriptionComplianceViolation[];
 }
 
-export function buildProductDescriptionForEbay(product: ProductDescriptionFields): BuiltProductDescription {
+// OFFEN 029: returnTerms = Rücknahme-Richtlinie des Angebots (fehlt/null → neutraler Rückgabe-Satz in der Vorlage).
+export function buildProductDescriptionForEbay(product: ProductDescriptionFields, returnTerms?: ReturnTerms | null): BuiltProductDescription {
   const variantGroupsParsed: Array<{ name: string; values: string[] }> = (() => {
     try {
       const parsed = JSON.parse(product.variants ?? '[]');
@@ -72,6 +74,7 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
     bullets: bulletsParsed.length > 0 ? bulletsParsed : undefined,
     images: images.filter(u => u.startsWith('http')).slice(0, 3),
     gpsrRaw: product.gpsrRaw ?? undefined,
+    returnTerms: returnTerms ?? null,
   };
 
   const html = neutralizeGpsrTab(buildEbayHTMLLight(templateProduct));
@@ -83,15 +86,17 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
 // übernommen, wenn sie nach neutralizeGpsrTab keine Dauerregel-Verstöße hat — sonst (z. B. alte
 // Vorlage mit E-Mail im Impressum) wird sie aus den aktuellen Produktfeldern neu gebaut. Ein
 // Verstoß bleibt nur, wenn auch der Neubau verstößt. Reine Funktion, damit ohne DB testbar.
-export function resolveListingDescription(product: ProductDescriptionFields, storedHtml: string | null | undefined): BuiltProductDescription {
+export function resolveListingDescription(product: ProductDescriptionFields, storedHtml: string | null | undefined, returnTerms?: ReturnTerms | null): BuiltProductDescription {
   const rawHtml = storedHtml ?? '';
   const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
   // Tab 5 (Produktsicherheit) gehört immer dazu: eine ältere gespeicherte Vorlage ohne ihn wird neu gebaut.
   const hasTab5 = rawHtml.includes('id="stet-t5"') || rawHtml.includes('id="stet-l5"');
-  if (isFullTemplate && hasTab5) {
+  // OFFEN 029: gespeicherte Vorlage ohne aktuelle Versand-/Rückgabe-Texte (alt: 3–10 Werktage, DHL, feste Rücksendekosten) → neu bauen.
+  const hasCurrentTexts = rawHtml.includes(TEXT_VERSION_MARKER);
+  if (isFullTemplate && hasTab5 && hasCurrentTexts) {
     const html = neutralizeGpsrTab(rawHtml);
     const violations = findDescriptionComplianceViolations(html);
     if (violations.length === 0) return { html, violations };
   }
-  return buildProductDescriptionForEbay(product);
+  return buildProductDescriptionForEbay(product, returnTerms);
 }

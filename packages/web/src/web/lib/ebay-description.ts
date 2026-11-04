@@ -5,6 +5,7 @@
 
 import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
 
+import { DELIVERY_TIME_TEXT, TEXT_VERSION_MARKER, returnTextBlocks, type ReturnTerms } from '../../shared/shipping-return-text';
 export interface ScrapedProduct {
   title: string;
   images?: string[];
@@ -16,6 +17,7 @@ export interface ScrapedProduct {
   bullets?: string[];
   setContents?: Record<string, string>; // z.B. { "SET1": "10 kleine + 10 große + Schraubendreher" }
   gpsrRaw?: string | null;              // GPSR Freitext (manuell oder auto-befüllt)
+  returnTerms?: ReturnTerms | null;     // OFFEN 029: aus der eBay-Rücknahme-Richtlinie; fehlt → neutraler Satz
 }
 
 function decodeEntities(str: string): string {
@@ -305,7 +307,9 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   `.trim();
 
   // ── Vollständige Vorlage ───────────────────────────────────────────────────
+  const ret = returnTextBlocks(product.returnTerms);
   return `<!-- STELE-E-TRANSFER eBay Vorlage - Black & Gold Edition -->
+${TEXT_VERSION_MARKER}
 <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#e8d5a0;background:#0a0a0a;border:1px solid #C9A84C;border-radius:8px;overflow:hidden;">
 
 <!-- HEADER -->
@@ -320,13 +324,13 @@ export function buildEbayHTML(product: ScrapedProduct): string {
   <div style="display:table-cell;width:50%;border-right:1px solid #C9A84C;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
-      <div style="font-size:11px;color:#8a7040;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
+      <div style="font-size:11px;color:#8a7040;line-height:1.7;">Lieferzeit ${DELIVERY_TIME_TEXT}<br/>Sendungsverfolgung &uuml;ber eBay</div>
     </div>
   </div>
   <div style="display:table-cell;width:50%;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
-      <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">30 TAGE R&Uuml;CKGABE</div>
-      <div style="font-size:11px;color:#8a7040;line-height:1.7;">Einfache R&uuml;ckgabe<br/>K&auml;uferschutz &uuml;ber eBay</div>
+      <div style="font-weight:bold;font-size:13px;color:#C9A84C;margin-bottom:8px;letter-spacing:1px;">${ret.boxTitle}</div>
+      <div style="font-size:11px;color:#8a7040;line-height:1.7;">${ret.boxSub}</div>
     </div>
   </div>
 </div>
@@ -384,16 +388,12 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       <h3>Versandinformationen</h3>
       <ul style="line-height:1.9;">
         <li><strong>Kostenloser Versand</strong> auf alle Bestellungen</li>
-        <li>Lieferzeit: <strong>3–10 Werktage</strong></li>
-        <li>Versand per <strong>DHL oder Deutsche Post</strong></li>
+        <li>Lieferzeit: <strong>${DELIVERY_TIME_TEXT}</strong></li>
         <li>Sendungsverfolgung wird per eBay-Nachricht mitgeteilt</li>
       </ul>
       <h3>Retouren &amp; R&uuml;ckgabe</h3>
       <ul style="line-height:1.9;">
-        <li><strong>30 Tage R&uuml;ckgaberecht</strong> ab Erhalt der Ware</li>
-        <li>R&uuml;cksendekosten tr&auml;gt der K&auml;ufer (sofern kein Defekt)</li>
-        <li>Bei Defekt oder Falschlieferung: R&uuml;cksendekosten werden erstattet</li>
-        <li>R&uuml;ckerstattung innerhalb von 3–5 Werktagen nach Wareneingang</li>
+        ${ret.tabItems.map(t => `<li>${t}</li>`).join('\n        ')}
       </ul>
       <p style="font-size:11px;color:#5a4a20;margin-top:20px;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
     </div>
@@ -428,7 +428,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       <p><strong>&sect; 4 Zahlung</strong><br/>
       Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
       <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
-      Lieferung innerhalb Deutschlands. Lieferzeit: 3–10 Werktage nach Zahlungseingang.<br/>
+      Lieferung innerhalb Deutschlands. Lieferzeit: ${DELIVERY_TIME_TEXT} nach Zahlungseingang.<br/>
       Keine Haftung f&uuml;r Verz&ouml;gerungen durch den Versanddienstleister.</p>
       <p><strong>&sect; 6 Eigentumsvorbehalt</strong><br/>
       Die Ware bleibt bis zur vollst&auml;ndigen Bezahlung Eigentum von stele-e-transfer.</p>
@@ -436,7 +436,7 @@ export function buildEbayHTML(product: ScrapedProduct): string {
       Sie haben das Recht, binnen 30 Tagen ohne Angabe von Gr&uuml;nden zu widerrufen.<br/>
       Widerruf an: stele-e-transfer, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.<br/>
       K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kaufübersicht zur Verf&uuml;gung. Als Widerrufsgrund bitte &quot;Widerruf des Vertrags&quot; ausw&auml;hlen.<br/>
-      R&uuml;ckerstattung innerhalb 14 Tagen. R&uuml;cksendekosten tr&auml;gt der K&auml;ufer.<br/>
+      R&uuml;ckerstattung innerhalb 14 Tagen. ${ret.agbCost}<br/>
       Kein Widerrufsrecht bei Hygieneartikeln nach &Ouml;ffnung.</p>
       <p><strong>&sect; 8 Gew&auml;hrleistung</strong><br/>
       Gesetzliche Gew&auml;hrleistung: 2 Jahre ab Lieferung.</p>
@@ -590,7 +590,9 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
     <p style="font-size:11px;color:#888888;margin:0;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
   `.trim();
 
+  const ret = returnTextBlocks(product.returnTerms);
   return `<!-- STELE-E-TRANSFER eBay Vorlage - Light Edition -->
+${TEXT_VERSION_MARKER}
 <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#333333;background:#ffffff;border:2px solid #B8860B;border-radius:8px;overflow:hidden;">
 
 <!-- HEADER -->
@@ -605,13 +607,13 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
   <div style="display:table-cell;width:50%;border-right:1px solid #e8d8a0;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
       <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">KOSTENLOSER VERSAND</div>
-      <div style="font-size:12px;color:#555555;line-height:1.7;">Lieferzeit 3–10 Werktage<br/>Versand per DHL / Deutsche Post</div>
+      <div style="font-size:12px;color:#555555;line-height:1.7;">Lieferzeit ${DELIVERY_TIME_TEXT}<br/>Sendungsverfolgung &uuml;ber eBay</div>
     </div>
   </div>
   <div style="display:table-cell;width:50%;vertical-align:top;">
     <div style="padding:18px 15px;text-align:center;">
-      <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">30 TAGE R&Uuml;CKGABE</div>
-      <div style="font-size:12px;color:#555555;line-height:1.7;">Einfache R&uuml;ckgabe<br/>K&auml;uferschutz &uuml;ber eBay</div>
+      <div style="font-weight:bold;font-size:13px;color:#B8860B;margin-bottom:8px;letter-spacing:1px;">${ret.boxTitle}</div>
+      <div style="font-size:12px;color:#555555;line-height:1.7;">${ret.boxSub}</div>
     </div>
   </div>
 </div>
@@ -667,16 +669,12 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
       <h3>Versandinformationen</h3>
       <ul style="line-height:1.9;">
         <li><strong>Kostenloser Versand</strong> auf alle Bestellungen</li>
-        <li>Lieferzeit: <strong>3–10 Werktage</strong></li>
-        <li>Versand per <strong>DHL oder Deutsche Post</strong></li>
+        <li>Lieferzeit: <strong>${DELIVERY_TIME_TEXT}</strong></li>
         <li>Sendungsverfolgung wird per eBay-Nachricht mitgeteilt</li>
       </ul>
       <h3>Retouren &amp; R&uuml;ckgabe</h3>
       <ul style="line-height:1.9;">
-        <li><strong>30 Tage R&uuml;ckgaberecht</strong> ab Erhalt der Ware</li>
-        <li>R&uuml;cksendekosten tr&auml;gt der K&auml;ufer (sofern kein Defekt)</li>
-        <li>Bei Defekt oder Falschlieferung: R&uuml;cksendekosten werden erstattet</li>
-        <li>R&uuml;ckerstattung innerhalb von 3–5 Werktagen nach Wareneingang</li>
+        ${ret.tabItems.map(t => `<li>${t}</li>`).join('\n        ')}
       </ul>
       <p style="font-size:11px;color:#888888;margin-top:20px;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
     </div>
@@ -707,10 +705,10 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
       <p><strong>&sect; 4 Zahlung</strong><br/>
       Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
       <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
-      Lieferzeit: 3–10 Werktage nach Zahlungseingang.</p>
+      Lieferzeit: ${DELIVERY_TIME_TEXT} nach Zahlungseingang.</p>
       <p><strong>&sect; 6 Widerrufsrecht</strong><br/>
       30 Tage Widerrufsrecht. Widerruf an: stele-e-transfer, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.<br/>
-      K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kauf&uuml;bersicht zur Verf&uuml;gung.</p>
+      K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kauf&uuml;bersicht zur Verf&uuml;gung. ${ret.agbCost}</p>
       <p><strong>&sect; 7 Gew&auml;hrleistung</strong><br/>
       Gesetzliche Gew&auml;hrleistung: 2 Jahre ab Lieferung.</p>
       <p><strong>&sect; 8 Datenschutz</strong><br/>

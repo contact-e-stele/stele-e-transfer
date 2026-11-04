@@ -16,6 +16,7 @@
 //
 // Reine, injizierbare Logik (GRUNDGESETZ Regel 2) — ohne echte DB/eBay-Zugriffe testbar.
 
+import type { ReturnTerms } from '../shared/shipping-return-text';
 import { buildProductDescriptionForEbay, type ProductDescriptionFields } from './ebay-description-builder';
 import { resolveGpsrForListing } from '../shared/gpsr-parser';
 import { buildRegulatoryBlock } from './ebay';
@@ -54,6 +55,8 @@ export interface DescriptionRefreshDeps {
   // — die eBay-ItemID allein reicht dafür nicht.
   reviseListingContent: (productId: number, itemId: string, input: { htmlDescription: string; title?: string; regulatory?: ReturnType<typeof buildRegulatoryBlock> }) => Promise<{ ok: boolean; error?: string }>;
   updateProductDescription: (productId: number, htmlDescription: string) => Promise<void>;
+  // OFFEN 029: Rücknahme-Richtlinie für den Rückgabe-Text (optional; fehlt → neutraler Satz)
+  getReturnTerms?: () => Promise<ReturnTerms | null>;
 }
 
 // manufacturerMissing (P71-C Teil 3): fehlende Herstellerfelder — der Herstellerblock wird dann weggelassen.
@@ -99,7 +102,8 @@ export async function refreshOneProductDescription(
 
   const before = product.htmlDescription ?? '';
   const violationsBefore = findDescriptionComplianceViolations(before);
-  const { html: after, violations: descriptionViolations } = buildProductDescriptionForEbay(product);
+  const returnTerms = deps.getReturnTerms ? await deps.getReturnTerms().catch(() => null) : null;
+  const { html: after, violations: descriptionViolations } = buildProductDescriptionForEbay(product, returnTerms);
   // Code-Review-Fund (eBay-Verstoßserie 2026-09-28): der Titel geht bei confirm:true GENAUSO an
   // eBay (<Title>) wie die Beschreibung, lief aber nicht durch den Validator — ein alter, noch
   // verunreinigter Titel (dieselbe Quelle wie die zu bereinigenden Beschreibungen) hätte die
