@@ -5308,13 +5308,16 @@ app.get('/ebay/origin-inventory', async (c) => {
     const [listings, policies, locations] = await Promise.all([getAllSellerListings(), fetchFulfillmentPolicies(), loadOriginLocations()]);
     const products = await db.select({ id: schema.products.id, ebayListingId: schema.products.ebayListingId, shipsFrom: schema.products.shipsFrom, variantPrices: schema.products.variantPrices }).from(schema.products).all();
     const byItem = new Map(products.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
-    const rows = [];
-    for (const l of listings) {
+    // Fund 05.11.: nacheinander > 10 s (Bun idleTimeout) → Render 502. Darum 8 Lesungen gleichzeitig (shared/map-limit.ts).
+    const { mapLimit } = await import('../shared/map-limit');
+    const { getAccessToken } = await import('./ebay');
+    const token = await getAccessToken();
+    const rows = await mapLimit(listings, 8, async (l) => {
       const p = byItem.get(l.itemId);
-      if (!p) { rows.push({ steleNr: '–', itemId: l.itemId, herkunft: 'nicht in der App', heuteLagerort: 'nicht gelesen', neuerLagerort: '–', heuteRichtlinie: 'nicht gelesen', neueRichtlinie: '–', umstellungNoetig: null }); continue; }
-      const live = await readOfferShipping(l.sku || `stele-${p.id}`).catch(() => null);
-      rows.push(inventoryRow({ productId: p.id, itemId: l.itemId, origin: originOfProduct(p), locations, policies, live }));
-    }
+      if (!p) return { steleNr: '–', itemId: l.itemId, herkunft: 'nicht in der App', heuteLagerort: 'nicht gelesen', neuerLagerort: '–', heuteRichtlinie: 'nicht gelesen', neueRichtlinie: '–', umstellungNoetig: null };
+      const live = await readOfferShipping(l.sku || `stele-${p.id}`, fetch, token).catch(() => null);
+      return inventoryRow({ productId: p.id, itemId: l.itemId, origin: originOfProduct(p), locations, policies, live });
+    });
     return c.json({ total: rows.length, rows }, 200);
   } catch (e) {
     return c.json({ error: String(e) }, 502);
