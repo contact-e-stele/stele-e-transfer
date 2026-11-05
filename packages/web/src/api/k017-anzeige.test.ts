@@ -106,3 +106,22 @@ describe('K-017 Punkt 6: Karten-Gewinn = Erwartet', () => {
     expect(cardMarginDisplay({ ...p, variantSellPrices: null, variantPrices: '[]' })).toBeNull();
   });
 });
+
+describe('K-017 Bedingungen Kalkulator 21:40', () => {
+  test('Bedingung 2: Hinweis nur bei Bestellungen jünger als 7 Tage', async () => {
+    const { adFeeMayStillPost } = await import('../shared/ad-rate-check');
+    const now = Date.parse('2026-11-05T21:00:00Z');
+    expect(adFeeMayStillPost('2026-11-01T10:00:00.000Z', now)).toBe(true);
+    expect(adFeeMayStillPost('2026-10-29T10:00:00.000Z', now)).toBe(false);
+    expect(adFeeMayStillPost('', now)).toBe(false);
+  });
+  test('Bedingung 3: EK neben dem Gewinn = EK der schlechtesten Variante, nicht products.buyPrice', () => {
+    const p = {
+      id: 225, adRate: 0, shipsFrom: 'China', sellPrice: 19.95, buyPrice: 12.69, targetMarginEur: 2,
+      variants: JSON.stringify([{ name: 'Farbe', values: ['Rot'] }]),
+      variantPrices: JSON.stringify([{ skuId: 's1', attrs: { Farbe: 'Rot' }, price: 11.5 }]),
+      variantSellPrices: JSON.stringify({ s1: 19.95 }),
+    };
+    expect(cardMarginDisplay(p)!.buyPriceEur).toBe(11.5);
+  });
+});

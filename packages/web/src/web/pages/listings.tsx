@@ -1626,9 +1626,10 @@ export default function Listings() {
                     )}
 
                     {/* EK + Marge wenn verknüpft */}
-                    {isLinked && listing.appProduct!.buyPrice && (
+                    {/* K-017: EK aus derselben Zeile wie der Gewinn (schlechteste gelistete Variante), nicht products.buyPrice */}
+                    {isLinked && margin !== null && (
                       <>
-                        <span style={{ fontSize: 11, color: "#64748B" }}>EK: {listing.appProduct!.buyPrice.toFixed(2)} €</span>
+                        {margin.buyPriceEur != null && <span style={{ fontSize: 11, color: "#64748B" }}>EK: {margin.buyPriceEur.toFixed(2)} €</span>}
                         {margin !== null && (
                           <span title="Gewinn je Verkauf nach Formel v2 (wie „Erwartet“): VK − (Ware + Versand + Einfuhr) − eBay-Gebühr − Anzeige (inkl. MwSt). Bei Varianten: schlechteste bei eBay angebotene Variante." style={{
                             fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 2,

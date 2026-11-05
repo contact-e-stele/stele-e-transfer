@@ -43,3 +43,11 @@ export function adRateTile(r: AdRateCheckReport | null, now: number = Date.now()
   if (r.abweichend.length > 0) return { value: String(r.abweichend.length), level: 'warn', title: `Abweichung App ↔ eBay (Stand ${when} UTC):\n${list}` };
   return { value: '0', level: stale ? 'unknown' : 'ok', title: `${r.geprueft} Angebote geprüft, 0 Abweichungen (Stand ${when} UTC)${stale ? ' — veraltet, täglicher Lauf fehlt' : ''}` };
 }
+
+/** K-017 Bedingung 2 (Kalkulator 21:40, Fund 20-15341-21173): eBay bucht „Verkauft über Anzeigen“ + Gebühr teils NACHTRÄGLICH
+ *  (Klick-Zeitraum). Bei Bestellungen jünger als 7 Tage weist der Bestellungen-Tab darauf hin. */
+export const AD_FEE_LATE_DAYS = 7;
+export function adFeeMayStillPost(orderDate: string, now: number = Date.now()): boolean {
+  const t = Date.parse(orderDate);
+  return Number.isFinite(t) && now - t < AD_FEE_LATE_DAYS * 24 * 60 * 60 * 1000;
+}

@@ -12,7 +12,7 @@ export interface MarginDisplayInput {
   checkoutFactor?: number | null;  // K-005, nur wenn aktiv bekannt
 }
 
-export interface MarginDisplay { profitEur: number; marginPct: number; tone: 'loss' | 'thin' | 'ok' }
+export interface MarginDisplay { profitEur: number; marginPct: number; tone: 'loss' | 'thin' | 'ok'; buyPriceEur?: number }
 
 /** Gewinn je Verkauf nach Formel v2 (Ware × Faktor, Versand 1,99 unter 10 €, Einfuhr, 15 % + 0,30 €, Anzeige, MwSt). */
 export function marginDisplay(i: MarginDisplayInput): MarginDisplay | null {
@@ -47,5 +47,6 @@ export function cardMarginDisplay(p: ProfitProduct): MarginDisplay | null {
   const worst = rows.reduce((a, b) => (b.profit < a.profit ? b : a));
   if (!(worst.sellPrice > 0)) return null;
   const tone = worst.profit < 0 ? 'loss' : worst.profit < 1 ? 'thin' : 'ok';
-  return { profitEur: worst.profit, marginPct: worst.profit / worst.sellPrice * 100, tone };
+  // K-017 Bedingung 3 (Kalkulator 21:40): EK neben dem Gewinn = EK genau dieser Zeile (nicht products.buyPrice).
+  return { profitEur: worst.profit, marginPct: worst.profit / worst.sellPrice * 100, tone, buyPriceEur: worst.buyPrice };
 }
