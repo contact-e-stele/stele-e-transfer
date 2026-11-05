@@ -28,6 +28,7 @@ import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions } from "../compon
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 import { matchesTileFilter, type ProductTileFilter } from "../../shared/product-tile-filter";
+import { adRateTile, type AdRateCheckReport } from "../../shared/ad-rate-check";
 import { allVisibleSelected, dedupeVerdict, priceCheckUrl, selectedVisible, toggleAllVisible, toggleOne, type DedupePreviewLite, type DedupeVerdict } from "../../shared/bulk-selection";
 
 type BulkRow = { id: number; ok?: boolean; text: string };
@@ -1205,6 +1206,11 @@ export default function Produkte() {
 
   // Inhaber 29.10.2026 „Extra-Knopf“: Pflichtmerkmale vor dem Listen prüfen (nur lesen, nichts an eBay).
   const [tileFilter, setTileFilter] = useState<ProductTileFilter>(null);
+  // K-017 Punkt 5: letzter täglicher Anzeige-Abgleich App ↔ eBay (nur lesen).
+  const [adCheck, setAdCheck] = useState<AdRateCheckReport | null | undefined>(undefined);
+  useEffect(() => {
+    fetch("/api/ebay/ad-rate-check").then(r => r.json()).then((d: { report?: AdRateCheckReport | null }) => setAdCheck(d.report ?? null)).catch(() => setAdCheck(null));
+  }, []);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRow[] | null>(null);
@@ -1593,6 +1599,16 @@ export default function Produkte() {
               <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>{s.label}</div>
             </div>
           ))}
+          {adCheck !== undefined && (() => {
+            const t = adRateTile(adCheck);
+            const st = t.level === "warn" ? { color: "#DC2626", bg: "#FEF2F2" } : t.level === "ok" ? { color: "#16A34A", bg: "#F0FDF4" } : { color: "#64748B", bg: "#F1F5F9" };
+            return (
+              <div title={t.title} style={{ background: st.bg, borderRadius: 14, padding: "14px 10px", textAlign: "center", whiteSpace: "pre-line" }}>
+                <div style={{ fontSize: 24, fontWeight: 800, color: st.color }}>{t.value}</div>
+                <div style={{ fontSize: 11, color: "#64748B", fontWeight: 600 }}>Anzeige App ≠ eBay</div>
+              </div>
+            );
+          })()}
         </div>
 
         {tileFilter && (

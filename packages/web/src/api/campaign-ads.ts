@@ -1,6 +1,6 @@
 // OFFEN 018 / ENTSCHEIDUNG 018: Angebote je Anzeige mit festem Satz in die laufende Kosten-pro-Verkauf-Kampagne (Marketing API).
 import { EBAY_API_BASE_URL, fetchPromotionStatus, getMarketingAccessToken } from './ebay';
-import { bulkAdRequests, parseBulkAdResponse, pickCpsCampaign, type BulkAdResult } from '../shared/campaign-ads';
+import { bulkAdRequests, parseBulkAdResponse, pickCpsCampaign, verifyAdsAfterSend, type BulkAdResult } from '../shared/campaign-ads';
 
 export interface CampaignAdsResult { ok: boolean; campaignId: string | null; results: BulkAdResult[]; error?: string }
 
@@ -36,7 +36,12 @@ export async function sendCampaignAds(listingIds: string[], percent: number, cam
     const updRes = new Map(parseBulkAdResponse(upd.json).map(r => [r.listingId, r]));
     results = results.map(r => r.alreadyExists ? (updRes.get(r.listingId) ?? { ...r, error: `bulk_update ${upd.status}: ${upd.text.slice(0, 200)}` }) : r);
   }
-  for (const r of results) console.log(`[Kampagne] ${cid} ${r.listingId} ${percent} %: ${r.ok ? 'ok' : `FEHLER ${r.error}`}`);
+  // K-017 Punkt 3: bei eBay zurücklesen — ok nur, wenn das Angebot danach wirklich mit diesem Satz beworben ist.
+  if (results.some(r => r.ok)) {
+    const after = await fetchPromotionStatus();
+    results = verifyAdsAfterSend(results, after.promo, percent);
+  }
+  for (const r of results) console.log(`[Kampagne] ${cid} ${r.listingId} ${percent} %: ${r.ok ? 'ok (zurückgelesen)' : `FEHLER ${r.error}`}`);
   return { ok: results.every(r => r.ok), campaignId: cid, results };
 }
 

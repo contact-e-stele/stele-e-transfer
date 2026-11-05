@@ -2,6 +2,7 @@
  * Bestellungen-Tab — eBay Bestellungen anzeigen (Grundgerüst P13)
  * Tracking-Eingabe folgt als nächster Schritt separat.
  */
+import { adFeeMayStillPost } from "../../shared/ad-rate-check";
 import { useState, useEffect, useCallback } from "react";
 import { ebayOrderDetailsUrl } from "../../shared/ebay-order-link";
 import { addressCopyParts } from "../../shared/address-copy";
@@ -48,6 +49,7 @@ interface Order {
   nettoErgebnis: number | null;
   nettoGebuehren: number | null;
   nettoQuelle: "manuell" | "automatisch" | null;
+  nettoAnzeige?: number | null;   // K-017: Anzeigengebühr laut eBay „Verkauft über Anzeigen“ (0 = nicht über Anzeige; null = unbekannt)
   aliexpressUrl: string | null;
   ebayListingUrl: string | null;
   localNote: {
@@ -755,6 +757,8 @@ export default function Bestellungen() {
                   <span style={{ fontWeight: 700, color: order.nettoErgebnis >= 0 ? "#16A34A" : "#DC2626" }} title={order.nettoGebuehren != null ? `davon ${order.nettoGebuehren.toFixed(2)} ${order.currency} eBay-Gebühren abgezogen` : undefined}>
                     Gewinn nach eBay-Geb.: {order.nettoErgebnis.toFixed(2)} {order.currency}
                     {order.nettoGebuehren != null && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (−{order.nettoGebuehren.toFixed(2)} € Geb.)</span>}
+                    {order.nettoAnzeige != null && order.nettoAnzeige > 0 && <span style={{ fontWeight: 600, color: "#7C3AED" }} title="eBay: Verkauft über Anzeigen — Anzeigengebühr ist in den Gebühren enthalten"> · über Anzeige (−{order.nettoAnzeige.toFixed(2)} €)</span>}
+                    {(order.nettoAnzeige ?? 0) === 0 && adFeeMayStillPost(order.orderDate) && <span style={{ fontWeight: 500, color: "#A16207" }} title="eBay bucht „Verkauft über Anzeigen“ und die Anzeigengebühr teils erst Tage später nach"> · Anzeigengebühr kann noch nachgebucht werden</span>}
                     {order.nettoQuelle === "manuell" && <span style={{ fontWeight: 500, color: "#94A3B8" }}> (manuell)</span>}
                   </span>
                 )}

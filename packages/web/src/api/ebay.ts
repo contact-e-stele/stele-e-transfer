@@ -3140,6 +3140,9 @@ export interface EbayOrder {
     // ihn fuer die Position nicht liefert — dann bleibt der Umsatz dieser Position unbekannt und
     // wird im Bericht als solcher ausgewiesen statt geschaetzt.
     lineItemCost: number | null;
+    // K-017: eBay-Kennzeichen „Verkauft über Anzeigen“ (lineItems[].properties.soldViaAdCampaign). eBay liefert das Feld nur,
+    // wenn es true ist — fehlt es, wurde die Position nicht über eine Anzeige verkauft.
+    soldViaAdCampaign: boolean;
   }>;
   shippingAddress: {
     fullName: string;
@@ -3204,6 +3207,7 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
           // der Umsatz einer einzelnen Varianten-SKU bei Mehrpositionen-Bestellungen nicht
           // bestimmen (order.total ist der Gesamtbetrag). Rein additiv, nur lesend.
           lineItemCost?: { value?: string; currency?: string };
+          properties?: { soldViaAdCampaign?: boolean; buyerProtection?: boolean };
         }>;
         fulfillmentStartInstructions?: Array<{
           shippingStep?: {
@@ -3241,6 +3245,7 @@ export async function getAllOrders(): Promise<EbayOrder[]> {
           // sobald das Produkt nicht (mehr) in unserer DB steht.
           legacyItemId: li.legacyItemId ?? null,
           lineItemCost: li.lineItemCost?.value != null ? parseFloat(li.lineItemCost.value) : null,
+          soldViaAdCampaign: li.properties?.soldViaAdCampaign === true,
         })),
         shippingAddress: shipTo ? {
           fullName: shipTo.fullName ?? '',

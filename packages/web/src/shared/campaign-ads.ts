@@ -1,6 +1,6 @@
 // OFFEN 018 / ENTSCHEIDUNG 018 (Inhaber 30.10.2026 05:57 „W5“): Angebote mit 5 % je Anzeige in die eBay-Kampagne (Marketing API),
 // weil der Trading-Weg (ReviseFixedPriceItem AdvancedMarketing) bei Inventory-API-Angeboten scheitert. Reine Funktionen.
-import type { MarketingCampaign } from './promoted-status';
+import type { MarketingCampaign, ListingPromotion } from './promoted-status';
 
 /** Die eine laufende Kosten-pro-Verkauf-Kampagne (bzw. die angegebene). Mehrdeutig/keine → Fehlertext. */
 export function pickCpsCampaign(campaigns: MarketingCampaign[], wantedId?: string | null): { ok: true; campaign: MarketingCampaign } | { ok: false; error: string } {
@@ -43,4 +43,19 @@ export function parseBulkAdResponse(json: unknown): BulkAdResult[] {
 /** OFFEN 024 NACHTRAG: Body für bulk_delete_ads_by_listing_id (Angebot aus der Kampagne nehmen). */
 export function bulkDeleteAdRequests(listingIds: string[]): { requests: Array<{ listingId: string }> } {
   return { requests: [...new Set(listingIds)].map(listingId => ({ listingId })) };
+}
+
+/**
+ * K-017 Punkt 3 (Kalkulator 05.11.2026): App führend heißt auch „danach bei eBay zurücklesen“. Ergebnis je Angebot nur ok, wenn es
+ * nach dem Anlegen/Ändern bei eBay in einer laufenden CPS-Kampagne mit GENAU diesem Satz beworben ist. Sonst Fehler mit dem gelesenen Stand
+ * — der Aufrufer (ad-switch) schreibt dann den App-Wert nicht.
+ */
+export function verifyAdsAfterSend(results: BulkAdResult[], promo: Map<string, ListingPromotion>, percent: number): BulkAdResult[] {
+  return results.map(r => {
+    if (!r.ok) return r;
+    const p = promo.get(r.listingId);
+    if (p?.kind === 'CPS' && Math.abs(p.ratePercent - percent) < 1e-9) return r;
+    const seen = !p || p.kind === 'NONE' ? 'nicht beworben' : p.kind === 'CPC' ? 'nur CPC-Kampagne' : `${p.ratePercent} %`;
+    return { ...r, ok: false, error: `eBay-Rücklesen: ${seen} statt ${percent} %` };
+  });
 }
