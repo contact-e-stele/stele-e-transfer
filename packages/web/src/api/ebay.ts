@@ -412,6 +412,7 @@ export async function ensureInventoryLocation(spec: LocationSpec, fetchFn: typeo
 export async function readOfferShipping(sku: string, fetchFn: typeof fetch = fetch, token?: string, itemId?: string | null): Promise<LiveShipping | null> {
   const t = token ?? await getAccessToken();
   let skus = [sku];
+  let partial: LiveShipping | null = null;
   if (sku.endsWith('-GROUP')) {
     skus = await getInventoryItemGroupSkus(sku, t, fetchFn).catch(() => [] as string[]);
   }
@@ -420,7 +421,8 @@ export async function readOfferShipping(sku: string, fetchFn: typeof fetch = fet
     if (!res.ok) continue;
     const data = await res.json() as { offers?: Parameters<typeof pickOfferShipping>[0] };
     const hit = pickOfferShipping(data.offers, itemId);
-    if (hit) return hit;
+    if (hit && (hit.fulfillmentPolicyId || !itemId)) return hit;
+    if (hit) { partial = hit; break; } // Live 05.11. 21:01: stele-224/225/189 – Offer mit Lagerort, aber ohne Richtlinie → GetItem ergänzt
   }
   if (!itemId) return null;
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -437,8 +439,10 @@ export async function readOfferShipping(sku: string, fetchFn: typeof fetch = fet
     headers: { 'Content-Type': 'text/xml', 'X-EBAY-API-SITEID': '77', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'GetItem', 'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID },
     body: xml,
   });
-  if (!r.ok) return null;
-  return parseGetItemShipping(await r.text());
+  if (!r.ok) return partial;
+  const gi = parseGetItemShipping(await r.text());
+  if (partial) return { ...partial, fulfillmentPolicyId: gi?.fulfillmentPolicyId ?? null, source: gi?.fulfillmentPolicyId ? 'offer+getitem' : 'offer' };
+  return gi;
 }
 
 /**

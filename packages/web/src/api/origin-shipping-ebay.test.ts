@@ -128,3 +128,15 @@ describe('readOfferShipping: alle Varianten-SKUs + GetItem-Fallback (Fund 05.11.
     expect(seen.filter(s => s.startsWith('POST')).length).toBe(1); // nur der GetItem-Lese-POST
   });
 });
+
+describe('readOfferShipping: Offer mit Lagerort, aber ohne Richtlinie (live stele-224/225/189, 05.11. 21:01)', () => {
+  test('Richtlinie wird per GetItem ergänzt, Lagerort aus dem Offer bleibt', async () => {
+    const f = (async (u: RequestInfo | URL) => {
+      const url = String(u);
+      if (url.includes('inventory_item_group')) return json({ variantSKUs: ['A'] });
+      if (url.includes('ws/api.dll')) return new Response('<GetItemResponse><Ack>Success</Ack><Item><Country>DE</Country><Location>Wiesbaden</Location><SellerProfiles><SellerShippingProfile><ShippingProfileID>276306574014</ShippingProfileID></SellerShippingProfile></SellerProfiles></Item></GetItemResponse>', { status: 200 });
+      return json({ offers: [{ status: 'PUBLISHED', merchantLocationKey: 'default', listing: { listingId: '198724953739' } }] });
+    }) as unknown as typeof fetch;
+    expect(await readOfferShipping('stele-224-GROUP', f, 'tok', '198724953739')).toEqual({ merchantLocationKey: 'default', fulfillmentPolicyId: '276306574014', source: 'offer+getitem' });
+  });
+});
