@@ -128,7 +128,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-11-03, aktuelle Version: v1.46):**
+**Aktueller Zählerstand (Stand 2026-11-05, aktuelle Version: v1.48):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -323,6 +323,14 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | — | #259 | *(zählt nicht — reine Doku: CLAUDE.md Regel 14)* |
 | 1 | #258 | OFFEN 021: Knopf „Retoure-Workflow kopieren“ + editierbare Vorlage |
 | 2 | #261 | OFFEN 025: eBay-Fehlertext bei Variantenpreisen + Fehlende Preise nachholen |
+| — | #262 | *(zählt nicht — Versions-Nachtrag v1.46, Housekeeping)* |
+| 3 | #260 | OFFEN 023: Varianten-Texte auf Deutsch (Import-Vorschau, Produkte-Tab) |
+| 4 | #263 | Anzeige-Rate überall live (Karte, alle angezeigten, Massenaktion) → **Bump v1.46 → v1.47 bei #263** (nachgetragen 05.11.) |
+| 1 | #264 | Werbung höchstens 5 %: Umschalter nur 0/2/3/5 % (Gesetz 72) |
+| 2 | #265 | OFFEN 026: Größen-/Farb-Achse je Kategorie auf eBay-Pflichtnamen |
+| 3 | #266 | OFFEN 026c: Größen-Werteliste verbindlich auch bei Taxonomy FREE_TEXT |
+| 4 | #268 | OFFEN 030 Weg B: Knopf legt Versandrichtlinien je Herkunft an → **Bump v1.47 → v1.48 bei #268** (nachgetragen 05.11.) |
+| 1 | #267 | OFFEN 029 + 030 Teil 1 + 2: Fußzeile, Lieferzeit, Lagerort und Versandrichtlinie je Herkunft |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -338,7 +346,7 @@ Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Br
 Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
 aber „2 von 4“.*
 
-**→ Zähler: 2 von 4 seit v1.46** (#258, #261; nächster Bump beim 4. größeren PR). Nachtrag 03.11.: drei fällige Sprünge (#249, #253, #257) in einem Schritt v1.43 → v1.46 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#259 vor #258). Reihenfolge = Merge-Zeitpunkt (#218 vor #217, #220 vor #219). *Lesart #212/#213 wie oben. Lesart „#221–#223 sind Folge-Fixes eines Themas und zählen nur einmal“: dann v1.38 und „4 von 4“ — Entscheidung beim Inhaber; hier wörtlich (eigenständige Bugfix-PRs, wie #205/#206).*
+**→ Zähler: 1 von 4 seit v1.48** (#267; nächster Bump beim 4. größeren PR). Nachtrag 05.11.: zwei fällige Sprünge (#263, #268) in einem Schritt v1.46 → v1.48 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#262 Housekeeping zählt nicht; #260 nach #262 gemergt). Nachtrag 03.11.: drei fällige Sprünge (#249, #253, #257) in einem Schritt v1.43 → v1.46 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#259 vor #258). Reihenfolge = Merge-Zeitpunkt (#218 vor #217, #220 vor #219). *Lesart #212/#213 wie oben. Lesart „#221–#223 sind Folge-Fixes eines Themas und zählen nur einmal“: dann v1.38 und „4 von 4“ — Entscheidung beim Inhaber; hier wörtlich (eigenständige Bugfix-PRs, wie #205/#206).*
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -383,6 +391,8 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.43 → v1.44: PR #246, #247, #248, #249 (nachgetragen 03.11.)
 - v1.44 → v1.45: PR #250, #251, #252, #253 (nachgetragen 03.11.)
 - v1.45 → v1.46: PR #254, #255, #256, #257 (nachgetragen 03.11.)
+- v1.46 → v1.47: PR #258, #261, #260, #263 (nachgetragen 05.11.)
+- v1.47 → v1.48: PR #264, #265, #266, #268 (nachgetragen 05.11.)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
