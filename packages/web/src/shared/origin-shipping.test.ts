@@ -190,3 +190,37 @@ describe('Bestandsliste (nur lesen)', () => {
     expect(r.umstellungNoetig).toBeNull();
   });
 });
+
+// Fund 05.11.2026 09:0x: 20 von 44 Live-Angeboten lieferten leere Felder, weil das erste Offer der ersten SKU genommen wurde.
+import { parseGetItemShipping, pickOfferShipping } from './origin-shipping';
+
+describe('Live-Versanddaten lesen (Fund 05.11.)', () => {
+  test('pickOfferShipping: Offer dieses Angebots (listingId) vor erstem Offer', () => {
+    const offers = [
+      { status: 'UNPUBLISHED', merchantLocationKey: 'alt', listingPolicies: { fulfillmentPolicyId: '1' } },
+      { status: 'PUBLISHED', merchantLocationKey: 'default', listingPolicies: { fulfillmentPolicyId: '276306574014' }, listing: { listingId: '198625473351' } },
+    ];
+    expect(pickOfferShipping(offers, '198625473351')).toEqual({ merchantLocationKey: 'default', fulfillmentPolicyId: '276306574014', source: 'offer' });
+  });
+  test('pickOfferShipping: ohne Treffer PUBLISHED vor leerem/anderem', () => {
+    expect(pickOfferShipping([{ status: 'UNPUBLISHED' }, { status: 'PUBLISHED', listingPolicies: { fulfillmentPolicyId: '9' } }], null))
+      .toEqual({ merchantLocationKey: null, fulfillmentPolicyId: '9', source: 'offer' });
+  });
+  test('pickOfferShipping: nur leere Offers → null (dann GetItem)', () => {
+    expect(pickOfferShipping([{ status: 'UNPUBLISHED' }, {}], '1')).toBeNull();
+    expect(pickOfferShipping(undefined)).toBeNull();
+  });
+  test('parseGetItemShipping: Richtlinie + Standort', () => {
+    const xml = '<GetItemResponse><Ack>Success</Ack><Item><Country>DE</Country><Location>Wiesbaden</Location><SellerProfiles><SellerShippingProfile><ShippingProfileID>276306574014</ShippingProfileID><ShippingProfileName>Versand</ShippingProfileName></SellerShippingProfile><SellerReturnProfile><ReturnProfileID>276306559014</ReturnProfileID></SellerReturnProfile></SellerProfiles></Item></GetItemResponse>';
+    expect(parseGetItemShipping(xml)).toEqual({ merchantLocationKey: null, fulfillmentPolicyId: '276306574014', locationText: 'Wiesbaden, DE', source: 'getitem' });
+  });
+  test('parseGetItemShipping: Fehler-Antwort → null', () => {
+    expect(parseGetItemShipping('<GetItemResponse><Ack>Failure</Ack></GetItemResponse>')).toBeNull();
+  });
+  test('Bestandsliste zeigt GetItem-Standort statt "–"', () => {
+    const r = inventoryRow({ productId: 152, itemId: '198625473351', origin: CN, locations: {}, policies: WITH_ORIGIN_POLICIES, live: { merchantLocationKey: null, fulfillmentPolicyId: '276306574014', locationText: 'Wiesbaden, DE', source: 'getitem' } });
+    expect(r.heuteLagerort).toBe('kein Inventory-Lagerort (Standort laut eBay: Wiesbaden, DE)');
+    expect(r.heuteRichtlinie).toBe('276306574014 "Versand"');
+    expect(r.umstellungNoetig).toBe(true);
+  });
+});

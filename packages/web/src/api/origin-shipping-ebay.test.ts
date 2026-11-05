@@ -86,7 +86,7 @@ describe('Lesewege (nur GET)', () => {
       if (String(u).includes('inventory_item_group')) return json({ variantSKUs: ['stele-120-ROT'] });
       return json({ offers: [{ merchantLocationKey: 'default', listingPolicies: { fulfillmentPolicyId: '276306574014' } }] });
     }) as unknown as typeof fetch;
-    expect(await readOfferShipping('stele-120-GROUP', f, 'tok')).toEqual({ merchantLocationKey: 'default', fulfillmentPolicyId: '276306574014' });
+    expect(await readOfferShipping('stele-120-GROUP', f, 'tok')).toEqual({ merchantLocationKey: 'default', fulfillmentPolicyId: '276306574014', source: 'offer' });
     expect(seen.every(s => s.startsWith('GET '))).toBe(true);
     expect(seen[1]).toContain('sku=stele-120-ROT');
   });
@@ -99,5 +99,32 @@ describe('Lesewege (nur GET)', () => {
     }) as unknown as typeof fetch;
     expect(await readDeliveryEstimate('198693421029', f, 'app')).toEqual({ minDate: '2026-11-13T08:00:00.000Z', maxDate: '2026-11-19T08:00:00.000Z' });
     expect(seen.every(s => s.startsWith('GET '))).toBe(true);
+  });
+});
+
+describe('readOfferShipping: alle Varianten-SKUs + GetItem-Fallback (Fund 05.11.)', () => {
+  test('erste SKU leer, zweite SKU hat das veröffentlichte Offer → das nehmen', async () => {
+    const f = (async (u: RequestInfo | URL) => {
+      const url = String(u);
+      if (url.includes('inventory_item_group')) return json({ variantSKUs: ['A', 'B'] });
+      if (url.includes('sku=A')) return json({ offers: [{ status: 'UNPUBLISHED' }] });
+      return json({ offers: [{ status: 'PUBLISHED', merchantLocationKey: 'default', listingPolicies: { fulfillmentPolicyId: '276306574014' }, listing: { listingId: '198625473351' } }] });
+    }) as unknown as typeof fetch;
+    expect(await readOfferShipping('stele-152-GROUP', f, 'tok', '198625473351')).toEqual({ merchantLocationKey: 'default', fulfillmentPolicyId: '276306574014', source: 'offer' });
+  });
+  test('kein Offer mit Feldern → GetItem (nur lesen)', async () => {
+    const seen: string[] = [];
+    const f = (async (u: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(u);
+      seen.push(`${init?.method ?? 'GET'} ${url.includes('ws/api.dll') ? 'GetItem' : 'rest'}`);
+      if (url.includes('inventory_item_group')) return json({ variantSKUs: ['A'] });
+      if (url.includes('ws/api.dll')) {
+        expect(String(init?.headers && (init.headers as Record<string, string>)['X-EBAY-API-CALL-NAME'])).toBe('GetItem');
+        return new Response('<GetItemResponse><Ack>Success</Ack><Item><Country>DE</Country><Location>Wiesbaden</Location><SellerProfiles><SellerShippingProfile><ShippingProfileID>276306574014</ShippingProfileID></SellerShippingProfile></SellerProfiles></Item></GetItemResponse>', { status: 200 });
+      }
+      return json({ offers: [{ status: 'UNPUBLISHED' }] });
+    }) as unknown as typeof fetch;
+    expect(await readOfferShipping('stele-152-GROUP', f, 'tok', '198625473351')).toEqual({ merchantLocationKey: null, fulfillmentPolicyId: '276306574014', locationText: 'Wiesbaden, DE', source: 'getitem' });
+    expect(seen.filter(s => s.startsWith('POST')).length).toBe(1); // nur der GetItem-Lese-POST
   });
 });

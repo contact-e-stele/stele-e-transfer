@@ -236,7 +236,7 @@ export function originAmpel(input: {
   locations: OriginLocations;
   policies: FulfillmentPolicyInfo[] | null;
   deliveryTimes?: DeliveryTimes;
-  live?: { merchantLocationKey: string | null; fulfillmentPolicyId: string | null } | null;
+  live?: LiveShipping | null;
 }): OriginAmpel {
   const deliveryTime = deliveryTimeFor(input.origin, input.deliveryTimes);
   const loc = resolveLocation(input.origin, input.locations);
@@ -249,7 +249,7 @@ export function originAmpel(input: {
   if (!pol.ok) return { standort: 'red', standortText: pol.error, location: loc.value, policy: null, deliveryTime, blockError: pol.error };
   if (input.live) {
     const wrong: string[] = [];
-    if (input.live.merchantLocationKey !== loc.value.key) wrong.push(`Lagerort bei eBay "${input.live.merchantLocationKey ?? '–'}", passend wäre "${loc.value.key}"`);
+    if (input.live.merchantLocationKey !== loc.value.key) wrong.push(`Lagerort bei eBay "${input.live.merchantLocationKey ?? (input.live.locationText ? `kein Inventory-Lagerort, Standort ${input.live.locationText}` : '–')}", passend wäre "${loc.value.key}"`);
     if (input.live.fulfillmentPolicyId !== pol.value.id) wrong.push(`Versandrichtlinie bei eBay ${input.live.fulfillmentPolicyId ?? '–'}, passend wäre ${pol.value.id} "${pol.value.name}"`);
     if (wrong.length) return { standort: 'red', standortText: wrong.join(' · '), location: loc.value, policy: pol.value, deliveryTime, blockError: null };
   }
@@ -272,14 +272,14 @@ export interface InventoryRow {
 
 export function inventoryRow(input: {
   productId: number; itemId: string; origin: ListingOrigin; locations: OriginLocations; policies: FulfillmentPolicyInfo[];
-  live: { merchantLocationKey: string | null; fulfillmentPolicyId: string | null } | null;
+  live: LiveShipping | null;
 }): InventoryRow {
   const o = input.origin;
   const herkunft = o.mixed ? `gemischt (${[...new Set(o.perVariant.map(v => v.label || 'unbekannt'))].join(', ')})` : (o.label || 'unbekannt');
   const loc = resolveLocation(o, input.locations);
   const pol = resolveFulfillmentPolicy(o, input.policies);
   const policyName = (id: string | null) => id ? `${id}${(n => n ? ` "${n}"` : '')(input.policies.find(p => p.id === id)?.name)}` : '–';
-  const heuteLagerort = input.live ? (input.live.merchantLocationKey ?? '–') : 'nicht lesbar';
+  const heuteLagerort = input.live ? (input.live.merchantLocationKey ?? (input.live.locationText ? `kein Inventory-Lagerort (Standort laut eBay: ${input.live.locationText})` : '–')) : 'nicht lesbar';
   const heuteRichtlinie = input.live ? policyName(input.live.fulfillmentPolicyId) : 'nicht lesbar';
   const decidable = loc.ok && pol.ok && !!input.live;
   return {
@@ -294,3 +294,38 @@ export function inventoryRow(input: {
   };
 }
 
+
+// ─── Live-Versanddaten eines Angebots lesen (Fund 05.11.2026 09:0x) ─────────────────────────────────────
+// Live: bei 20 von 44 Angeboten lieferte "erstes Offer der ersten Varianten-SKU" leere Felder (Lagerort und Richtlinie null),
+// obwohl der Seller Hub für 42 Angebote die Richtlinie "Versand" zeigt. Darum: das veröffentlichte Offer DIESES Angebots
+// suchen (listing.listingId = eBay-Nr, sonst PUBLISHED mit Feldern); findet sich keins, liest die App GetItem
+// (SellerShippingProfile + Standort-Text). Nur lesen.
+
+export interface LiveShipping {
+  merchantLocationKey: string | null;
+  fulfillmentPolicyId: string | null;
+  locationText?: string | null;   // nur aus GetItem (Ort, Land), wenn kein Inventory-Offer mit Lagerort lesbar ist
+  source?: 'offer' | 'getitem';
+}
+
+interface OfferLike { status?: string; merchantLocationKey?: string; listingPolicies?: { fulfillmentPolicyId?: string }; listing?: { listingId?: string } }
+
+/** Aus der Offer-Liste einer SKU das passende Offer wählen. null = keins mit Lagerort oder Richtlinie. */
+export function pickOfferShipping(offers: OfferLike[] | undefined, itemId?: string | null): LiveShipping | null {
+  const list = (offers ?? []).filter(o => o && (o.merchantLocationKey || o.listingPolicies?.fulfillmentPolicyId));
+  if (!list.length) return null;
+  const o = (itemId ? list.find(x => x.listing?.listingId === itemId) : undefined)
+    ?? list.find(x => x.status === 'PUBLISHED')
+    ?? list[0];
+  return { merchantLocationKey: o.merchantLocationKey ?? null, fulfillmentPolicyId: o.listingPolicies?.fulfillmentPolicyId ?? null, source: 'offer' };
+}
+
+/** Trading GetItem (OutputSelector SellerProfiles, Location, PostalCode, Country) → Richtlinie + Standort-Text. */
+export function parseGetItemShipping(xml: string): LiveShipping | null {
+  if (!/<Ack>(Success|Warning)<\/Ack>/.test(xml)) return null;
+  const policy = xml.match(/<SellerShippingProfile>[\s\S]*?<ShippingProfileID>(\d+)<\/ShippingProfileID>/)?.[1] ?? null;
+  const loc = xml.match(/<Location>([^<]*)<\/Location>/)?.[1]?.trim() || null;
+  const country = xml.match(/<Item>[\s\S]*?<Country>([A-Z]{2})<\/Country>/)?.[1] ?? null;
+  if (!policy && !loc) return null;
+  return { merchantLocationKey: null, fulfillmentPolicyId: policy, locationText: [loc, country].filter(Boolean).join(', ') || null, source: 'getitem' };
+}

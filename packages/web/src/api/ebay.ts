@@ -48,7 +48,7 @@ import {
 } from '../shared/variant-resolver';
 import { parseReturnPolicy, type ReturnTerms } from '../shared/shipping-return-text';
 import { buildFulfillmentPolicyBody, type CreatePolicyRequest } from '../shared/fulfillment-policy';
-import { locationCreateBody, parseFulfillmentPolicies, parseBrowseDeliveryEstimate, type LocationSpec, type FulfillmentPolicyInfo, type DeliveryEstimate } from '../shared/origin-shipping';
+import { locationCreateBody, parseFulfillmentPolicies, parseBrowseDeliveryEstimate, pickOfferShipping, parseGetItemShipping, type LiveShipping, type LocationSpec, type FulfillmentPolicyInfo, type DeliveryEstimate } from '../shared/origin-shipping';
 import { planVariantAxes, categoryAspectMap, type AxisPlan, type CategoryAspectInfo } from '../shared/variant-axis-aspect';
 
 // P-85 Schritt 2b (20.09.2026): NON_VARIATION_ASPECTS und slugify() leben jetzt in
@@ -404,21 +404,41 @@ export async function ensureInventoryLocation(spec: LocationSpec, fetchFn: typeo
   return 'created';
 }
 
-/** NUR LESEN: Lagerort + Versandrichtlinie eines Live-Angebots (bei "-GROUP" über die erste Varianten-SKU). null = nicht lesbar. */
-export async function readOfferShipping(sku: string, fetchFn: typeof fetch = fetch, token?: string): Promise<{ merchantLocationKey: string | null; fulfillmentPolicyId: string | null } | null> {
+/**
+ * NUR LESEN: Lagerort + Versandrichtlinie eines Live-Angebots. Sucht über ALLE Varianten-SKUs das Offer dieses Angebots
+ * (pickOfferShipping); findet sich keins mit Feldern und ist die eBay-Nr bekannt → GetItem (Richtlinie + Standort-Text).
+ * null = nichts lesbar.
+ */
+export async function readOfferShipping(sku: string, fetchFn: typeof fetch = fetch, token?: string, itemId?: string | null): Promise<LiveShipping | null> {
   const t = token ?? await getAccessToken();
-  let offerSku = sku;
+  let skus = [sku];
   if (sku.endsWith('-GROUP')) {
-    const skus = await getInventoryItemGroupSkus(sku, t, fetchFn).catch(() => [] as string[]);
-    if (!skus.length) return null;
-    offerSku = skus[0];
+    skus = await getInventoryItemGroupSkus(sku, t, fetchFn).catch(() => [] as string[]);
   }
-  const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(offerSku)}&marketplace_id=EBAY_DE`, { headers: { 'Authorization': `Bearer ${t}` } });
-  if (!res.ok) return null;
-  const data = await res.json() as { offers?: Array<{ merchantLocationKey?: string; listingPolicies?: { fulfillmentPolicyId?: string } }> };
-  const o = data.offers?.[0];
-  if (!o) return null;
-  return { merchantLocationKey: o.merchantLocationKey ?? null, fulfillmentPolicyId: o.listingPolicies?.fulfillmentPolicyId ?? null };
+  for (const s of skus) {
+    const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(s)}&marketplace_id=EBAY_DE`, { headers: { 'Authorization': `Bearer ${t}` } });
+    if (!res.ok) continue;
+    const data = await res.json() as { offers?: Parameters<typeof pickOfferShipping>[0] };
+    const hit = pickOfferShipping(data.offers, itemId);
+    if (hit) return hit;
+  }
+  if (!itemId) return null;
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>${t}</eBayAuthToken></RequesterCredentials>
+  <ItemID>${itemId}</ItemID>
+  <OutputSelector>SellerProfiles</OutputSelector>
+  <OutputSelector>Location</OutputSelector>
+  <OutputSelector>Country</OutputSelector>
+  <OutputSelector>Ack</OutputSelector>
+</GetItemRequest>`;
+  const r = await fetchFn('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/xml', 'X-EBAY-API-SITEID': '77', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'GetItem', 'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID },
+    body: xml,
+  });
+  if (!r.ok) return null;
+  return parseGetItemShipping(await r.text());
 }
 
 /**
