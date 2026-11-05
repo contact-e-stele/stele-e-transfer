@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { isAliOrderIdNotTracking, ALI_ORDER_ID_AS_TRACKING_ERROR } from '../shared/tracking-guard';
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, setAdRate, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
 import { sentPricesToPatch } from '../shared/sent-prices';
 import { cleanGeneratedTitle, keepImportTitle } from '../shared/title-clean';
 import { earUmlageFor, evaluateElectricGate, suggestElectric, weeeLineForListing, parseElectricPatch, parseElectricSettingsBody } from '../shared/electric';
@@ -890,7 +890,8 @@ const app = new Hono()
         // s. computeOrderNettoErgebnis() in order-matching.ts.
         const netto = computeOrderNettoErgebnis({
           orderTotal: order.total,
-          lineItems: order.lineItems.map(li => ({ sku: li.sku, quantity: li.quantity })),
+          // K-017: Anzeigengebühr nach eBay-Kennzeichen „Verkauft über Anzeigen“ statt nach dem heutigen adRate.
+          lineItems: order.lineItems.map(li => ({ sku: li.sku, quantity: li.quantity, soldViaAd: li.soldViaAdCampaign, lineItemCost: li.lineItemCost })),
           manualBuyPrice: note?.manualBuyPrice,
           orderDate: order.orderDate,
           findProduct: (sku) => {
@@ -920,6 +921,7 @@ const app = new Hono()
           nettoErgebnis: netto.nettoErgebnis,
           nettoGebuehren: netto.nettoGebuehren,
           nettoQuelle: netto.nettoQuelle,
+          nettoAnzeige: netto.nettoAnzeige ?? null,
           aliexpressUrl,
           ebayListingUrl,
         };
@@ -1744,37 +1746,13 @@ const app = new Hono()
     }
   })
 
-  .post('/ebay/listings/bulk/adrate', async (c) => {
-    try {
-      const body = await c.req.json() as { itemIds: string[]; ratePercent: number };
-      const { db, schema } = await import('../db/index').then(async m => {
-        const s = await import('../db/schema');
-        return { db: m.db, schema: s };
-      });
-      const results: Array<{ itemId: string; ok: boolean; error?: string }> = [];
-      // K-009 Rest (Kalkulator 15.10.2026): "0 % (aus)" in der Sammel-Auswahl setzt NUR den App-Wert (für die Gewinnrechnung unbeworbener
-      // Angebote). An eBay geht dabei nichts — was BidPercentage 0 über ReviseFixedPriceItem bei eBay bewirkt, ist nicht geprüft; eine
-      // Kampagne beendet der Inhaber im Seller Hub.
-      if (body.ratePercent === 0) {
-        for (const itemId of body.itemIds) {
-          await db.update(schema.products).set({ adRate: 0, updatedAt: new Date().toISOString() }).where(eq(schema.products.ebayListingId, itemId));
-          results.push({ itemId, ok: true });
-        }
-        return c.json({ results, appOnly: true }, 200);
-      }
-      for (const itemId of body.itemIds) {
-        const r = await setAdRate(itemId, body.ratePercent);
-        if (r.ok) {
-          await db.update(schema.products).set({ adRate: body.ratePercent }).where(eq(schema.products.ebayListingId, itemId));
-        }
-        results.push({ itemId, ok: r.ok, error: r.error });
-        await new Promise(res => setTimeout(res, 400));
-      }
-      return c.json({ results }, 200);
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
-  })
+  // K-017 Punkt 3 (Kalkulator 05.11.2026, Vorgabe Inhaber „App führend“): der alte Weg (#181) setzte bei 0 % NUR den App-Wert und bei
+  // 2/3/5 % den Trading-Weg ohne Zurücklesen. Die Oberfläche nutzt ihn seit #257/#263 nicht mehr — einziger Weg ist
+  // POST /ebay/listings/ad-switch (Kampagne bei eBay ändern, zurücklesen, App-Wert nur bei Erfolg). Der alte Weg ist gesperrt,
+  // damit kein Skript/Aufruf die App wieder vom eBay-Stand löst.
+  .post('/ebay/listings/bulk/adrate', (c) => c.json({
+    error: 'Weg abgeschaltet (K-017): Anzeige-Rate nur noch über POST /api/ebay/listings/ad-switch — ändert die Kampagne bei eBay, liest zurück und setzt den App-Wert nur bei Erfolg.',
+  }, 410))
 
   // OFFEN 024 NACHTRAG (Inhaber 03.11.2026): Anzeige-Rate 5 % ↔ 0 % — Kampagne bei eBay + Preise je Variante (× 0,762 / 0,8215, ,95 aufgerundet).
   // Ohne confirm: nur Vorschau. Reihenfolge und Sperren: api/ad-switch.ts. K-011-gesperrte Produkte werden nicht angefasst.
@@ -3818,6 +3796,18 @@ const app = new Hono()
       console.error('[promoted-status]', e);
       return c.json({ error: String(e) }, 502);
     }
+  })
+
+  // K-017 Punkt 5: letzter täglicher Anzeige-Abgleich (Kachel im Produkte-Tab); POST startet ihn sofort (nur lesen bei eBay).
+  .get('/ebay/ad-rate-check', async (c) => {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const { AD_RATE_CHECK_KEY, parseAdRateCheck } = await import('../shared/ad-rate-check');
+    const row = await db.select().from(schema.appSettings).where(eq(schema.appSettings.key, AD_RATE_CHECK_KEY)).get();
+    return c.json({ report: parseAdRateCheck(row?.value) }, 200);
+  })
+  .post('/ebay/ad-rate-check', async (c) => {
+    const { runAdRateCheck } = await import('./ad-rate-check');
+    return c.json({ report: await runAdRateCheck() }, 200);
   })
 
   .post('/ebay/promoted-status/apply', async (c) => {

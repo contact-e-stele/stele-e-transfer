@@ -58,11 +58,12 @@ describe('K-009 Rest: Sammel-Auswahl', () => {
     expect(src).toContain('AD_RATE_OPTIONS.map(r => <option');
     expect(src).not.toContain('[2, 3, 5, 8, 10].map');
   });
-  test('Route bulk/adrate: 0 % setzt nur die App, kein setAdRate-Aufruf an eBay', async () => {
+  test('K-017: alter Weg bulk/adrate ist abgeschaltet (410) — kein „nur App“, kein setAdRate', async () => {
     const src = await Bun.file(new URL('../api/index.ts', import.meta.url)).text();
     const i = src.indexOf("'/ebay/listings/bulk/adrate'");
-    const block = src.slice(i, src.indexOf('const r = await setAdRate', i));
-    expect(block).toContain('if (body.ratePercent === 0)');
-    expect(block).toContain('return c.json({ results, appOnly: true }, 200);');
+    const block = src.slice(i, src.indexOf('}, 410))', i) + 8);
+    expect(block).toContain('/api/ebay/listings/ad-switch');
+    expect(block).not.toContain('appOnly');
+    expect(block).not.toContain('setAdRate');
   });
 });

@@ -7,7 +7,7 @@
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
 import { einfuhrForOrderDate } from '../shared/checkout-factor';
-import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant } from '../shared/pricing';
+import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { activeCheckoutFactor, applyCheckoutFactor } from '../shared/checkout-factor';
 import { slugify, NON_VARIATION_ASPECTS, resolveVariantEntries, type VariantGroup } from '../shared/variant-resolver';
 
@@ -103,7 +103,9 @@ export async function getOrderChinaZollEur(): Promise<number> {
 // sie nachzubauen (Grundgesetz Regel 8).
 export interface OrderNettoInput {
   orderTotal: number;
-  lineItems: Array<{ sku: string | null; quantity: number }>;
+  /** K-017: soldViaAd = eBay-Kennzeichen „Verkauft über Anzeigen“ (Fulfillment API lineItems[].properties.soldViaAdCampaign).
+   *  Fehlt es bei ALLEN Positionen (undefined), rechnet die Funktion wie bisher mit dem heutigen products.adRate (ältere Aufrufer). */
+  lineItems: Array<{ sku: string | null; quantity: number; soldViaAd?: boolean; lineItemCost?: number | null }>;
   manualBuyPrice: number | null | undefined;
   findProduct: (sku: string | null) => OrderProductInfo | null;
   orderDate?: string; // P-EINFUHR: Einfuhr nach Bestelltag (bis 22.10.2026: 3,57; ab 23.10.2026: 5,95)
@@ -175,13 +177,58 @@ export interface OrderNettoResult {
   nettoErgebnis: number | null;
   nettoGebuehren: number | null;
   nettoQuelle: 'manuell' | 'automatisch' | null;
+  /** K-017: Anzeigengebühr (brutto) laut eBay-Kennzeichen; 0 = nicht über Anzeige verkauft; null = Kennzeichen unbekannt (alter Weg). */
+  nettoAnzeige?: number | null;
+}
+
+/**
+ * K-017 Punkt 4 (Kalkulator 05.11.2026): Anzeigengebühr einer Bestellung nach dem eBay-Kennzeichen „Verkauft über Anzeigen“, nicht
+ * nach dem HEUTIGEN products.adRate. Grund: stele-127 wurde am 01.11. über die Anzeige verkauft (Gebühr 1,01 €) und erst am 03.11.
+ * aus der Kampagne genommen — mit dem heutigen Satz 0 zeigte der Bestellungen-Tab die Gebühr nicht.
+ * Satz je markierter Position: products.adRate, wenn > 0; sonst der einzige Satz, den das Konto je hatte (DEFAULT 5 %, eine
+ * Kampagne „fest 5 %“ — belegt im Befund des Kalkulators 05.11.). Der Gebührenbetrag selbst steht nur in der Finances API
+ * (Scope sell.finances fehlt) — daher VK × Satz × 1,19.
+ * Rückgabe null = kein Kennzeichen bekannt → Aufrufer rechnet wie bisher.
+ */
+export function orderAdFee(
+  orderTotal: number,
+  lineItems: OrderNettoInput['lineItems'],
+  findProduct: OrderNettoInput['findProduct'],
+): { adFee: number; rate: number | null } | null {
+  if (lineItems.every(li => li.soldViaAd === undefined)) return null;
+  const flagged = lineItems.filter(li => li.soldViaAd === true);
+  if (flagged.length === 0) return { adFee: 0, rate: 0 };
+  const rateOf = (sku: string | null) => {
+    const r = findProduct(sku)?.adRate;
+    return typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
+  };
+  const rates = flagged.map(li => rateOf(li.sku));
+  // Alle Positionen über die Anzeige mit demselben Satz → Satz auf den Gesamtbetrag (wie computeOrderProfit bisher).
+  if (flagged.length === lineItems.length && rates.every(r => r === rates[0])) {
+    return { adFee: orderTotal * rates[0] / 100 * DEFAULT_PRICING_CONFIG.vatFactor, rate: rates[0] };
+  }
+  // Gemischt: je markierter Position ihr Positionsbetrag; fehlt er, der Gesamtbetrag (Gewinn nie zu hoch).
+  const adFee = flagged.reduce((a, li, i) => a + (li.lineItemCost ?? orderTotal) * rates[i] / 100 * DEFAULT_PRICING_CONFIG.vatFactor, 0);
+  return { adFee, rate: null };
+}
+
+/** Gewinn/Gebühren mit Anzeige nach Kennzeichen (ad) bzw. altem Weg (ad === null → Produkt-Satz). */
+function profitWithAd(orderTotal: number, einkauf: number, ad: ReturnType<typeof orderAdFee>, legacyRate: number | null | undefined) {
+  if (ad === null) return { ...computeOrderProfit(orderTotal, einkauf, legacyRate), nettoAnzeige: null };
+  if (ad.rate !== null) return { ...computeOrderProfit(orderTotal, einkauf, ad.rate), nettoAnzeige: Math.round(ad.adFee * 100) / 100 };
+  const base = computeOrderProfit(orderTotal, einkauf, 0);
+  return {
+    profit: Math.round((base.profit - ad.adFee) * 100) / 100,
+    feesDeducted: Math.round((base.feesDeducted + ad.adFee) * 100) / 100,
+    nettoAnzeige: Math.round(ad.adFee * 100) / 100,
+  };
 }
 
 export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoResult {
   if (input.manualBuyPrice != null) {
     const adRate = input.lineItems.map(li => input.findProduct(li.sku)?.adRate).find(a => a != null);
-    const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, input.manualBuyPrice, adRate);
-    return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell' };
+    const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, input.manualBuyPrice, orderAdFee(input.orderTotal, input.lineItems, input.findProduct), adRate);
+    return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell', nettoAnzeige };
   }
 
   let einkaufBekannt = true;
@@ -213,8 +260,9 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
     einkaufGesamt += costs.totalCost - costs.customs + (dated ?? costs.customs);
   }
   if (!einkaufBekannt) {
-    return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null };
+    const ad = orderAdFee(input.orderTotal, input.lineItems, input.findProduct);
+    return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null, nettoAnzeige: ad ? Math.round(ad.adFee * 100) / 100 : null };
   }
-  const { profit, feesDeducted } = computeOrderProfit(input.orderTotal, einkaufGesamt, adRate);
-  return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch' };
+  const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, einkaufGesamt, orderAdFee(input.orderTotal, input.lineItems, input.findProduct), adRate);
+  return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch', nettoAnzeige };
 }

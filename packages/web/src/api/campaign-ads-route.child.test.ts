@@ -22,6 +22,8 @@ describe.skipIf(!IS_CHILD)('Kampagne 5 % (eigener Prozess, lokale Datei-DB)', ()
   let cookie = '';
   const realFetch = globalThis.fetch;
   const posts: Array<{ url: string; body: unknown }> = [];
+  // K-017: Attrappe merkt sich angelegte/geänderte Anzeigen, damit das Zurücklesen (getAds) den echten Stand nach dem Senden sieht.
+  const liveAds = new Map<string, string>();
 
   beforeAll(async () => {
     if (!process.env.TURSO_DATABASE_URL!.startsWith('file:')) throw new Error('nur gegen lokale Datei-DB');
@@ -48,15 +50,17 @@ describe.skipIf(!IS_CHILD)('Kampagne 5 % (eigener Prozess, lokale Datei-DB)', ()
       const url = String(input instanceof Request ? input.url : input);
       if (url.includes('/identity/v1/oauth2/token')) return new Response(JSON.stringify({ access_token: 'mkt', expires_in: 7200 }), { status: 200 });
       if (url.includes('/ad_campaign?')) return new Response(JSON.stringify({ campaigns: [{ campaignId: '154721036015', campaignName: 'K', campaignStatus: 'RUNNING', fundingStrategy: { fundingModel: 'COST_PER_SALE', bidPercentage: '10.0' } }] }), { status: 200 });
-      if (/\/ad_campaign\/154721036015\/ad\?/.test(url)) return new Response(JSON.stringify({ ads: [] }), { status: 200 });
+      if (/\/ad_campaign\/154721036015\/ad\?/.test(url)) return new Response(JSON.stringify({ ads: [...liveAds].map(([listingId, bidPercentage]) => ({ listingId, bidPercentage, adStatus: 'ACTIVE' })) }), { status: 200 });
       if (url.endsWith('/bulk_create_ads_by_listing_id')) {
         const b = JSON.parse(String(init?.body)); posts.push({ url, body: b });
+        for (const r of b.requests as Array<{ listingId: string; bidPercentage: string }>) if (r.listingId !== '198725787016') liveAds.set(r.listingId, r.bidPercentage);
         return new Response(JSON.stringify({ responses: b.requests.map((r: { listingId: string }) => r.listingId === '198725787016'
           ? { listingId: r.listingId, statusCode: 400, errors: [{ errorId: 35036, message: 'The listing ID already exists in the campaign.' }] }
           : { listingId: r.listingId, statusCode: 201, adId: 'ad' + r.listingId }) }), { status: 207 });
       }
       if (url.endsWith('/bulk_update_ads_bid_by_listing_id')) {
         const b = JSON.parse(String(init?.body)); posts.push({ url, body: b });
+        for (const r of b.requests as Array<{ listingId: string; bidPercentage: string }>) liveAds.set(r.listingId, r.bidPercentage);
         return new Response(JSON.stringify({ responses: b.requests.map((r: { listingId: string }) => ({ listingId: r.listingId, statusCode: 200 })) }), { status: 207 });
       }
       throw new Error('unerwarteter Netzwerkaufruf: ' + url);

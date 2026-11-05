@@ -4,6 +4,7 @@ import { startBackupScheduler } from "./api/backup";
 import { startPriceMonitor, startAvailabilityCheckCron } from "./api/price-monitor";
 import { startOrderNotifier } from "./api/order-notifier";
 import { startTrackingSyncCron } from "./api/tracking-sync";
+import { startAdRateCheckCron } from "./api/ad-rate-check";
 import { runMigrations } from "./db/migrate";
 import { runStartupCheck } from "./startup-check";
 import { readEnvSecret } from "./shared/env-secret";
@@ -99,6 +100,9 @@ startOrderNotifier();
 // Sendungsnummer automatisch von AliExpress übernehmen: alle 4h — hinter Schalter, steht
 // standardmäßig AUS (ALIEXPRESS_TRACKING_SYNC_ENABLED in tracking-sync.ts)
 startTrackingSyncCron();
+
+// K-017 Punkt 5: Anzeige-Abgleich App ↔ eBay-Kampagne täglich (nur lesen bei eBay), Kachel im Produkte-Tab
+startAdRateCheckCron();
 
 function getStaticFilePath(pathname: string) {
   const cleanPath = decodeURIComponent(pathname)
