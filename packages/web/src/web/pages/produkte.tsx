@@ -22,6 +22,7 @@ import { ProductDataPanel } from "../components/product-data-panel";
 import { VariantTextPanel } from "../components/variant-text-panel";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
+import { OriginAmpelButton } from "../components/origin-panel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
 import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions } from "../components/gpsr-fields-editor";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
@@ -2014,6 +2015,9 @@ export default function Produkte() {
                   );
                 })()}
 
+                {/* OFFEN 030 Teil 2: Ampel Standort/Lieferzeit (Klick liest eBay, nur lesen) */}
+                <OriginAmpelButton productId={product.id} shipsFrom={product.shipsFrom} variantPrices={product.variantPrices} />
+
                 {/* Compliance-Übersteuerung (P-66 Schritt 3) */}
                 {product.complianceOverride && (
                   <span
@@ -2309,33 +2313,9 @@ export default function Produkte() {
                 )}
               </div>
 
-              {/* Bearbeitungszeit (Handling Time) */}
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                <span style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap" }}>Bearb.-Zeit</span>
-                <select
-                  value={String(product.handlingTimeDays ?? 10)}
-                  onChange={async (e) => {
-                    const val = parseInt(e.currentTarget.value);
-                    await fetch(`/api/products/${product.id}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ handlingTimeDays: val }),
-                    });
-                    setProducts(prev => prev.map(p => p.id === product.id ? { ...p, handlingTimeDays: val } : p));
-                  }}
-                  style={{
-                    fontSize: 11, padding: "4px 8px", borderRadius: 6,
-                    border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#0F172A",
-                    fontFamily: "inherit", cursor: "pointer",
-                  }}
-                >
-                  <option value="3">3 Tage</option>
-                  <option value="5">5 Tage</option>
-                  <option value="7">7 Tage</option>
-                  <option value="10">10 Tage</option>
-                  <option value="14">14 Tage</option>
-                </select>
-              </div>
+              {/* OFFEN 030 Teil 2: Bearbeitungszeit steht in der Versandrichtlinie je Herkunft — das frühere Auswahlfeld legte beim Listen
+                  still neue Richtlinien an ("Stele 7d/5d Handling", DHL Paket) und wird nicht mehr ausgewertet. */}
+              <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 8 }}>Bearb.-Zeit: aus der Versandrichtlinie je Herkunft</div>
 
               {/* OFFEN 017: vorher "!listingResult" → nach JEDEM Listen-Versuch (egal welches Produkt) verschwand der Fehlerblock samt
                   Pflichtfeld-Auswahl, bis die Seite neu geladen wurde. Jetzt nur ausblenden, wenn DIESES Produkt gerade erfolgreich gelistet wurde. */}
