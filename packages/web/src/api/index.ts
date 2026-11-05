@@ -5308,11 +5308,12 @@ app.get('/ebay/origin-inventory', async (c) => {
     const [listings, policies, locations] = await Promise.all([getAllSellerListings(), fetchFulfillmentPolicies(), loadOriginLocations()]);
     const products = await db.select({ id: schema.products.id, ebayListingId: schema.products.ebayListingId, shipsFrom: schema.products.shipsFrom, variantPrices: schema.products.variantPrices }).from(schema.products).all();
     const byItem = new Map(products.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
-    // Fund 05.11.: nacheinander > 10 s (Bun idleTimeout) → Render 502. Darum 8 Lesungen gleichzeitig (shared/map-limit.ts).
+    // Fund 05.11.: nacheinander > 10 s (Bun idleTimeout) → Render 502. Darum Lesungen gleichzeitig (shared/map-limit.ts).
     const { mapLimit } = await import('../shared/map-limit');
     const { getAccessToken } = await import('./ebay');
     const token = await getAccessToken();
-    const rows = await mapLimit(listings, 8, async (l) => {
+    // 05.11. 21:01 live: 10,9 s bei 8 parallel (knapp über Bun-idleTimeout 10 s) → 12 parallel.
+    const rows = await mapLimit(listings, 12, async (l) => {
       const p = byItem.get(l.itemId);
       if (!p) return { steleNr: '–', itemId: l.itemId, herkunft: 'nicht in der App', heuteLagerort: 'nicht gelesen', neuerLagerort: '–', heuteRichtlinie: 'nicht gelesen', neueRichtlinie: '–', umstellungNoetig: null };
       const live = await readOfferShipping(l.sku || `stele-${p.id}`, fetch, token, l.itemId).catch(() => null);

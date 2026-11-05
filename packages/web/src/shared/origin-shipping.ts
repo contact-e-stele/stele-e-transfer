@@ -305,7 +305,7 @@ export interface LiveShipping {
   merchantLocationKey: string | null;
   fulfillmentPolicyId: string | null;
   locationText?: string | null;   // nur aus GetItem (Ort, Land), wenn kein Inventory-Offer mit Lagerort lesbar ist
-  source?: 'offer' | 'getitem';
+  source?: 'offer' | 'getitem' | 'offer+getitem';
 }
 
 interface OfferLike { status?: string; merchantLocationKey?: string; listingPolicies?: { fulfillmentPolicyId?: string }; listing?: { listingId?: string } }
