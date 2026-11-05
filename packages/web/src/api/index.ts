@@ -5285,7 +5285,7 @@ app.get('/ebay/origin-check/:id', async (c) => {
     const deliveryTimes = await loadDeliveryTimes();
     const policies = await fetchFulfillmentPolicies().catch(() => null);
     const listed = !!product.ebayListingId;
-    const live = listed ? await readOfferShipping(product.variants && product.variants !== '[]' ? `stele-${id}-GROUP` : `stele-${id}`).catch(() => null) : null;
+    const live = listed ? await readOfferShipping(product.variants && product.variants !== '[]' ? `stele-${id}-GROUP` : `stele-${id}`, fetch, undefined, product.ebayListingId).catch(() => null) : null;
     const ampel = originAmpel({ origin, locations: await loadOriginLocations(), policies, deliveryTimes, live });
     const estimate = listed ? await readDeliveryEstimate(product.ebayListingId!).catch(() => null) : null;
     const lieferzeit = listed
@@ -5315,7 +5315,7 @@ app.get('/ebay/origin-inventory', async (c) => {
     const rows = await mapLimit(listings, 8, async (l) => {
       const p = byItem.get(l.itemId);
       if (!p) return { steleNr: '–', itemId: l.itemId, herkunft: 'nicht in der App', heuteLagerort: 'nicht gelesen', neuerLagerort: '–', heuteRichtlinie: 'nicht gelesen', neueRichtlinie: '–', umstellungNoetig: null };
-      const live = await readOfferShipping(l.sku || `stele-${p.id}`, fetch, token).catch(() => null);
+      const live = await readOfferShipping(l.sku || `stele-${p.id}`, fetch, token, l.itemId).catch(() => null);
       return inventoryRow({ productId: p.id, itemId: l.itemId, origin: originOfProduct(p), locations, policies, live });
     });
     return c.json({ total: rows.length, rows }, 200);
