@@ -125,8 +125,9 @@ describe("buildEbayHTMLLight — Verstoß-Reparatur Phase 2 + Grundsatzkonform (
   });
 
   // NACHTRAG 029 (Inhaber 04.11. "A ja"): Reiter "Versand & Retouren" und Kacheln ersetzt durch EINE Fußzeile.
-  it("NACHTRAG 029: Versand & Rückgabe als eine Fußzeile, kein Reiter/keine Kachel, ohne Amazon Logistik", () => {
-    expect(html).toContain("Versand &amp; R&uuml;ckgabe:");
+  it("NACHTRAG 029 + v3: Versand & Rückgabe als Fußzeile, kein Reiter/keine Kachel, ohne Amazon Logistik", () => {
+    expect(html).toContain("Versand &amp; R&uuml;ckgabe</div>");
+    expect(html).toContain("<div>Versand: ");
     expect(html).not.toContain(">Versand &amp; Retouren</label>");
     expect(html).not.toContain("KOSTENLOSER VERSAND");
     expect(html).not.toContain("Amazon Logistik");
@@ -172,7 +173,10 @@ describe("Regressionsschutz — unauffälliges Produkt bleibt unverändert nutzb
   it("erzeugt weiterhin eine vollständige Vorlage (Beschreibung + Fußzeile Versand & Rückgabe)", () => {
     const html = buildEbayHTMLLight(cleanProduct);
     expect(html).toContain("Beschreibung");
-    expect(html).toContain("Versand &amp; R&uuml;ckgabe:");
-    expect(html).toContain("Praktisches Set für Küche und Aufbewahrung");
+    expect(html).toContain("Versand &amp; R&uuml;ckgabe</div>");
+    // v3: Stichpunkte statt Einleitungssatz (Plan "Beschreibung einfach"); Einleitung nur ohne Stichpunkte.
+    expect(html).toContain("Auslaufsicher");
+    expect(html).toContain("Spülmaschinenfest");
+    expect(html).not.toContain("Praktisches Set für Küche und Aufbewahrung");
   });
 });

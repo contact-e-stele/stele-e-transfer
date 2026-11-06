@@ -110,10 +110,12 @@ describe('refreshOneProductDescription — 422-Sperre', () => {
   // stripSupplierContact() (ebay-description.ts) von Kontaktdaten befreit — ein Verstoß, der
   // NACH dem Neuaufbau noch übrig bleibt, kommt daher realistisch aus einem Feld, das dort NICHT
   // bereinigt wird: dem Varianten-Namen (buildVariantsHtml schreibt v.name ungefiltert ins HTML).
-  test('bleibt nach dem Neuaufbau ein Verstoß stehen (z.B. Kontakt im Varianten-Namen), wird übersprungen und gemeldet', async () => {
+  // Beschreibung v3 (06.11.2026): Variantennamen stehen nicht mehr im HTML (keine Variantentabelle ohne Bilder). Ein Feld, das
+  // ungefiltert durchgeht, ist jetzt das vom Nutzer gepflegte Material (A-045) — die Sperre muss weiterhin greifen.
+  test('bleibt nach dem Neuaufbau ein Verstoß stehen (z.B. Kontakt im Material-Feld), wird übersprungen und gemeldet', async () => {
     const product = makeProduct({
       id: 2, ebayListingId: '198646122180',
-      variantPrices: JSON.stringify([{ sku: 'successservice2@hotmail.com', price: 9.99 }]),
+      material: 'successservice2@hotmail.com',
     });
     const deps = makeDeps([product]);
     const outcome = await refreshOneProductDescription(2, { confirm: true }, deps);
