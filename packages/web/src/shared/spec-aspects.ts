@@ -60,6 +60,16 @@ export function translateValue(table: Record<string, string>, value: string): st
   return [...new Set(out)].join(', ');
 }
 
+/** Beschreibung v3 (06.11.2026): Material-Wert übersetzen — dieselbe Tabelle wie für die eBay-Merkmale (Grundgesetz 8). Unbekannt → null. */
+export function translateMaterial(value: string): string | null {
+  const translated = translateValue(MATERIAL_DE, value);
+  if (translated) return translated;
+  // Schon deutsch ("Edelstahl", "Kunststoff") → unverändert übernehmen, wenn jeder Teil ein bekannter Tabellenwert ist.
+  const known = new Set(Object.values(MATERIAL_DE).map(v => v.toLowerCase()));
+  const parts = value.split(/\s*[/,+&]\s*/).map(x => x.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every(x => known.has(x.toLowerCase())) ? parts.join(', ') : null;
+}
+
 /** Maße nur, wenn Zahlen mit Einheit: "45x50cm", "About 13.5*3cm" → "45 x 50 cm", "13,5 x 3 cm". */
 export function normalizeDimensions(value: string): string | null {
   const m = value.toLowerCase().replace(/^about\s+/, '').match(/^(\d+(?:[.,]\d+)?)\s*[x*×]\s*(\d+(?:[.,]\d+)?)(?:\s*[x*×]\s*(\d+(?:[.,]\d+)?))?\s*(cm|mm)$/);

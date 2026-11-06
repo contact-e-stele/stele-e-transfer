@@ -10,7 +10,9 @@
 import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { neutralizeGpsrTab } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
-import { TEXT_VERSION_MARKER, type ReturnTerms } from '../shared/shipping-return-text';
+import { TEXT_VERSION_MARKER, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../shared/shipping-return-text';
+import { DESCRIPTION_V3_MARKER } from '../shared/description-v3';
+import type { VariantDetails } from '../shared/variant-measure';
 import { listingOrigin, deliveryTimeFor, type DeliveryTimes, type ListingOrigin } from '../shared/listing-origin';
 
 export interface ProductDescriptionFields {
@@ -26,6 +28,12 @@ export interface ProductDescriptionFields {
   images?: string | null;          // JSON array
   gpsrRaw?: string | null;         // nur als Schalter für den Tab Produktsicherheit (Inhalt: GPSR_DESCRIPTION_NOTICE)
   shipsFrom?: string | null;       // OFFEN 030: Herkunft → Lieferzeit in der Fußzeile
+  // Beschreibung v3 (06.11.2026): A-045-Produktdaten + Pflichtmerkmale für Überschrift/Datentabelle
+  material?: string | null;
+  usageNote?: string | null;
+  usePurpose?: string | null;
+  variantDetails?: string | null;  // JSON {skuId: {displayNameDe, pieces, measure}}
+  manualAspects?: string | null;   // JSON {"Produktart": "…"}
 }
 
 // OFFEN 029/030: was die Beschreibung von außen braucht (eBay-Rücknahme-Richtlinie, Lieferzeiten je Herkunft aus den Einstellungen).
@@ -82,6 +90,9 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
   const images: string[] = (() => {
     try { return JSON.parse(product.images ?? '[]') as string[]; } catch { return []; }
   })();
+  const parseObj = <T,>(json: string | null | undefined): T | null => {
+    try { const v = JSON.parse(json ?? 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v as T : null; } catch { return null; }
+  };
 
   const templateProduct: EbayScrapedProduct = {
     title: product.generatedTitle ?? product.title,
@@ -95,6 +106,11 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
     gpsrRaw: product.gpsrRaw ?? undefined,
     returnTerms: ctx.returnTerms ?? null,
     deliveryTime: deliveryTimeFor(origin, ctx.deliveryTimes),
+    material: product.material ?? null,
+    usageNote: product.usageNote ?? null,
+    usePurpose: product.usePurpose ?? null,
+    variantDetails: parseObj<VariantDetails>(product.variantDetails),
+    manualAspects: parseObj<Record<string, string>>(product.manualAspects),
   };
 
   const html = neutralizeGpsrTab(buildEbayHTMLLight(templateProduct));
@@ -112,7 +128,8 @@ export function resolveListingDescription(product: ProductDescriptionFields, sto
   // Tab 5 (Produktsicherheit) gehört immer dazu: eine ältere gespeicherte Vorlage ohne ihn wird neu gebaut.
   const hasTab5 = rawHtml.includes('id="stet-t5"') || rawHtml.includes('id="stet-l5"');
   // OFFEN 029: gespeicherte Vorlage ohne aktuelle Versand-/Rückgabe-Texte (alt: 3–10 Werktage, DHL, feste Rücksendekosten) → neu bauen.
-  const hasCurrentTexts = rawHtml.includes(TEXT_VERSION_MARKER);
+  // Beschreibung v3 (06.11.2026): gespeicherte Vorlage ohne v3-Merkmal (alter Aufbau) → neu bauen.
+  const hasCurrentTexts = rawHtml.includes(TEXT_VERSION_MARKER) && rawHtml.includes(DESCRIPTION_V3_MARKER);
   if (isFullTemplate && hasTab5 && hasCurrentTexts) {
     const html = neutralizeGpsrTab(rawHtml);
     const violations = findDescriptionComplianceViolations(html);
@@ -125,6 +142,10 @@ export function resolveListingDescription(product: ProductDescriptionFields, sto
 }
 
 function footerOf(html: string): string | null {
+  // v3: Fußzeile steht zwischen FOOTER_BLOCK_START/END (Versand · Rückgabe · §19); ältere Vorlagen: eine Zeile.
+  const a = html.indexOf(FOOTER_BLOCK_START);
+  const b = html.indexOf(FOOTER_BLOCK_END);
+  if (a >= 0 && b > a) return html.slice(a, b);
   const m = html.match(/Versand &amp; R&uuml;ckgabe: [^<]*/);
   return m ? m[0] : null;
 }

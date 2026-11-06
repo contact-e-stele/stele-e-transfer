@@ -54,3 +54,21 @@ export function deliveryFooterText(deliveryTime: string | null | undefined): str
 export function shippingReturnFooter(deliveryTime: string | null | undefined, terms: ReturnTerms | null | undefined): string {
   return `Versand &amp; R&uuml;ckgabe: ${deliveryFooterText(deliveryTime)} &middot; ${returnFooterText(terms)}`;
 }
+
+// Beschreibung v3 (Inhaber 06.11.2026 07:52 "Ja"): Versand · Rückgabe · §19 je eine Zeile in der Fußzeile — aus DIESER Datei
+// (dieselben Texte wie oben, gleiche Quelle wie die eBay-Richtlinie). shippingReturnFooter() bleibt für die dunkle Vorlage.
+export const USTG19_FOOTER_TEXT = '&sect;19 UStG: Als Kleinunternehmer wird keine Umsatzsteuer berechnet und ausgewiesen';
+/** Kommentar-Klammer um die Fußzeile — damit vergleicht das Listen gespeicherte und frische Fußzeile (ebay-description-builder.ts). */
+export const FOOTER_BLOCK_START = '<!-- stele-fuss -->';
+export const FOOTER_BLOCK_END = '<!-- /stele-fuss -->';
+
+export interface FooterLines { versand: string; rueckgabe: string; ustg19: string }
+
+/** Die drei Zeilen der Fußzeile v3. Unbekannte Lieferzeit/Rücknahme → neutraler Satz, nie eine geratene Zahl. */
+export function shippingReturnFooterLines(deliveryTime: string | null | undefined, terms: ReturnTerms | null | undefined): FooterLines {
+  return {
+    versand: `Versand: ${deliveryFooterText(deliveryTime)}`,
+    rueckgabe: `R&uuml;ckgabe: ${returnFooterText(terms)}`,
+    ustg19: USTG19_FOOTER_TEXT,
+  };
+}

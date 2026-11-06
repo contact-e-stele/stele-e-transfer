@@ -1345,6 +1345,12 @@ export default function Produkte() {
           })(),
           setContents: previewProduct.variantContents ?? undefined,
           gpsrRaw: previewProduct.gpsrRaw ?? undefined,
+          // Beschreibung v3: dieselben Produktdaten wie beim Listen (ebay-description-builder.ts)
+          material: previewProduct.material ?? null,
+          usageNote: previewProduct.usageNote ?? null,
+          usePurpose: previewProduct.usePurpose ?? null,
+          variantDetails: (() => { try { const v = JSON.parse(previewProduct.variantDetails ?? 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { return null; } })(),
+          manualAspects: (() => { try { const v = JSON.parse(previewProduct.manualAspects ?? 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { return null; } })(),
         };
         let liveHtml = "";
         try {

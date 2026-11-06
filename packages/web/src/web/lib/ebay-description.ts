@@ -5,7 +5,10 @@
 
 import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
 
-import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, shippingReturnFooter, type ReturnTerms } from '../../shared/shipping-return-text';
+import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
+import { DESCRIPTION_V3_MARKER, factRows, headingText, v3Bullets, type DescriptionV3Input } from '../../shared/description-v3';
+import type { VariantDetails } from '../../shared/variant-measure';
+
 export interface ScrapedProduct {
   title: string;
   images?: string[];
@@ -19,6 +22,12 @@ export interface ScrapedProduct {
   gpsrRaw?: string | null;              // GPSR Freitext (manuell oder auto-befüllt)
   returnTerms?: ReturnTerms | null;     // OFFEN 029: aus der eBay-Rücknahme-Richtlinie; fehlt → neutraler Satz
   deliveryTime?: string | null;         // OFFEN 030: Lieferzeit aus der Herkunft (listing-origin.ts); fehlt → neutraler Satz
+  // Beschreibung v3 (06.11.2026): Produktdaten aus A-045 für Überschrift + Datentabelle (nur hell). Fehlt → Zeile entfällt.
+  material?: string | null;
+  usageNote?: string | null;
+  usePurpose?: string | null;
+  variantDetails?: VariantDetails | null;
+  manualAspects?: Record<string, string> | null;
 }
 
 function decodeEntities(str: string): string {
@@ -438,137 +447,88 @@ ${TEXT_VERSION_MARKER}
 
 
 /**
- * Helle Version — STELE-E-TRANSFER eBay Beschreibungs-Generator
- * Gleiche Struktur wie Black & Gold, aber weißer Hintergrund für bessere Lesbarkeit.
+ * Helle Version — Beschreibung v3 "einfach" (7 App Schritt 5, 06.11.2026).
+ * Aufbau (Handy zuerst): schmaler Kopf · Überschrift Name + Menge + Maß · Datentabelle · bis 5 Zeilen ✓ STICHWORT ·
+ * Reiter Impressum / AGB / Produktsicherheit (Inhaber 29.09.) · Fußzeile Versand / Rückgabe / §19 je eine Zeile
+ * (Inhaber 06.11. 07:52 "Ja", Texte aus shared/shipping-return-text.ts).
+ * Weg fallen: Einleitungs-/Schlusssatz, englische Überschrift "TECHNISCHE DATEN", rohe AliExpress-Specs, leere Bild-Kästchen,
+ * doppelter §19-Hinweis im Beschreibungs-Reiter, Füllsatz "hochwertige Qualität …", Werbezeile "SCHNELLE LIEFERUNG".
+ * Variantentabelle: nur mit echten Variantenbildern (Plan Punkt 5). Bilder dürfen nicht in den Text (Dauerregel 2: kein Link,
+ * auch kein alicdn) — deshalb erscheint sie derzeit nie; Menge/Farbe/Maß je Variante stehen in der Datentabelle.
  */
 export function buildEbayHTMLLight(product: ScrapedProduct): string {
   const title = cleanText(product.title || "");
-  const specs = product.specs ?? {};
-  const specEntries = Object.entries(specs).filter(([k, v]) => {
-    const key = cleanText(k);
-    const val = cleanText(v);
-    return key && val && !isGarbage(key) && !isGarbage(val);
-  }).slice(0, 14);
+  const v3Input: DescriptionV3Input = {
+    title,
+    variants: product.variants,
+    specs: product.specs,
+    material: product.material,
+    usageNote: product.usageNote,
+    usePurpose: product.usePurpose,
+    variantDetails: product.variantDetails,
+    manualAspects: product.manualAspects,
+  };
 
-  // ── Beschreibung parsen: ###INTRO###/###BULLETS###/###OUTRO### Format ────
-  let introText = "";
-  let outroText = "";
-  const bullets: string[] = [];
+  // ── Stichpunkte: ###BULLETS### aus der KI-Beschreibung, sonst product.bullets ──
   const desc = product.description ?? "";
-  const hasStructured = desc.includes("###INTRO###") || desc.includes("###BULLETS###");
-
-  if (hasStructured) {
-    const introM = desc.match(/###INTRO###\s*([\s\S]*?)(?:###BULLETS###|$)/);
+  let bulletLines: string[] = [];
+  let introText = "";
+  if (desc.includes("###BULLETS###") || desc.includes("###INTRO###")) {
     const bulletsM = desc.match(/###BULLETS###\s*([\s\S]*?)(?:###OUTRO###|$)/);
-    const outroM = desc.match(/###OUTRO###\s*([\s\S]*?)$/);
+    const introM = desc.match(/###INTRO###\s*([\s\S]*?)(?:###BULLETS###|$)/);
     introText = cleanText(introM?.[1]?.trim() ?? "");
-    outroText = cleanText(outroM?.[1]?.trim() ?? "");
-    if (bulletsM) {
-      const lines = bulletsM[1].split("\n").map(l => cleanText(l.replace(/^[\-\*•]\s*/, "").trim())).filter(l => l.length > 10 && !isGarbage(l));
-      bullets.push(...lines.slice(0, 8));
-    }
-  } else {
-    if (product.bullets && product.bullets.length > 0) {
-      for (const b of product.bullets) {
-        const c = cleanText(b);
-        if (c.length > 15 && !isGarbage(c)) bullets.push(c);
-        if (bullets.length >= 8) break;
-      }
-    }
-    if (bullets.length < 3 && desc.length > 30) {
-      const lines = desc.split(/[\n•\-\*]/).map(l => cleanText(l)).filter(l => l.length > 20 && !isGarbage(l));
-      for (const l of lines) {
-        if (!bullets.includes(l)) bullets.push(l);
-        if (bullets.length >= 8) break;
-      }
-    }
-    if (!introText && desc.length > 30) {
-      const firstSentence = cleanText(desc).split(/[.!?]\s+/)[0];
-      if (firstSentence && firstSentence.length > 20) introText = firstSentence;
-    }
+    if (bulletsM) bulletLines = bulletsM[1].split("\n").map(l => cleanText(l.replace(/^[\-\*•]\s*/, "").trim())).filter(l => l.length > 10 && !isGarbage(l));
+  } else if (product.bullets && product.bullets.length > 0) {
+    bulletLines = product.bullets.map(b => cleanText(b)).filter(c => c.length > 15 && !isGarbage(c));
   }
+  const bullets = v3Bullets(bulletLines);
 
-  // ── Intro-Absatz ──────────────────────────────────────────────────────────
-  let descParas = "";
-  if (introText) {
-    descParas = `<p style="color:#333333;line-height:1.8;margin:0 0 14px 0;font-size:14px;font-weight:500;">${introText}</p>`;
-  }
-
-  // ── Bullet Points ─────────────────────────────────────────────────────────
   let bulletsHtml = "";
   if (bullets.length > 0) {
     bulletsHtml = `
-    <ul style="margin:0 0 16px 0;padding:0;list-style:none;">
+    <ul style="margin:0 0 8px 0;padding:0;list-style:none;">
       ${bullets.map(b => `
-      <li style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #e8e0d0;">
-        <span style="color:#B8860B;font-size:15px;line-height:1.3;flex-shrink:0;margin-top:1px;">✓</span>
-        <span style="color:#333333;line-height:1.7;font-size:14px;">${b}</span>
+      <li style="padding:6px 0;border-bottom:1px solid #eee6d6;color:#333333;font-size:14px;line-height:1.5;">
+        <span style="color:#B8860B;font-weight:bold;">&#10003;</span> ${b.keyword ? `<strong style="color:#222222;">${b.keyword}</strong> &ndash; ` : ""}${b.text}
       </li>`).join("")}
     </ul>`;
+  } else if (introText) {
+    // Ohne Stichpunkte: der eine echte Einleitungssatz (kein Füllsatz).
+    bulletsHtml = `<p style="color:#333333;line-height:1.6;margin:0 0 8px 0;font-size:14px;">${introText}</p>`;
   }
 
-  // ── Outro ─────────────────────────────────────────────────────────────────
-  let outroHtml = "";
-  if (outroText) {
-    outroHtml = `<p style="color:#666666;line-height:1.7;margin:12px 0 0;font-size:12px;font-style:italic;">${outroText}</p>`;
-  }
-
-  if (!descParas && !bulletsHtml) {
-    descParas = `<p style="color:#444444;line-height:1.8;margin:8px 0;font-size:14px;">${title} — hochwertige Qualität für anspruchsvolle Anwender.</p>`;
-  }
-
-  // ── Specs-Tabelle ──────────────────────────────────────────────────────────
-  let specsHtml = "";
-  if (specEntries.length > 0) {
-    const rows = specEntries.map(([k, v], i) => {
-      const key = cleanText(k);
-      const val = cleanText(v);
-      return `<tr style="background:${i % 2 === 0 ? "#ffffff" : "#f9f6f0"};">
-        <td style="padding:9px 14px;font-weight:700;color:#B8860B;white-space:nowrap;border-bottom:1px solid #e8e0d0;width:35%;font-size:13px;">${key}</td>
-        <td style="padding:9px 14px;color:#333333;border-bottom:1px solid #e8e0d0;font-size:13px;">${val}</td>
-      </tr>`;
-    }).join("\n");
-    specsHtml = `
-    <table style="width:100%;border-collapse:collapse;margin:16px 0;border:1px solid #e8e0d0;border-radius:4px;overflow:hidden;">
-      <thead>
-        <tr style="background:#B8860B;">
-          <th colspan="2" style="padding:10px 14px;text-align:left;color:#ffffff;font-size:12px;letter-spacing:1px;">TECHNISCHE DATEN</th>
-        </tr>
-      </thead>
+  // ── Datentabelle (nur belegte Zeilen) ──
+  const rows = factRows(v3Input);
+  let factsHtml = "";
+  if (rows.length > 0) {
+    factsHtml = `
+    <table style="width:100%;border-collapse:collapse;margin:0 0 14px 0;border:1px solid #e8e0d0;font-size:14px;">
       <tbody>
-        ${rows}
+        ${rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#ffffff" : "#f9f6f0"};">
+          <td style="padding:7px 12px;font-weight:700;color:#8a6508;border-bottom:1px solid #e8e0d0;width:35%;">${r.label}</td>
+          <td style="padding:7px 12px;color:#333333;border-bottom:1px solid #e8e0d0;">${r.value}</td>
+        </tr>`).join("\n        ")}
       </tbody>
     </table>`;
   }
 
-  // ── Varianten-Sektion ────
-  const variantsHtml = buildVariantsHtml(product, "light");
-
-  // ── Tab 1: Beschreibung HTML ───────────────────────────────────────────────
+  // ── Tab 1: Beschreibung ──
   const tab1 = `
-    <h3 style="color:#B8860B;border-bottom:2px solid #B8860B;padding-bottom:10px;letter-spacing:1px;margin:0 0 16px 0;font-size:16px;">${title}</h3>
-    ${descParas}
+    <h1 style="color:#222222;font-size:18px;line-height:1.35;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #B8860B;">${headingText(v3Input)}</h1>
+    ${factsHtml}
     ${bulletsHtml}
-    ${outroHtml}
-    ${specsHtml}
-    ${variantsHtml}
-    <hr style="margin:20px 0;border:none;border-top:1px solid #e8e0d0;" />
-    <p style="font-size:11px;color:#888888;margin:0;"><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong> Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
   `.trim();
 
-  const footer = shippingReturnFooter(product.deliveryTime, product.returnTerms); // NACHTRAG 029: EINE Fußzeile
+  const foot = shippingReturnFooterLines(product.deliveryTime, product.returnTerms); // v3: Versand · Rückgabe · §19 je eine Zeile
   return `<!-- STELE-E-TRANSFER eBay Vorlage - Light Edition -->
 ${TEXT_VERSION_MARKER}
+${DESCRIPTION_V3_MARKER}
 <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#333333;background:#ffffff;border:2px solid #B8860B;border-radius:8px;overflow:hidden;">
 
-<!-- HEADER -->
-<div style="background:linear-gradient(135deg,#1a1a0a 0%,#2a2008 50%,#1a1a0a 100%);padding:18px;text-align:center;border-bottom:3px solid #B8860B;">
-  <div style="color:#C9A84C;font-size:22px;font-weight:bold;letter-spacing:5px;">STELE-E-TRANSFER</div>
-  <div style="color:#a89050;font-size:11px;letter-spacing:3px;margin-top:6px;">PREMIUM QUALIT&Auml;T &middot; SCHNELLE LIEFERUNG</div>
-  <div style="height:1px;background:linear-gradient(to right,#1a1a0a,#C9A84C,#1a1a0a);margin-top:12px;">&nbsp;</div>
+<!-- HEADER (schmal, 1 Zeile) -->
+<div style="background:#1a1a0a;padding:8px 12px;text-align:center;border-bottom:3px solid #B8860B;">
+  <span style="color:#C9A84C;font-size:15px;font-weight:bold;letter-spacing:4px;">STELE-E-TRANSFER</span>
 </div>
-
-<div style="height:2px;background:linear-gradient(to right,#ffffff,#B8860B,#ffffff);"></div>
 
 <!-- CSS TABS -->
 <style type="text/css">
@@ -659,11 +619,15 @@ ${TEXT_VERSION_MARKER}
   </div>
 </div>
 
-<!-- FOOTER -->
-<div style="background:#1a1a0a;padding:14px;text-align:center;border-top:3px solid #B8860B;">
-  <span style="color:#C9A84C;font-size:11px;letter-spacing:5px;font-weight:bold;">STELE-E-TRANSFER</span><br/>
-  <span style="color:#8a7040;font-size:12px;letter-spacing:.5px;">${footer}</span>
+<!-- FOOTER: Versand · Rückgabe · §19 -->
+${FOOTER_BLOCK_START}
+<div style="background:#fdf9f0;padding:12px 16px;border-top:3px solid #B8860B;font-size:13px;line-height:1.6;color:#333333;">
+  <div style="color:#8a6508;font-weight:bold;letter-spacing:.5px;">Versand &amp; R&uuml;ckgabe</div>
+  <div>${foot.versand}</div>
+  <div>${foot.rueckgabe}</div>
+  <div>${foot.ustg19}</div>
 </div>
+${FOOTER_BLOCK_END}
 
 </div>`;
 }
