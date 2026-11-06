@@ -39,6 +39,7 @@ import { NON_VARIATION_ASPECTS, type VariantGroup } from '../shared/variant-reso
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { buildProductLookups, findProductForSku as findProductForSkuShared, computeOrderNettoErgebnis, orderProductInfoFromRow, getOrderChinaZollEur, DEFAULT_ORDER_CHINA_ZOLL_EUR } from './order-matching';
 import { Sentry } from '../instrument';
+import { v3BulletsPromptBlock, V3_BULLET_RULES } from '../shared/description-prompt';
 
 // ─── Beschreibung generieren (Gemini oder Fallback) ──────────────────────────
 function generateFallbackDescription(
@@ -77,14 +78,11 @@ function generateFallbackDescription(
     bullets.push(`Lieferumfang je Variante: ${setLine}`);
   }
 
-  // Immer mindestens 3 Bullets — Filler wenn nötig
-  if (bullets.length < 3) {
-    bullets.push('Schnelle Lieferung aus dem EU-Lager');
-    bullets.push('30 Tage Rückgabe über eBay Käuferschutz');
-  }
+  // Beschreibung v3 (06.11.2026): keine Füllsätze mehr ("Schnelle Lieferung aus dem EU-Lager", "30 Tage Rückgabe …") —
+  // falsch für China-Ware und doppelt zur Fußzeile (Grundgesetz 4). Weniger echte Stichpunkte sind richtig.
 
   // Outro
-  const outro = 'Für zuverlässigen Einsatz im Alltag – einfache Handhabung und schnelle Lieferung.';
+  const outro = 'Für zuverlässigen Einsatz im Alltag – einfache Handhabung.';
 
   return [
     '###INTRO###',
@@ -126,12 +124,7 @@ FORMAT (exakt so zurückgeben, mit den Trennzeichen):
 ###INTRO###
 [1 starker Einleitungssatz: Was ist das Produkt, für wen, welcher Hauptnutzen – max. 25 Wörter]
 ###BULLETS###
-- [konkretes Feature/Vorteil mit echten Daten, z.B. Maße, Material, Funktion]
-- [konkretes Feature/Vorteil]
-- [konkretes Feature/Vorteil]
-- [konkretes Feature/Vorteil]
-${setContentsText ? '- Lieferumfang je Set: [alle Set-Inhalte aus LIEFERUMFANG JE SET oben aufführen, z.B. "SET1: 10 kleine + 10 große + Schraubendreher + Gummistreifen"]' : '- [konkretes Feature/Vorteil]'}
-- [konkretes Feature/Vorteil, wenn möglich Anwendungsbereich]
+${v3BulletsPromptBlock(!!setContentsText)}
 ###OUTRO###
 [1 Abschlusssatz: Qualität + Einsatzbereich – max. 20 Wörter]
 
@@ -142,7 +135,8 @@ REGELN (unbedingt einhalten):
 - EU-Maße: cm statt inch, ml statt oz, Komma als Dezimalzeichen
 - Wenn LIEFERUMFANG JE SET vorhanden: ALLE Sets mit ihren Inhalten im Bullet aufführen
 - Anwendungsbereich konkret nennen (Auto, Motorrad, LKW etc.) wenn aus Produktinfo ersichtlich
-- Sprache: sachlich, direkt, kein Marketingsprech`;
+- Sprache: sachlich, direkt, kein Marketingsprech
+${V3_BULLET_RULES}`;
 
 
   // Versuche jedes Modell nacheinander (Fallback bei 503/Überlastung)
@@ -4427,7 +4421,7 @@ function generateFallbackFromRawText(rawText: string, title?: string): string {
   // Intro
   const intro = productTitle
     ? `${productTitle} – praktisches Produkt für den täglichen Einsatz.`
-    : 'Hochwertiges Produkt – schnelle Lieferung aus dem EU-Lager.';
+    : '';  // v3: kein Füllsatz ohne Titel
 
   // Sätze/Zeilen aus Rohtext extrahieren
   const lines = cleanText
@@ -4437,19 +4431,8 @@ function generateFallbackFromRawText(rawText: string, title?: string): string {
     .filter(s => !/aliexpress|amazon|china|free ship|click|buy|order|seller|store|shop|feedback|rating/i.test(s))
     .slice(0, 6);
 
-  const bullets = lines.length > 0
-    ? lines
-    : [
-        'Schnelle Lieferung aus dem EU-Lager',
-        '30 Tage Rückgabe über eBay Käuferschutz',
-        'Zuverlässige Qualität für den Alltag',
-      ];
-
-  // Sicherstellen: mindestens 3 Bullets
-  if (bullets.length < 3) {
-    bullets.push('Schnelle Lieferung aus dem EU-Lager');
-    bullets.push('30 Tage Rückgabe über eBay Käuferschutz');
-  }
+  // v3 (06.11.2026): nur echte Zeilen aus dem Rohtext, keine Versand-/Rückgabe-Füllsätze (Grundgesetz 4).
+  const bullets = lines;
 
   const outro = 'Solide Verarbeitung und einfache Handhabung – geeignet für den täglichen Einsatz.';
 
@@ -4505,12 +4488,7 @@ FORMAT (exakt so zurückgeben, mit den Trennzeichen):
 ###INTRO###
 [1 starker Einleitungssatz: Was ist das Produkt, für wen, welcher Hauptnutzen – max. 25 Wörter]
 ###BULLETS###
-- [konkretes Feature/Vorteil mit echten Daten, z.B. Maße, Material, Funktion]
-- [konkretes Feature/Vorteil]
-- [konkretes Feature/Vorteil]
-- [konkretes Feature/Vorteil]
-- [konkretes Feature/Vorteil]
-- [konkretes Feature/Vorteil, Anwendungsbereich wenn bekannt]
+${v3BulletsPromptBlock(false)}
 ###OUTRO###
 [1 Abschlusssatz: Qualität + Einsatzbereich – max. 20 Wörter]
 
@@ -4519,7 +4497,8 @@ REGELN:
 - Keine Emojis, kein Markdown (kein **, kein #)
 - NICHT erwähnen: AliExpress, China, Amazon, Händlername
 - EU-Maße: cm statt inch, ml statt oz, Komma als Dezimalzeichen (z.B. 2,5 cm)
-- Sprache: sachlich, direkt, kein Marketingsprech`;
+- Sprache: sachlich, direkt, kein Marketingsprech
+${V3_BULLET_RULES}`;
 
     for (const modelName of GEMINI_MODELS) {
       for (let attempt = 1; attempt <= 3; attempt++) {
