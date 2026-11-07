@@ -17,7 +17,7 @@ function deps(over: Partial<VariantRepriceDeps> = {}) {
     heldSkuIds: async () => new Set(),
     send: async (_id, _g, _e, changes, direction) => { calls.send.push(changes); calls.direction.push(direction); return { resolved: true, results: changes.map(c => ({ skuId: c.skuId, sku: 's-' + c.skuId, ok: true })) }; },
     store: async (_id, json) => { calls.store.push(json); },
-    readBack: async () => { calls.readBack++; return { ok: true, prices: { [BLUE]: 25.45, [BLACK]: 23.45, [GRAY]: 24.95 } }; },
+    readBack: async () => { calls.readBack++; return { ok: true, prices: { [BLUE]: 25.45, [BLACK]: 23.95, [GRAY]: 24.95 } }; },
     ...over,
   };
   return { d, calls };
@@ -34,17 +34,17 @@ describe('runVariantReprice', () => {
   });
   test('nur die geprüfte Auswahl wird gesendet (abgelehnte Zeile nicht), App speichert nur diese, GRAY bleibt 24,95; Rücklesen eBay = App', async () => {
     const { d, calls } = deps();
-    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45, [BLACK]: 23.45, [GRAY]: 25.95 } }, d);
+    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45, [BLACK]: 23.95, [GRAY]: 25.95 } }, d);
     expect(r.status).toBe('sent');
-    expect(calls.send).toEqual([[{ skuId: BLUE, newSell: 25.45 }, { skuId: BLACK, newSell: 23.45 }]]);
-    expect(parseVariantSellPrices(calls.store[0])).toEqual({ [BLUE]: 25.45, [BLACK]: 23.45, [GRAY]: 24.95 });
+    expect(calls.send).toEqual([[{ skuId: BLUE, newSell: 25.45 }, { skuId: BLACK, newSell: 23.95 }]]);
+    expect(parseVariantSellPrices(calls.store[0])).toEqual({ [BLUE]: 25.45, [BLACK]: 23.95, [GRAY]: 24.95 });
     expect(r.rows.find(x => x.skuId === GRAY)?.status).toBe('abgelehnt');
     expect(r.rows.filter(x => x.ergebnis === 'gesetzt').every(x => x.ebayGleichApp === true)).toBe(true);
     expect(calls.readBack).toBe(1);
   });
   test('Teil-Fehler bei eBay → NICHTS gespeichert, Meldung "x von y"', async () => {
     const { d, calls } = deps({ send: async (_i, _g, _e, ch) => ({ resolved: true, results: ch.map((c, i) => ({ skuId: c.skuId, ok: i === 0, error: i === 0 ? undefined : 'PUT 500' })) }) });
-    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45, [BLACK]: 23.45 } }, d);
+    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45, [BLACK]: 23.95 } }, d);
     expect(r.status).toBe('send_failed');
     expect(r.error).toContain('1 von 2');
     expect(calls.store).toHaveLength(0);

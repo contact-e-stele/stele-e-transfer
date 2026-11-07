@@ -3752,7 +3752,7 @@ const app = new Hono()
     }
   })
 
-  // ─── OFFEN 033/034: "Auswahl senken" (direction 'down', Standard) bzw. "Auswahl anheben" (direction 'up', OFFEN 034) — nur die genannten Varianten, nur senken, Bremse 8 %, Gewinn ≥ 1,00 €, "Preis halten" bleibt ──────
+  // ─── OFFEN 033/034: "Auswahl senken" (direction 'down', Standard) bzw. "Auswahl anheben" (direction 'up', OFFEN 034) — nur die genannten Varianten; down: nur senken, Bremse 8 %, ohne Kassen-Faktor (K-018 c1); up: nur anheben, Sprung > 15 % abgelehnt; Gewinn ≥ max(1,00; Ziel), "Preis halten" bleibt ──────
   // mode:'preview' schreibt/sendet NICHTS. mode:'apply' braucht confirm:true; live gelistet nur mit sendToEbay:true. Erst eBay (je Variante
   // GET→PUT volles Offer, nie anheben), App-Preise nur bei vollem Erfolg, danach Käuferpreis zurücklesen. Regeln: shared/variant-reprice.ts.
   .post('/products/variant-reprice', async (c) => {

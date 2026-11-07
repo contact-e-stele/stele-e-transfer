@@ -4,6 +4,7 @@
 // derselben Stelle wie Listings-Tab/Stufenwechsel (Formel v2, floor95 mit Boden, Herkunft je Variante, Anzeigensatz des Produkts).
 // Es wird nichts geschrieben und nichts gesendet. Die Senkungsbremse (max. 8 % je Lauf) wird nur angezeigt (applyDecreaseCap).
 import { planTierReprice, type RepriceProduct } from './tier-reprice';
+import { withoutFactorForLowering } from './checkout-factor';
 import { productTarget } from './target-margin-bulk';
 import { applyDecreaseCap, DEFAULT_PRICING_CONFIG, parseVariantSellPrices, resolveVariantSellPrice } from './pricing';
 import { buildCombinations, entryMatchesCombo, NON_VARIATION_ASPECTS, type VariantGroup, type VariantPriceEntry } from './variant-resolver';
@@ -56,7 +57,8 @@ export function buildSenkBericht(products: Array<SenkProduct & { groups?: Varian
   const nichtBeiEbay: SenkBericht['nichtBeiEbay'] = [];
   for (const p of products) {
     const target = productTarget(p);
-    const plan = planTierReprice(p, target, p.groups);
+    // K-018 c1: Senken rechnet ohne Kassen-Faktor „inkl. Rabatt“ (withoutFactorForLowering).
+    const plan = planTierReprice(withoutFactorForLowering(p), target, p.groups);
     const stored = parseVariantSellPrices(p.variantSellPrices);
     let legacy: Array<{ skuId: string; ebayPrice?: number }> = [];
     try { legacy = p.variantPrices ? JSON.parse(p.variantPrices) : []; } catch { legacy = []; }
