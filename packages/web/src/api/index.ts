@@ -3766,39 +3766,9 @@ const app = new Hono()
       const p = schema.products;
       const [product] = await db.select().from(p).where(eq(p.id, parsed.productId)).limit(1);
       const { runVariantReprice } = await import('./variant-reprice');
-      const { getPriceHolds } = await import('./price-holds');
-      const { resolvePriceHolds } = await import('../shared/price-hold');
-      const { sendVariantPriceChanges, parseVariantGroupsJson } = await import('./price-monitor');
-      const { getAccessToken, getInventoryItemGroupSkus, getItemBuyerPricesXml } = await import('./ebay');
-      const { readEbaySellPrices } = await import('./ebay-price-readback');
-      const { parseGetItemBuyerPrices } = await import('../shared/ebay-buyer-price');
-      const { isVariantProduct } = await import('../shared/variant-product');
-      const { parseVariantSellPrices } = await import('../shared/pricing');
       const row = product ? { ...product, generatedTitle: product.generatedTitle ?? product.title ?? '', ebayStatus: product.ebayStatus ?? 'none' } : undefined;
-      const result = await runVariantReprice(row, parsed, {
-        heldSkuIds: async (pr) => {
-          const holds = await getPriceHolds(); // nicht lesbar → Fehler → 500 (lieber nichts senken als "Preis halten" übergehen)
-          return resolvePriceHolds(product as never, holds[String(pr.id)]).heldKeys;
-        },
-        send: async (id, groups, entries, changes, direction) => sendVariantPriceChanges(id, groups, entries, changes, await getAccessToken(), fetch, direction === 'up' ? 'raise' : 'lower'),
-        store: async (id, json) => { await db.update(p).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(p.id, id)); },
-        readBack: async (pr) => {
-          const token = await getAccessToken();
-          let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
-          try { const pv = pr.variantPrices ? JSON.parse(pr.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
-          const rb = await readEbaySellPrices({
-            productId: pr.id, groups: parseVariantGroupsJson(pr.variants), entries: entries as never,
-            isVariant: isVariantProduct(pr.variants, pr.variantPrices), appSellPrices: parseVariantSellPrices(pr.variantSellPrices), appSellPrice: pr.sellPrice,
-            token, getGroupSkus: (g) => getInventoryItemGroupSkus(g, token),
-            getBuyerPrices: async () => {
-              const r = await getItemBuyerPricesXml(pr.ebayListingId as string);
-              if (r.httpStatus !== 200) return { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` };
-              return parseGetItemBuyerPrices(r.xml);
-            },
-          });
-          return { ok: rb.ok, reason: rb.reason, prices: Object.fromEntries(rb.rows.filter(r => r.skuId).map(r => [r.skuId as string, r.ebayPrice])) };
-        },
-      });
+      const { buildVariantRepriceDeps } = await import('./variant-reprice-deps');
+      const result = await runVariantReprice(row, parsed, buildVariantRepriceDeps(product as never));
       for (const r of result.rows) {
         if (r.ergebnis === 'gesetzt') console.log(`[${parsed.direction === 'up' ? 'Anheben' : 'Senken'}] stele-${result.productId} ${r.label} ${r.alt?.toFixed(2)} → ${r.neu.toFixed(2)} Gewinn ${r.gewinnAlt?.toFixed(2)} → ${r.gewinnNeu?.toFixed(2)}${r.ebayGleichApp === false ? ' (eBay ≠ App!)' : ''}`);
       }
@@ -3810,6 +3780,11 @@ const app = new Hono()
   })
 
   // ─── K-005 Punkt 3: Senk-Kandidaten (NUR LESEN — nichts schreiben, nichts senden) ───────────────────────────
+  // K-018 PR B: letzte Vorschau/Ergebnis von „automatisch senken“ (aus dem Tages-Preislauf, app_settings auto_lower_last_preview) — nur lesen.
+  .get('/reports/auto-lower', async (c) => {
+    const { readAutoLowerPreview, autoLowerEnabled } = await import('./auto-lower');
+    return c.json({ schalter: autoLowerEnabled() ? 'AN' : 'AUS', letzterLauf: await readAutoLowerPreview() });
+  })
   .get('/reports/senk-kandidaten', async (c) => {
     try {
       const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));

@@ -58,7 +58,8 @@ export function discountedUnitPrice(sellPrice: number, percent: number): number 
   return cents(sellPrice * (1 - percent / 100));
 }
 
-function orderProfit(v: VolumeDiscountVariant, qty: number, percent: number, inp: VolumeDiscountInput) {
+// K-018 PR B: exportiert (reiner Extract, Grundgesetz 8) — „automatisch senken“ prüft den Gewinn je Stück mit den LIVE-Prozent.
+export function volumeOrderProfit(v: VolumeDiscountVariant, qty: number, percent: number, inp: Pick<VolumeDiscountInput, 'adRatePercent' | 'checkoutFactor' | 'earUmlageEur'>) {
   const unitPrice = discountedUnitPrice(v.sellPrice, percent);
   const total = cents(unitPrice * qty);
   const profit = profitAtSellPrice({
@@ -86,12 +87,12 @@ export function planVolumeDiscount(inp: VolumeDiscountInput): VolumeDiscountPlan
   if (variants.length === 0) return empty('Kein Verkaufspreis oder Einkaufspreis bekannt — nichts berechenbar.');
   const minProfit = effectiveProfitFloor(inp.floorEur);
   const basePrice = Math.max(...variants.map(v => v.sellPrice));
-  const singleRows = variants.map(v => ({ label: v.label, skuId: v.skuId, profit: cents(orderProfit(v, 1, 0, inp).profit) }));
-  const singleProfit = new Map(variants.map(v => [v, orderProfit(v, 1, 0, inp).profit]));
+  const singleRows = variants.map(v => ({ label: v.label, skuId: v.skuId, profit: cents(volumeOrderProfit(v, 1, 0, inp).profit) }));
+  const singleProfit = new Map(variants.map(v => [v, volumeOrderProfit(v, 1, 0, inp).profit]));
   // Inhaber 25.10.2026 (Regel 6 €/11 €): Mehrstück darf je Stück nie weniger bringen als ein Einzelkauf. Sonst lohnt der Rabatt nicht
   // (betrifft Artikel ohne gesparten Versand/Einfuhr, z. B. EU-Lager: 77, 92, 95, 97, 139, 140, 145 am 25.10.).
-  const unitNotWorse = (v: VolumeDiscountVariant, qty: number, p: number) => orderProfit(v, qty, p, inp).profit / qty >= singleProfit.get(v)! - 1e-9;
-  const floorOk = (qty: number, p: number) => variants.every(v => orderProfit(v, qty, p, inp).profit >= minProfit - 1e-9);
+  const unitNotWorse = (v: VolumeDiscountVariant, qty: number, p: number) => volumeOrderProfit(v, qty, p, inp).profit / qty >= singleProfit.get(v)! - 1e-9;
+  const floorOk = (qty: number, p: number) => variants.every(v => volumeOrderProfit(v, qty, p, inp).profit >= minProfit - 1e-9);
   const unitOk = (qty: number, p: number) => variants.every(v => unitNotWorse(v, qty, p));
   const allAboveFloor = (qty: number, p: number) => floorOk(qty, p) && unitOk(qty, p);
 
@@ -110,7 +111,7 @@ export function planVolumeDiscount(inp: VolumeDiscountInput): VolumeDiscountPlan
     else if (!unitOk(qty, p) && !error) error = `${qty} Stück: schon bei ${p} % (kleinster erlaubter Wert) bringt jedes Stück weniger als ein Einzelkauf — Mengenrabatt lohnt hier nicht (Rabatt größer als der gesparte Versand/Einfuhr, z. B. EU-Lager oder teurer Artikel).`;
     percents[qty] = p;
     const rows = variants.map(v => {
-      const r = orderProfit(v, qty, p, inp);
+      const r = volumeOrderProfit(v, qty, p, inp);
       return { label: v.label, skuId: v.skuId, unitPrice: r.unitPrice, total: r.total, saving: r.saving, profit: cents(r.profit), belowFloor: r.profit < minProfit - 1e-9 };
     });
     tiers.push({ qty, targetEur, wantedPercent: wanted, percent: p, reason, rows });
