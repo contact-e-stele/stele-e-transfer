@@ -42,3 +42,21 @@ export interface SwitchRow {
 export function readBackMatches(live: { merchantLocationKey: string | null; fulfillmentPolicyId: string | null } | null, target: SwitchTarget): boolean {
   return !!live && live.merchantLocationKey === target.locationKey && live.fulfillmentPolicyId === target.fulfillmentPolicyId;
 }
+
+/** Offer-Preis aus einem vollen Offer (GET). null = nicht lesbar. */
+export function offerPriceOf(offer: Record<string, unknown>): number | null {
+  const v = parseFloat(String((offer.pricingSummary as { price?: { value?: string } } | undefined)?.price?.value ?? ''));
+  return Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Pflicht vor jedem vollen Offer-PUT (wie setOfferAvailableQuantity, Fund Aufsicht PR 285 Befund 1): ein voller PUT schreibt auch
+ * pricingSummary zurück. Weicht der Offer-Preis vom Käuferpreis ab (Preis im Seller Hub geändert) oder ist einer unbekannt, spränge
+ * der Käuferpreis still zurück → KEIN PUT. null = ok, sonst Grund.
+ */
+export function priceMismatch(sku: string, offerPrice: number | null, buyerPrice: number | null | undefined): string | null {
+  if (typeof buyerPrice !== 'number' || !Number.isFinite(buyerPrice)) return `Käuferpreis für ${sku} unbekannt — kein Offer-PUT ohne Preisvergleich`;
+  if (offerPrice == null) return `Angebotspreis für ${sku} nicht lesbar — kein Offer-PUT`;
+  if (Math.abs(offerPrice - buyerPrice) > 0.01 + 1e-9) return `eBay-Preise uneinheitlich – erst angleichen (${sku}: Käufer ${buyerPrice.toFixed(2)} ≠ Angebotsdaten ${offerPrice.toFixed(2)})`;
+  return null;
+}

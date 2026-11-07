@@ -5388,6 +5388,17 @@ app.post('/ebay/origin-inventory/switch', async (c) => {
           return r.ok || r.status === 204 ? { ok: true } : { ok: false, error: `PUT offer/${id}: ${r.status} ${(await r.text()).slice(0, 300)}` };
         },
         ensureLocation: (spec) => ebay.ensureInventoryLocation(spec, fetch, token),
+        // Befund 1 (Aufsicht PR 285): Käuferpreise je Angebot (GetItem) + K-011b-Sperre + Sperre setzen — wie setOfferAvailableQuantity.
+        buyerPrices: async (itemId) => {
+          const g = await ebay.getItemBuyerPricesXml(itemId);
+          if (g.httpStatus !== 200) return null;
+          const { parseGetItemBuyerPrices } = await import('../shared/ebay-buyer-price');
+          const b = parseGetItemBuyerPrices(g.xml);
+          if (b.error) return null;
+          return b.isVariation ? { bySku: new Map(b.rows.map(r => [r.sku, r.price])), single: null } : { bySku: new Map(), single: b.rows[0]?.price ?? null };
+        },
+        priceLocked: (sku) => ebay.priceLockError(sku, 'Standort umstellen (PUT Offer)'),
+        setLock: async (pid, row) => { const { setPriceLock } = await import('./price-locks'); await setPriceLock(pid, { at: new Date().toISOString(), rows: [{ sku: row.sku, label: row.sku, buyerPrice: row.buyerPrice, offerPrice: row.offerPrice }] }); },
       });
       for (const r of rows) if (r.status === 'umgestellt' || r.status === 'fehler') console.log(`[Standort Bestand] ${r.steleNr} ${r.itemId}: ${r.status} ${r.vorher.lagerort ?? '–'} → ${r.ziel?.locationKey ?? '–'}${r.nachher ? ` (zurückgelesen: ${r.nachher.stimmt ? 'stimmt' : 'STIMMT NICHT'})` : ''}${r.grund ? ` — ${r.grund}` : ''}`);
       const count = (s: string) => rows.filter(r => r.status === s).length;

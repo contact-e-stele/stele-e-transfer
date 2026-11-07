@@ -4,7 +4,7 @@
 // Menge folgt dem Lager (Mengen-Fix B) → PUT → danach zurücklesen. Ohne confirm: nur Vorschau, nichts wird geschrieben.
 // Alle eBay-/DB-Zugriffe kommen als deps herein (Grundgesetz 2: mit Mocks testbar). Preise werden NICHT angefasst.
 import { resolveLocation, resolveFulfillmentPolicy, type LocationSpec, type FulfillmentPolicyInfo, type OriginLocations, type LiveShipping } from '../shared/origin-shipping';
-import { offersOfListing, switchOfferBody, readBackMatches, type OfferSummary, type SwitchRow, type SwitchTarget } from '../shared/origin-switch';
+import { offersOfListing, switchOfferBody, readBackMatches, offerPriceOf, priceMismatch, type OfferSummary, type SwitchRow, type SwitchTarget } from '../shared/origin-switch';
 import type { ListingOrigin } from '../shared/listing-origin';
 
 export interface OriginSwitchListing { itemId: string; sku: string; productId: number | null; origin: ListingOrigin | null }
@@ -20,6 +20,12 @@ export interface OriginSwitchDeps {
   putOffer: (offerId: string, body: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
   ensureLocation: (spec: LocationSpec) => Promise<'exists' | 'created'>;
   applyQuantity: (offer: Record<string, unknown>, qty: number | null) => void;
+  /** Käuferpreise des Angebots (GetItem): SKU → Preis; Einzelartikel: single. null = nicht lesbar. */
+  buyerPrices: (itemId: string) => Promise<{ bySku: Map<string, number>; single: number | null } | null>;
+  /** K-011b: Sperr-Text, wenn das Produkt gesperrt ist, sonst null. */
+  priceLocked: (sku: string) => Promise<string | null>;
+  /** K-011: Sperre setzen bei Abweichung (nur beim Umstellen, nicht in der Vorschau). */
+  setLock: (productId: number, row: { sku: string; buyerPrice: number; offerPrice: number }) => Promise<void>;
 }
 
 export async function runOriginSwitch(listings: OriginSwitchListing[], opts: { confirm: boolean }, deps: OriginSwitchDeps): Promise<SwitchRow[]> {
@@ -36,24 +42,46 @@ export async function runOriginSwitch(listings: OriginSwitchListing[], opts: { c
     if (!pol.ok) { rows.push({ ...base, vorher, ziel: null, status: 'übersprungen', grund: pol.error }); continue; }
     const ziel: SwitchTarget = { locationKey: loc.value.key, fulfillmentPolicyId: pol.value.id };
     if (readBackMatches(live, ziel)) { rows.push({ ...base, vorher, ziel, status: 'schon richtig' }); continue; }
-    if (!opts.confirm) { rows.push({ ...base, vorher, ziel, status: 'vorschau', grund: `würde umstellen auf ${ziel.locationKey} / Richtlinie ${ziel.fulfillmentPolicyId}${loc.value.estimated ? ' (Ort geschätzt)' : ''}` }); continue; }
     try {
-      if (!ensured.has(loc.value.key)) { await deps.ensureLocation(loc.value); ensured.add(loc.value.key); }
+      // Befund 1 (Aufsicht PR 285): vor jedem vollen Offer-PUT Sperre + Käuferpreis prüfen — auch in der Vorschau (nur lesen),
+      // damit uneinheitliche Preise VOR "ja Standort Bestand" sichtbar sind.
+      const locked = await deps.priceLocked(l.sku);
+      if (locked) { rows.push({ ...base, vorher, ziel, status: 'übersprungen', grund: locked }); continue; }
+      const buyer = await deps.buyerPrices(l.itemId).catch(() => null);
       const skus = await deps.skusOf(l.sku);
-      let touched = 0; const errors: string[] = [];
+      const plan: Array<{ sku: string; offerId: string; body: Record<string, unknown> }> = [];
+      const problems: string[] = [];
+      let unchanged = 0;
       for (const sku of skus) {
         for (const o of offersOfListing(await deps.offersOf(sku), l.itemId)) {
           const full = await deps.getOffer(o.offerId);
+          const offerPrice = offerPriceOf(full);
+          const buyerPrice = buyer ? (buyer.bySku.get(sku) ?? (buyer.bySku.size === 0 ? buyer.single : null)) : null;
+          const mism = priceMismatch(sku, offerPrice, buyerPrice);
+          if (mism) {
+            problems.push(mism);
+            if (opts.confirm && offerPrice != null && typeof buyerPrice === 'number') await deps.setLock(l.productId, { sku, buyerPrice, offerPrice }).catch(() => undefined);
+            continue;
+          }
           const { body, changed } = switchOfferBody(full, ziel);
-          if (!changed) continue;
-          deps.applyQuantity(body, await deps.quantityOf(sku));
-          const r = await deps.putOffer(o.offerId, body);
-          if (r.ok) touched++; else errors.push(`${sku}: ${r.error ?? 'PUT fehlgeschlagen'}`);
+          if (!changed) { unchanged++; continue; }
+          plan.push({ sku, offerId: o.offerId, body });
         }
       }
-      if (touched === 0 && errors.length === 0) {
-        rows.push({ ...base, vorher, ziel, status: 'übersprungen', grund: 'kein Inventory-Offer zu diesem Angebot gefunden (außerhalb der App eingestellt?) — von Hand im Seller Hub umstellen' });
+      if (problems.length > 0) { rows.push({ ...base, vorher, ziel, status: 'übersprungen', grund: `${problems.join(' | ')}${opts.confirm ? ' — Sperre gesetzt, nichts geändert' : ''}` }); continue; }
+      if (plan.length === 0) {
+        rows.push({ ...base, vorher, ziel, status: 'übersprungen', grund: unchanged > 0
+          ? 'Offers schon richtig, Rücklesen widerspricht — bitte im Seller Hub prüfen'
+          : 'kein Inventory-Offer zu diesem Angebot gefunden (außerhalb der App eingestellt?) — von Hand im Seller Hub umstellen' });
         continue;
+      }
+      if (!opts.confirm) { rows.push({ ...base, vorher, ziel, offers: plan.length, status: 'vorschau', grund: `würde umstellen auf ${ziel.locationKey} / Richtlinie ${ziel.fulfillmentPolicyId}${loc.value.estimated ? ' (Ort geschätzt)' : ''} · Preise geprüft (Käufer = Angebot)` }); continue; }
+      if (!ensured.has(loc.value.key)) { await deps.ensureLocation(loc.value); ensured.add(loc.value.key); }
+      let touched = 0; const errors: string[] = [];
+      for (const p of plan) {
+        deps.applyQuantity(p.body, await deps.quantityOf(p.sku));
+        const r = await deps.putOffer(p.offerId, p.body);
+        if (r.ok) touched++; else errors.push(`${p.sku}: ${r.error ?? 'PUT fehlgeschlagen'}`);
       }
       const after = await deps.readLive(l).catch(() => null);
       const nachher = { lagerort: after?.merchantLocationKey ?? null, richtlinie: after?.fulfillmentPolicyId ?? null, stimmt: readBackMatches(after, ziel) };

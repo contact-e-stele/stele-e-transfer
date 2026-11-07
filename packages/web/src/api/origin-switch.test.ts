@@ -21,7 +21,7 @@ function deps(over: Partial<OriginSwitchDeps> = {}) {
     o2: { offerId: 'o2', sku: 'stele-225-b', merchantLocationKey: 'default', listingPolicies: { fulfillmentPolicyId: '276306574014' }, pricingSummary: { price: { value: '23.95', currency: 'EUR' } } },
     oX: { offerId: 'oX', sku: 'stele-225-a', merchantLocationKey: 'default', listingPolicies: { fulfillmentPolicyId: '276306574014' } },
   };
-  const calls = { put: [] as Array<{ id: string; body: Record<string, unknown> }>, ensure: [] as string[], reads: 0 };
+  const calls = { put: [] as Array<{ id: string; body: Record<string, unknown> }>, ensure: [] as string[], reads: 0, locks: [] as Array<{ pid: number; sku: string; buyerPrice: number; offerPrice: number }> };
   let switched = false;
   const d: OriginSwitchDeps = {
     policies: POLICIES, locations: {},
@@ -35,6 +35,9 @@ function deps(over: Partial<OriginSwitchDeps> = {}) {
     applyQuantity: (o, q) => { if (q != null) o.availableQuantity = q; },
     putOffer: async (id, body) => { calls.put.push({ id, body }); switched = true; return { ok: true }; },
     ensureLocation: async (spec) => { calls.ensure.push(spec.key); return 'created'; },
+    buyerPrices: async () => ({ bySku: new Map([['stele-225-a', 25.45], ['stele-225-b', 23.95]]), single: null }),
+    priceLocked: async () => null,
+    setLock: async (pid, row) => { calls.locks.push({ pid, ...row }); },
     ...over,
   };
   return { d, calls };
@@ -104,5 +107,49 @@ describe('runOriginSwitch', () => {
     expect(r.status).toBe('übersprungen');
     expect(r.grund).toContain('Versand aus China');
     expect(calls.put).toEqual([]);
+  });
+
+  // Befund 1 (Aufsicht PR 285): kein voller Offer-PUT ohne Preisvergleich.
+  test('Offer-Preis ≠ Käuferpreis (Variante b: Käufer 22,95, Angebot 23,95) → kein PUT, übersprungen, Sperre gesetzt', async () => {
+    const { d, calls } = deps({ buyerPrices: async () => ({ bySku: new Map([['stele-225-a', 25.45], ['stele-225-b', 22.95]]), single: null }) });
+    const [r] = await runOriginSwitch([L225], { confirm: true }, d);
+    expect(r.status).toBe('übersprungen');
+    expect(r.grund).toContain('eBay-Preise uneinheitlich');
+    expect(calls.put).toEqual([]);
+    expect(calls.locks).toEqual([{ pid: 225, sku: 'stele-225-b', buyerPrice: 22.95, offerPrice: 23.95 }]);
+  });
+  test('dasselbe in der Vorschau: gemeldet, aber KEINE Sperre gesetzt und nichts geschrieben', async () => {
+    const { d, calls } = deps({ buyerPrices: async () => ({ bySku: new Map([['stele-225-a', 25.45], ['stele-225-b', 22.95]]), single: null }) });
+    const [r] = await runOriginSwitch([L225], { confirm: false }, d);
+    expect(r.status).toBe('übersprungen');
+    expect(r.grund).toContain('eBay-Preise uneinheitlich');
+    expect(calls.locks).toEqual([]);
+    expect(calls.put).toEqual([]);
+  });
+  test('Sperre aktiv (K-011b) → kein PUT', async () => {
+    const { d, calls } = deps({ priceLocked: async () => 'K-011 Sperre – erst angleichen' });
+    const [r] = await runOriginSwitch([L225], { confirm: true }, d);
+    expect(r).toMatchObject({ status: 'übersprungen', grund: 'K-011 Sperre – erst angleichen' });
+    expect(calls.put).toEqual([]);
+  });
+  test('Käuferpreis unbekannt (GetItem nicht lesbar) → kein PUT', async () => {
+    const { d, calls } = deps({ buyerPrices: async () => null });
+    const [r] = await runOriginSwitch([L225], { confirm: true }, d);
+    expect(r.status).toBe('übersprungen');
+    expect(r.grund).toContain('Käuferpreis für stele-225-a unbekannt');
+    expect(calls.put).toEqual([]);
+  });
+  test('Einzelartikel: Käuferpreis = Offer-Preis → umgestellt', async () => {
+    const { d, calls } = deps({ skusOf: async () => ['stele-225-a'], buyerPrices: async () => ({ bySku: new Map(), single: 25.45 }) });
+    const [r] = await runOriginSwitch([{ ...L225, sku: 'stele-225-a' }], { confirm: true }, d);
+    expect(r.status).toBe('umgestellt');
+    expect(calls.put.map(p => p.id)).toEqual(['o1']);
+  });
+  // Befund 2: alle Offers schon richtig, Rücklesen widerspricht → eigener Grund (nicht „kein Inventory-Offer“).
+  test('Offers schon richtig, Rücklesen widerspricht → eigener Grund', async () => {
+    const { d } = deps({ getOffer: async (id) => ({ offerId: id, merchantLocationKey: 'CN-Shenzhen', listingPolicies: { fulfillmentPolicyId: '303262307014' }, pricingSummary: { price: { value: id === 'o1' ? '25.45' : '23.95', currency: 'EUR' } } }) });
+    const [r] = await runOriginSwitch([L225], { confirm: true }, d);
+    expect(r.status).toBe('übersprungen');
+    expect(r.grund).toContain('Offers schon richtig, Rücklesen widerspricht');
   });
 });
