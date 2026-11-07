@@ -10,6 +10,7 @@ import type { VariantSendResult } from './variant-raise';
 import { isLiveListed, parseGroups } from './tier-reprice';
 
 export interface VariantRepriceProductRow extends RepriceProduct {
+  targetMarginEur?: number | null;   // OFFEN 033b: Mindestgewinn = max(1,00; Ziel)
   generatedTitle: string;
   variants: string | null;
   ebayStatus: string;

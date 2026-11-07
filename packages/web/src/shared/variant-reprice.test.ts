@@ -67,3 +67,20 @@ describe('planVariantDecrease – Regeln', () => {
     expect(r[0].status).toBe('abgelehnt');
   });
 });
+
+describe('OFFEN 033b (Kalkulator 07.11. 11:05)', () => {
+  // Frisch mit bun gerechnet: Blue 25,45 → mit Faktor +1,37 / ohne +1,01 · black 23,45 → +1,29 / ohne +0,97 · Blue 25,95 → +1,78
+  test('Punkt 1: Mindestgewinn = max(1,00; Ziel) — Ziel 1,50: black 23,45 (+1,29) und Blue 25,45 (+1,37) abgelehnt, Blue 25,95 (+1,78) ok', () => {
+    const a = planVariantDecrease(p225({ targetMarginEur: 1.5 }), { [BLUE]: 25.45, [BLACK]: 23.45 }, GROUPS).rows;
+    expect(a.map(r => [r.status, r.mindestGewinn])).toEqual([['abgelehnt', 1.5], ['abgelehnt', 1.5]]);
+    expect(a[1].grund).toContain('1.50');
+    expect(planVariantDecrease(p225({ targetMarginEur: 1.5 }), { [BLUE]: 25.95 }, GROUPS).rows[0]).toMatchObject({ status: 'ok', gewinnNeu: 1.78 });
+    expect(planVariantDecrease(p225({ targetMarginEur: 1 }), { [BLACK]: 23.45 }, GROUPS).rows[0].mindestGewinn).toBe(1);
+  });
+  test('Punkt 2: gewinnOhneFaktor je Zeile; unter Mindestgewinn nur WARNUNG, keine Ablehnung', () => {
+    const r = planVariantDecrease(p225(), { [BLUE]: 25.45, [BLACK]: 23.45 }, GROUPS).rows;
+    expect(r.map(x => [x.gewinnNeu, x.gewinnOhneFaktor, x.status])).toEqual([[1.37, 1.01, 'ok'], [1.29, 0.97, 'ok']]);
+    expect(r[0].hinweis).toBeUndefined();
+    expect(r[1].hinweis).toContain('ohne Kassen-Faktor nur 0.97');
+  });
+});
