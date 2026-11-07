@@ -46,7 +46,7 @@ export function buildCheckoutFactorMatcher(products: FactorSyncProduct[]): (sku:
 /**
  * Reine Kernlogik: welche Faktoren werden geschrieben bzw. gelöscht.
  * - Neuere Bestellung als der gespeicherte Stand → schreiben.
- * - DIESELBE Bestellung wie gespeichert (Rechnungsbetrag korrigiert) → neu schreiben, wenn sich der Faktor ändert (Gegenprüfung B1).
+ * - DIESELBE Bestellung wie gespeichert → NICHT neu rechnen (K-018 c1 Weg 2: eingefroren; früher B1 „neu schreiben“).
  * - Gespeicherte Quell-Bestellung liefert keinen gültigen Faktor mehr (Betrag gelöscht oder jetzt unplausibel) → durch den nächstbesten
  *   abgeleiteten Faktor ersetzen, sonst auf null setzen. Fehlt die Bestellung nur in der eBay-Liste (> 90 Tage), bleibt der Stand
  *   (er läuft nach 14 Tagen ohnehin ab).
@@ -84,7 +84,11 @@ export function planCheckoutFactorSync(notes: FactorSyncNote[], orders: FactorSy
       continue;
     }
     if (storedOrder != null && f.orderId === storedOrder) {
-      if (p.aliCheckoutFactor !== f.factor || p.aliCheckoutFactorAt !== f.at) writes.push(f);
+      // K-018 c1 Weg 2 (Kalkulator 07.11.2026 12:20/13:05): Faktor je Bestellung nur EINMAL rechnen — mit dem App-Preis beim ersten
+      // Abgleich (≈ Bestelltag). Früher wurde er täglich mit dem App-Preis von HEUTE neu gerechnet (gleicher Zeitstempel, anderer Wert,
+      // Beleg stele-225: 0,9733 → 0,9573). Nur ein halber Stand (Faktor oder Datum fehlt) wird ergänzt. Ein korrigierter Rechnungsbetrag
+      // wirkt erst, wenn er gelöscht und neu eingetragen wird (Löschen setzt den Faktor auf null, s. storedInvalid).
+      if (p.aliCheckoutFactor == null || p.aliCheckoutFactorAt == null) writes.push(f);
       continue;
     }
     if (storedInvalid) { writes.push(f); continue; }
@@ -109,7 +113,7 @@ export async function syncCheckoutFactors(deps?: Partial<CheckoutFactorSyncDeps>
   for (const w of plan.writes) {
     await d.writeFactor(w.productId, { factor: w.factor, at: w.at, orderId: w.orderId });
     geschrieben++;
-    console.log(`[K-005] stele-${w.productId}: Kassen-Faktor ${w.factor} (Kasse ${w.checkoutWare.toFixed(2)} € ÷ App ${w.apiWare.toFixed(2)} €, Bestellung ${w.orderId} vom ${w.at})`);
+    console.log(`[K-005] stele-${w.productId}: Kassen-Faktor ${w.factor} inkl. Rabatt (Kasse ${w.checkoutWare.toFixed(2)} € ÷ App ${w.apiWare.toFixed(2)} €, Bestellung ${w.orderId} vom ${w.at})`);
   }
   let gelöscht = 0;
   for (const id of plan.clears) {

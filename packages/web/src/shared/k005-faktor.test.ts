@@ -169,10 +169,25 @@ describe('Faktor-Abgleich (planCheckoutFactorSync): nur schreiben, wenn die Best
   // Gegenprüfung B1 (14.10.2026): Tippfehler 13,04 statt 15,04 bei DERSELBEN Bestellung — Korrektur muss den Faktor neu schreiben.
   // 13,04 − 3,57 = 9,47 < 10 → − 1,99 = 7,48; 7,48 ÷ 12,19 = 0,6136 (mit bun nachgerechnet).
   const same = (factor: number | null, at: string | null): FactorSyncProduct => ({ ...prod(at), aliCheckoutFactor: factor, aliCheckoutFactorOrder: '15-15284-69835' });
-  test('B1: gleiche Bestellung, Betrag korrigiert (gespeichert 0,6136) → neu schreiben 0,9409', () => {
+  // K-018 c1 Weg 2 (Kalkulator 12:20): gleiche Bestellung wird NICHT neu gerechnet (früher B1 „neu schreiben“) — sonst ändert ein neuer
+  // App-Preis den Faktor bei gleichem Zeitstempel (Beleg stele-225 0,9733 → 0,9573). Korrektur nur über Löschen + neu eintragen.
+  test('c1: gleiche Bestellung, anderer gespeicherter Faktor (0,6136) → eingefroren, nichts schreiben', () => {
     const r = planCheckoutFactorSync(notes, orders, [same(0.6136, '2026-10-12T10:00:00.000Z')]);
-    expect(r.writes).toEqual([expect.objectContaining({ productId: 220, factor: 0.9409 })]);
+    expect(r.writes).toEqual([]);
     expect(r.clears).toEqual([]);
+  });
+  test('c1: gleiche Bestellung, gespeichert 0,9733, heute gerechnet wäre 0,9409 → bleibt 0,9733 (nichts schreiben)', () => {
+    const r = planCheckoutFactorSync(notes, orders, [same(0.9733, '2026-10-12T10:00:00.000Z')]);
+    expect(r.writes).toEqual([]);
+  });
+  test('c1: halber Stand (Faktor da, Datum fehlt) → ergänzen', () => {
+    const r = planCheckoutFactorSync(notes, orders, [{ ...same(0.6136, '2026-10-12T10:00:00.000Z'), aliCheckoutFactorAt: null }]);
+    expect(r.writes).toEqual([expect.objectContaining({ productId: 220, factor: 0.9409 })]);
+  });
+  test('c1: Korrektur-Weg — Betrag gelöscht (→ null), danach neu eingetragen → neu gerechnet', () => {
+    expect(planCheckoutFactorSync([{ ebayOrderId: '15-15284-69835', manualBuyPrice: null }], orders, [same(0.6136, '2026-10-12T10:00:00.000Z')]).clears).toEqual([220]);
+    const r = planCheckoutFactorSync(notes, orders, [{ ...same(0.6136, '2026-10-12T10:00:00.000Z'), aliCheckoutFactor: null, aliCheckoutFactorAt: null, aliCheckoutFactorOrder: null }]);
+    expect(r.writes).toEqual([expect.objectContaining({ productId: 220, factor: 0.9409 })]);
   });
   test('B1: gleiche Bestellung, gleicher Faktor → nichts schreiben', () => {
     const r = planCheckoutFactorSync(notes, orders, [same(0.9409, '2026-10-12T10:00:00.000Z')]);
