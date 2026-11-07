@@ -125,7 +125,8 @@ export function planVariantReprice(
       // Kalkulator 07.11.2026 13:50 (OFFEN 035): Anheben, das den Gewinn verbessert, ist auch unter dem Mindestgewinn ok — mit Hinweis.
       // Senken bleibt streng (abgelehnt).
       if (direction === 'up' && gewinnNeu > gewinnAlt + 1e-9) {
-        rows.push({ ...base, status: 'ok', hinweis: `noch unter Mindestgewinn: ${gewinnNeu.toFixed(2)} € < ${mindestGewinn.toFixed(2)} € (Gewinn steigt von ${gewinnAlt.toFixed(2)} €)` });
+        const unter = `noch unter Mindestgewinn: ${gewinnNeu.toFixed(2)} € < ${mindestGewinn.toFixed(2)} € (Gewinn steigt von ${gewinnAlt.toFixed(2)} €)`;
+        rows.push({ ...base, status: 'ok', hinweis: base.hinweis ? `${base.hinweis} · ${unter}` : unter }); // Kalkulator 14:10: beide Hinweise anhängen
         continue;
       }
       rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${mindestGewinn.toFixed(2)} € (max(1,00; Ziel))` }); continue;
