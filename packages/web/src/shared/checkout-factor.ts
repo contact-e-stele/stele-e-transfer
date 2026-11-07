@@ -15,6 +15,16 @@ export function einfuhrForOrderDate(orderDate: string): number | null {
 }
 
 export const CHECKOUT_FACTOR_MAX_AGE_DAYS = 14;
+
+// K-018 c1 (Kalkulator 07.11.2026 13:05): Der Faktor kommt aus dem Rechnungsbetrag „Insgesamt“ (order_notes.manual_buy_price) —
+// der Posten „Artikel“ wird nicht erfasst. Rabatte/Münzen stecken also darin → Kennzeichen „inkl. Rabatt“. Ein solcher Faktor gilt
+// für Anheben und Preisalarm weiter, für SENKEN nicht: Senken rechnet ohne Faktor (sonst würde ein Rabatt in den Dauerpreis eingehen).
+export const CHECKOUT_FACTOR_INKL_RABATT = true;
+
+/** Produkt für Senk-Rechnungen: Faktor „inkl. Rabatt“ entfernt (Senk-Bericht, „Auswahl senken“). */
+export function withoutFactorForLowering<T extends { aliCheckoutFactor?: number | null }>(p: T): T {
+  return CHECKOUT_FACTOR_INKL_RABATT ? { ...p, aliCheckoutFactor: null } : p;
+}
 export const CHECKOUT_FACTOR_MAX = 1.0;
 // Plausibilitätsgrenze (Inhaber 14.10.2026, 20:50: "Grenze 0,85: ja"): ein Faktor unter 0,85 ist eher Eingabefehler/Rabattaktion als ein
 // echter Dauer-Preisunterschied → wird nicht übernommen (Abgleich) UND nie angewendet (activeCheckoutFactor → ohne Faktor rechnen).

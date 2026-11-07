@@ -29,12 +29,19 @@ describe('parseVariantRepriceBody', () => {
 describe('planVariantDecrease – Regeln', () => {
   const plan = (prices: Record<string, number>, held?: Set<string>, over?: Partial<RepriceProduct>) => planVariantDecrease(p225(over), prices, GROUPS, held).rows;
 
-  test('freigegebene Senkung (Senk-Bericht Schritt 1): Blue 26,95 → 25,45 (+1,37), black 24,95 → 23,45 (+1,29) = ok', () => {
+  // K-018 c1 (Kalkulator 13:05): Senken rechnet OHNE Kassen-Faktor „inkl. Rabatt“ (bun: Blue 25,45 → +1,01, black 23,45 → +0,97).
+  test('Senken ohne Faktor (K-018 c1): Blue 26,95 → 25,45 (+1,01) ok, black 24,95 → 23,45 (+0,97) abgelehnt', () => {
     const r = plan({ [BLUE]: 25.45, [BLACK]: 23.45 });
     expect(r.map(x => [x.skuId, x.alt, x.neu, x.gewinnAlt, x.gewinnNeu, x.status])).toEqual([
-      [BLUE, 26.95, 25.45, 2.6, 1.37, 'ok'],
-      [BLACK, 24.95, 23.45, 2.52, 1.29, 'ok'],
+      [BLUE, 26.95, 25.45, 2.24, 1.01, 'ok'],
+      [BLACK, 24.95, 23.45, 2.2, 0.97, 'abgelehnt'],
     ]);
+  });
+  test('Senken: Ergebnis mit und ohne gespeicherten Faktor gleich (Faktor wird beim Senken nicht benutzt)', () => {
+    const mit = plan({ [BLUE]: 25.45, [BLACK]: 23.95 });
+    const ohne = plan({ [BLUE]: 25.45, [BLACK]: 23.95 }, undefined, { aliCheckoutFactor: null });
+    expect(mit.map(x => [x.gewinnNeu, x.status])).toEqual(ohne.map(x => [x.gewinnNeu, x.status]));
+    expect(mit.map(x => x.gewinnNeu)).toEqual([1.01, 1.38]);
   });
   test('Regel 1: Anheben abgelehnt (black 24,95 → 25,95), gleicher Preis abgelehnt', () => {
     const r = plan({ [BLACK]: 25.95, [GRAY]: 24.95 });
@@ -46,12 +53,12 @@ describe('planVariantDecrease – Regeln', () => {
     expect(r[0].grund).toContain('Senkungsbremse');
     expect(r[1].grund ?? '').not.toContain('Senkungsbremse');
   });
-  test('Regel 3: Gewinn unter 1,00 abgelehnt — GRAY 22,95 = 0,88 mit Faktor; ohne Faktor 0,56', () => {
-    expect(plan({ [GRAY]: 22.95 })[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: 0.88 });
+  test('Regel 3: Gewinn unter 1,00 abgelehnt — GRAY 22,95 = 0,56 (Senken ohne Faktor)', () => {
+    expect(plan({ [GRAY]: 22.95 })[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: 0.56 });
     expect(plan({ [GRAY]: 22.95 }, undefined, { aliCheckoutFactor: null })[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: 0.56 });
   });
   test('Regel 4: "Preis halten" → gehalten (auch wenn die Senkung sonst ok wäre)', () => {
-    const r = plan({ [BLUE]: 25.45, [BLACK]: 23.45 }, new Set([BLUE]));
+    const r = plan({ [BLUE]: 25.45, [BLACK]: 23.95 }, new Set([BLUE]));
     expect(r[0].status).toBe('gehalten');
     expect(r[1].status).toBe('ok');
   });
@@ -71,19 +78,23 @@ describe('planVariantDecrease – Regeln', () => {
 });
 
 describe('OFFEN 033b (Kalkulator 07.11. 11:05)', () => {
-  // Frisch mit bun gerechnet: Blue 25,45 → mit Faktor +1,37 / ohne +1,01 · black 23,45 → +1,29 / ohne +0,97 · Blue 25,95 → +1,78
-  test('Punkt 1: Mindestgewinn = max(1,00; Ziel) — Ziel 1,50: black 23,45 (+1,29) und Blue 25,45 (+1,37) abgelehnt, Blue 25,95 (+1,78) ok', () => {
-    const a = planVariantDecrease(p225({ targetMarginEur: 1.5 }), { [BLUE]: 25.45, [BLACK]: 23.45 }, GROUPS).rows;
+  // Frisch mit bun gerechnet, Senken OHNE Faktor (K-018 c1): Blue 25,45 → +1,01 · black 23,95 → +1,38 · Blue 25,95 → +1,42 · Blue 26,45 → +1,83
+  test('Punkt 1: Mindestgewinn = max(1,00; Ziel) — Ziel 1,50: black 23,95 (+1,38) und Blue 25,95 (+1,42) abgelehnt, Blue 26,45 (+1,83) ok', () => {
+    const a = planVariantDecrease(p225({ targetMarginEur: 1.5 }), { [BLUE]: 25.95, [BLACK]: 23.95 }, GROUPS).rows;
     expect(a.map(r => [r.status, r.mindestGewinn])).toEqual([['abgelehnt', 1.5], ['abgelehnt', 1.5]]);
     expect(a[1].grund).toContain('1.50');
-    expect(planVariantDecrease(p225({ targetMarginEur: 1.5 }), { [BLUE]: 25.95 }, GROUPS).rows[0]).toMatchObject({ status: 'ok', gewinnNeu: 1.78 });
+    expect(planVariantDecrease(p225({ targetMarginEur: 1.5 }), { [BLUE]: 26.45 }, GROUPS).rows[0]).toMatchObject({ status: 'ok', gewinnNeu: 1.83 });
     expect(planVariantDecrease(p225({ targetMarginEur: 1 }), { [BLACK]: 23.45 }, GROUPS).rows[0].mindestGewinn).toBe(1);
   });
-  test('Punkt 2: gewinnOhneFaktor je Zeile; unter Mindestgewinn nur WARNUNG, keine Ablehnung', () => {
-    const r = planVariantDecrease(p225(), { [BLUE]: 25.45, [BLACK]: 23.45 }, GROUPS).rows;
-    expect(r.map(x => [x.gewinnNeu, x.gewinnOhneFaktor, x.status])).toEqual([[1.37, 1.01, 'ok'], [1.29, 0.97, 'ok']]);
-    expect(r[0].hinweis).toBeUndefined();
-    expect(r[1].hinweis).toContain('ohne Kassen-Faktor nur 0.97');
+  test('Punkt 2: gewinnOhneFaktor je Zeile; beim Senken = gewinnNeu (ohne Faktor gerechnet) → keine Warnung', () => {
+    const r = planVariantDecrease(p225(), { [BLUE]: 25.45, [BLACK]: 23.95 }, GROUPS).rows;
+    expect(r.map(x => [x.gewinnNeu, x.gewinnOhneFaktor, x.status])).toEqual([[1.01, 1.01, 'ok'], [1.38, 1.38, 'ok']]);
+    expect(r.every(x => x.hinweis === undefined)).toBe(true);
+  });
+  test('Warnung „ohne Kassen-Faktor“ gibt es nur noch beim Anheben: Blue 26,95 → 27,45 mit Ziel 2,70 (mit +3,01, ohne +2,65)', () => {
+    const r = planVariantReprice(p225({ targetMarginEur: 2.7 }), { [BLUE]: 27.45 }, GROUPS, new Set(), 'up').rows[0];
+    expect(r).toMatchObject({ status: 'ok', gewinnNeu: 3.01, gewinnOhneFaktor: 2.65 });
+    expect(r.hinweis).toContain('ohne Kassen-Faktor nur 2.65');
   });
 });
 
@@ -120,5 +131,15 @@ describe('OFFEN 034 "Auswahl anheben" (direction up)', () => {
   });
   test('"Preis halten" → gehalten', () => {
     expect(up({ [BLUE]: 27.45 }, new Set([BLUE]))[0].status).toBe('gehalten');
+  });
+});
+
+describe('K-018 c1: Senk-Bericht rechnet ohne Kassen-Faktor „inkl. Rabatt“', () => {
+  test('225 mit Faktor 0,9733 = 225 ohne Faktor (gleicher Bericht)', async () => {
+    const { buildSenkBericht } = await import('./senk-kandidaten');
+    const mit = buildSenkBericht([{ ...p225(), groups: GROUPS }]);
+    const ohne = buildSenkBericht([{ ...p225({ aliCheckoutFactor: null }), groups: GROUPS }]);
+    expect(mit).toEqual(ohne);
+    expect(mit.kandidaten.length).toBeGreaterThan(0);
   });
 });

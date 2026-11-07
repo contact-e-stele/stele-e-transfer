@@ -14,6 +14,7 @@ import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 import { productTarget } from './target-margin-bulk';
 import { isPriceJump, MAX_AUTO_RAISE_PCT } from './price-jump';
 import type { VariantGroup } from './variant-resolver';
+import { withoutFactorForLowering } from './checkout-factor';
 
 export const VARIANT_REPRICE_MIN_PROFIT_EUR = 1.0;
 export const VARIANT_REPRICE_MAX_DECREASE_PERCENT = MAX_PRICE_DECREASE_PERCENT; // 8 % (Teil 2D) — eine Quelle
@@ -86,8 +87,10 @@ export function planVariantReprice(
   direction: VariantRepriceDirection = 'down',
 ): { isVariant: boolean; rows: VariantRepriceRow[] } {
   // Zielgewinn ist hier egal (wir übernehmen ware/alt/attrs aus dem Plan, nicht den Formelpreis); Dubletten wie im Senk-Bericht zusammengelegt.
-  const plan = planTierReprice(product, DEFAULT_PRICING_CONFIG.targetMarginEur, groups);
-  const feesFor = repriceFeesFor(product);
+  // K-018 c1: Senken (down) rechnet ohne Kassen-Faktor „inkl. Rabatt“; Anheben (up) mit Faktor.
+  const calcProduct = direction === 'down' ? withoutFactorForLowering(product) : product;
+  const plan = planTierReprice(calcProduct, DEFAULT_PRICING_CONFIG.targetMarginEur, groups);
+  const feesFor = repriceFeesFor(calcProduct);
   // OFFEN 033b: nie unter das Ziel des Produkts senken (Regel 07.11.) — Mindestgewinn = max(1,00; Ziel), Ziel wie im Senk-Bericht (productTarget).
   const mindestGewinn = Math.max(VARIANT_REPRICE_MIN_PROFIT_EUR, productTarget(product));
   const stored = parseVariantSellPrices(product.variantSellPrices);
