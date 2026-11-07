@@ -3758,6 +3758,63 @@ const app = new Hono()
     }
   })
 
+  // ─── OFFEN 033: "Auswahl senken" — nur die genannten Varianten, nur senken, Bremse 8 %, Gewinn ≥ 1,00 €, "Preis halten" bleibt ──────
+  // mode:'preview' schreibt/sendet NICHTS. mode:'apply' braucht confirm:true; live gelistet nur mit sendToEbay:true. Erst eBay (je Variante
+  // GET→PUT volles Offer, nie anheben), App-Preise nur bei vollem Erfolg, danach Käuferpreis zurücklesen. Regeln: shared/variant-reprice.ts.
+  .post('/products/variant-reprice', async (c) => {
+    let body: unknown;
+    try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+    const { parseVariantRepriceBody } = await import('../shared/variant-reprice');
+    const parsed = parseVariantRepriceBody(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const p = schema.products;
+      const [product] = await db.select().from(p).where(eq(p.id, parsed.productId)).limit(1);
+      const { runVariantReprice } = await import('./variant-reprice');
+      const { getPriceHolds } = await import('./price-holds');
+      const { resolvePriceHolds } = await import('../shared/price-hold');
+      const { sendVariantPriceChanges, parseVariantGroupsJson } = await import('./price-monitor');
+      const { getAccessToken, getInventoryItemGroupSkus, getItemBuyerPricesXml } = await import('./ebay');
+      const { readEbaySellPrices } = await import('./ebay-price-readback');
+      const { parseGetItemBuyerPrices } = await import('../shared/ebay-buyer-price');
+      const { isVariantProduct } = await import('../shared/variant-product');
+      const { parseVariantSellPrices } = await import('../shared/pricing');
+      const row = product ? { ...product, generatedTitle: product.generatedTitle ?? product.title ?? '', ebayStatus: product.ebayStatus ?? 'none' } : undefined;
+      const result = await runVariantReprice(row, parsed, {
+        heldSkuIds: async (pr) => {
+          const holds = await getPriceHolds(); // nicht lesbar → Fehler → 500 (lieber nichts senken als "Preis halten" übergehen)
+          return resolvePriceHolds(product as never, holds[String(pr.id)]).heldKeys;
+        },
+        send: async (id, groups, entries, changes) => sendVariantPriceChanges(id, groups, entries, changes, await getAccessToken(), fetch, 'lower'),
+        store: async (id, json) => { await db.update(p).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(p.id, id)); },
+        readBack: async (pr) => {
+          const token = await getAccessToken();
+          let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
+          try { const pv = pr.variantPrices ? JSON.parse(pr.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+          const rb = await readEbaySellPrices({
+            productId: pr.id, groups: parseVariantGroupsJson(pr.variants), entries: entries as never,
+            isVariant: isVariantProduct(pr.variants, pr.variantPrices), appSellPrices: parseVariantSellPrices(pr.variantSellPrices), appSellPrice: pr.sellPrice,
+            token, getGroupSkus: (g) => getInventoryItemGroupSkus(g, token),
+            getBuyerPrices: async () => {
+              const r = await getItemBuyerPricesXml(pr.ebayListingId as string);
+              if (r.httpStatus !== 200) return { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` };
+              return parseGetItemBuyerPrices(r.xml);
+            },
+          });
+          return { ok: rb.ok, reason: rb.reason, prices: Object.fromEntries(rb.rows.filter(r => r.skuId).map(r => [r.skuId as string, r.ebayPrice])) };
+        },
+      });
+      for (const r of result.rows) {
+        if (r.ergebnis === 'gesetzt') console.log(`[Senken] stele-${result.productId} ${r.label} ${r.alt?.toFixed(2)} → ${r.neu.toFixed(2)} Gewinn ${r.gewinnAlt?.toFixed(2)} → ${r.gewinnNeu?.toFixed(2)}${r.ebayGleichApp === false ? ' (eBay ≠ App!)' : ''}`);
+      }
+      return c.json(result, result.status === 'not_found' ? 404 : 200);
+    } catch (e) {
+      console.error('[variant-reprice]', e);
+      return c.json({ error: 'Fehler bei "Auswahl senken": ' + String(e) + ' — nichts gespeichert.' }, 500);
+    }
+  })
+
   // ─── K-005 Punkt 3: Senk-Kandidaten (NUR LESEN — nichts schreiben, nichts senden) ───────────────────────────
   .get('/reports/senk-kandidaten', async (c) => {
     try {
