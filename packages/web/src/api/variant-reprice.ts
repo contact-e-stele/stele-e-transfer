@@ -2,7 +2,7 @@
 // Zurücklesen kommen als `deps` (index.ts verdrahtet die echten Funktionen), damit alle Regeln mit Mocks testbar sind (Grundgesetz 2).
 // Ablauf (Regeln 5–7): nur die geprüften Zeilen (status ok) senden → App-Preise NUR bei vollem Erfolg speichern (wie A-021) → eBay
 // zurücklesen und je Variante "eBay = App" melden. Ob eBay überhaupt berührt werden darf: decideTierRepriceAction (eine Entscheidungsstelle).
-import { planVariantDecrease, type VariantRepriceMode, type VariantRepriceRow } from '../shared/variant-reprice';
+import { planVariantReprice, type VariantRepriceDirection, type VariantRepriceMode, type VariantRepriceRow } from '../shared/variant-reprice';
 import { decideTierRepriceAction, type RepriceProduct } from '../shared/tier-reprice';
 import { parseVariantSellPrices, serializeVariantSellPrices } from '../shared/pricing';
 import type { VariantGroup, VariantPriceEntry } from '../shared/variant-resolver';
@@ -19,7 +19,7 @@ export interface VariantRepriceProductRow extends RepriceProduct {
 
 export interface VariantRepriceDeps {
   heldSkuIds: (product: VariantRepriceProductRow) => Promise<ReadonlySet<string>>;
-  send: (productId: number, groups: VariantGroup[], entries: VariantPriceEntry[], changes: Array<{ skuId: string; newSell: number }>) => Promise<VariantSendResult>;
+  send: (productId: number, groups: VariantGroup[], entries: VariantPriceEntry[], changes: Array<{ skuId: string; newSell: number }>, direction: VariantRepriceDirection) => Promise<VariantSendResult>;
   store: (productId: number, variantSellPrices: string) => Promise<void>;
   readBack: (product: VariantRepriceProductRow) => Promise<{ ok: boolean; reason?: string; prices: Record<string, number | null> }>;
 }
@@ -44,7 +44,7 @@ export interface VariantRepriceResult {
 
 export async function runVariantReprice(
   product: VariantRepriceProductRow | undefined,
-  input: { productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean },
+  input: { productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean; direction?: VariantRepriceDirection },
   deps: VariantRepriceDeps,
 ): Promise<VariantRepriceResult> {
   if (!product) return { productId: input.productId, title: '', isLive: false, status: 'not_found', rows: [], error: 'Produkt nicht gefunden' };
@@ -52,7 +52,8 @@ export async function runVariantReprice(
   const base = { productId: product.id, title: product.generatedTitle, isLive };
   const groups = parseGroups(product.variants) as VariantGroup[];
   const held = await deps.heldSkuIds(product);
-  const plan = planVariantDecrease(product, input.prices, groups, held);
+  const direction: VariantRepriceDirection = input.direction ?? 'down';
+  const plan = planVariantReprice(product, input.prices, groups, held, direction);
   const rows: VariantRepriceResultRow[] = plan.rows.map(r => ({ ...r }));
   const okRows = rows.filter(r => r.status === 'ok');
 
@@ -76,7 +77,7 @@ export async function runVariantReprice(
   try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
   let sent: VariantSendResult;
   try {
-    sent = await deps.send(product.id, groups, entries, okRows.map(r => ({ skuId: r.skuId, newSell: r.neu })));
+    sent = await deps.send(product.id, groups, entries, okRows.map(r => ({ skuId: r.skuId, newSell: r.neu })), direction);
   } catch (e) {
     for (const r of okRows) r.ergebnis = 'nicht gesendet';
     return { ...base, status: 'send_failed', rows, error: 'Senden an eBay fehlgeschlagen: ' + String(e) + ' — App-Preise NICHT gespeichert (eBay-Stand unklar, bitte zurücklesen).' };

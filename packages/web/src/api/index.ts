@@ -3752,7 +3752,7 @@ const app = new Hono()
     }
   })
 
-  // ─── OFFEN 033: "Auswahl senken" — nur die genannten Varianten, nur senken, Bremse 8 %, Gewinn ≥ 1,00 €, "Preis halten" bleibt ──────
+  // ─── OFFEN 033/034: "Auswahl senken" (direction 'down', Standard) bzw. "Auswahl anheben" (direction 'up', OFFEN 034) — nur die genannten Varianten, nur senken, Bremse 8 %, Gewinn ≥ 1,00 €, "Preis halten" bleibt ──────
   // mode:'preview' schreibt/sendet NICHTS. mode:'apply' braucht confirm:true; live gelistet nur mit sendToEbay:true. Erst eBay (je Variante
   // GET→PUT volles Offer, nie anheben), App-Preise nur bei vollem Erfolg, danach Käuferpreis zurücklesen. Regeln: shared/variant-reprice.ts.
   .post('/products/variant-reprice', async (c) => {
@@ -3780,7 +3780,7 @@ const app = new Hono()
           const holds = await getPriceHolds(); // nicht lesbar → Fehler → 500 (lieber nichts senken als "Preis halten" übergehen)
           return resolvePriceHolds(product as never, holds[String(pr.id)]).heldKeys;
         },
-        send: async (id, groups, entries, changes) => sendVariantPriceChanges(id, groups, entries, changes, await getAccessToken(), fetch, 'lower'),
+        send: async (id, groups, entries, changes, direction) => sendVariantPriceChanges(id, groups, entries, changes, await getAccessToken(), fetch, direction === 'up' ? 'raise' : 'lower'),
         store: async (id, json) => { await db.update(p).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(p.id, id)); },
         readBack: async (pr) => {
           const token = await getAccessToken();
@@ -3800,7 +3800,7 @@ const app = new Hono()
         },
       });
       for (const r of result.rows) {
-        if (r.ergebnis === 'gesetzt') console.log(`[Senken] stele-${result.productId} ${r.label} ${r.alt?.toFixed(2)} → ${r.neu.toFixed(2)} Gewinn ${r.gewinnAlt?.toFixed(2)} → ${r.gewinnNeu?.toFixed(2)}${r.ebayGleichApp === false ? ' (eBay ≠ App!)' : ''}`);
+        if (r.ergebnis === 'gesetzt') console.log(`[${parsed.direction === 'up' ? 'Anheben' : 'Senken'}] stele-${result.productId} ${r.label} ${r.alt?.toFixed(2)} → ${r.neu.toFixed(2)} Gewinn ${r.gewinnAlt?.toFixed(2)} → ${r.gewinnNeu?.toFixed(2)}${r.ebayGleichApp === false ? ' (eBay ≠ App!)' : ''}`);
       }
       return c.json(result, result.status === 'not_found' ? 404 : 200);
     } catch (e) {

@@ -48,3 +48,16 @@ describe('sendVariantPriceChanges(direction "lower")', () => {
     expect(r.results[0].skipped).toContain('nie senken');
   });
 });
+
+describe('sendVariantPriceChanges(direction "raise") — "Auswahl anheben"', () => {
+  test('nur die genannte SKU wird angehoben (16,95 → 17,95), nie senken', async () => {
+    const { fn, puts } = mockEbay({});
+    const r = await sendVariantPriceChanges(119, GROUPS, entries, [{ skuId: 'v100a', newSell: 17.95 }], 'tok', fn, 'raise');
+    expect(r.results[0]).toMatchObject({ skuId: 'v100a', ok: true });
+    expect(puts).toEqual([{ sku: skuOf('100pcs A'), price: '17.95' }]);
+    const b = mockEbay({ [skuOf('100pcs A')]: '18.95' });
+    const r2 = await sendVariantPriceChanges(119, GROUPS, entries, [{ skuId: 'v100a', newSell: 17.95 }], 'tok', b.fn, 'raise');
+    expect(b.puts).toHaveLength(0);
+    expect(r2.results[0].skipped).toContain('nie senken');
+  });
+});
