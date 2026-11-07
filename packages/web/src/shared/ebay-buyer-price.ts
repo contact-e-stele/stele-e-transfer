@@ -57,3 +57,17 @@ export function productIdFromSku(sku: string): number | null {
   const m = sku.match(/^stele-(\d+)(?:-|$)/);
   return m ? Number(m[1]) : null;
 }
+
+/**
+ * Nebenbefund PR 285 (updateOfferDescription): Käuferpreis je SKU aus GetItem, als Eingabe für den Preisvergleich vor jedem vollen
+ * Offer-PUT der Beschreibung. Varianten: je <Variation> SKU → StartPrice. Einzelartikel: der Item-StartPrice gilt für die Basis-SKU
+ * (stele-<id>), auch wenn GetItem keine oder eine andere SKU nennt. GetItem fehlgeschlagen → leere Map (= alle Käuferpreise unbekannt
+ * → kein PUT). REIN.
+ */
+export function buyerPriceMap(parsed: ReturnType<typeof parseGetItemBuyerPrices>, baseSku: string): Map<string, number> {
+  const map = new Map<string, number>();
+  if (parsed.error) return map;
+  if (parsed.isVariation) { for (const r of parsed.rows) map.set(r.sku, r.price); return map; }
+  if (parsed.rows.length === 1) map.set(baseSku, parsed.rows[0].price);
+  return map;
+}

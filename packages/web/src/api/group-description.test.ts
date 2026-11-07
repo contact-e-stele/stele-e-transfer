@@ -38,7 +38,7 @@ function makeFetch(opts: { groupGetOk?: boolean; groupPutStatus?: number; offerP
       const offers = sku === 'stele-1-A' ? [{ offerId: 'OFF-A' }] : sku === 'stele-1-B' ? [{ offerId: 'OFF-B' }] : [];
       return new Response(JSON.stringify({ offers }), { status: 200 });
     }
-    if (method === 'GET') return new Response(JSON.stringify({ sku: 'x', listingDescription: 'alt' }), { status: 200 });
+    if (method === 'GET') return new Response(JSON.stringify({ sku: 'x', pricingSummary: { price: { value: '9.99', currency: 'EUR' } }, listingDescription: 'alt' }), { status: 200 });
     if (method === 'PUT') {
       order.push('offer-put');
       offerPuts.push(u);
@@ -50,12 +50,16 @@ function makeFetch(opts: { groupGetOk?: boolean; groupPutStatus?: number; offerP
   return { fetchFn, groupPuts, offerPuts, order };
 }
 
+// Käuferpreis-Vergleich vor jedem vollen Offer-PUT: Käuferpreis = Offer-Preis 9.99 je Varianten-SKU.
+const BUYER: ReadonlyMap<string, number> = new Map([['stele-1-A', 9.99], ['stele-1-B', 9.99]]);
+const BUYER_XML = async () => ({ httpStatus: 200, xml: '<GetItemResponse><Ack>Success</Ack><Item><Variations><Variation><SKU>stele-1-A</SKU><StartPrice currencyID="EUR">9.99</StartPrice></Variation><Variation><SKU>stele-1-B</SKU><StartPrice currencyID="EUR">9.99</StartPrice></Variation></Variations></Item></GetItemResponse>' });
+
 const NEW_HTML = '<p>Hochwertige Frischhaltedose.</p>';
 
 describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', () => {
   test('Gruppen-PUT wird mit neuer description UND neuem title gesendet, übrige Gruppenfelder bleiben erhalten', async () => {
     const { fetchFn, groupPuts } = makeFetch();
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, 'Neuer Titel', fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, 'Neuer Titel', fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(true);
     expect(groupPuts.length).toBe(1);
     expect(groupPuts[0].description).toBe(NEW_HTML);
@@ -67,7 +71,7 @@ describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', (
 
   test('ohne Titel: description wird ersetzt, der bestehende Gruppen-Titel bleibt', async () => {
     const { fetchFn, groupPuts } = makeFetch();
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(true);
     expect(groupPuts[0].title).toBe('Alter Titel');
     expect(groupPuts[0].description).toBe(NEW_HTML);
@@ -75,7 +79,7 @@ describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', (
 
   test('P71-C Teil 3: alle Offers gelingen → Gruppen-PUT genau einmal, und zwar NACH beiden Offer-PUTs', async () => {
     const { fetchFn, offerPuts, groupPuts, order } = makeFetch();
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(true);
     expect(offerPuts.length).toBe(2);
     expect(groupPuts.length).toBe(1);
@@ -84,7 +88,7 @@ describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', (
 
   test('Gruppen-PUT scheitert (500) → ok:false, Fehlertext nennt die Gruppe (die Offers sind dann schon geschrieben)', async () => {
     const { fetchFn, offerPuts } = makeFetch({ groupPutStatus: 500 });
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, 'Neuer Titel', fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, 'Neuer Titel', fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('Gruppen-Beschreibung fehlgeschlagen');
     expect(r.error).toContain('500');
@@ -93,14 +97,14 @@ describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', (
 
   test('Gruppen-GET scheitert → ok:false', async () => {
     const { fetchFn, groupPuts } = makeFetch({ groupGetOk: false });
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(false);
     expect(groupPuts.length).toBe(0);
   });
 
   test('P71-C Teil 3: Varianten-Offers scheitern → ok:false und der Gruppen-PUT wird NICHT aufgerufen (kein halber Zustand)', async () => {
     const { fetchFn, groupPuts } = makeFetch({ offerPutOk: false });
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('2 von 2 Varianten-Offers fehlgeschlagen, Gruppe nicht geändert');
     expect(groupPuts.length).toBe(0);
@@ -108,7 +112,7 @@ describe('updateOfferDescriptionInventory — Varianten-Angebot: Gruppen-PUT', (
 
   test('P71-C Teil 3: nur 1 von 2 Offers scheitert → Gruppen-PUT ebenfalls NICHT aufgerufen', async () => {
     const { fetchFn, groupPuts } = makeFetch({ offerPutFailSkus: ['stele-1-B'] });
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(false);
     expect(groupPuts.length).toBe(0);
   });
@@ -126,7 +130,7 @@ describe('updateInventoryItemGroupContent', () => {
 describe('Rücklese-Prüfung, Teilerfolg, kein falscher Erfolg über den Trading-Fallback', () => {
   test('PUT 204, aber die Gruppe trägt beim Zurücklesen noch die alte Beschreibung → ok:false', async () => {
     const { fetchFn, offerPuts } = makeFetch({ putIgnored: true });
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('Zurücklesen');
     expect(offerPuts.length).toBe(2);
@@ -134,7 +138,7 @@ describe('Rücklese-Prüfung, Teilerfolg, kein falscher Erfolg über den Trading
 
   test('nur 1 von 2 Varianten-Offers scheitert → ok:false, partial:true', async () => {
     const { fetchFn } = makeFetch({ offerPutFailSkus: ['stele-1-B'] });
-    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok');
+    const r = await updateOfferDescriptionInventory(1, NEW_HTML, undefined, fetchFn, async () => 'tok', undefined, BUYER);
     expect(r.ok).toBe(false);
     expect(r.partial).toBe(true);
     expect(r.error).toContain('1 von 2');
@@ -144,7 +148,7 @@ describe('Rücklese-Prüfung, Teilerfolg, kein falscher Erfolg über den Trading
     const { fetchFn } = makeFetch({ offerPutFailSkus: ['stele-1-B'] });
     let tradingCalled = false;
     const tradingFn = (async () => { tradingCalled = true; return { ok: true }; }) as unknown as typeof reviseListingContent;
-    const r = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: NEW_HTML }, fetchFn, async () => 'tok', tradingFn);
+    const r = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: NEW_HTML }, fetchFn, async () => 'tok', tradingFn, BUYER_XML);
     expect(r.ok).toBe(false);
     expect(tradingCalled).toBe(false);
   });
@@ -153,7 +157,7 @@ describe('Rücklese-Prüfung, Teilerfolg, kein falscher Erfolg über den Trading
     const { fetchFn } = makeFetch({ groupPutStatus: 500 });
     let tradingCalled = false;
     const tradingFn = (async () => { tradingCalled = true; return { ok: false, error: 'trading down' }; }) as unknown as typeof reviseListingContent;
-    const r = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: NEW_HTML }, fetchFn, async () => 'tok', tradingFn);
+    const r = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: NEW_HTML }, fetchFn, async () => 'tok', tradingFn, BUYER_XML);
     expect(r.ok).toBe(false);
     expect(tradingCalled).toBe(false);
   });

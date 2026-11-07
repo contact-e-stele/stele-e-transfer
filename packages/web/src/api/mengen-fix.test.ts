@@ -81,7 +81,7 @@ describe('B: volle Offer-PUTs schicken die Lagermenge statt der alten Offer-Meng
   });
   test('Beschreibungs-PUT: Offer 0, Lager 3 → PUT mit availableQuantity 3', async () => {
     const { f, puts } = mock(3, 0);
-    await ebay.updateOfferDescriptionBySku('stele-220-GRAY', '<p>neu</p>', 'tok', f);
+    await ebay.updateOfferDescriptionBySku('stele-220-GRAY', '<p>neu</p>', 'tok', f, undefined, 19.95);
     const off = puts.find(p => p.url.includes('/offer/O1'))!;
     expect(off.body.availableQuantity).toBe(3);
     expect(off.body.listingDescription).toBe('<p>neu</p>');

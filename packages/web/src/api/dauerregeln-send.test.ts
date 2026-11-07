@@ -53,9 +53,10 @@ describe('reviseListingDescription / updateOfferDescriptionInventory (Inventory-
     const fetchFn = (async (url: unknown, init?: RequestInit) => {
       calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
       if (String(url).includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'O1' }] }), { status: 200 });
-      return new Response(JSON.stringify({ offerId: 'O1', listingDescription: 'alt' }), { status: 200 });
+      return new Response(JSON.stringify({ offerId: 'O1', pricingSummary: { price: { value: '9.99', currency: 'EUR' } }, listingDescription: 'alt' }), { status: 200 });
     }) as unknown as typeof fetch;
-    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: CLEAN }, fetchFn, async () => 'tok');
+    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: CLEAN }, fetchFn, async () => 'tok', undefined,
+      async () => ({ httpStatus: 200, xml: '<GetItemResponse><Ack>Success</Ack><Item><SKU>stele-1</SKU><StartPrice currencyID="EUR">9.99</StartPrice></Item></GetItemResponse>' }));
     expect(result.ok).toBe(true);
     expect(calls.length).toBeGreaterThan(0);
   });

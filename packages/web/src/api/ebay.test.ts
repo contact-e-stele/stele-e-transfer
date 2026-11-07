@@ -865,7 +865,7 @@ describe('updateOfferDescriptionBySku — GET-volles-Offer + PUT-volles-Offer (k
         'OFF-1': { sku: 'stele-42', listingDescription: '<p>ALT</p>', pricingSummary: { price: { value: '19.95', currency: 'EUR' } }, availableQuantity: 3 },
       },
     });
-    const result = await updateOfferDescriptionBySku('stele-42', '<p>NEU</p>', 'tok', fetchFn);
+    const result = await updateOfferDescriptionBySku('stele-42', '<p>NEU</p>', 'tok', fetchFn, undefined, 19.95);
     expect(result.ok).toBe(true);
     expect(putBodies['OFF-1'].listingDescription).toBe('<p>NEU</p>');
     // Regressionsbeweis: wäre hier statt des vollen Offers nur { sku, listingDescription } gesendet
@@ -892,14 +892,19 @@ describe('updateOfferDescriptionBySku — GET-volles-Offer + PUT-volles-Offer (k
   test('zwei Offers, einer scheitert beim PUT → trotzdem ok:true (mind. einer erfolgreich)', async () => {
     const { fetchFn, putBodies } = makeFetch({
       listOffers: [{ offerId: 'OFF-A' }, { offerId: 'OFF-B' }],
-      fullOfferByOfferId: { 'OFF-A': { sku: 'x' }, 'OFF-B': { sku: 'y' } },
+      fullOfferByOfferId: { 'OFF-A': { sku: 'x', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }, 'OFF-B': { sku: 'y', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } } },
       putResult: { 'OFF-A': true, 'OFF-B': false },
     });
-    const result = await updateOfferDescriptionBySku('stele-1', '<p>NEU</p>', 'tok', fetchFn);
+    const result = await updateOfferDescriptionBySku('stele-1', '<p>NEU</p>', 'tok', fetchFn, undefined, 9.99);
     expect(result.ok).toBe(true);
     expect(putBodies['OFF-A'].listingDescription).toBe('<p>NEU</p>');
   });
 });
+
+// Käuferpreis-Vergleich vor jedem vollen Offer-PUT (Nebenbefund PR 285): Käuferpreis = Offer-Preis 9.99 in den Fixtures.
+const BUYER_SINGLE: ReadonlyMap<string, number> = new Map([['stele-1', 9.99]]);
+const BUYER_VARIANTS: ReadonlyMap<string, number> = new Map([['stele-1-A', 9.99], ['stele-1-B', 9.99]]);
+const BUYER_XML_SINGLE = async () => ({ httpStatus: 200, xml: '<GetItemResponse><Ack>Success</Ack><Item><SKU>stele-1</SKU><StartPrice currencyID="EUR">9.99</StartPrice></Item></GetItemResponse>' });
 
 describe('updateOfferDescriptionInventory — Einzelartikel-SKU zuerst, dann Varianten-Gruppe', () => {
   function makeFetch(opts: {
@@ -939,9 +944,9 @@ describe('updateOfferDescriptionInventory — Einzelartikel-SKU zuerst, dann Var
   test('Einzelartikel-SKU hat ein Offer → aktualisiert, Varianten-Gruppe wird NICHT abgefragt', async () => {
     const { fetchFn, calledUrls } = makeFetch({
       baseOffers: [{ offerId: 'OFF-BASE' }],
-      fullOfferByOfferId: { 'OFF-BASE': { sku: 'stele-1' } },
+      fullOfferByOfferId: { 'OFF-BASE': { sku: 'stele-1', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } } },
     });
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok', undefined, BUYER_SINGLE);
     expect(result.ok).toBe(true);
     expect(calledUrls.some(u => u.includes('/inventory_item_group/'))).toBe(false);
   });
@@ -951,9 +956,9 @@ describe('updateOfferDescriptionInventory — Einzelartikel-SKU zuerst, dann Var
       baseOffers: [],
       groupVariantSkus: ['stele-1-A', 'stele-1-B'],
       variantOffersBySku: { 'stele-1-A': [{ offerId: 'OFF-A' }], 'stele-1-B': [{ offerId: 'OFF-B' }] },
-      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A' }, 'OFF-B': { sku: 'stele-1-B' } },
+      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }, 'OFF-B': { sku: 'stele-1-B', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } } },
     });
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok', undefined, BUYER_VARIANTS);
     expect(result.ok).toBe(true);
   });
 
@@ -965,10 +970,10 @@ describe('updateOfferDescriptionInventory — Einzelartikel-SKU zuerst, dann Var
       baseOffers: [],
       groupVariantSkus: ['stele-1-A', 'stele-1-B'],
       variantOffersBySku: { 'stele-1-A': [{ offerId: 'OFF-A' }], 'stele-1-B': [{ offerId: 'OFF-B' }] },
-      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A' }, 'OFF-B': { sku: 'stele-1-B' } },
+      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }, 'OFF-B': { sku: 'stele-1-B', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } } },
       putOkByOfferId: { 'OFF-A': true, 'OFF-B': false },
     });
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok', undefined, BUYER_VARIANTS);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('1 von 2');
     expect(result.error).toContain('stele-1-B');
@@ -976,7 +981,7 @@ describe('updateOfferDescriptionInventory — Einzelartikel-SKU zuerst, dann Var
 
   test('weder Einzelartikel- noch Varianten-Offer gefunden → ok:false mit dem Fehler der Basis-SKU', async () => {
     const { fetchFn } = makeFetch({ baseOffers: [], groupVariantSkus: [], fullOfferByOfferId: {} });
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok', undefined, BUYER_VARIANTS);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('stele-1');
   });
@@ -986,10 +991,10 @@ describe('updateOfferDescriptionInventory — Einzelartikel-SKU zuerst, dann Var
       baseOffers: [],
       groupVariantSkus: ['stele-1-A'],
       variantOffersBySku: { 'stele-1-A': [{ offerId: 'OFF-A' }] },
-      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A' } },
+      fullOfferByOfferId: { 'OFF-A': { sku: 'stele-1-A', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } } },
       putOkByOfferId: { 'OFF-A': false },
     });
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok', undefined, BUYER_VARIANTS);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('stele-1');
     expect(result.error).toContain('Varianten');
@@ -1007,7 +1012,7 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
       const u = String(url);
       if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'OFF-1' }] }), { status: 200 });
       if (u.includes('/offer/OFF-1')) {
-        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }), { status: 200 });
         putBodies.offer = JSON.parse(String(init.body));
         return new Response('', { status: 200 });
       }
@@ -1019,7 +1024,7 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
       return new Response('', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok', undefined, BUYER_SINGLE);
     expect(result.ok).toBe(true);
     // A-013: beim Zurückschicken wird ein fehlendes EAN-Merkmal mit "Nicht zutreffend" ergänzt (sonst eBay 400).
     expect(putBodies.item.product).toEqual({ title: 'Neuer Titel', description: 'Plain-Text bleibt', aspects: { EAN: ['Nicht zutreffend'] } });
@@ -1030,7 +1035,7 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
       const u = String(url);
       if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'OFF-1' }] }), { status: 200 });
       if (u.includes('/offer/OFF-1')) {
-        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }), { status: 200 });
         return new Response('', { status: 200 });
       }
       if (u.includes('/inventory_item/stele-1')) {
@@ -1040,7 +1045,7 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
       return new Response('', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok', undefined, BUYER_SINGLE);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Titel');
   });
@@ -1060,13 +1065,13 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
         return new Response(JSON.stringify({ offers }), { status: 200 });
       }
       if (u.includes('/offer/OFF-A')) {
-        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1-A' }), { status: 200 });
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1-A', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }), { status: 200 });
         return new Response('', { status: 200 });
       }
       return new Response('', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', 'Neuer Titel', fetchFn, async () => 'tok', undefined, BUYER_VARIANTS);
     expect(result.ok).toBe(true);
     expect(putBodies.group.title).toBe('Neuer Titel');
     expect(putBodies.group.variantSKUs).toEqual(['stele-1-A']); // Rest der Gruppe bleibt erhalten
@@ -1081,13 +1086,13 @@ describe('updateOfferDescriptionInventory — Titel-Übertragung (Code-Review-Fu
       calledUrls.push(`${init?.method ?? 'GET'} ${u}`);
       if (u.includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'OFF-1' }] }), { status: 200 });
       if (u.includes('/offer/OFF-1')) {
-        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+        if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ sku: 'stele-1', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }), { status: 200 });
         return new Response('', { status: 200 });
       }
       return new Response('', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok');
+    const result = await updateOfferDescriptionInventory(1, '<p>NEU</p>', undefined, fetchFn, async () => 'tok', undefined, BUYER_SINGLE);
     expect(result.ok).toBe(true);
     expect(calledUrls.some(u => !u.startsWith('GET ') && u.includes('/inventory_item'))).toBe(false);
   });
@@ -1097,11 +1102,11 @@ describe('reviseListingDescription — Inventory-API zuerst, Trading-API als zwe
   test('Inventory-API erfolgreich → Trading-API-Fallback wird NICHT aufgerufen', async () => {
     const fetchFn = (async (url: unknown) => {
       if (String(url).includes('/offer?sku=')) return new Response(JSON.stringify({ offers: [{ offerId: 'O1' }] }), { status: 200 });
-      return new Response(JSON.stringify({ sku: 'stele-1' }), { status: 200 });
+      return new Response(JSON.stringify({ sku: 'stele-1', pricingSummary: { price: { value: '9.99', currency: 'EUR' } } }), { status: 200 });
     }) as unknown as typeof fetch;
     let tradingCalled = false;
     const tradingReviseFn = (async () => { tradingCalled = true; return { ok: true }; }) as typeof reviseListingContent;
-    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn);
+    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn, BUYER_XML_SINGLE);
     expect(result.ok).toBe(true);
     expect(tradingCalled).toBe(false);
   });
@@ -1112,7 +1117,7 @@ describe('reviseListingDescription — Inventory-API zuerst, Trading-API als zwe
       return new Response(JSON.stringify({ variantSKUs: [] }), { status: 200 });
     }) as unknown as typeof fetch;
     const tradingReviseFn = (async () => ({ ok: true })) as typeof reviseListingContent;
-    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn);
+    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn, BUYER_XML_SINGLE);
     expect(result.ok).toBe(true);
   });
 
@@ -1122,7 +1127,7 @@ describe('reviseListingDescription — Inventory-API zuerst, Trading-API als zwe
       return new Response(JSON.stringify({ variantSKUs: [] }), { status: 200 });
     }) as unknown as typeof fetch;
     const tradingReviseFn = (async () => ({ ok: false, error: 'Die warenbestandsbasierte Angebotsverwaltung wird derzeit von diesem Tool nicht unterstützt' })) as typeof reviseListingContent;
-    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn);
+    const result = await reviseListingDescription(1, 'ITEM-1', { htmlDescription: '<p>NEU</p>' }, fetchFn, async () => 'tok', tradingReviseFn, BUYER_XML_SINGLE);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Inventory-API:');
     expect(result.error).toContain('Trading-API:');

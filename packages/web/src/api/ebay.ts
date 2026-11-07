@@ -9,7 +9,8 @@ import { computeMinSellPrice, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } 
 import type { ResolvedGpsr } from '../shared/gpsr-parser';
 import type { SentPrice } from '../shared/sent-prices';
 import { checkOutgoingListingText, formatComplianceViolations } from '../shared/description-compliance';
-import { productIdFromSku } from '../shared/ebay-buyer-price';
+import { productIdFromSku, parseGetItemBuyerPrices, buyerPriceMap } from '../shared/ebay-buyer-price';
+import { offerPriceOf, priceMismatch } from '../shared/origin-switch';
 import { applyOfferQuantity } from '../shared/offer-quantity';
 
 // K-011b (Kalkulator-Prüfung #179): Ist ein Produkt gesperrt (eBay-Käuferpreis ≠ Inventory-Angebotsdaten), darf KEIN Schreibaufruf auf
@@ -2311,8 +2312,9 @@ export async function updateOfferDescriptionBySku(
   token: string,
   fetchFn: typeof fetch = fetch,
   regulatory?: ReturnType<typeof buildRegulatoryBlock>,
-): Promise<{ ok: boolean; error?: string }> {
-  { const locked = await priceLockError(sku, 'Beschreibung/GPSR (PUT volles Offer)'); if (locked) return { ok: false, error: locked }; } // K-011b
+  buyerPrice?: number | null,
+): Promise<{ ok: boolean; error?: string; priceBlocked?: boolean }> {
+  { const locked = await priceLockError(sku, 'Beschreibung/GPSR (PUT volles Offer)'); if (locked) return { ok: false, error: locked, priceBlocked: true }; } // K-011b
   const res = await fetchFn(
     `${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`,
     { headers: { 'Authorization': `Bearer ${token}` } },
@@ -2324,12 +2326,30 @@ export async function updateOfferDescriptionBySku(
 
   let anyOk = false;
   const errors: string[] = [];
+  // Nebenbefund PR 285 (wie setOfferAvailableQuantity / origin-switch): ein voller Offer-PUT schreibt auch pricingSummary zurück.
+  // Deshalb ERST alle vollen Offers lesen und JEDEN Offer-Preis gegen den Käuferpreis (GetItem) prüfen — erst wenn alle gleich sind
+  // (±0,01 €), wird geschrieben. Käuferpreis unbekannt, Offer-Preis unlesbar oder Abweichung → KEIN PUT; bei Abweichung Sperre (K-011).
+  const fullOffers: Array<{ offerId: string; data: Record<string, unknown> }> = [];
   for (const offer of offers) {
     const fullRes = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${offer.offerId}`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
     if (!fullRes.ok) { errors.push(`GET offer/${offer.offerId}: ${fullRes.status}`); continue; }
-    const offerData = await fullRes.json() as Record<string, unknown>;
+    const data = await fullRes.json() as Record<string, unknown>;
+    const offerPrice = offerPriceOf(data);
+    const mism = priceMismatch(sku, offerPrice, buyerPrice);
+    if (mism) {
+      const pid = productIdFromSku(sku);
+      if (pid != null && offerPrice != null && typeof buyerPrice === 'number' && Number.isFinite(buyerPrice)) {
+        await priceLockSetter(pid, { at: new Date().toISOString(), rows: [{ sku, label: sku, buyerPrice, offerPrice }] });
+      }
+      console.warn(`[eBay] ${sku}: Beschreibung NICHT gesendet — ${mism}`);
+      return { ok: false, error: `${mism} — Beschreibung nicht gesendet`, priceBlocked: true };
+    }
+    fullOffers.push({ offerId: offer.offerId, data });
+  }
+  for (const { offerId, data: offerData } of fullOffers) {
+    const offer = { offerId };
     applyOfferQuantity(offerData, await getInventoryItemQuantity(sku, token, fetchFn)); // Mengen-Fix B: keine alte Offer-Menge zurückschreiben
     offerData.listingDescription = html;
     if (regulatory) offerData.regulatory = regulatory; // P71-C Teil 2: im selben PUT, vorhandenes regulatory wird ersetzt
@@ -2506,13 +2526,15 @@ export async function updateOfferDescriptionInventory(
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAccessToken,
   regulatory?: ReturnType<typeof buildRegulatoryBlock>,
-): Promise<{ ok: boolean; error?: string; partial?: boolean }> {
-  { const locked = await priceLockError(`stele-${productId}`, 'Beschreibung nachziehen'); if (locked) return { ok: false, error: locked }; } // K-011b
+  buyerPrices: ReadonlyMap<string, number> = new Map(),
+): Promise<{ ok: boolean; error?: string; partial?: boolean; priceBlocked?: boolean }> {
+  { const locked = await priceLockError(`stele-${productId}`, 'Beschreibung nachziehen'); if (locked) return { ok: false, error: locked, priceBlocked: true }; } // K-011b
   const blocked = outgoingTextBlockError(title, html);
   if (blocked) return { ok: false, error: blocked };
   const token = await getTokenFn();
   const sku = `stele-${productId}`;
-  const baseResult = await updateOfferDescriptionBySku(sku, html, token, fetchFn, regulatory);
+  const baseResult = await updateOfferDescriptionBySku(sku, html, token, fetchFn, regulatory, buyerPrices.get(sku));
+  if (baseResult.priceBlocked) return baseResult; // Nebenbefund PR 285: Preis nicht geprüft/abweichend → nichts weiter senden
   if (baseResult.ok) {
     if (!title) return baseResult;
     const titleResult = await updateInventoryItemTitle(sku, title, token, fetchFn);
@@ -2527,13 +2549,19 @@ export async function updateOfferDescriptionInventory(
   // P71-C Teil 3 (Live-Fehler 148): ERST alle Varianten-Offers (Beschreibung + regulatory — hier validiert eBay die
   // GPSR-Angaben), NUR wenn alle gelingen DANACH die Gruppe (Beschreibung + Titel). Scheitert ein Offer, bleibt die
   // Gruppe unangetastet — kein halber Zustand "Gruppe neu, Offers alt".
+  // Nebenbefund PR 285: fehlt für eine Variante der Käuferpreis, wird VOR dem ersten PUT abgebrochen (kein halber Zustand).
+  const noBuyer = variantSkus.filter(v => !buyerPrices.has(v));
+  if (noBuyer.length > 0) {
+    return { ok: false, priceBlocked: true, error: `Käuferpreis unbekannt für ${noBuyer.join(', ')} — kein Offer-PUT ohne Preisvergleich, Beschreibung nicht gesendet` };
+  }
   const failed: string[] = [];
+  let anyPriceBlocked = false;
   for (const varSku of variantSkus) {
-    const r = await updateOfferDescriptionBySku(varSku, html, token, fetchFn, regulatory); // die Gruppe selbst hat kein regulatory
-    if (!r.ok) failed.push(`${varSku}: ${r.error ?? 'unbekannter Fehler'}`);
+    const r = await updateOfferDescriptionBySku(varSku, html, token, fetchFn, regulatory, buyerPrices.get(varSku)); // die Gruppe selbst hat kein regulatory
+    if (!r.ok) { failed.push(`${varSku}: ${r.error ?? 'unbekannter Fehler'}`); if (r.priceBlocked) anyPriceBlocked = true; }
   }
   if (failed.length > 0) {
-    return { ok: false, partial: true, error: `${failed.length} von ${variantSkus.length} Varianten-Offers fehlgeschlagen, Gruppe nicht geändert: ${failed.join('; ')}` };
+    return { ok: false, partial: true, priceBlocked: anyPriceBlocked || undefined, error: `${failed.length} von ${variantSkus.length} Varianten-Offers fehlgeschlagen, Gruppe nicht geändert: ${failed.join('; ')}` };
   }
 
   const groupResult = await updateInventoryItemGroupContent(groupSku, { description: html, title }, token, fetchFn);
@@ -2552,12 +2580,19 @@ export async function reviseListingDescription(
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAccessToken,
   tradingReviseFn: typeof reviseListingContent = reviseListingContent,
+  buyerPricesFn: (itemId: string) => Promise<{ httpStatus: number; xml: string }> = getItemBuyerPricesXml,
 ): Promise<{ ok: boolean; error?: string }> {
   // Vorab-Sperre, damit bei einem Verstoß nicht zwei (identische) Sperr-Fehler aus beiden Wegen zusammengeklebt werden.
   const blocked = outgoingTextBlockError(input.title, input.htmlDescription);
   if (blocked) return { ok: false, error: blocked };
-  const inventoryResult = await updateOfferDescriptionInventory(productId, input.htmlDescription, input.title, fetchFn, getTokenFn, input.regulatory);
+  // Nebenbefund PR 285: Käuferpreise (GetItem, nur lesen) für den Preisvergleich vor jedem vollen Offer-PUT. Lesefehler → leere Map → kein PUT.
+  const buyerPrices = await buyerPricesFn(itemId)
+    .then(r => buyerPriceMap(parseGetItemBuyerPrices(r.xml), `stele-${productId}`))
+    .catch(e => { console.warn(`[eBay] GetItem ${itemId} (Käuferpreise) fehlgeschlagen:`, e); return new Map<string, number>(); });
+  const inventoryResult = await updateOfferDescriptionInventory(productId, input.htmlDescription, input.title, fetchFn, getTokenFn, input.regulatory, buyerPrices);
   if (inventoryResult.ok) return { ok: true };
+  // Preis ungeprüft/abweichend: KEIN Trading-Fallback (das Angebot ist ein Inventory-Angebot, der Fehler muss sichtbar bleiben).
+  if (inventoryResult.priceBlocked) return { ok: false, error: `Inventory-API: ${inventoryResult.error ?? 'Preisvergleich fehlgeschlagen'}` };
   // P71-C Teil 2: die Trading-API kann kein regulatory — bei gesetztem regulatory KEIN Fallback, sonst wäre ein 2xx ein Scheinerfolg.
   if (input.regulatory) return { ok: false, error: `Inventory-API: ${inventoryResult.error ?? 'unbekannter Fehler'}` };
   // Teilerfolg (Gruppe neu, Offers je SKU nicht): KEIN Trading-Fallback, sonst könnte dessen 2xx den Fehler verschlucken.
