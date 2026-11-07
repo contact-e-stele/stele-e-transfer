@@ -124,7 +124,16 @@ export function planVariantReprice(
       // Kalkulator 12:20: Anheben ohne Senkungsbremse. Schutz vor Fehl-Zuordnung bleibt die bestehende Grenze OFFEN 010 (Preissprung > 15 %).
       if (isPriceJump(alt, neu)) { rows.push({ ...base, status: 'abgelehnt', grund: `Preissprung: mehr als +${MAX_AUTO_RAISE_PCT} % (OFFEN 010) — bitte prüfen` }); continue; }
     }
-    if (gewinnNeu < mindestGewinn - 1e-9) { rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${mindestGewinn.toFixed(2)} € (max(1,00; Ziel))` }); continue; }
+    if (gewinnNeu < mindestGewinn - 1e-9) {
+      // Kalkulator 07.11.2026 13:50 (OFFEN 035): Anheben, das den Gewinn verbessert, ist auch unter dem Mindestgewinn ok — mit Hinweis.
+      // Senken bleibt streng (abgelehnt).
+      if (direction === 'up' && gewinnNeu > gewinnAlt + 1e-9) {
+        const unter = `noch unter Mindestgewinn: ${gewinnNeu.toFixed(2)} € < ${mindestGewinn.toFixed(2)} € (Gewinn steigt von ${gewinnAlt.toFixed(2)} €)`;
+        rows.push({ ...base, status: 'ok', hinweis: base.hinweis ? `${base.hinweis} · ${unter}` : unter }); // Kalkulator 14:10: beide Hinweise anhängen
+        continue;
+      }
+      rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${mindestGewinn.toFixed(2)} € (max(1,00; Ziel))` }); continue;
+    }
     rows.push({ ...base, status: 'ok' });
   }
   return { isVariant: plan.isVariant, rows };
