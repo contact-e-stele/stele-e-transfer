@@ -365,7 +365,8 @@ export async function updateOfferPriceBySku(
   fetchFn: typeof fetch = fetch,
   raiseOnly = false,
   // K-011: Preis-Sperre (Käuferpreis ≠ Angebotsdaten). bypassPriceLock NUR für "Angebotsdaten an Käuferpreis angleichen".
-  opts: { bypassPriceLock?: boolean; isLocked?: (productId: number) => Promise<boolean> } = {},
+  // OFFEN 033: lowerOnly = Gegenstück zu raiseOnly — liegt der LIVE-Preis schon auf oder unter dem neuen, wird NICHT geschrieben (nie anheben).
+  opts: { bypassPriceLock?: boolean; isLocked?: (productId: number) => Promise<boolean>; lowerOnly?: boolean } = {},
 ): Promise<{ ok: boolean; error?: string; skipped?: string }> {
   const lockPid = productIdFromSku(sku);
   if (lockPid != null && !opts.bypassPriceLock && await (opts.isLocked ?? isProductPriceLocked)(lockPid)) {
@@ -402,6 +403,11 @@ export async function updateOfferPriceBySku(
       if (!Number.isFinite(live)) { errors.push(`GET offer/${offer.offerId}: Live-Preis nicht lesbar — im raise-only-Modus NICHT geschrieben`); continue; }
       if (live >= newPrice - 0.004) { skippedLive.push(live); continue; }
     }
+    if (opts.lowerOnly) {
+      const live = parseFloat(String((offerData.pricingSummary as { price?: { value?: string } } | undefined)?.price?.value ?? ''));
+      if (!Number.isFinite(live)) { errors.push(`GET offer/${offer.offerId}: Live-Preis nicht lesbar — im Senk-Modus NICHT geschrieben`); continue; }
+      if (live <= newPrice + 0.004) { skippedLive.push(live); continue; }
+    }
     offerData.pricingSummary = {
       ...(offerData.pricingSummary as Record<string, unknown> | undefined ?? {}),
       price: { value: newPrice.toFixed(2), currency: 'EUR' },
@@ -424,7 +430,11 @@ export async function updateOfferPriceBySku(
     }
   }
   if (errors.length > 0) console.warn(`[PriceMonitor] Preis-Update ${sku}: ${errors.join('; ')}`);
-  if (!anyOk && errors.length === 0 && skippedLive.length > 0) return { ok: true, skipped: `Live-Preis ${skippedLive[0].toFixed(2)} € ist schon ≥ neuer Preis (nie senken)` };
+  if (!anyOk && errors.length === 0 && skippedLive.length > 0) {
+    return { ok: true, skipped: opts.lowerOnly
+      ? `Live-Preis ${skippedLive[0].toFixed(2)} € ist schon ≤ neuer Preis (nie anheben)`
+      : `Live-Preis ${skippedLive[0].toFixed(2)} € ist schon ≥ neuer Preis (nie senken)` };
+  }
   return anyOk ? { ok: true } : { ok: false, error: errors.join('; ') };
 }
 
@@ -438,6 +448,20 @@ export async function sendVariantRaises(
   raises: Array<{ skuId: string; newSell: number }>,
   token: string,
   fetchFn: typeof fetch = fetch,
+): Promise<VariantSendResult> {
+  return sendVariantPriceChanges(productId, groups, allEntries, raises, token, fetchFn, 'raise');
+}
+
+// OFFEN 033: derselbe Weg für "Auswahl senken" — gleiche Zuordnungsprüfung, nur die genannten Varianten, je Variante GET→PUT volles Offer,
+// aber mit lowerOnly (nie anheben) statt raiseOnly. Andere Varianten des Produkts werden nicht angefasst.
+export async function sendVariantPriceChanges(
+  productId: number,
+  groups: VariantGroup[],
+  allEntries: VariantPriceEntry[],
+  raises: Array<{ skuId: string; newSell: number }>,
+  token: string,
+  fetchFn: typeof fetch = fetch,
+  direction: 'raise' | 'lower' = 'raise',
 ): Promise<VariantSendResult> {
   const resolved = resolveVariantEntries(productId, groups, allEntries);
   const ambiguous = resolved.filter(r => r.error?.startsWith('Mehrdeutig'));
@@ -461,7 +485,9 @@ export async function sendVariantRaises(
     // Je Variante abgefangen: eine Exception (Netz, JSON) bei Variante B darf das Ergebnis von bereits angehobener Variante A nicht verwerfen
     // (sonst würde A nie gespeichert, obwohl eBay sie schon trägt).
     try {
-      const res = await updateOfferPriceBySku(t.sku, t.newSell, token, fetchFn, true);
+      const res = direction === 'lower'
+        ? await updateOfferPriceBySku(t.sku, t.newSell, token, fetchFn, false, { lowerOnly: true })
+        : await updateOfferPriceBySku(t.sku, t.newSell, token, fetchFn, true);
       results.push({ skuId: t.skuId, sku: t.sku, ok: res.ok, skipped: res.skipped, error: res.error });
     } catch (e) {
       results.push({ skuId: t.skuId, sku: t.sku, ok: false, error: 'Ausnahme beim Senden: ' + String(e) });

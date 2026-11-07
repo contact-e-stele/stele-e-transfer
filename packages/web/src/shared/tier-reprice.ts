@@ -56,16 +56,22 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // Einkaufspreis fehlen (nichts geraten). Alter VK: variant_sell_prices → altes ebayPrice → Produkt-VK; Einzelartikel: sellPrice.
 // groups (A-023): Varianten-Gruppen des Produkts. Mit groups werden Dubletten (dieselbe Kombination mehrfach in variantPrices) zu EINER Zeile
 // mit dem höchsten EK zusammengelegt — sonst ist die Zuordnung beim Senden mehrdeutig (Live-Fund stele-119).
-export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?: VariantGroup[]): TierPlan {
+// OFFEN 033 (07.11.2026): Gebühren/Kosten-Parameter je Variante als eigene Funktion (reiner Extract aus planTierReprice, Grundgesetz 8) —
+// "Auswahl senken" (shared/variant-reprice.ts) rechnet den Gewinn beim vorgegebenen VK mit GENAU diesen Parametern.
+export function repriceFeesFor(p: RepriceProduct) {
   const adRate = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const checkoutFactor = activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt); // K-005: Ware × Kassen-Faktor (in der Formel)
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China. feesFor(attrs) statt einer Herkunft fürs ganze Produkt.
-  const feesFor = (attrs?: Record<string, string>) => ({
+  return (attrs?: Record<string, string>) => ({
     isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom), ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     earUmlageEur: earUmlageFor(p.isElectric), // A-029: nur Elektro = ja
     checkoutFactor,
   });
+}
+
+export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?: VariantGroup[]): TierPlan {
+  const feesFor = repriceFeesFor(p);
   const newSellFor = (ware: number, fees: ReturnType<typeof feesFor>) => computeMinSellPrice({
     ...fees, buyPrice: ware, targetMarginEur: newTargetEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95',
   }).minSellPrice;
