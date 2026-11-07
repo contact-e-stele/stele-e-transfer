@@ -101,8 +101,22 @@ describe('OFFEN 034 "Auswahl anheben" (direction up)', () => {
     expect(up({ [BLACK]: 28.95 })[0].grund).toContain('Preissprung');
     expect(up({ [BLACK]: 28.45 })[0].status).toBe('ok'); // +14,0 %
   });
-  test('Mindestgewinn max(1,00; Ziel) gilt auch beim Anheben: Ziel 3,50 → Blue 27,45 (+3,01) abgelehnt', () => {
-    expect(up({ [BLUE]: 27.45 }, undefined, { targetMarginEur: 3.5 })[0]).toMatchObject({ status: 'abgelehnt', mindestGewinn: 3.5 });
+  // OFFEN 035 (Kalkulator 13:50): Anheben, das den Gewinn verbessert, ist auch unter max(1,00; Ziel) ok — mit Hinweis. Senken bleibt streng.
+  test('OFFEN 035: Ziel 3,50 → Blue 26,95 → 27,45 (+2,60 → +3,01) ok mit Hinweis „noch unter Mindestgewinn“', () => {
+    const r = up({ [BLUE]: 27.45 }, undefined, { targetMarginEur: 3.5 })[0];
+    expect(r).toMatchObject({ status: 'ok', mindestGewinn: 3.5, gewinnAlt: 2.6, gewinnNeu: 3.01 });
+    expect(r.hinweis).toContain('noch unter Mindestgewinn');
+  });
+  test('OFFEN 035: VK unter 1,00 (Blue 22,95 = −0,68, black 21,45 = −0,36) → Blue 23,45 (−0,27) und black 21,95 (+0,05) ok + Hinweis', () => {
+    const vsp = JSON.stringify({ [BLUE]: 22.95, [BLACK]: 21.45 });
+    const r = up({ [BLUE]: 23.45, [BLACK]: 21.95 }, undefined, { variantSellPrices: vsp });
+    expect(r.map(x => [x.gewinnAlt, x.gewinnNeu, x.status])).toEqual([[-0.68, -0.27, 'ok'], [-0.36, 0.05, 'ok']]);
+    expect(r.every(x => x.hinweis?.includes('noch unter Mindestgewinn'))).toBe(true);
+  });
+  test('OFFEN 035: Gewinn steigt nicht (gleicher Preis) → abgelehnt; Senken unter Mindestgewinn bleibt abgelehnt (Blue 22,95 → 22,45 = −1,09)', () => {
+    const vsp = JSON.stringify({ [BLUE]: 22.95, [BLACK]: 21.45 });
+    expect(up({ [BLUE]: 22.95 }, undefined, { variantSellPrices: vsp })[0].status).toBe('abgelehnt');
+    expect(planVariantReprice(p225({ variantSellPrices: vsp }), { [BLUE]: 22.45 }, GROUPS, new Set(), 'down').rows[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -1.09 });
   });
   test('"Preis halten" → gehalten', () => {
     expect(up({ [BLUE]: 27.45 }, new Set([BLUE]))[0].status).toBe('gehalten');
