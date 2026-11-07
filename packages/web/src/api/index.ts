@@ -5326,6 +5326,89 @@ app.get('/ebay/origin-inventory', async (c) => {
   }
 });
 
+// ─── OFFEN 030 Punkt 4b: Bestand umstellen („ja Standort Bestand“) ────────────────────────────────────────────
+// POST {confirm?, freigabe?, itemIds?}: läuft im HINTERGRUND (44 Angebote > 10 s Bun-idleTimeout, Fund #270), Ergebnis in app_settings
+// "origin_switch_last", lesbar mit GET. Ohne confirm: nur Vorschau. Schreiben NUR mit confirm: true UND freigabe: "ja Standort Bestand".
+// Geändert werden je Offer NUR Lagerort + Versandrichtlinie (Menge folgt dem Lager); keine Preise, kein Titel, keine Beschreibung.
+const ORIGIN_SWITCH_KEY = 'origin_switch_last';
+let originSwitchRunning = false;
+app.get('/ebay/origin-inventory/switch', async (c) => {
+  const { db } = await import('../db/index');
+  const { appSettings } = await import('../db/schema');
+  const row = await db.select().from(appSettings).where(eq(appSettings.key, ORIGIN_SWITCH_KEY)).get();
+  let last: unknown = null;
+  try { last = row?.value ? JSON.parse(row.value) : null; } catch { last = null; }
+  return c.json({ laeuft: originSwitchRunning, letzterLauf: last }, 200);
+});
+app.post('/ebay/origin-inventory/switch', async (c) => {
+  let body: { confirm?: unknown; freigabe?: unknown; itemIds?: unknown } = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  const confirm = body.confirm === true;
+  if (confirm && body.freigabe !== 'ja Standort Bestand') return c.json({ error: 'Schreiben nur mit freigabe: "ja Standort Bestand" (Inhaber) — nichts gestartet' }, 400);
+  if (body.itemIds !== undefined && !(Array.isArray(body.itemIds) && body.itemIds.every(x => typeof x === 'string' && /^\d{9,15}$/.test(x)))) return c.json({ error: '"itemIds" muss eine Liste von eBay-Nummern sein' }, 400);
+  if (originSwitchRunning) return c.json({ error: 'Umstellung läuft schon — Ergebnis mit GET abwarten' }, 409);
+  originSwitchRunning = true;
+  const only = Array.isArray(body.itemIds) ? new Set(body.itemIds as string[]) : null;
+  void (async () => {
+    const startedAt = new Date().toISOString();
+    let result: unknown;
+    try {
+      const { db } = await import('../db/index');
+      const schema = await import('../db/schema');
+      const ebay = await import('./ebay');
+      const { applyOfferQuantity } = await import('../shared/offer-quantity');
+      const { runOriginSwitch } = await import('./origin-switch');
+      const token = await ebay.getAccessToken();
+      const BASE = process.env.EBAY_SANDBOX === 'true' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+      const auth = { 'Authorization': `Bearer ${token}` };
+      const [listings, policies, locations] = await Promise.all([ebay.getAllSellerListings(), ebay.fetchFulfillmentPolicies(), loadOriginLocations()]);
+      const products = await db.select({ id: schema.products.id, ebayListingId: schema.products.ebayListingId, shipsFrom: schema.products.shipsFrom, variantPrices: schema.products.variantPrices }).from(schema.products).all();
+      const byItem = new Map(products.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
+      const input = listings.filter(l => !only || only.has(l.itemId)).map(l => {
+        const p = byItem.get(l.itemId);
+        return { itemId: l.itemId, sku: l.sku || (p ? `stele-${p.id}` : ''), productId: p?.id ?? null, origin: p ? originOfProduct(p) : null };
+      });
+      const rows = await runOriginSwitch(input, { confirm }, {
+        policies, locations,
+        readLive: (l) => ebay.readOfferShipping(l.sku, fetch, token, l.itemId),
+        skusOf: async (sku) => sku.endsWith('-GROUP') ? ebay.getInventoryItemGroupSkus(sku, token) : [sku],
+        offersOf: async (sku) => {
+          const r = await fetch(`${BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`, { headers: auth });
+          return r.ok ? ((await r.json()) as { offers?: never[] }).offers ?? [] : [];
+        },
+        getOffer: async (id) => {
+          const r = await fetch(`${BASE}/sell/inventory/v1/offer/${id}`, { headers: auth });
+          if (!r.ok) throw new Error(`GET offer/${id}: ${r.status} ${(await r.text()).slice(0, 200)}`);
+          return await r.json() as Record<string, unknown>;
+        },
+        quantityOf: (sku) => ebay.getInventoryItemQuantity(sku, token),
+        applyQuantity: (o, q) => { applyOfferQuantity(o, q); },
+        putOffer: async (id, b) => {
+          const r = await fetch(`${BASE}/sell/inventory/v1/offer/${id}`, { method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' }, body: JSON.stringify(b) });
+          return r.ok || r.status === 204 ? { ok: true } : { ok: false, error: `PUT offer/${id}: ${r.status} ${(await r.text()).slice(0, 300)}` };
+        },
+        ensureLocation: (spec) => ebay.ensureInventoryLocation(spec, fetch, token),
+      });
+      for (const r of rows) if (r.status === 'umgestellt' || r.status === 'fehler') console.log(`[Standort Bestand] ${r.steleNr} ${r.itemId}: ${r.status} ${r.vorher.lagerort ?? '–'} → ${r.ziel?.locationKey ?? '–'}${r.nachher ? ` (zurückgelesen: ${r.nachher.stimmt ? 'stimmt' : 'STIMMT NICHT'})` : ''}${r.grund ? ` — ${r.grund}` : ''}`);
+      const count = (s: string) => rows.filter(r => r.status === s).length;
+      result = { modus: confirm ? 'umstellen' : 'vorschau', startedAt, finishedAt: new Date().toISOString(), total: rows.length,
+        umgestellt: count('umgestellt'), schonRichtig: count('schon richtig'), vorschau: count('vorschau'), uebersprungen: count('übersprungen'), fehler: count('fehler'), rows };
+    } catch (e) {
+      result = { modus: confirm ? 'umstellen' : 'vorschau', startedAt, finishedAt: new Date().toISOString(), error: String(e) };
+      console.error('[Standort Bestand]', e);
+    } finally {
+      try {
+        const { db } = await import('../db/index');
+        const { appSettings } = await import('../db/schema');
+        const value = JSON.stringify(result ?? null); const now = new Date().toISOString();
+        await db.insert(appSettings).values({ key: ORIGIN_SWITCH_KEY, value, updatedAt: now }).onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+      } catch (e) { console.warn('[Standort Bestand] Ergebnis nicht gespeichert:', e); }
+      originSwitchRunning = false;
+    }
+  })();
+  return c.json({ gestartet: true, modus: confirm ? 'umstellen' : 'vorschau', hinweis: 'Ergebnis mit GET /api/ebay/origin-inventory/switch lesen' }, 202);
+});
+
 // ─── OFFEN 030 Weg B (ENTSCHEIDUNG Inhaber 04.11.2026 21:56): 2 Versandrichtlinien je Herkunft per Knopf ──────────
 // GET = nur lesen (gibt es "Versand aus China" / "Versand aus EU-Lager" schon?). POST = SCHREIBT ins eBay-Konto, nur mit
 // confirm: true, Bearbeitungszeit Pflicht (kein Standard), Service aus der erlaubten Liste, nie doppelt, nie überschreiben.
