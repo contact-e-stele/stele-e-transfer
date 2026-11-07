@@ -12,10 +12,10 @@ const row = (over: Partial<VariantRepriceProductRow> = {}): VariantRepriceProduc
   ({ ...p225(), generatedTitle: 'Reisekissen', variants: p225().variants as string, ebayStatus: 'listed', ebayListingId: '198725779927', ...over });
 
 function deps(over: Partial<VariantRepriceDeps> = {}) {
-  const calls = { send: [] as Array<Array<{ skuId: string; newSell: number }>>, store: [] as string[], readBack: 0 };
+  const calls = { send: [] as Array<Array<{ skuId: string; newSell: number }>>, store: [] as string[], readBack: 0, direction: [] as string[] };
   const d: VariantRepriceDeps = {
     heldSkuIds: async () => new Set(),
-    send: async (_id, _g, _e, changes) => { calls.send.push(changes); return { resolved: true, results: changes.map(c => ({ skuId: c.skuId, sku: 's-' + c.skuId, ok: true })) }; },
+    send: async (_id, _g, _e, changes, direction) => { calls.send.push(changes); calls.direction.push(direction); return { resolved: true, results: changes.map(c => ({ skuId: c.skuId, sku: 's-' + c.skuId, ok: true })) }; },
     store: async (_id, json) => { calls.store.push(json); },
     readBack: async () => { calls.readBack++; return { ok: true, prices: { [BLUE]: 25.45, [BLACK]: 23.45, [GRAY]: 24.95 } }; },
     ...over,
@@ -85,5 +85,22 @@ describe('runVariantReprice', () => {
   });
   test('Produkt fehlt → not_found', async () => {
     expect((await runVariantReprice(undefined, { ...APPLY, prices: { x: 1 } }, deps().d)).status).toBe('not_found');
+  });
+});
+
+describe('runVariantReprice direction up (OFFEN 034)', () => {
+  test('anheben: nur die Auswahl, Richtung "up" an das Senden, gespeichert nach vollem Erfolg', async () => {
+    const { d, calls } = deps({ readBack: async () => ({ ok: true, prices: { [BLUE]: 27.45 } }) });
+    const r = await runVariantReprice(row(), { ...APPLY, direction: 'up', prices: { [BLUE]: 27.45, [BLACK]: 23.95 } }, d);
+    expect(r.status).toBe('sent');
+    expect(calls.send).toEqual([[{ skuId: BLUE, newSell: 27.45 }]]);
+    expect(calls.direction).toEqual(['up']);
+    expect(parseVariantSellPrices(calls.store[0])[BLUE]).toBe(27.45);
+    expect(r.rows[0]).toMatchObject({ ergebnis: 'gesetzt', ebayGleichApp: true });
+  });
+  test('ohne direction bleibt es Senken (Standard)', async () => {
+    const { d, calls } = deps();
+    await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45 } }, d);
+    expect(calls.direction).toEqual(['down']);
   });
 });

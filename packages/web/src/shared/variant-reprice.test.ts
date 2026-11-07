@@ -6,14 +6,16 @@ import { setAliEinfuhrEur, ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR } from './consta
 // Betriebswert Einfuhr 5,95 (der Test-Preload setzt sonst 3,57 für alte Belege) — danach zurück.
 beforeAll(() => setAliEinfuhrEur(ALI_EINFUHR_EUR));
 afterAll(() => setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR));
-import { parseVariantRepriceBody, planVariantDecrease } from './variant-reprice';
+import { parseVariantRepriceBody, planVariantDecrease, planVariantReprice } from './variant-reprice';
 import type { RepriceProduct } from './tier-reprice';
 
 import { BLUE, BLACK, GRAY, GROUPS, p225 } from './variant-reprice.fixture';
 
 describe('parseVariantRepriceBody', () => {
   test('gültig; apply nur mit confirm; Preise > 0 und höchstens 2 Nachkommastellen', () => {
-    expect(parseVariantRepriceBody({ productId: 225, prices: { [BLUE]: 25.45 }, mode: 'preview' })).toEqual({ ok: true, productId: 225, prices: { [BLUE]: 25.45 }, mode: 'preview', confirm: false, sendToEbay: false });
+    expect(parseVariantRepriceBody({ productId: 225, prices: { [BLUE]: 25.45 }, mode: 'preview' })).toEqual({ ok: true, productId: 225, prices: { [BLUE]: 25.45 }, mode: 'preview', confirm: false, sendToEbay: false, direction: 'down' });
+    expect(parseVariantRepriceBody({ productId: 225, prices: { [BLUE]: 27.45 }, mode: 'preview', direction: 'up' })).toMatchObject({ ok: true, direction: 'up' });
+    expect(parseVariantRepriceBody({ productId: 225, prices: { [BLUE]: 27.45 }, mode: 'preview', direction: 'hoch' }).ok).toBe(false);
     expect(parseVariantRepriceBody({ productId: 225, prices: { [BLUE]: 25.45 }, mode: 'apply' }).ok).toBe(false);
     expect(parseVariantRepriceBody({ productId: 225, prices: { [BLUE]: 25.45 }, mode: 'apply', confirm: true, sendToEbay: true }).ok).toBe(true);
     expect(parseVariantRepriceBody({ productId: 225, prices: {}, mode: 'preview' }).ok).toBe(false);
@@ -82,5 +84,27 @@ describe('OFFEN 033b (Kalkulator 07.11. 11:05)', () => {
     expect(r.map(x => [x.gewinnNeu, x.gewinnOhneFaktor, x.status])).toEqual([[1.37, 1.01, 'ok'], [1.29, 0.97, 'ok']]);
     expect(r[0].hinweis).toBeUndefined();
     expect(r[1].hinweis).toContain('ohne Kassen-Faktor nur 0.97');
+  });
+});
+
+describe('OFFEN 034 "Auswahl anheben" (direction up)', () => {
+  // Frisch mit bun gerechnet (Backup-Fixture 225, Faktor 0,9733, Einfuhr 5,95): Blue 27,45 → +3,01 (ohne Faktor +2,65); black 28,95 → +16 %.
+  const up = (prices: Record<string, number>, held?: Set<string>, over?: Parameters<typeof p225>[0]) => planVariantReprice(p225(over), prices, GROUPS, held, 'up').rows;
+  test('anheben ok: Blue 26,95 → 27,45 (+3,01)', () => {
+    expect(up({ [BLUE]: 27.45 })[0]).toMatchObject({ status: 'ok', alt: 26.95, neu: 27.45, gewinnNeu: 3.01, gewinnOhneFaktor: 2.65 });
+  });
+  test('nur anheben: Senken und gleicher Preis abgelehnt', () => {
+    const r = up({ [BLUE]: 25.45, [BLACK]: 24.95 });
+    expect(r.every(x => x.status === 'abgelehnt' && x.grund!.startsWith('nur anheben'))).toBe(true);
+  });
+  test('keine Senkungsbremse beim Anheben, aber Preissprung > 15 % (OFFEN 010) abgelehnt: black 24,95 → 28,95', () => {
+    expect(up({ [BLACK]: 28.95 })[0].grund).toContain('Preissprung');
+    expect(up({ [BLACK]: 28.45 })[0].status).toBe('ok'); // +14,0 %
+  });
+  test('Mindestgewinn max(1,00; Ziel) gilt auch beim Anheben: Ziel 3,50 → Blue 27,45 (+3,01) abgelehnt', () => {
+    expect(up({ [BLUE]: 27.45 }, undefined, { targetMarginEur: 3.5 })[0]).toMatchObject({ status: 'abgelehnt', mindestGewinn: 3.5 });
+  });
+  test('"Preis halten" → gehalten', () => {
+    expect(up({ [BLUE]: 27.45 }, new Set([BLUE]))[0].status).toBe('gehalten');
   });
 });

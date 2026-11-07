@@ -12,12 +12,15 @@ import { planTierReprice, repriceFeesFor, type RepriceProduct } from './tier-rep
 import { profitAtSellPrice, parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 import { productTarget } from './target-margin-bulk';
+import { isPriceJump, MAX_AUTO_RAISE_PCT } from './price-jump';
 import type { VariantGroup } from './variant-resolver';
 
 export const VARIANT_REPRICE_MIN_PROFIT_EUR = 1.0;
 export const VARIANT_REPRICE_MAX_DECREASE_PERCENT = MAX_PRICE_DECREASE_PERCENT; // 8 % (Teil 2D) — eine Quelle
 
 export type VariantRepriceMode = 'preview' | 'apply';
+// OFFEN 034 (Aufsicht 07.11. 12:24, Kalkulator 12:20 "Weg B JA"): "Auswahl anheben" = Spiegelbild von "Auswahl senken".
+export type VariantRepriceDirection = 'down' | 'up';
 export type VariantRepriceStatus = 'ok' | 'abgelehnt' | 'gehalten';
 
 export interface VariantRepriceRow {
@@ -38,7 +41,7 @@ export interface VariantRepriceRow {
 }
 
 export type VariantRepriceParse =
-  | { ok: true; productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean }
+  | { ok: true; productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean; direction: VariantRepriceDirection }
   | { ok: false; error: string };
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -58,9 +61,10 @@ export function parseVariantRepriceBody(body: unknown): VariantRepriceParse {
     prices[k] = v;
   }
   if (b.sendToEbay !== undefined && typeof b.sendToEbay !== 'boolean') return { ok: false, error: '"sendToEbay" muss true oder false sein' };
+  if (b.direction !== undefined && b.direction !== 'down' && b.direction !== 'up') return { ok: false, error: '"direction" muss "down" (senken, Standard) oder "up" (anheben) sein' };
   const confirm = b.confirm === true;
   if (b.mode === 'apply' && !confirm) return { ok: false, error: '"confirm": true fehlt — es wird nichts gespeichert oder gesendet' };
-  return { ok: true, productId: b.productId, prices, mode: b.mode, confirm, sendToEbay: b.sendToEbay === true };
+  return { ok: true, productId: b.productId, prices, mode: b.mode, confirm, sendToEbay: b.sendToEbay === true, direction: b.direction === 'up' ? 'up' : 'down' };
 }
 
 /** Prüft jede gewünschte Zeile gegen die Regeln. heldSkuIds = wirksames "Preis halten" (resolvePriceHolds().heldKeys). */
@@ -69,6 +73,17 @@ export function planVariantDecrease(
   prices: Record<string, number>,
   groups: VariantGroup[],
   heldSkuIds: ReadonlySet<string> = new Set(),
+): { isVariant: boolean; rows: VariantRepriceRow[] } {
+  return planVariantReprice(product, prices, groups, heldSkuIds, 'down');
+}
+
+/** Senken (down) oder Anheben (up) ausgewählter Varianten — dieselben Prüfungen, spiegelbildlich. */
+export function planVariantReprice(
+  product: RepriceProduct & { targetMarginEur?: number | null },
+  prices: Record<string, number>,
+  groups: VariantGroup[],
+  heldSkuIds: ReadonlySet<string> = new Set(),
+  direction: VariantRepriceDirection = 'down',
 ): { isVariant: boolean; rows: VariantRepriceRow[] } {
   // Zielgewinn ist hier egal (wir übernehmen ware/alt/attrs aus dem Plan, nicht den Formelpreis); Dubletten wie im Senk-Bericht zusammengelegt.
   const plan = planTierReprice(product, DEFAULT_PRICING_CONFIG.targetMarginEur, groups);
@@ -97,9 +112,15 @@ export function planVariantDecrease(
       ? `Warnung: ohne Kassen-Faktor nur ${gewinnOhneFaktor.toFixed(2)} € (Faktor ungeklärt, K-018 c1)` : undefined;
     const base = { skuId, label: pr.label, attrs: pr.attrs, displayValues: pr.displayValues, ware: pr.ware, alt, neu, gewinnAlt, gewinnNeu, gewinnOhneFaktor, mindestGewinn, ...(hinweis ? { hinweis } : {}) };
     if (heldSkuIds.has(skuId)) { rows.push({ ...base, status: 'gehalten', grund: '"Preis halten" aktiv — nicht geändert' }); continue; }
-    if (neu >= alt - 0.004) { rows.push({ ...base, status: 'abgelehnt', grund: `nur senken: neu ${neu.toFixed(2)} € ist nicht niedriger als alt ${alt.toFixed(2)} €` }); continue; }
-    const untergrenze = alt * (1 - VARIANT_REPRICE_MAX_DECREASE_PERCENT / 100);
-    if (neu < untergrenze - 0.005) { rows.push({ ...base, status: 'abgelehnt', grund: `Senkungsbremse: höchstens ${VARIANT_REPRICE_MAX_DECREASE_PERCENT} % je Lauf (nicht unter ${untergrenze.toFixed(2)} €)` }); continue; }
+    if (direction === 'down') {
+      if (neu >= alt - 0.004) { rows.push({ ...base, status: 'abgelehnt', grund: `nur senken: neu ${neu.toFixed(2)} € ist nicht niedriger als alt ${alt.toFixed(2)} €` }); continue; }
+      const untergrenze = alt * (1 - VARIANT_REPRICE_MAX_DECREASE_PERCENT / 100);
+      if (neu < untergrenze - 0.005) { rows.push({ ...base, status: 'abgelehnt', grund: `Senkungsbremse: höchstens ${VARIANT_REPRICE_MAX_DECREASE_PERCENT} % je Lauf (nicht unter ${untergrenze.toFixed(2)} €)` }); continue; }
+    } else {
+      if (neu <= alt + 0.004) { rows.push({ ...base, status: 'abgelehnt', grund: `nur anheben: neu ${neu.toFixed(2)} € ist nicht höher als alt ${alt.toFixed(2)} €` }); continue; }
+      // Kalkulator 12:20: Anheben ohne Senkungsbremse. Schutz vor Fehl-Zuordnung bleibt die bestehende Grenze OFFEN 010 (Preissprung > 15 %).
+      if (isPriceJump(alt, neu)) { rows.push({ ...base, status: 'abgelehnt', grund: `Preissprung: mehr als +${MAX_AUTO_RAISE_PCT} % (OFFEN 010) — bitte prüfen` }); continue; }
+    }
     if (gewinnNeu < mindestGewinn - 1e-9) { rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${mindestGewinn.toFixed(2)} € (max(1,00; Ziel))` }); continue; }
     rows.push({ ...base, status: 'ok' });
   }
