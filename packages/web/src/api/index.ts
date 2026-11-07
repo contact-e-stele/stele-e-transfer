@@ -3822,8 +3822,8 @@ const app = new Hono()
       }).from(p).where(eq(p.ebayStatus, 'listed')).all();
       const { buildSenkBericht, SENK_SCHWELLE_EUR, SENK_BREMSE_PROZENT } = await import('../shared/senk-kandidaten');
       const { parseGroups } = await import('./tier-reprice');
-      const { kandidaten, ohneVariantenVk } = buildSenkBericht(rows.map(r => ({ ...r, title: r.generatedTitle ?? r.title, groups: parseGroups(r.variants) })));
-      return c.json({ schwelleEur: SENK_SCHWELLE_EUR, bremseProzent: SENK_BREMSE_PROZENT, geprueft: rows.length, anzahl: kandidaten.length, kandidaten, ohneVariantenVk }, 200);
+      const { kandidaten, ohneVariantenVk, nichtBeiEbay } = buildSenkBericht(rows.map(r => ({ ...r, title: r.generatedTitle ?? r.title, groups: parseGroups(r.variants) })));
+      return c.json({ schwelleEur: SENK_SCHWELLE_EUR, bremseProzent: SENK_BREMSE_PROZENT, geprueft: rows.length, anzahl: kandidaten.length, kandidaten, ohneVariantenVk, nichtBeiEbay }, 200);
     } catch (e) {
       console.error('[senk-kandidaten]', e);
       return c.json({ error: String(e) }, 500);

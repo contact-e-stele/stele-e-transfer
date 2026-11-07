@@ -131,10 +131,30 @@ describe('K-005 Nachbesserung: Varianten ohne eigenen VK sind keine Senk-Kandida
   const p123 = { id: 123, variants: JSON.stringify([{ name: 'M', values: ['10PCS', '200PCS'] }]), buyPrice: 2.05, sellPrice: 36.95,
     shipsFrom: 'China', adRate: 5, variantPrices: vp123, variantSellPrices: null, targetMarginEur: 1.5 };
   test('Produkt-VK als Ersatz → kein Kandidat, gezählt als "VK je Variante unbekannt"', () => {
-    expect(buildSenkBericht([p123])).toEqual({ kandidaten: [], ohneVariantenVk: [{ productId: 123, varianten: 2 }] });
+    expect(buildSenkBericht([p123])).toEqual({ kandidaten: [], ohneVariantenVk: [{ productId: 123, varianten: 2 }], nichtBeiEbay: [] });
   });
   test('mit gespeichertem VK der Variante wird sie wieder bewertet (stele-97 unverändert 2 Kandidaten)', () => {
     expect(buildSenkBericht([{ ...p97, groups: groups97 }]).kandidaten.length).toBe(2);
     expect(buildSenkBericht([{ ...p97, groups: groups97 }]).ohneVariantenVk).toEqual([]);
+  });
+});
+
+// Live-Fund 07.11.2026: nicht bei eBay angebotene AliExpress-Einträge sind keine "VK-Lücke" (119: 500PCs, 245: 52/60CM, 228: 1000ml bag).
+describe('Senk-Bericht: nicht angeboten ≠ VK unbekannt', () => {
+  const groups228 = [{ name: 'Varianten', values: ['2000ml bag', '1000ml pink', '2000ml pink', '2000ml grey set'] }];
+  const p228 = { id: 228, variants: JSON.stringify(groups228), buyPrice: 5.99, sellPrice: 14.95, shipsFrom: 'China', adRate: 5, targetMarginEur: 1,
+    variantSellPrices: JSON.stringify({ '167': 20.45, '884': 17.95, '885': 20.45, '171': 21.95 }),
+    variantPrices: JSON.stringify([
+      { skuId: '167', attrs: { Color: '2000ml bag' }, displayValues: { Varianten: '2000ml bag' }, price: 5.99 },
+      { skuId: '884', attrs: { Color: '1000ml pink' }, displayValues: { Varianten: '1000ml pink' }, price: 4.09 },
+      { skuId: '885', attrs: { Color: '2000ml pink' }, displayValues: { Varianten: '2000ml pink' }, price: 5.79 },
+      { skuId: '171', attrs: { Color: '2000ml grey set' }, displayValues: { Varianten: '2000ml grey set' }, price: 7.09 },
+      { skuId: '166', attrs: { Color: '1000ml bag' }, price: 3.99 },
+    ]) };
+  test('228 (Backup 05.11.): 1000ml bag ohne VK ist nicht angeboten → nichtBeiEbay, ohneVariantenVk leer', () => {
+    const b = buildSenkBericht([{ ...p228, groups: groups228 }]);
+    expect(b.ohneVariantenVk).toEqual([]);
+    expect(b.nichtBeiEbay).toEqual([{ productId: 228, varianten: 1, labels: ['1000ml bag'] }]);
+    expect(b.kandidaten.some(k => k.skuId === '166')).toBe(false);
   });
 });
