@@ -874,6 +874,38 @@ export async function maybeDailyCheckoutFactorSync(now = Date.now()): Promise<vo
 export const PRODUCT_TIME_LIMIT_MS = 5 * 60 * 1000;
 export const EBAY_CALL_TIME_LIMIT_MS = 30 * 1000;
 
+/** K-018 PR B: nach dem Preislauf — Produkte frisch aus der DB, c3 (VK in diesem Lauf geändert), Halten, Sperren, Multi-Rabatt → runAutoLower. */
+async function maybeAutoLower(
+  freshEk: Map<number, string>,
+  sellBefore: Map<number, { vsp: Record<string, number>; sell: number | null }>,
+  priceHolds: PriceHolds,
+  excluded: AutoPriceExclusions,
+): Promise<void> {
+  const { runAutoLower, autoLowerEnabled, defaultSavePreview } = await import('./auto-lower');
+  const { buildVariantRepriceDeps } = await import('./variant-reprice-deps');
+  const { getSentPromotions } = await import('./multi-rabatt');
+  const rows = await db.select().from(schema.products).where(and(eq(schema.products.ebayStatus, 'listed'), isNotNull(schema.products.ebayListingId)));
+  const changedThisRun = new Set<string>();
+  const held = new Map<number, ReadonlySet<string>>();
+  const gesperrt = new Map<number, string>();
+  for (const p of rows) {
+    const before = sellBefore.get(p.id);
+    const now = parseVariantSellPrices(p.variantSellPrices);
+    for (const sku of new Set([...Object.keys(before?.vsp ?? {}), ...Object.keys(now)])) {
+      if ((before?.vsp ?? {})[sku] !== now[sku]) changedThisRun.add(`${p.id}:${sku}`);
+    }
+    held.set(p.id, resolvePriceHolds(p, priceHolds[String(p.id)]).heldKeys);
+    if (excluded[String(p.id)]) gesperrt.set(p.id, 'OFFEN 010: Produkt auf der Ausnahmeliste');
+    else if (await isProductPriceLocked(p.id)) gesperrt.set(p.id, 'K-011: Käuferpreis-Sperre aktiv');
+  }
+  const sent = await getSentPromotions();
+  const promotions = new Map(Object.entries(sent).filter(([, v]) => v?.percents).map(([k, v]) => [Number(k), v.percents]));
+  const products = rows.map(p => ({ ...p, generatedTitle: p.generatedTitle ?? p.title ?? '', ebayStatus: p.ebayStatus ?? 'none', groups: parseVariantGroupsJson(p.variants) }));
+  await runAutoLower({ products: products as never, freshEk, changedThisRun, held, promotions, gesperrt }, {
+    enabled: autoLowerEnabled(), depsFor: (p) => buildVariantRepriceDeps(p as never), savePreview: defaultSavePreview,
+  });
+}
+
 export async function runPriceCheck(): Promise<{ checked: number; updated: number; ebayUpdated: number; errors: number; stockUpdated: number }> {
   console.log('[PriceMonitor] Starte Preisüberwachung...');
 
@@ -899,6 +931,10 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
   let excluded: AutoPriceExclusions = {};
   let exclusionsUnreadable = false;
   try { excluded = await getAutoPriceExclusions(); } catch (e) { exclusionsUnreadable = true; console.warn('[OFFEN 010] Ausnahmeliste nicht lesbar — in diesem Lauf keine Anhebung bei eBay:', e); }
+
+  // K-018 PR B: Merker für „automatisch senken“ am Laufende (c2 frischer EK, c3 VK vorher).
+  const freshEk = new Map<number, string>();
+  const sellBefore = new Map(products.map(p => [p.id, { vsp: parseVariantSellPrices(p.variantSellPrices), sell: p.sellPrice }]));
 
   // Hilfsfunktion: ein Produkt prüfen
   async function checkOne(product: typeof products[0]): Promise<void> {
@@ -1146,6 +1182,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // A-019 Teil 2: liegt der Gewinn EINER Variante unter dem Boden der Stufe → nur diese anheben (raise-only, GET→PUT je Variante, nach
         // Erfolg in variant_sell_prices speichern). Hinter AUTO_VARIANT_RAISE_ENABLED (Default AUS: nur Log "würde anheben"). Bricht den Cron nie ab.
         await maybeRaiseVariants(product, freshVariantPricesJson, shipsFromEff, hold.heldKeys);
+        // K-018 PR B c2: NUR hier (AliExpress-Daten in diesem Lauf gelesen) gilt der EK als frisch — mit den gelesenen Varianten-EK.
+        // Nicht frisch: der Weg ohne AliExpress-Daten (#205, oben bei `if (!data)`) und lastPriceCheck (auch bei Preis-Änderung von Hand gesetzt).
+        if (freshVariantPricesJson) freshEk.set(product.id, freshVariantPricesJson);
         return;
       }
 
@@ -1263,6 +1302,9 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       }
     }));
   }
+
+  // K-018 PR B: automatisch senken (Schalter AUTO_LOWER_ENABLED, Standard AUS = nur Vorschau). Fehler brechen den Lauf nie ab.
+  try { await maybeAutoLower(freshEk, sellBefore, priceHolds, excluded); } catch (e) { console.warn('[AutoSenken] Fehler (Preislauf fertig):', e); }
 
   console.log(`[PriceMonitor] Fertig — geprüft: ${checked}, aktualisiert: ${updated}, eBay-Updates: ${ebayUpdated}, Fehler: ${errors}, Varianten-Mengen gesetzt (Ziel = Lager, höchstens Obergrenze): ${stockUpdated}`);
   return { checked, updated, ebayUpdated, errors, stockUpdated };
