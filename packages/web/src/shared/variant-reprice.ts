@@ -11,6 +11,7 @@
 import { planTierReprice, repriceFeesFor, type RepriceProduct } from './tier-reprice';
 import { profitAtSellPrice, parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
+import { productTarget } from './target-margin-bulk';
 import type { VariantGroup } from './variant-resolver';
 
 export const VARIANT_REPRICE_MIN_PROFIT_EUR = 1.0;
@@ -29,6 +30,9 @@ export interface VariantRepriceRow {
   neu: number;
   gewinnAlt: number | null;
   gewinnNeu: number | null;
+  gewinnOhneFaktor?: number | null; // OFFEN 033b (Kalkulator 07.11. 11:05): Gewinn beim neuen VK OHNE Kassen-Faktor (Fund K-018 c1)
+  mindestGewinn?: number;           // max(1,00; Ziel des Produkts)
+  hinweis?: string;                 // Warnung, lehnt nicht ab
   status: VariantRepriceStatus;
   grund?: string;
 }
@@ -61,7 +65,7 @@ export function parseVariantRepriceBody(body: unknown): VariantRepriceParse {
 
 /** Prüft jede gewünschte Zeile gegen die Regeln. heldSkuIds = wirksames "Preis halten" (resolvePriceHolds().heldKeys). */
 export function planVariantDecrease(
-  product: RepriceProduct,
+  product: RepriceProduct & { targetMarginEur?: number | null },
   prices: Record<string, number>,
   groups: VariantGroup[],
   heldSkuIds: ReadonlySet<string> = new Set(),
@@ -69,6 +73,8 @@ export function planVariantDecrease(
   // Zielgewinn ist hier egal (wir übernehmen ware/alt/attrs aus dem Plan, nicht den Formelpreis); Dubletten wie im Senk-Bericht zusammengelegt.
   const plan = planTierReprice(product, DEFAULT_PRICING_CONFIG.targetMarginEur, groups);
   const feesFor = repriceFeesFor(product);
+  // OFFEN 033b: nie unter das Ziel des Produkts senken (Regel 07.11.) — Mindestgewinn = max(1,00; Ziel), Ziel wie im Senk-Bericht (productTarget).
+  const mindestGewinn = Math.max(VARIANT_REPRICE_MIN_PROFIT_EUR, productTarget(product));
   const stored = parseVariantSellPrices(product.variantSellPrices);
   let legacy: Array<{ skuId: string; ebayPrice?: number }> = [];
   try { legacy = product.variantPrices ? JSON.parse(product.variantPrices) : []; } catch { legacy = []; }
@@ -86,12 +92,15 @@ export function planVariantDecrease(
     const alt = vk.sellPrice;
     const gewinnAlt = r2(profitAtSellPrice({ ...fees, sellPrice: alt, buyPrice: pr.ware }));
     const gewinnNeu = r2(profitAtSellPrice({ ...fees, sellPrice: neu, buyPrice: pr.ware }));
-    const base = { skuId, label: pr.label, attrs: pr.attrs, displayValues: pr.displayValues, ware: pr.ware, alt, neu, gewinnAlt, gewinnNeu };
+    const gewinnOhneFaktor = r2(profitAtSellPrice({ ...fees, checkoutFactor: null, sellPrice: neu, buyPrice: pr.ware }));
+    const hinweis = gewinnOhneFaktor < mindestGewinn - 1e-9 && gewinnNeu >= mindestGewinn - 1e-9
+      ? `Warnung: ohne Kassen-Faktor nur ${gewinnOhneFaktor.toFixed(2)} € (Faktor ungeklärt, K-018 c1)` : undefined;
+    const base = { skuId, label: pr.label, attrs: pr.attrs, displayValues: pr.displayValues, ware: pr.ware, alt, neu, gewinnAlt, gewinnNeu, gewinnOhneFaktor, mindestGewinn, ...(hinweis ? { hinweis } : {}) };
     if (heldSkuIds.has(skuId)) { rows.push({ ...base, status: 'gehalten', grund: '"Preis halten" aktiv — nicht geändert' }); continue; }
     if (neu >= alt - 0.004) { rows.push({ ...base, status: 'abgelehnt', grund: `nur senken: neu ${neu.toFixed(2)} € ist nicht niedriger als alt ${alt.toFixed(2)} €` }); continue; }
     const untergrenze = alt * (1 - VARIANT_REPRICE_MAX_DECREASE_PERCENT / 100);
     if (neu < untergrenze - 0.005) { rows.push({ ...base, status: 'abgelehnt', grund: `Senkungsbremse: höchstens ${VARIANT_REPRICE_MAX_DECREASE_PERCENT} % je Lauf (nicht unter ${untergrenze.toFixed(2)} €)` }); continue; }
-    if (gewinnNeu < VARIANT_REPRICE_MIN_PROFIT_EUR - 1e-9) { rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${VARIANT_REPRICE_MIN_PROFIT_EUR.toFixed(2)} €` }); continue; }
+    if (gewinnNeu < mindestGewinn - 1e-9) { rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${mindestGewinn.toFixed(2)} € (max(1,00; Ziel))` }); continue; }
     rows.push({ ...base, status: 'ok' });
   }
   return { isVariant: plan.isVariant, rows };
