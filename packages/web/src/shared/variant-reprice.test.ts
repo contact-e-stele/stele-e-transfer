@@ -124,10 +124,10 @@ describe('OFFEN 034 "Auswahl anheben" (direction up)', () => {
     expect(r.map(x => [x.gewinnAlt, x.gewinnNeu, x.status])).toEqual([[-0.68, -0.27, 'ok'], [-0.36, 0.05, 'ok']]);
     expect(r.every(x => x.hinweis?.includes('noch unter Mindestgewinn'))).toBe(true);
   });
-  test('OFFEN 035: Gewinn steigt nicht (gleicher Preis) → abgelehnt; Senken unter Mindestgewinn bleibt abgelehnt (Blue 22,95 → 22,45 = −1,09)', () => {
+  test('OFFEN 035: Gewinn steigt nicht (gleicher Preis) → abgelehnt; Senken unter Mindestgewinn bleibt abgelehnt (Blue 22,95 → 22,45 = −1,45, ohne Faktor seit #281)', () => {
     const vsp = JSON.stringify({ [BLUE]: 22.95, [BLACK]: 21.45 });
     expect(up({ [BLUE]: 22.95 }, undefined, { variantSellPrices: vsp })[0].status).toBe('abgelehnt');
-    expect(planVariantReprice(p225({ variantSellPrices: vsp }), { [BLUE]: 22.45 }, GROUPS, new Set(), 'down').rows[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -1.09 });
+    expect(planVariantReprice(p225({ variantSellPrices: vsp }), { [BLUE]: 22.45 }, GROUPS, new Set(), 'down').rows[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -1.45 });
   });
   test('"Preis halten" → gehalten', () => {
     expect(up({ [BLUE]: 27.45 }, new Set([BLUE]))[0].status).toBe('gehalten');
