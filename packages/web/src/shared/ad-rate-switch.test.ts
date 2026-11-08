@@ -9,22 +9,26 @@ beforeAll(() => { before = aliEinfuhrEur(); setAliEinfuhrEur(5.95); });
 afterAll(() => setAliEinfuhrEur(before));
 
 const row = (label: string, buyPrice: number, sellPrice: number) => ({ skuId: label, label, buyPrice, sellPrice });
-// [Label, EK, VK alt, VK neu laut Tabelle, Gewinn neu laut Tabelle]
+// [Label, EK, VK alt, VK neu, Gewinn neu]
+// HISTORISCHE ZAHL GEÄNDERT (Formel je Standort, 08.11.2026): die Freigabe-Tabelle vom 03.11. war mit Standort DE (S = 1) gerechnet.
+// planAdRateSwitch nimmt S aus der Herkunft (China 1,19, Verhältnis 0,71678 / 0,787585) und hat keinen Parameter dafür → VK neu und
+// Gewinn neu frisch mit bun neu gerechnet (VK alt/EK = Live-Stand unverändert). Vorher-Werte je Zeile siehe docs/formel-je-standort-testaenderungen.md.
+// Alle Zeilen bleiben send = true (Gewinn neu ≥ Gewinn heute, auch wo er unter dem Boden liegt).
 const t120: Array<[string, number, number, number, number]> = [
-  ['50PCS 40-42CM', 1.89, 14.95, 13.95, 1.27], ['50PCS 47CM', 3.05, 16.95, 15.95, 1.76], ['50PCS 52CM', 3.39, 17.45, 16.95, 2.24],
-  ['50PCS 60CM', 5.09, 19.95, 18.95, 2.18], ['50PCS 70CM', 5.19, 19.95, 18.95, 2.08], ['50PCS 120CM', 11.19, 25.45, 23.95, 2.18],
-  ['100PCS 40-42CM', 2.89, 16.45, 15.95, 1.92], ['100PCS 47CM', 5.09, 19.45, 18.95, 2.18], ['100PCS 52CM', 5.79, 20.95, 19.95, 2.30],
-  ['100PCS 60CM', 9.99, 25.45, 23.95, 1.39], ['100PCS 70CM', 9.39, 24.95, 23.95, 1.99], ['100PCS 120CM', 25.39, 44.95, 41.95, 2.76],
+  ['50PCS 40-42CM', 1.89, 14.95, 13.95, 0.80], ['50PCS 47CM', 3.05, 16.95, 15.95, 1.21], ['50PCS 52CM', 3.39, 17.45, 15.95, 0.87],
+  ['50PCS 60CM', 5.09, 19.95, 18.95, 1.54], ['50PCS 70CM', 5.19, 19.95, 18.95, 1.44], ['50PCS 120CM', 11.19, 25.45, 23.95, 1.37],
+  ['100PCS 40-42CM', 2.89, 16.45, 15.95, 1.37], ['100PCS 47CM', 5.09, 19.45, 17.95, 0.75], ['100PCS 52CM', 5.79, 20.95, 19.95, 1.63],
+  ['100PCS 60CM', 9.99, 25.45, 23.95, 0.58], ['100PCS 70CM', 9.39, 24.95, 22.95, 0.39], ['100PCS 120CM', 25.39, 44.95, 40.95, 0.55],
 ];
 const t123: Array<[string, number, number, number, number]> = [
-  ['10PCS', 2.09, 15.95, 14.95, 1.89], ['20PCS', 2.69, 16.95, 15.95, 2.12], ['30PCS', 4.19, 18.95, 17.95, 2.26],
-  ['50PCS', 6.09, 21.45, 19.95, 2.00], ['100PCS', 11.79, 25.95, 24.95, 2.40], ['200PCS', 20.39, 36.95, 34.95, 2.01],
+  ['10PCS', 2.09, 15.95, 14.95, 1.39], ['20PCS', 2.69, 16.95, 15.95, 1.57], ['30PCS', 4.19, 18.95, 17.95, 1.65],
+  ['50PCS', 6.09, 21.45, 19.95, 1.33], ['100PCS', 11.79, 25.95, 23.95, 0.77], ['200PCS', 20.39, 36.95, 33.95, 0.04],
 ];
 const t127: Array<[string, number, number, number, number]> = [
-  ['Multicolour 50pcs', 2.49, 15.95, 14.95, 1.49], ['Multicolour 100pcs', 3.35, 16.95, 15.95, 1.46],
-  ['White 500pcs', 10.39, 23.95, 22.95, 2.16], ['Multicolour 500pcs', 10.69, 24.45, 22.95, 1.86],
+  ['Multicolour 50pcs', 2.49, 15.95, 14.95, 0.99], ['Multicolour 100pcs', 3.35, 16.95, 15.95, 0.91],
+  ['White 500pcs', 10.39, 23.95, 21.95, 0.59], ['Multicolour 500pcs', 10.69, 24.45, 22.95, 1.08],
 ];
-const t227: Array<[string, number, number, number, number]> = [['Grey', 4.99, 18.95, 17.95, 1.46]];
+const t227: Array<[string, number, number, number, number]> = [['Grey', 4.99, 18.95, 17.95, 0.85]];
 
 describe('Anzeige-Rate 5 % → 0 % (OFFEN 024)', () => {
   test('Faktoren 0,762 / 0,8215', () => {
@@ -57,7 +61,7 @@ describe('Anzeige-Rate 5 % → 0 % (OFFEN 024)', () => {
   });
   test('0 % → 5 %: Preis steigt (× 0,8215 / 0,762, aufgerundet)', () => {
     const [r] = planAdRateSwitch({ fromRate: 0, toRate: 5, isChinaOrigin: true, targetMarginEur: 1, rows: [row('Grey', 4.99, 17.95)] });
-    expect(r.newVk).toBe(19.95);   // 17,95 × 1,07808 = 19,35 → 19,95
+    expect(r.newVk).toBe(19.95);   // China, S 1,19: 17,95 × 0,787585 / 0,71678 = 19,72 → 19,95 (vorher S 1: × 1,07808 = 19,35)
     expect(r.send).toBe(true);
   });
 });

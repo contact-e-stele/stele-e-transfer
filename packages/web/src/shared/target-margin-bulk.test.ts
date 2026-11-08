@@ -20,8 +20,10 @@ const p95: ProfitProduct = {
   // K-014 Schritt 2: Varianten zählen nur mit eigenem VK (kein Rückfall auf sellPrice mehr) — VK der einen Variante = 15,95 wie bisher.
   variantSellPrices: JSON.stringify({ '12000056840616727': 15.95 }),
 }; // K-004: Variante "Ships From: Germany" = EU → K = 8,99 (kein Versand, keine Einfuhr) → Gewinn 2,8069 (vorher fälschlich 0,8169)
-const pGrenze = single(1, 13.45, 3.15, true);               // Gewinn 1,1819 (13,45×0,762−0,357−8,71) — K-006: über B−0,10 (1,10), unter C−0,10 (1,20)
-const pYellow = single(2, 13.95, 3.15, true);               // Gewinn 1,5629
+// Formel je Standort (08.11.2026): China mit S 1,19 (f = 0,71678) — erfundene Fixtures so verschoben, dass die Grenzfälle bleiben
+// (vorher pGrenze 13,45/3,15 = 1,1819, pYellow 13,95/3,15 = 1,5629; mit S 1,19 wären es 0,5737 / 0,9321).
+const pGrenze = single(1, 14.45, 3.29, true);               // Gewinn 1,1505 (14,45×0,71678−0,357−8,85) — K-006: über B−0,10 (1,10), unter C−0,10 (1,20)
+const pYellow = single(2, 14.95, 3.15, true);               // Gewinn 1,6489
 const pOhneVk = single(3, null, null, true);                // nicht berechenbar
 const p119: ProfitProduct = {
   id: 119, variants: '[{"name":"Menge","values":["100PCS","200PCS"]}]', targetMarginEur: 2, shipsFrom: 'China', adRate: 5, sellPrice: 14.95, buyPrice: 3.15,
@@ -38,12 +40,12 @@ describe('productProfitRows', () => {
     expect(r.rows[0].profit).toBeCloseTo(2.8069, 4);
   });
 
-  test('Varianten-Produkt: je Variante mit ihrem VK aus variant_sell_prices (119: 0,0389 € und 0,6849 €)', () => {
+  test('Varianten-Produkt: je Variante mit ihrem VK aus variant_sell_prices (119: −0,5015 € und 0,0089 €)', () => {
     const r = productProfitRows(p119);
     expect(r.isVariant).toBe(true);
     expect(r.rows.map(x => x.label)).toEqual(['100PCS', '200PCS']);
-    expect(r.rows[0].profit).toBeCloseTo(0.0389, 4);
-    expect(r.rows[1].profit).toBeCloseTo(0.6849, 4);
+    expect(r.rows[0].profit).toBeCloseTo(-0.5015, 4);
+    expect(r.rows[1].profit).toBeCloseTo(0.0089, 4);
   });
 
   // K-014 Schritt 2 (Kalkulator 28.10.2026): vorher griff hier der Produkt-VK (14,95) — genau der Falschalarm von stele-119.
@@ -58,23 +60,23 @@ describe('productProfitRows', () => {
 
 describe('previewTierChange — "N Listings → Stufe X. Davon rot nach Wechsel: M"', () => {
   // K-004: 95 rechnet jetzt mit EU-Herkunft der Variante (Gewinn 2,8069) und ist in keiner Stufe mehr rot.
-  test('Stufe A (1,00/1,00): rot ist nur 119 (Variante); 95 (2,8069) und Grenzfall-Produkt (1,1819) nicht', () => {
+  test('Stufe A (1,00/1,00): rot ist nur 119 (Variante); 95 (2,8069) und Grenzfall-Produkt (1,1505) nicht', () => {
     const p = previewTierChange(ALL, 1.0);
     expect(p).toEqual({ total: 5, red: 1, redSingle: 0, redVariant: 1, yellow: 0, unknown: 1, redIds: [119] });
   });
 
-  test('Stufe B (1,50/1,20, rot unter 1,10): Grenzfall (1,1819 ≥ 1,10) ist gelb statt rot', () => {
+  test('Stufe B (1,50/1,20, rot unter 1,10): Grenzfall (1,1505 ≥ 1,10) ist gelb statt rot', () => {
     const p = previewTierChange(ALL, 1.5);
     expect(p.red).toBe(1);
     expect(p.yellow).toBe(1);
   });
 
-  test('Stufe C (2,00/1,30, rot unter 1,20): Grenzfall-Produkt (1,1819 < 1,20) wird rot — der Stufenwechsel verändert die Zahl M', () => {
+  test('Stufe C (2,00/1,30, rot unter 1,20): Grenzfall-Produkt (1,1505 < 1,20) wird rot — der Stufenwechsel verändert die Zahl M', () => {
     const p = previewTierChange(ALL, 2.0);
     expect(p).toEqual({ total: 5, red: 2, redSingle: 1, redVariant: 1, yellow: 1, unknown: 1, redIds: [1, 119] });
   });
 
-  test('Stufe D (3,00/1,50): rot 2 (Grenzfall, 119); 13,95-Produkt (1,5629) und 95 (2,8069 < 3,00) gelb', () => {
+  test('Stufe D (3,00/1,50): rot 2 (Grenzfall, 119); 14,95-Produkt (1,6489) und 95 (2,8069 < 3,00) gelb', () => {
     const p = previewTierChange(ALL, 3.0);
     expect(p.red).toBe(2);
     expect(p.yellow).toBe(2);

@@ -69,19 +69,25 @@ describe('P-EINFUHR: Varianten-Anhebung stele-127 (raise-only)', () => {
   test('mit 5,95 werden alle 4 Varianten angehoben (alle im Verlust)', () => {
     const r = planVariantRaises(p127 as never).map(x => [x.label, x.oldSell, x.newSell]);
     expect(r).toEqual([
-      ['Multicolour 100pcs', 13.95, 16.95],
-      ['Multicolour 50pcs', 12.95, 15.95],
-      ['White 500pcs', 20.95, 23.95],
-      ['Multicolour 500pcs', 20.95, 24.45],
+      // Formel je Standort (08.11.2026, China S 1,19): neue VK frisch mit bun (vorher 16,95 / 15,95 / 23,95 / 24,45)
+      ['Multicolour 100pcs', 13.95, 17.95],
+      ['Multicolour 50pcs', 12.95, 16.95],
+      ['White 500pcs', 20.95, 25.45],
+      ['Multicolour 500pcs', 20.95, 25.95],
     ]);
   });
   test('Gewinn nach Anhebung je Variante ≥ 1,00 (Boden Stufe A)', () => {
     for (const x of planVariantRaises(p127 as never)) expect(x.newProfit).toBeGreaterThanOrEqual(1.00);
-    expect(planVariantRaises(p127 as never)[0].oldProfit).toBeCloseTo(-1.1571, 4); // Befund Nachrichten: −1,17 (gerundet anders)
+    expect(planVariantRaises(p127 as never)[0].oldProfit).toBeCloseTo(-1.7879, 4); // Formel je Standort (S 1,19); vorher −1,1571 (Befund Nachrichten: −1,17)
   });
+  // Formel je Standort (08.11.2026): mit S 1,19 lägen beim Live-VK vom 24.10. auch mit 3,57 alle 4 Varianten unter dem Boden — der Unterschied
+  // 3,57 ↔ 5,95 wäre nicht mehr zu sehen. EINGABE GEÄNDERT: VK 13,95 / 12,95 / 20,95 / 20,95 → 14,95 / 13,95 / 22,45 / 20,95
+  // (bun, Einfuhr 3,57: +1,3089 / +1,4921 / +1,3747 / −0,1005; mit 5,95 alle negativ → alle 4 angehoben).
   test('mit dem alten Wert 3,57 hätte die App nur eine Variante angehoben (darum griff nichts)', () => {
+    const vk = { ...p127, variantSellPrices: JSON.stringify({ '12000058063615237': 14.95, '12000058063615236': 13.95, '12000058063615239': 22.45, '12000058063615238': 20.95 }) };
+    expect(planVariantRaises(vk as never)).toHaveLength(4); // Gegenprobe mit 5,95: dieselben VK → alle 4
     setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR);
-    expect(planVariantRaises(p127 as never).map(x => x.label)).toEqual(['Multicolour 500pcs']);
+    expect(planVariantRaises(vk as never).map(x => x.label)).toEqual(['Multicolour 500pcs']);
   });
 });
 

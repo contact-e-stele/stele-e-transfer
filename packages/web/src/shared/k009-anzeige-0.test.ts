@@ -34,21 +34,23 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
   test('mit adRate 5 (bisheriger App-Stand) → Gebühr 5,34, Gewinn 0,47 (der gemeldete Fehlwert)', () => {
     expect(order(5)).toMatchObject({ nettoGebuehren: 5.34, nettoErgebnis: 0.47 });
   });
+  // Formel je Standort (08.11.2026): EINGABEN GEÄNDERT wie in k008-preis-halten.test.ts (GRAY-Ware 11,47 → 11,59, VK GRAY 19,95 → 20,95,
+  // Blue 21,95 → 22,45, black 20,95 → 21,45) — sonst wären mit S 1,19 auch bei adRate 0 alle drei unter dem Boden. bun: adRate 0 GRAY 0,9829.
   const p220 = (adRate: number) => ({
     id: 220, variants: JSON.stringify([{ name: 'Color Name', values: ['GRAY', 'Blue', 'black'] }]), targetMarginEur: 1, shipsFrom: 'China', adRate,
-    sellPrice: 19.95, buyPrice: 11.47,
+    sellPrice: 20.95, buyPrice: 11.59,
     variantPrices: JSON.stringify([
-      { skuId: 'g', attrs: { 'Color Name': 'GRAY' }, price: 11.47 },
+      { skuId: 'g', attrs: { 'Color Name': 'GRAY' }, price: 11.59 },
       { skuId: 'b', attrs: { 'Color Name': 'Blue' }, price: 12.49 },
       { skuId: 'k', attrs: { 'Color Name': 'black' }, price: 11.59 },
     ]),
-    variantSellPrices: JSON.stringify({ g: 19.95, b: 21.95, k: 20.95 }), ebayStatus: 'listed', ebayListingId: '198712713157',
+    variantSellPrices: JSON.stringify({ g: 20.95, b: 22.45, k: 21.45 }), ebayStatus: 'listed', ebayListingId: '198712713157',
   });
-  test('Preisprüfung adRate 0: nur GRAY (0,9919 < 1,00) würde angehoben — BLACK/BLUE nicht (K-008 regelt GRAY)', () => {
-    expect(planVariantRaises(p220(0)).map(r => [r.skuId, r.newSell])).toEqual([['g', 20.45]]);
+  test('Preisprüfung adRate 0: nur GRAY (0,9829 < 1,00) würde angehoben — BLACK/BLUE nicht (K-008 regelt GRAY)', () => {
+    expect(planVariantRaises(p220(0)).map(r => [r.skuId, r.newSell])).toEqual([['g', 21.45]]);
   });
   test('Preisprüfung adRate 5 (Fehlstand): alle drei würden angehoben', () => {
-    expect(planVariantRaises(p220(5)).map(r => [r.skuId, r.newSell])).toEqual([['g', 21.95], ['b', 22.95], ['k', 21.95]]);
+    expect(planVariantRaises(p220(5)).map(r => [r.skuId, r.newSell])).toEqual([['g', 23.45], ['b', 24.45], ['k', 23.45]]);
   });
 });
 

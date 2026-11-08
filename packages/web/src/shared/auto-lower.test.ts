@@ -12,17 +12,21 @@ afterAll(() => setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR));
 const PINK = '12000045241000885';     // 228 2000ml pink
 const PCS100 = '12000050569622130';   // 119 100pcs
 const prod = (fx: unknown): AutoLowerProduct => { const p = fx as AutoLowerProduct & { variants: string }; return { ...p, groups: JSON.parse(p.variants) }; };
-const p228 = prod(fx228), p119 = prod(fx119);
+// Formel je Standort (08.11.2026): mit S 1,19 (China) ist beim Backup-VK keine der beiden Varianten mehr Senk-Kandidat (pink 20,45 → +0,57,
+// 100pcs 16,45 = Formelpreis). EINGABE GEÄNDERT (Backup-JSON unverändert): pink 20,45 → 21,95, 100pcs 16,45 → 16,95 — frisch mit bun gerechnet.
+const withVk = (p: AutoLowerProduct, sku: string, vk: number): AutoLowerProduct =>
+  ({ ...p, variantSellPrices: JSON.stringify({ ...JSON.parse(p.variantSellPrices as string), [sku]: vk }) });
+const p228 = withVk(prod(fx228), PINK, 21.95), p119 = withVk(prod(fx119), PCS100, 16.95);
 const fresh = (...ps: AutoLowerProduct[]) => new Map(ps.map(p => [p.id, p.variantPrices as string]));
 const base = { changedThisRun: new Set<string>(), held: new Map<number, Set<string>>(), promotions: new Map<number, { 2: number; 3: number }>() };
 
 describe('planAutoLower – Kandidaten (Schwelle Ziel + 0,20)', () => {
   test('Schwelle ist 0,20 (eigene Konstante, Senk-Bericht bleibt 1,00)', () => expect(AUTO_LOWER_SCHWELLE_EUR).toBe(0.2));
-  test('228 pink 20,45 → 19,95 (+1,50 → +1,11); 119 100pcs 16,45 → 15,45 (+1,93 → +1,11) — niedrigste Endung mit Gewinn ≥ Ziel', () => {
+  test('228 pink 21,95 → 21,45 (+1,65 → +1,29); 119 100pcs 16,95 → 16,45 (+1,76 → +1,37) — niedrigste Endung mit Gewinn ≥ Ziel', () => {
     const r = planAutoLower({ ...base, products: [p228, p119], freshEk: fresh(p228, p119) });
     expect(r.senken.map(s => [s.productId, s.rows.map(x => [x.skuId, x.alt, x.neu, x.gewinnAlt, x.gewinnNeu])])).toEqual([
-      [119, [[PCS100, 16.45, 15.45, 1.93, 1.11]]],
-      [228, [[PINK, 20.45, 19.95, 1.5, 1.11]]],
+      [119, [[PCS100, 16.95, 16.45, 1.76, 1.37]]],
+      [228, [[PINK, 21.95, 21.45, 1.65, 1.29]]],
     ]);
     expect(r.nichtGesenkt).toEqual([]);
   });
@@ -50,17 +54,18 @@ describe('c3 kein Hin und Her', () => {
 });
 
 describe('c4 Multi-Rabatt je Stück ≥ 1,00 (LIVE-Prozent)', () => {
-  test('35 %/36 %: alter VK 20,45 ok, neuer 19,95 → 2 Stück nur 0,94 € je Stück → nicht gesenkt', () => {
+  // Formel je Standort: 35 %/36 % → 36 %/37 % (bei 35 % bliebe auch 21,45 mit 1,05 je Stück über 1,00).
+  test('36 %/37 %: alter VK 21,95 ok (1,13 je Stück), neuer 21,45 → 2 Stück nur 0,90 € je Stück → nicht gesenkt', () => {
     const attrs = { Color: '2000ml pink' };
-    expect(multiRabattPerPieceProblem(p228, 5.79, 20.45, attrs, { 2: 35, 3: 36 })).toBeNull();
-    expect(multiRabattPerPieceProblem(p228, 5.79, 19.95, attrs, { 2: 35, 3: 36 })).toContain('nur 0.94 € je Stück');
-    const r = planAutoLower({ ...base, products: [p228], freshEk: fresh(p228), promotions: new Map([[228, { 2: 35, 3: 36 }]]) });
+    expect(multiRabattPerPieceProblem(p228, 5.79, 21.95, attrs, { 2: 36, 3: 37 })).toBeNull();
+    expect(multiRabattPerPieceProblem(p228, 5.79, 21.45, attrs, { 2: 36, 3: 37 })).toContain('nur 0.90 € je Stück');
+    const r = planAutoLower({ ...base, products: [p228], freshEk: fresh(p228), promotions: new Map([[228, { 2: 36, 3: 37 }]]) });
     expect(r.senken).toEqual([]);
     expect(r.nichtGesenkt[0].grund).toContain('c4');
   });
-  test('30 %/31 %: 19,95 bleibt ≥ 1,00 je Stück → gesenkt', () => {
+  test('30 %/31 %: 21,45 bleibt ≥ 1,00 je Stück (1,82) → gesenkt', () => {
     const r = planAutoLower({ ...base, products: [p228], freshEk: fresh(p228), promotions: new Map([[228, { 2: 30, 3: 31 }]]) });
-    expect(r.senken[0].prices).toEqual({ [PINK]: 19.95 });
+    expect(r.senken[0].prices).toEqual({ [PINK]: 21.45 });
   });
 });
 

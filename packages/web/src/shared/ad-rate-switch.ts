@@ -1,11 +1,12 @@
 // OFFEN 024 NACHTRAG (Inhaber 03.11.2026 08:26): Listings-Tab "Anzeige-Rate" 5 % ↔ 0 % nimmt das Angebot bei eBay aus der Kampagne
 // (bzw. nimmt es auf) UND rechnet die Variantenpreise um: neuer VK = alter VK × f(alt) / f(neu), auf x,95 AUFgerundet.
 // f(Satz) = 1 − (eBay-Gebühr + Anzeige) × MwSt = 0,762 bei 5 %, 0,8215 bei 0 %. Reine Regeln (Grundgesetz 2), kein eBay-Aufruf.
-import { DEFAULT_PRICING_CONFIG, profitAtSellPrice, profitFloorFor } from './pricing';
+import { DEFAULT_PRICING_CONFIG, profitAtSellPrice, profitFloorFor, ebayLocationFactorFor } from './pricing';
 
 /** Anteil des VK, der nach eBay-Gebühr + Anzeige (inkl. MwSt) bleibt: 5 % → 0,762 · 0 % → 0,8215. */
-export function netFactor(adRatePercent: number): number {
-  return 1 - ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
+// Formel je Standort (08.11.): bei China-Herkunft/-Standort S = 1,19 auf den Prozent-Anteil (CN: 0,7168 / 0,7876). Weggelassen = 1 (DE/EU).
+export function netFactor(adRatePercent: number, locationFactor = 1): number {
+  return 1 - ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor * locationFactor;
 }
 
 /** Kleinster Preis mit Endung ,95, der ≥ x ist (14,795 → 14,95 · 15,95 → 15,95 · 15,96 → 16,95). */
@@ -44,7 +45,8 @@ const profit = (sell: number, buy: number, rate: number, i: AdSwitchInput) => pr
  */
 export function planAdRateSwitch(i: AdSwitchInput): AdSwitchRow[] {
   const floorEur = profitFloorFor(i.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur);
-  const ratio = netFactor(i.fromRate) / netFactor(i.toRate);
+  const sLoc = ebayLocationFactorFor(i.isChinaOrigin);
+  const ratio = netFactor(i.fromRate, sLoc) / netFactor(i.toRate, sLoc);
   return i.rows.map(r => {
     const newVk = roundUpTo95(r.sellPrice * ratio);
     const profitOld = profit(r.sellPrice, r.buyPrice, i.fromRate, i);
