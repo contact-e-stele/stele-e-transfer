@@ -94,10 +94,11 @@ describe('Formel: checkoutFactor in computeMinSellPrice/profitAtSellPrice = Ware
     safetyBufferEur: 0, rounding: 'floor95',
   });
   // [App-Ware, China, Anzeige %, Ziel, Faktor, Ware×Faktor, VK ohne Faktor, VK mit Faktor, Gewinn bei 19,95 ohne/mit] — alles bun.
+  // Formel je Standort (08.11.2026): China-Zeilen mit S 1,19 neu gerechnet; EU-Zeile unverändert.
   const cases: Array<[number, boolean, number, number, number, number, number, number, number, number]> = [
-    [12.19, true, 5, 1.00, 0.9508, 11.59, 22.95, 21.95, -0.9151, -0.3151],
+    [12.19, true, 5, 1.00, 0.9508, 11.59, 23.95, 23.45, -1.817239, -1.217239],
     [13.79, false, 5, 2.00, 0.913, 12.59, 20.95, 19.45, 1.0549, 2.2549],
-    [9.50, true, 0, 1.50, 0.8, 7.60, 20.45, 17.95, 0.971925, 2.871925],
+    [9.50, true, 0, 1.50, 0.8, 7.60, 21.45, 18.95, 0.295321, 2.195321],
   ];
   for (const [ware, china, ad, target, f, wareF, vkOhne, vkMit, gOhne, gMit] of cases) {
     test(`Ware ${ware} × ${f}: VK ${vkOhne} → ${vkMit}`, () => {
@@ -116,12 +117,12 @@ describe('Formel: checkoutFactor in computeMinSellPrice/profitAtSellPrice = Ware
   test('ohne Faktor (null/weggelassen) identisch', () => {
     expect(computeMinSellPrice({ ...base(12.19, true, 5, 1), checkoutFactor: null })).toEqual(computeMinSellPrice(base(12.19, true, 5, 1)));
   });
-  test('evaluatePriceAlarm reicht den Faktor durch (19,95 €, Ziel 1,00: −0,92 → Alarm; mit 0,9508: bun −0,3151 → Alarm; mit 0,6: Ware 7,31 → Gewinn bun 1,9749 → kein Alarm)', () => {
+  test('evaluatePriceAlarm reicht den Faktor durch (19,95 €, Ziel 1,00: −1,82 → Alarm; mit 0,9508: bun −1,217239 → Alarm; mit 0,6: Ware 7,31 → Gewinn bun 1,072761 → kein Alarm)', () => {
     const a = { currentSellPrice: 19.95, variants: [{ buyPrice: 12.19 }], isChinaOrigin: true, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 1.00 };
     expect(evaluatePriceAlarm(a).isAlarm).toBe(true);
-    expect(evaluatePriceAlarm({ ...a, checkoutFactor: 0.9508 }).worstProfit).toBeCloseTo(-0.3151, 6);
+    expect(evaluatePriceAlarm({ ...a, checkoutFactor: 0.9508 }).worstProfit).toBeCloseTo(-1.217239, 6);
     const r = evaluatePriceAlarm({ ...a, checkoutFactor: 0.6 });
-    expect(r.worstProfit).toBeCloseTo(1.9749, 6);
+    expect(r.worstProfit).toBeCloseTo(1.072761, 6);
     expect(r.isAlarm).toBe(false);
   });
 });
@@ -230,22 +231,24 @@ describe('K-005 Grenze 0,85 + Warnhinweis ohne Faktor', () => {
   });
   const base = { variants: [{ buyPrice: 12.19 }], isChinaOrigin: true, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5, targetMarginEur: 1 };
-  test('stele-220 VK 20,95, Faktor 0,9409: mit Faktor +0,5669, ohne −0,1531 → Warnhinweis', () => {
-    const a = evaluatePriceAlarm({ ...base, currentSellPrice: 20.95, checkoutFactor: 0.9409 });
-    expect(a.worstProfit).toBeCloseTo(0.5669, 4);
-    expect(a.worstProfitWithoutFactor).toBeCloseTo(-0.1531, 4);
+  // Formel je Standort (08.11.2026): EINGABE GEÄNDERT VK 20,95 → 21,95 und 21,45 → 22,95 — bei 20,95 wäre auch der Gewinn MIT Faktor negativ
+  // (−0,3805), das Szenario „mit Faktor positiv, ohne negativ“ läge nicht mehr vor.
+  test('stele-220 VK 21,95, Faktor 0,9409: mit Faktor +0,3363, ohne −0,3837 → Warnhinweis', () => {
+    const a = evaluatePriceAlarm({ ...base, currentSellPrice: 21.95, checkoutFactor: 0.9409 });
+    expect(a.worstProfit).toBeCloseTo(0.3363, 4);
+    expect(a.worstProfitWithoutFactor).toBeCloseTo(-0.3837, 4);
     expect(a.lossWithoutFactor).toBe(true);
   });
-  test('VK 21,45: ohne Faktor +0,2279 → kein Warnhinweis; ohne Faktor gerechnet → nie Warnhinweis', () => {
-    expect(evaluatePriceAlarm({ ...base, currentSellPrice: 21.45, checkoutFactor: 0.9409 }).lossWithoutFactor).toBe(false);
-    const n = evaluatePriceAlarm({ ...base, currentSellPrice: 20.95, checkoutFactor: null });
+  test('VK 22,95: ohne Faktor +0,3331 → kein Warnhinweis; ohne Faktor gerechnet → nie Warnhinweis', () => {
+    expect(evaluatePriceAlarm({ ...base, currentSellPrice: 22.95, checkoutFactor: 0.9409 }).lossWithoutFactor).toBe(false);
+    const n = evaluatePriceAlarm({ ...base, currentSellPrice: 21.95, checkoutFactor: null });
     expect(n.lossWithoutFactor).toBe(false);
-    expect(n.worstProfitWithoutFactor).toBeCloseTo(-0.1531, 4);
+    expect(n.worstProfitWithoutFactor).toBeCloseTo(-0.3837, 4);
   });
   test('Listings/Produkte-Anzeige: profitWithoutFactor je Zeile', () => {
-    const { rows } = productProfitRows({ id: 220, variants: null, adRate: 5, shipsFrom: 'China', sellPrice: 20.95, buyPrice: 12.19,
+    const { rows } = productProfitRows({ id: 220, variants: null, adRate: 5, shipsFrom: 'China', sellPrice: 21.95, buyPrice: 12.19,
       variantPrices: null, aliCheckoutFactor: 0.9409, aliCheckoutFactorAt: today });
-    expect(rows[0].profit).toBeCloseTo(0.5669, 4);
-    expect(rows[0].profitWithoutFactor).toBeCloseTo(-0.1531, 4);
+    expect(rows[0].profit).toBeCloseTo(0.3363, 4);
+    expect(rows[0].profitWithoutFactor).toBeCloseTo(-0.3837, 4);
   });
 });

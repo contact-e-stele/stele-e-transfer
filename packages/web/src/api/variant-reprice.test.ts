@@ -8,6 +8,10 @@ import { runVariantReprice, type VariantRepriceDeps, type VariantRepriceProductR
 import { p225, BLUE, BLACK, GRAY } from '../shared/variant-reprice.fixture';
 import { parseVariantSellPrices } from '../shared/pricing';
 
+// Formel je Standort (08.11.2026): mit S 1,19 bringt beim echten 225-VK (26,95 / 24,95) keine erlaubte Senkung mehr ≥ 1,00 Gewinn.
+// Für die Sende-/Speicher-Abläufe deshalb alter VK + 1,50 (wie shared/variant-reprice.test.ts): Blue 28,45 · black/GRAY 26,45 → neu Blue 26,95
+// (+1,33) · black 24,95 (+1,35), frisch mit bun gerechnet (ohne Faktor, Einfuhr 5,95).
+const VSP_HOCH = JSON.stringify({ [BLUE]: 28.45, [BLACK]: 26.45, [GRAY]: 26.45 });
 const row = (over: Partial<VariantRepriceProductRow> = {}): VariantRepriceProductRow =>
   ({ ...p225(), generatedTitle: 'Reisekissen', variants: p225().variants as string, ebayStatus: 'listed', ebayListingId: '198725779927', ...over });
 
@@ -17,7 +21,7 @@ function deps(over: Partial<VariantRepriceDeps> = {}) {
     heldSkuIds: async () => new Set(),
     send: async (_id, _g, _e, changes, direction) => { calls.send.push(changes); calls.direction.push(direction); return { resolved: true, results: changes.map(c => ({ skuId: c.skuId, sku: 's-' + c.skuId, ok: true })) }; },
     store: async (_id, json) => { calls.store.push(json); },
-    readBack: async () => { calls.readBack++; return { ok: true, prices: { [BLUE]: 25.45, [BLACK]: 23.95, [GRAY]: 24.95 } }; },
+    readBack: async () => { calls.readBack++; return { ok: true, prices: { [BLUE]: 26.95, [BLACK]: 24.95, [GRAY]: 26.45 } }; },
     ...over,
   };
   return { d, calls };
@@ -32,41 +36,41 @@ describe('runVariantReprice', () => {
     expect(calls.send).toHaveLength(0);
     expect(calls.store).toHaveLength(0);
   });
-  test('nur die geprüfte Auswahl wird gesendet (abgelehnte Zeile nicht), App speichert nur diese, GRAY bleibt 24,95; Rücklesen eBay = App', async () => {
+  test('nur die geprüfte Auswahl wird gesendet (abgelehnte Zeile nicht), App speichert nur diese, GRAY bleibt 26,45; Rücklesen eBay = App', async () => {
     const { d, calls } = deps();
-    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45, [BLACK]: 23.95, [GRAY]: 25.95 } }, d);
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLUE]: 26.95, [BLACK]: 24.95, [GRAY]: 26.95 } }, d);
     expect(r.status).toBe('sent');
-    expect(calls.send).toEqual([[{ skuId: BLUE, newSell: 25.45 }, { skuId: BLACK, newSell: 23.95 }]]);
-    expect(parseVariantSellPrices(calls.store[0])).toEqual({ [BLUE]: 25.45, [BLACK]: 23.95, [GRAY]: 24.95 });
+    expect(calls.send).toEqual([[{ skuId: BLUE, newSell: 26.95 }, { skuId: BLACK, newSell: 24.95 }]]);
+    expect(parseVariantSellPrices(calls.store[0])).toEqual({ [BLUE]: 26.95, [BLACK]: 24.95, [GRAY]: 26.45 });
     expect(r.rows.find(x => x.skuId === GRAY)?.status).toBe('abgelehnt');
     expect(r.rows.filter(x => x.ergebnis === 'gesetzt').every(x => x.ebayGleichApp === true)).toBe(true);
     expect(calls.readBack).toBe(1);
   });
   test('Teil-Fehler bei eBay → NICHTS gespeichert, Meldung "x von y"', async () => {
     const { d, calls } = deps({ send: async (_i, _g, _e, ch) => ({ resolved: true, results: ch.map((c, i) => ({ skuId: c.skuId, ok: i === 0, error: i === 0 ? undefined : 'PUT 500' })) }) });
-    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45, [BLACK]: 23.95 } }, d);
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLUE]: 26.95, [BLACK]: 24.95 } }, d);
     expect(r.status).toBe('send_failed');
     expect(r.error).toContain('1 von 2');
     expect(calls.store).toHaveLength(0);
   });
   test('übersprungen (eBay-Preis schon niedriger) zählt nicht als Erfolg → nichts gespeichert', async () => {
     const { d, calls } = deps({ send: async (_i, _g, _e, ch) => ({ resolved: true, results: ch.map(c => ({ skuId: c.skuId, ok: true, skipped: 'Live-Preis ist schon ≤ neuer Preis (nie anheben)' })) }) });
-    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45 } }, d);
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLUE]: 26.95 } }, d);
     expect(r.status).toBe('send_failed');
     expect(calls.store).toHaveLength(0);
   });
   test('Zuordnung nicht eindeutig → nichts gespeichert', async () => {
     const { d, calls } = deps({ send: async () => ({ resolved: false, reason: 'mehrdeutig', results: [] }) });
-    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45 } }, d);
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLUE]: 26.95 } }, d);
     expect(r.status).toBe('send_failed');
     expect(calls.store).toHaveLength(0);
   });
   test('live ohne sendToEbay → abgelehnt, nichts gesendet; nicht live → nur App speichern, nichts gesendet', async () => {
     const a = deps();
-    expect((await runVariantReprice(row(), { ...APPLY, sendToEbay: false, prices: { [BLUE]: 25.45 } }, a.d)).status).toBe('rejected');
+    expect((await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, sendToEbay: false, prices: { [BLUE]: 26.95 } }, a.d)).status).toBe('rejected');
     expect(a.calls.send).toHaveLength(0);
     const b = deps();
-    const r = await runVariantReprice(row({ ebayStatus: 'none', ebayListingId: null }), { ...APPLY, sendToEbay: false, prices: { [BLUE]: 25.45 } }, b.d);
+    const r = await runVariantReprice(row({ ebayStatus: 'none', ebayListingId: null, variantSellPrices: VSP_HOCH }), { ...APPLY, sendToEbay: false, prices: { [BLUE]: 26.95 } }, b.d);
     expect(r.status).toBe('stored');
     expect(b.calls.send).toHaveLength(0);
     expect(b.calls.store).toHaveLength(1);
@@ -79,9 +83,9 @@ describe('runVariantReprice', () => {
     expect(calls.send).toHaveLength(0);
   });
   test('Rücklesen weicht ab → ebayGleichApp false (gemeldet)', async () => {
-    const { d } = deps({ readBack: async () => ({ ok: true, prices: { [BLUE]: 26.95 } }) });
-    const r = await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45 } }, d);
-    expect(r.rows[0]).toMatchObject({ ergebnis: 'gesetzt', ebay: 26.95, ebayGleichApp: false });
+    const { d } = deps({ readBack: async () => ({ ok: true, prices: { [BLUE]: 28.45 } }) });
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLUE]: 26.95 } }, d);
+    expect(r.rows[0]).toMatchObject({ ergebnis: 'gesetzt', ebay: 28.45, ebayGleichApp: false });
   });
   test('Produkt fehlt → not_found', async () => {
     expect((await runVariantReprice(undefined, { ...APPLY, prices: { x: 1 } }, deps().d)).status).toBe('not_found');
@@ -100,7 +104,7 @@ describe('runVariantReprice direction up (OFFEN 034)', () => {
   });
   test('ohne direction bleibt es Senken (Standard)', async () => {
     const { d, calls } = deps();
-    await runVariantReprice(row(), { ...APPLY, prices: { [BLUE]: 25.45 } }, d);
+    await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLUE]: 26.95 } }, d);
     expect(calls.direction).toEqual(['down']);
   });
 });

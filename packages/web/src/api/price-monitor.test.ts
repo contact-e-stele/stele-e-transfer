@@ -146,10 +146,10 @@ describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
     expect(rowsDefault[0].correctSellPrice).toBe(7.95);
     expect(rowsMargin2[0].correctSellPrice).toBe(7.95);
     expect(rowsMargin3[0].correctSellPrice).toBe(8.95); // Stufe D
-    // Herkunft leer → wie China (K = 3,80 + 1,99 + 3,57 = 9,36): Ziel 2,00 Roh 15,3766 → 14,95 (Gewinn 1,6749);
-    // Ziel 3,00 Roh 16,6890 → 16,45 (K-006, vorher 15,95; Gewinn 16,45 × 0,762 − 0,357 − 9,36 = 2,8179).
-    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5)[0].correctSellPrice).toBe(14.95);
-    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00)[0].correctSellPrice).toBe(16.45);
+    // Herkunft leer → wie China (K = 3,80 + 1,99 + 3,57 = 9,36), Formel je Standort (08.11.2026) S 1,19 → f = 0,71678:
+    // Ziel 2,00 Roh 16,3467 → 15,95 (Gewinn 1,7156; vorher S 1: 14,95); Ziel 3,00 Roh 17,7418 → 17,45 (Gewinn 2,7908; vorher 16,45).
+    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5)[0].correctSellPrice).toBe(15.95);
+    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00)[0].correctSellPrice).toBe(17.45);
     expect(rowsMargin3[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
   });
 

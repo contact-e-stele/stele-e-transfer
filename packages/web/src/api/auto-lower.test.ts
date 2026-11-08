@@ -9,7 +9,10 @@ beforeAll(() => setAliEinfuhrEur(ALI_EINFUHR_EUR));
 afterAll(() => setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR));
 
 const PINK = '12000045241000885';
-const p = { ...(fx228 as Record<string, unknown>), groups: JSON.parse((fx228 as { variants: string }).variants), generatedTitle: 'Trinkflasche', ebayStatus: 'listed' } as never as { id: number; variantPrices: string };
+// Formel je Standort (08.11.2026): mit S 1,19 ist pink beim Backup-VK 20,45 (+0,57) kein Senk-Kandidat mehr → EINGABE GEÄNDERT: pink 21,95
+// (Gewinn +1,65 > Ziel + 0,20) → Plan 21,45 (+1,29), wie shared/auto-lower.test.ts. Backup-JSON unverändert.
+const vsp228 = JSON.stringify({ ...JSON.parse((fx228 as { variantSellPrices: string }).variantSellPrices), [PINK]: 21.95 });
+const p = { ...(fx228 as Record<string, unknown>), variantSellPrices: vsp228, groups: JSON.parse((fx228 as { variants: string }).variants), generatedTitle: 'Trinkflasche', ebayStatus: 'listed' } as never as { id: number; variantPrices: string };
 const input = () => ({ products: [p] as never, freshEk: new Map([[228, p.variantPrices]]), changedThisRun: new Set<string>(), held: new Map(), promotions: new Map() });
 
 function mocks() {
@@ -18,7 +21,7 @@ function mocks() {
     heldSkuIds: async () => new Set(),
     send: async (_id, _g, _e, changes, direction) => { calls.send.push({ changes, direction }); return { resolved: true, results: changes.map(c => ({ skuId: c.skuId, sku: 's', ok: true })) }; },
     store: async (_id, json) => { calls.store.push(json); },
-    readBack: async () => ({ ok: true, prices: { [PINK]: 19.95 } }),
+    readBack: async () => ({ ok: true, prices: { [PINK]: 21.45 } }),
   };
   return { d, calls, savePreview: async (j: string) => { calls.preview.push(j); } };
 }
@@ -29,18 +32,18 @@ describe('runAutoLower', () => {
     expect(autoLowerEnabled({ AUTO_LOWER_ENABLED: '1' })).toBe(false);
     expect(autoLowerEnabled({ AUTO_LOWER_ENABLED: 'true' })).toBe(true);
   });
-  test('AUS: nichts gesendet, nichts gespeichert, Vorschau mit 228 pink 20,45 → 19,95 abgelegt', async () => {
+  test('AUS: nichts gesendet, nichts gespeichert, Vorschau mit 228 pink 21,95 → 21,45 abgelegt', async () => {
     const m = mocks();
     const r = await runAutoLower(input(), { enabled: false, depsFor: () => m.d, savePreview: m.savePreview });
     expect(m.calls.send).toEqual([]);
     expect(m.calls.store).toEqual([]);
-    expect(r.plan.senken[0].prices).toEqual({ [PINK]: 19.95 });
+    expect(r.plan.senken[0].prices).toEqual({ [PINK]: 21.45 });
     expect(JSON.parse(m.calls.preview[0]).enabled).toBe(false);
   });
   test('AN: genau der Plan wird gesendet (direction down), gespeichert, Ergebnis "sent"', async () => {
     const m = mocks();
     const r = await runAutoLower(input(), { enabled: true, depsFor: () => m.d, savePreview: m.savePreview });
-    expect(m.calls.send).toEqual([{ changes: [{ skuId: PINK, newSell: 19.95 }], direction: 'down' }]);
+    expect(m.calls.send).toEqual([{ changes: [{ skuId: PINK, newSell: 21.45 }], direction: 'down' }]);
     expect(m.calls.store).toHaveLength(1);
     expect(r.gesendet).toEqual([{ productId: 228, status: 'sent' }]);
   });

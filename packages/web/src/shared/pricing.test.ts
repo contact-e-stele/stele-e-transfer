@@ -232,7 +232,7 @@ describe('variant_sell_prices — Teil 3: eigene Spalte für den VK je Variante 
       ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
     });
     const wieder = parseVariantSellPrices(serializeVariantSellPrices(plan.rows));
-    expect(wieder).toEqual({ v1: 19.95, v2: 12.95 });
+    expect(wieder).toEqual({ v1: 19.95, v2: 13.95 }); // Formel je Standort (China S 1,19): v2 12,95 → 13,95 (bun, wie pricing-v2.test.ts)
     for (const row of plan.rows) {
       expect(resolveVariantSellPrice(row.skuId, wieder, null).sellPrice).toBe(row.sellPrice);
     }

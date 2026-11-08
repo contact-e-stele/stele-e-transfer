@@ -8,6 +8,9 @@ import { setAliEinfuhrEur, ALI_EINFUHR_ALT_EUR } from './constants';
 beforeAll(() => setAliEinfuhrEur(5.95));
 afterAll(() => setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR));
 
+// Formel je Standort (08.11.2026): China rechnet mit S 1,19 (f 0 % = 0,787585, 5 % = 0,71678). Beim Live-VK vom 28.10. lägen 119/189/107
+// unter dem Boden (Alarm/rot) — die Tests prüfen aber „kein Falschalarm bei richtigen Varianten“. EINGABEN GEÄNDERT (frisch mit bun):
+// 119 200pcs 22,95 → 23,95 und 100pcs 16,45 → 16,95 · 189 L/Green 18,95 → 19,95 · 107 18,45 → 19,45 (beide Varianten).
 // stele-119: eBay 100pcs 16,45 / 200pcs 22,95; AliExpress …127 500PCs, …129 1000PCs (beide nicht bei eBay). Anzeige 0 %, Stufe B.
 // Kassen-Faktor 0,9666 (Bestellung 01-15348-46871); Datum relativ zu heute, damit der Faktor (≤ 14 Tage) im Test gilt.
 const p119 = (): ProfitProduct => ({
@@ -18,7 +21,7 @@ const p119 = (): ProfitProduct => ({
     { skuId: '12000050569622129', attrs: { Color: '1000PCs', 'Ships From': 'China Mainland' }, price: 24.59 },
     { skuId: '12000050569622127', attrs: { Color: '500PCs', 'Ships From': 'China Mainland' }, price: 11.69 },
   ]),
-  variantSellPrices: JSON.stringify({ '12000050569622128': 22.95, '12000050569622129': 38.95, '12000050569622130': 16.45 }),
+  variantSellPrices: JSON.stringify({ '12000050569622128': 23.95, '12000050569622129': 38.95, '12000050569622130': 16.95 }),
   aliCheckoutFactor: 0.9666, aliCheckoutFactorAt: new Date().toISOString(),
 });
 
@@ -32,7 +35,7 @@ const p189: ProfitProduct = {
     { skuId: '12000060779140981', attrs: { Size: 'L', Color: 'Green' }, price: 4.29 },
     { skuId: '12000060802123543', attrs: { Size: 'L', Color: 'Green' }, price: 4.39 },
   ]),
-  variantSellPrices: JSON.stringify({ '12000060802123543': 18.95 }),
+  variantSellPrices: JSON.stringify({ '12000060802123543': 19.95 }),
 };
 
 // stele-107: zwei eBay-Varianten, je zwei AliExpress-Einträge gleichen Namens; nur …819/…818 haben einen VK (18,45).
@@ -44,34 +47,34 @@ const p107: ProfitProduct = {
     { skuId: '12000048597697819', attrs: { Color: 'white Triangle', 'Ships From': 'China Mainland' }, price: 2.19 },
     { skuId: '12000048597697818', attrs: { Color: 'white Ellipse', 'Ships From': 'China Mainland' }, price: 4.19 },
   ]),
-  variantSellPrices: JSON.stringify({ '12000048597697819': 18.45, '12000048597697818': 18.45 }),
+  variantSellPrices: JSON.stringify({ '12000048597697819': 19.45, '12000048597697818': 19.45 }),
 };
 
 describe('K-014: Erwartet nur über gelistete Varianten mit eigenem VK', () => {
-  test('stele-119: Erwartet = 200pcs 1,58 € (ohne Faktor 1,27), 1000PCs/500PCs grau "nicht bei eBay", kein Alarm', () => {
+  test('stele-119: Erwartet = 200pcs 1,59 € (ohne Faktor 1,28), 1000PCs/500PCs grau "nicht bei eBay", kein Alarm', () => {
     const r = productProfitRows(p119());
     expect(r.rows.map(x => x.label)).toEqual(['200pcs / China Mainland', '100pcs / China Mainland']);
     const worst = Math.min(...r.rows.map(x => x.profit));
-    expect(worst).toBeCloseTo(1.576425, 6);
-    expect(Math.min(...r.rows.map(x => x.profitWithoutFactor ?? x.profit))).toBeCloseTo(1.266425, 6);
-    expect(evaluateTargetDisplay(1.5, worst).expectedEur).toBe(1.58);
+    expect(worst).toBeCloseTo(1.585661, 6);
+    expect(Math.min(...r.rows.map(x => x.profitWithoutFactor ?? x.profit))).toBeCloseTo(1.275661, 6);
+    expect(evaluateTargetDisplay(1.5, worst).expectedEur).toBe(1.59);
     expect(r.excluded.map(x => [x.skuId, x.reason])).toEqual([['12000050569622129', 'nicht bei eBay'], ['12000050569622127', 'nicht bei eBay']]);
     expect(variantPriceAlarm(p119()).isAlarm).toBe(false);
   });
 
-  test('stele-189 L/Green: alter ebayPrice 16,95 einer Dublette zählt nicht, nur der aktuelle VK 18,95', () => {
+  test('stele-189 L/Green: alter ebayPrice 16,95 einer Dublette zählt nicht, nur der aktuelle VK 19,95', () => {
     const r = productProfitRows(p189);
-    expect(r.rows.map(x => [x.skuId, x.sellPrice])).toEqual([['12000060802123543', 18.95]]);
+    expect(r.rows.map(x => [x.skuId, x.sellPrice])).toEqual([['12000060802123543', 19.95]]);
     expect(r.excluded.map(x => [x.skuId, x.reason])).toEqual([['12000060779140981', 'ohne eigenen VK'], ['12000060168465759', 'Dublette mit altem VK']]);
-    expect(r.rows[0].profit).toBeCloseTo(18.95 - (4.39 + 1.99 + 5.95) - (18.95 * 0.2 * 1.19 + 0.3 * 1.19), 9);
+    expect(r.rows[0].profit).toBeCloseTo(19.95 - (4.39 + 1.99 + 5.95) - (19.95 * 0.2 * 1.19 * 1.19 + 0.3 * 1.19), 9); // S 1,19 auf den Prozent-Anteil
     expect(variantPriceAlarm(p189).isAlarm).toBe(false);
   });
 
-  test('stele-107: Erwartet 1,57 € (gelb), die Dubletten ohne VK zählen nicht', () => {
+  test('stele-107: Erwartet 1,45 € (gelb), die Dubletten ohne VK zählen nicht', () => {
     const r = productProfitRows(p107);
     expect(r.rows.map(x => x.skuId)).toEqual(['12000048597697819', '12000048597697818']);
     const d = evaluateTargetDisplay(2, Math.min(...r.rows.map(x => x.profit)));
-    expect(d.expectedEur).toBe(1.57);
+    expect(d.expectedEur).toBe(1.45);
     expect(d.level).toBe('yellow');
     expect(r.excluded.map(x => x.reason)).toEqual(['ohne eigenen VK', 'ohne eigenen VK']);
   });

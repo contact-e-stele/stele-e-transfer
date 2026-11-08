@@ -32,39 +32,40 @@ const SKU_6X8 = '12000056823911280';
 const row6x8 = (plan: ReturnType<typeof planTierReprice>) => plan.rows.find(r => r.skuId === SKU_6X8)!;
 
 describe('stele-218, Variante "200PCS / 6x8cm" (EK 2,99 €, China, Ware < 10 €): VK + Gewinn je Stufe nach Formel v2', () => {
-  // K = 2,99 + 1,99 Versand + 3,57 Einfuhrabgaben = 8,55; f = 1 − 0,20 × 1,19 = 0,762; Fix = 0,357.
+  // K = 2,99 + 1,99 Versand + 3,57 Einfuhrabgaben = 8,55; Fix = 0,357.
+  // Formel je Standort (08.11.2026): China → S 1,19, f = 1 − 0,20 × 1,19 × 1,19 = 0,71678 (vorher 0,762).
   // K-006 (14.10.2026): Endungen ,45/,95; Mindestgewinn = max(Boden − 0,10, 1,00).
-  test('Stufe A (Ziel 1,00, Boden 1,00): Roh 13,0013 → 12,95 hätte Gewinn 0,96 < 1,00 → 13,45, Gewinn 1,3419', () => {
+  test('Stufe A (Ziel 1,00, Boden 1,00): Roh 13,8215 → 13,45 hätte Gewinn 0,7337 < 1,00 → 13,95, Gewinn 1,0921', () => {
     const r = row6x8(planTierReprice(stele218, 1.0));
-    expect(r.newSell).toBe(13.45);
-    expect(r.newProfit).toBeCloseTo(1.3419, 4); // 13,45 × 0,762 − 0,357 − 8,55
-    expect(12.95 * 0.762 - 0.357 - 8.55).toBeCloseTo(0.9609, 4); // Beweis: 12,95 € würde den Mindestgewinn 1,00 verletzen
+    expect(r.newSell).toBe(13.95);
+    expect(r.newProfit).toBeCloseTo(1.0921, 4); // 13,95 × 0,71678 − 0,357 − 8,55
+    expect(13.45 * 0.71678 - 0.357 - 8.55).toBeCloseTo(0.7337, 4); // Beweis: 13,45 € würde den Mindestgewinn 1,00 verletzen
   });
 
-  test('Stufe B (Ziel 1,50, Boden 1,20): Roh 13,6575 → 13,45 €, Gewinn 1,3419 ≥ 1,10 (Boden − 0,10)', () => {
+  test('Stufe B (Ziel 1,50, Boden 1,20): Roh 14,5191 → 14,45 €, Gewinn 1,4505 ≥ 1,10 (Boden − 0,10)', () => {
     const r = row6x8(planTierReprice(stele218, 1.5));
-    expect(r.newSell).toBe(13.45);
-    expect(r.newProfit).toBeCloseTo(1.3419, 4);
+    expect(r.newSell).toBe(14.45);
+    expect(r.newProfit).toBeCloseTo(1.4505, 4);
     expect(r.newProfit).toBeGreaterThanOrEqual(profitFloorFor(1.5));
   });
 
-  test('Stufe C (Ziel 2,00, Boden 1,30): 13,95 €, Gewinn 1,7229 ≥ 1,30 (gelb: unter Ziel, über Boden)', () => {
+  test('Stufe C (Ziel 2,00, Boden 1,30): 14,95 €, Gewinn 1,8089 ≥ 1,30 (gelb: unter Ziel, über Boden)', () => {
     const r = row6x8(planTierReprice(stele218, 2.0));
-    expect(r.newSell).toBe(13.95);
+    expect(r.newSell).toBe(14.95);
     expect(r.newProfit).toBeGreaterThanOrEqual(profitFloorFor(2.0));
     expect(evaluateTargetDisplay(2.0, r.newProfit).level).toBe('yellow');
   });
 
-  test('Stufe D (Ziel 3,00, Boden 1,50): Roh 15,626 → 15,45 €, Gewinn 2,8659 (15,45 × 0,762 − 0,357 − 8,55)', () => {
+  test('Stufe D (Ziel 3,00, Boden 1,50): Roh 16,6118 → 16,45 €, Gewinn 2,8840 (16,45 × 0,71678 − 0,357 − 8,55)', () => {
     const r = row6x8(planTierReprice(stele218, 3.0));
-    expect(r.newSell).toBe(15.45);
-    expect(r.newProfit).toBeCloseTo(2.8659, 4);
+    expect(r.newSell).toBe(16.45);
+    expect(r.newProfit).toBeCloseTo(2.884, 4);
   });
 
-  test('alter VK 14,95 €: echter Gewinn nach Formel v2 = 2,4849 € (die alte Anzeige rechnete +8,22 € — 13 % statt 15 %, 0,45 statt 0,30, ohne Versand und Einfuhr)', () => {
+  test('alter VK 14,95 €: echter Gewinn nach Formel v2 = 1,8089 € (die alte Anzeige rechnete +8,22 € — 13 % statt 15 %, 0,45 statt 0,30, ohne Versand und Einfuhr)', () => {
     const r = row6x8(planTierReprice(stele218, 1.5));
     expect(r.oldSell).toBe(14.95);
-    expect(r.oldProfit).toBeCloseTo(2.4849, 4);
+    expect(r.oldProfit).toBeCloseTo(1.8089, 4);
     const oldDisplay = 14.95 - 14.95 * (13 + 5) / 100 * 1.19 - 0.45 * 1.19 - 2.99; // die frühere Inline-Formel aus produkte.tsx
     expect(oldDisplay).toBeCloseTo(8.2222, 4);
   });
@@ -90,7 +91,7 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
     const patch = storePatchForPlan(stele218, plan);
     expect(Object.keys(patch)).toEqual(['variantSellPrices']);
     expect(Object.keys(JSON.parse(patch.variantSellPrices!))).toHaveLength(18);
-    expect(JSON.parse(patch.variantSellPrices!)[SKU_6X8]).toBe(13.45);
+    expect(JSON.parse(patch.variantSellPrices!)[SKU_6X8]).toBe(14.45);
   });
 
   test('nach der Übernahme zeigt die Gewinn-Spalte (productProfitRows) exakt den Plan-Gewinn — dieselbe Funktion wie "Erwartet"', () => {
@@ -105,7 +106,7 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
       expect(r.profit).toBeCloseTo(plan.rows[i].newProfit, 9);
     });
     // variant_sell_prices hat Vorrang vor dem alten ebayPrice (Teil-3-Regel):
-    expect(rows.find(r => r.skuId === SKU_6X8)!.sellPrice).toBe(13.45);
+    expect(rows.find(r => r.skuId === SKU_6X8)!.sellPrice).toBe(14.45);
   });
 
   test('zweiter Plan über denselben Stand ändert nichts mehr (idempotent): changedCount 0', () => {
@@ -113,15 +114,15 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
     expect(planTierReprice(stored, 1.5).changedCount).toBe(0);
   });
 
-  test('Einzelartikel: ein Plan-Eintrag, Übernahme schreibt sellPrice (Ware 3,15 China, Stufe C → 14,45 €)', () => {
+  test('Einzelartikel: ein Plan-Eintrag, Übernahme schreibt sellPrice (Ware 3,15 China, Stufe C → 14,95 €)', () => {
     const single: RepriceProduct = { id: 5, variants: '[]', buyPrice: 3.15, sellPrice: 11.95, shipsFrom: 'China', adRate: 5, variantPrices: null };
     const p = planTierReprice(single, 2.0);
     expect(p.isVariant).toBe(false);
     expect(p.rows).toHaveLength(1);
-    expect(p.rows[0].newSell).toBe(14.45); // Roh 14,5236 → 14,45; Gewinn 14,45 × 0,762 − 0,357 − 8,71 = 1,9439
+    expect(p.rows[0].newSell).toBe(14.95); // Roh 15,4399 → 14,95; Gewinn 14,95 × 0,71678 − 0,357 − 8,71 = 1,6489
     expect(p.rows[0].oldSell).toBe(11.95);
-    expect(p.rows[0].oldProfit).toBeCloseTo(0.0389, 4);
-    expect(storePatchForPlan(single, p)).toEqual({ sellPrice: 14.45 });
+    expect(p.rows[0].oldProfit).toBeCloseTo(-0.5015, 4);
+    expect(storePatchForPlan(single, p)).toEqual({ sellPrice: 14.95 });
   });
 
   test('Zeilen ohne Einkaufspreis fehlen im Plan (nichts geraten); ganz ohne EK → leerer Plan, leerer Patch', () => {
@@ -247,9 +248,9 @@ describe('A-023: Dubletten im Stufenwechsel (stele-119)', () => {
   test('ohne groups (bisher): drei Zeilen, 100pcs doppelt — beim Senden mehrdeutig', () => {
     expect(planTierReprice(p119, 1.5).rows).toHaveLength(3);
   });
-  test('mit groups: genau eine Zeile je eBay-Variante; 100pcs rechnet mit dem HÖCHSTEN EK 3,45 (nicht 3,15), 200pcs 15,95 / 100pcs 13,95', () => {
+  test('mit groups: genau eine Zeile je eBay-Variante; 100pcs rechnet mit dem HÖCHSTEN EK 3,45 (nicht 3,15), 200pcs 16,95 / 100pcs 14,95', () => {
     const plan = planTierReprice(p119, 1.5, g119);
-    expect(plan.rows.map(r => [r.skuId, r.ware, r.newSell])).toEqual([['12000050569622128', 4.79, 15.95], ['12000050569622129', 3.45, 13.95]]);
+    expect(plan.rows.map(r => [r.skuId, r.ware, r.newSell])).toEqual([['12000050569622128', 4.79, 16.95], ['12000050569622129', 3.45, 14.95]]);
     expect(plan.rows.every(r => r.newProfit >= 1.2)).toBe(true);
   });
   test('Dublette mit hohem EK zuerst (Reihenfolge egal): Zeile trägt weiter den höchsten EK', () => {

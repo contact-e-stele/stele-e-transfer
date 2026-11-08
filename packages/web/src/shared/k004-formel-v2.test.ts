@@ -8,7 +8,9 @@ import { MARGIN_TIERS } from './constants';
 import { computeOrderNettoErgebnis, matchOrderVariant } from '../api/order-matching';
 
 const fees = { ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor };
-const profitChina5 = (sell: number, ware: number) => profitAtSellPrice({ ...fees, sellPrice: sell, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5 });
+// Formel je Standort (08.11.2026): s = Standort-Faktor S explizit. Die Pflicht-Tests (Kalkulator 08.10.2026, echte Verkäufe mit Standort DE)
+// rechnen mit s = 1 und behalten ihre Zahlen; weggelassen = S aus der Herkunft (China 1,19).
+const profitChina5 = (sell: number, ware: number, s?: number) => profitAtSellPrice({ ...fees, sellPrice: sell, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, ebayLocationFactor: s });
 
 describe('K-004 Pflicht-Tests profitAtSellPrice (China, Anzeige 5 %)', () => {
   const cases: Array<[number, number, number]> = [
@@ -16,21 +18,21 @@ describe('K-004 Pflicht-Tests profitAtSellPrice (China, Anzeige 5 %)', () => {
   ];
   for (const [sell, ware, exp] of cases) {
     test(`VK ${sell} / Ware ${ware} → ${exp}`, () => {
-      expect(Math.abs(profitChina5(sell, ware) - exp)).toBeLessThanOrEqual(0.20);
-      expect(profitChina5(sell, ware)).toBeCloseTo(exp, 1);
+      expect(Math.abs(profitChina5(sell, ware, 1) - exp)).toBeLessThanOrEqual(0.20);
+      expect(profitChina5(sell, ware, 1)).toBeCloseTo(exp, 1);
     });
   }
 });
 
 describe('K-004 Stufen floor95', () => {
-  const minSell = (ware: number, target: number) => computeMinSellPrice({
-    ...fees, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, targetMarginEur: target, safetyBufferEur: 0, rounding: 'floor95',
+  const minSell = (ware: number, target: number, s?: number) => computeMinSellPrice({
+    ...fees, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, targetMarginEur: target, safetyBufferEur: 0, rounding: 'floor95', ebayLocationFactor: s,
   }).minSellPrice;
 
   // K-006 (14.10.2026): Endungen ,45/,95; Mindestgewinn max(Boden − 0,10, 1,00). 13,45 × 0,762 − 0,357 − 8,71 = 1,1819 ≥ 1,10.
   test('Ware 3,15 Stufe B → 13,45 / Gewinn 1,18', () => {
-    expect(minSell(3.15, 1.5)).toBe(13.45);
-    expect(profitChina5(13.45, 3.15)).toBeCloseTo(1.18, 2);
+    expect(minSell(3.15, 1.5, 1)).toBe(13.45);       // Kalkulator-Beispiel (Standort DE) → s = 1
+    expect(profitChina5(13.45, 3.15, 1)).toBeCloseTo(1.18, 2);
   });
 
   // K-006: Schritt zwischen zwei erlaubten Endungen = 0,50 € VK = 0,50 × 0,762 = 0,381 € Gewinn (vorher 1 € = 0,762).

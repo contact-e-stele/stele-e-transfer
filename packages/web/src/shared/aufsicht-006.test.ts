@@ -55,14 +55,16 @@ describe('OFFEN 006 R2 höchstens 5 Varianten, Vorauswahl', () => {
     expect(minKept).toBeGreaterThanOrEqual(maxRemoved);
     expect(maxVariantsError(r.groups)).toBeNull();
   });
-  test('Lager < 5 oder unbekannt → nicht wählbar (Yellow/Brown wären sonst unter den besten 5)', () => {
+  // Formel je Standort (08.11.2026): mit S 1,19 (China) sind die besten 5 jetzt Blue/Red/Gray/White/Light blue (bun: Gray 1,9753 … Red 1,8153;
+  // Yellow/Brown 1,7753 nicht mehr dabei). EINGABE GEÄNDERT: geprüft werden Gray (Lager 4) und Red (Lager unbekannt) statt Yellow/Brown.
+  test('Lager < 5 oder unbekannt → nicht wählbar (Gray/Red wären sonst unter den besten 5)', () => {
     const base = preselectVariants(g213, vp213, 5, profitAtSuggested);
-    expect(base.kept).toContain('Yellow');
-    expect(base.kept).toContain('Brown');
-    const vp = vp213.map(x => (x.attrs.Color === 'Yellow' ? { ...x, stock: 4 } : x.attrs.Color === 'Brown' ? { ...x, stock: undefined as unknown as number } : x));
+    expect(base.kept).toContain('Gray');
+    expect(base.kept).toContain('Red');
+    const vp = vp213.map(x => (x.attrs.Color === 'Gray' ? { ...x, stock: 4 } : x.attrs.Color === 'Red' ? { ...x, stock: undefined as unknown as number } : x));
     const r = preselectVariants(g213, vp, 5, profitAtSuggested);
-    expect(r.kept).not.toContain('Yellow');
-    expect(r.kept).not.toContain('Brown');
+    expect(r.kept).not.toContain('Gray');
+    expect(r.kept).not.toContain('Red');
     expect(r.kept.length).toBe(5);
   });
   test('höchstens 5 oder weniger Varianten → keine Automatik', () => {

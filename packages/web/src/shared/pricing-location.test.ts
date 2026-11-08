@@ -1,0 +1,58 @@
+// Formel je Standort (ENTSCHEIDUNG INHABER 08.11.2026 16:31) — Gegenrechnungen des Kalkulators (Auftrag Punkt 4, Nachtrag 17:30).
+// Gewinn = VK × (1 − (0,15 + Anzeige) × 1,19 × S) − 0,357 − Kosten; S = 1,19 bei Standort/Herkunft außerhalb der EU, sonst 1.
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { setAliEinfuhrEur, ALI_EINFUHR_EUR } from './constants';
+import { profitAtSellPrice, computeMinSellPrice, ebayLocationFactorFor, IOSS_PROVISION_FACTOR, DEFAULT_PRICING_CONFIG } from './pricing';
+import { netFactor } from './ad-rate-switch';
+
+beforeEach(() => setAliEinfuhrEur(ALI_EINFUHR_EUR)); // 5,95 — andere Tests lassen den Laufzeitwert auf 3,57 stehen
+
+const base = { ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19 };
+const gewinn = (sellPrice: number, buyPrice: number, adRatePercent: number, isChinaOrigin: boolean, ebayLocationFactor?: number) =>
+  profitAtSellPrice({ ...base, sellPrice, buyPrice, adRatePercent, isChinaOrigin, ebayLocationFactor });
+
+describe('Standort-Faktor S', () => {
+  test('China/unbekannt → 1,19; EU → 1; Konstante 1,19', () => {
+    expect(IOSS_PROVISION_FACTOR).toBe(1.19);
+    expect(ebayLocationFactorFor(true)).toBe(1.19);
+    expect(ebayLocationFactorFor(false)).toBe(1);
+  });
+  test('F bei CN 0,7876 (0 %) / 0,7168 (5 %), bei DE/EU unverändert 0,8215 / 0,762', () => {
+    expect(netFactor(0, 1.19)).toBeCloseTo(0.787585, 6);
+    expect(netFactor(5, 1.19)).toBeCloseTo(0.71678, 6);
+    expect(netFactor(0)).toBeCloseTo(0.8215, 6);
+    expect(netFactor(5)).toBeCloseTo(0.762, 6);
+  });
+});
+
+describe('Kalkulator-Gegenrechnung (Auftrag 16:31, Punkt 4)', () => {
+  test('255 Pink: Ware 7,49, 0 %, CN → VK 21,45 = +1,11 · VK 20,45 = +0,32', () => {
+    expect(gewinn(21.45, 7.49, 0, true)).toBeCloseTo(1.1067, 4);
+    expect(gewinn(20.45, 7.49, 0, true)).toBeCloseTo(0.3191, 4);
+  });
+  test('255 Blue: Ware 6,49, 0 %, CN → VK 20,45 = +1,32 · VK 19,45 = +0,53', () => {
+    expect(gewinn(20.45, 6.49, 0, true)).toBeCloseTo(1.3191, 4);
+    expect(gewinn(19.45, 6.49, 0, true)).toBeCloseTo(0.5315, 4);
+  });
+  test('120 …3447: 13,95, Ware 1,89, 0 % → CN +0,80 · Standort DE (gleiche China-Kosten, S = 1) +1,27', () => {
+    expect(gewinn(13.95, 1.89, 0, true)).toBeCloseTo(0.7998, 4);
+    expect(gewinn(13.95, 1.89, 0, true, 1)).toBeCloseTo(1.2729, 4);
+  });
+  test('234 …0015: 22,45, Ware 8,49, 5 % → CN −0,70 · Standort DE +0,32', () => {
+    expect(gewinn(22.45, 8.49, 5, true)).toBeCloseTo(-0.6953, 4);
+    expect(gewinn(22.45, 8.49, 5, true, 1)).toBeCloseTo(0.3199, 4);
+  });
+  test('513 (Nachtrag 17:30): Lager DE, Ware 13,81, 0 %, VK 18,95 → +1,40 · dieselbe Ware aus China → −5,19', () => {
+    expect(gewinn(18.95, 13.81, 0, false)).toBeCloseTo(1.4004, 4);
+    expect(gewinn(18.95, 13.81, 0, true)).toBeCloseTo(-5.1923, 4);
+  });
+});
+
+describe('Mindestpreis rechnet mit S (Preisvorschlag/Anheben/Senken nutzen computeMinSellPrice)', () => {
+  test('255 Pink Ziel 1,00: CN-Mindestpreis ≥ 21,45 (20,45 reicht nicht mehr)', () => {
+    const r = computeMinSellPrice({ ...base, buyPrice: 7.49, isChinaOrigin: true, adRatePercent: 0, targetMarginEur: 1.0,
+      safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95' });
+    expect(r.minSellPrice).toBe(21.45);
+    expect(gewinn(r.minSellPrice, 7.49, 0, true)).toBeGreaterThanOrEqual(1.0 - 0.1);
+  });
+});
