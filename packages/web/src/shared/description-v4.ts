@@ -6,7 +6,7 @@
 //   WEEE              : weeeLineForListing (shared/electric.ts), nur bei bestätigtem Elektro
 // Grundgesetz 4: fehlt ein Wert, fällt die Zeile/Angabe weg — kein Platzhalter, kein Füllsatz.
 import { piecesOf, formatPieces, measureText, materialText, FOOTER_TOPIC_RE, type DescriptionV3Input, type V3Bullet } from './description-v3';
-import { deliveryFooterText, returnFooterText, PAYMENT_CHIP_TEXT, type ReturnTerms } from './shipping-return-text';
+import { NEUTRAL_RETURN_TEXT, type ReturnTerms } from './shipping-return-text';
 
 /** Merkmal der v4-Vorlage — beim Listen wird eine gespeicherte Vorlage nur übernommen, wenn sie das AKTIVE Merkmal trägt. */
 export const DESCRIPTION_V4_MARKER = '<!-- stele-beschreibung: v4 -->';
@@ -84,7 +84,32 @@ export function introSentence(input: DescriptionV3Input, introText: string | nul
   return `${pieces ? `Inhalt: ${pieces}` : ''}${pieces && m ? ' &middot; ' : ''}${m ? `Ma&szlig;e: ${m}` : ''}.`;
 }
 
-/** Genau 3 Vertrauens-Chips — Texte ausschließlich aus shared/shipping-return-text.ts (unbekannt → neutraler Satz). */
-export function trustChips(deliveryTime: string | null | undefined, terms: ReturnTerms | null | undefined): [string, string, string] {
-  return [deliveryFooterText(deliveryTime), returnFooterText(terms), PAYMENT_CHIP_TEXT];
+// ABNAHME DESIGN S1 M2 (08.11.2026): Chips = kurzes Versprechen, Einzelheiten (Lieferzeit, Zahlungstext) NUR unten in den Kästen.
+// Kein "Kostenloser Versand": ob der Versand kostenlos ist, steht nicht in den Produktdaten (Regel 4 – nichts erfinden).
+export const SHIPPING_CHIP_TEXT = 'Versand mit Sendungsnummer';
+export const PAYMENT_PROMISE_CHIP_TEXT = 'Sicher bezahlen &uuml;ber eBay';
+
+/** Rückgabe-Chip nur aus der eBay-Richtlinie; ohne Daten neutral (keine erfundene Frist). */
+export function returnChipText(terms: ReturnTerms | null | undefined): string {
+  if (!terms || !terms.returnsAccepted || !terms.costPayer) return NEUTRAL_RETURN_TEXT;
+  const free = terms.costPayer === 'SELLER';
+  if (terms.days) return free ? `${terms.days} Tage kostenlose R&uuml;ckgabe` : `${terms.days} Tage R&uuml;ckgabe`;
+  return free ? 'Kostenlose R&uuml;ckgabe' : 'R&uuml;ckgabe m&ouml;glich';
+}
+
+/** Genau 3 Vertrauens-Chips. deliveryTime bleibt Parameter (Aufrufer unverändert), steht aber nur im Kasten Versand. */
+export function trustChips(_deliveryTime: string | null | undefined, terms: ReturnTerms | null | undefined): [string, string, string] {
+  return [SHIPPING_CHIP_TEXT, returnChipText(terms), PAYMENT_PROMISE_CHIP_TEXT];
+}
+
+/** ABNAHME DESIGN S1 M1: Titel der Leiste. Gespeicherte Titel sind hart auf 80 Zeichen gekürzt (mitten im Wort) —
+ *  ab 80 Zeichen am letzten ganzen Wort kürzen, Satzzeichen am Ende weg. Kürzere Titel bleiben unverändert. */
+export const TITLE_HARD_LIMIT = 80;
+export function titleBarText(title: string): string {
+  const t = title.trim();
+  if (t.length < TITLE_HARD_LIMIT) return t;
+  const cut = t.slice(0, TITLE_HARD_LIMIT);
+  const lastSpace = cut.lastIndexOf(' ');
+  const base = lastSpace > 20 ? cut.slice(0, lastSpace) : cut;
+  return base.replace(/[\s,;:\-–·&]+$/, '').trim();
 }

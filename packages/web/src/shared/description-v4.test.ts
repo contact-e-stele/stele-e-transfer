@@ -6,7 +6,8 @@ import { buildProductDescriptionForEbay, resolveListingDescription } from '../ap
 import { findDescriptionComplianceViolations } from './description-compliance';
 import { neutralizeGpsrTab, GPSR_DESCRIPTION_NOTICE } from './gpsr-description';
 import { DESCRIPTION_V3_MARKER } from './description-v3';
-import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, V4_KEYS, v4Rows, introSentence, trustChips } from './description-v4';
+import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, V4_KEYS, v4Rows, introSentence, trustChips, titleBarText, SHIPPING_CHIP_TEXT, PAYMENT_PROMISE_CHIP_TEXT } from './description-v4';
+import { NEUTRAL_RETURN_TEXT } from './shipping-return-text';
 import { deliveryFooterText, returnFooterText, PAYMENT_TEXT, PAYMENT_CHIP_TEXT, USTG19_FOOTER_TEXT, FOOTER_BLOCK_START, FOOTER_BLOCK_END } from './shipping-return-text';
 
 const P225 = {
@@ -80,11 +81,11 @@ describe('1 + 2: schmale Titelleiste, keine Bilder', () => {
 describe('3: genau 3 Vertrauens-Chips, Text aus shipping-return-text.ts', () => {
   test('mit eBay-Richtlinie und Lieferzeit', () => {
     expect(count(html, 'class="stele-v4-chip"')).toBe(3);
-    expect(trustChips('7–12 Werktage', TERMS)).toEqual(['Lieferzeit 7–12 Werktage', 'Kostenloser R&uuml;ckversand &middot; 30 Tage R&uuml;ckgabe', PAYMENT_CHIP_TEXT]);
+    expect(trustChips('7–12 Werktage', TERMS)).toEqual([SHIPPING_CHIP_TEXT, '30 Tage kostenlose R&uuml;ckgabe', PAYMENT_PROMISE_CHIP_TEXT]);
     for (const c of trustChips('7–12 Werktage', TERMS)) expect(html).toContain(`&#10003; ${c}</span>`);
   });
   test('ohne Daten: neutrale Sätze, keine erfundene Frist', () => {
-    expect(trustChips(null, null)).toEqual([deliveryFooterText(null), returnFooterText(null), PAYMENT_CHIP_TEXT]);
+    expect(trustChips(null, null)).toEqual([SHIPPING_CHIP_TEXT, NEUTRAL_RETURN_TEXT, PAYMENT_PROMISE_CHIP_TEXT]);
     const h = buildEbayHTMLv4({ title: 'Nur Titel' });
     expect(count(h, 'class="stele-v4-chip"')).toBe(3);
     // Fristen nur aus der AGB (v3-Text, unverändert) — oberhalb der aufklappbaren Bereiche keine Zahl mit Tagen
@@ -216,5 +217,29 @@ describe('9: Compliance grün, keine externen Ressourcen', () => {
       expect(findDescriptionComplianceViolations(neutralizeGpsrTab(buildEbayHTMLv4(p)))).toEqual([]);
     }
     expect(html).not.toMatch(/https?:|www\.|href=|src=|url\(/i);
+  });
+});
+
+describe('ABNAHME DESIGN S1: M1 Titelleiste, M2 keine doppelten Angaben', () => {
+  test('M1: 80-Zeichen-Titel (mitten im Wort gekürzt) endet am letzten ganzen Wort', () => {
+    const t120 = 'Einweg Frischhaltehauben Lebensmittelabdeckung Elastisch, Staubdicht, Lebensmittelech';
+    expect(t120.length).toBeGreaterThanOrEqual(80);
+    const bar = titleBarText(t120.slice(0, 80));
+    expect(bar.endsWith('Staubdicht')).toBe(true);
+    const h = buildEbayHTMLv4({ title: t120.slice(0, 80) });
+    expect(h).toContain(`>${bar}</h1>`);
+    expect(h).not.toContain('Lebensmittelech</h1>');
+  });
+  test('M1: kurzer Titel bleibt unverändert', () => {
+    expect(titleBarText('Einweg Frischhaltehauben, Lebensmittelabdeckung')).toBe('Einweg Frischhaltehauben, Lebensmittelabdeckung');
+  });
+  test('M2: Lieferzeit und Zahlungstext nur im Kasten, nicht in den Chips', () => {
+    const h = buildEbayHTMLv4({ title: 'Test', deliveryTime: '7–12 Werktage', returnTerms: TERMS });
+    const chips = h.split('class="stele-v4-chip"').slice(1).map(x => x.slice(0, x.indexOf('</span>'))).join(' ');
+    expect(chips).not.toContain('Werktage');
+    expect(chips).not.toContain(PAYMENT_CHIP_TEXT);
+    const top = h.slice(0, h.indexOf('<details')); // AGB unten im Aufklapp-Bereich zählt nicht
+    expect(count(top, '7–12 Werktage')).toBe(1);
+    expect(count(top, PAYMENT_CHIP_TEXT)).toBe(1);
   });
 });
