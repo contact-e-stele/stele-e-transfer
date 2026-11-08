@@ -4,6 +4,7 @@
 // von Hand aus den Rohdaten abgeleitet und dann gegen den Trockenlauf des Skripts bestätigt (Grundgesetz Regel 3).
 import { describe, expect, test } from 'bun:test';
 import { planVariantDedupe, renderDedupeMarkdown, collapseDuplicateEntries, staleSellPriceNotes, type DedupeEntry } from './variant-dedupe';
+import { DEDUPE_MAX_EK_SPREAD } from './variant-dedupe';
 import { resolveVariantEntries } from './variant-resolver';
 
 const GROUPS = [
@@ -246,5 +247,32 @@ describe('A-023 Review: ungültige EK und Träger-Regel', () => {
     const c = collapseDuplicateEntries(G119, [o, s1]);
     expect(c.entries).toEqual([{ ...o, skuId: 'S1', price: 3.45, stock: 9 }]);
     expect(c.entries).toEqual(planVariantDedupe(G119, [o, s1]).newEntries);
+  });
+});
+
+describe('planVariantDedupe — Knopf: EK-Spanne > 15 % = vermutlich verschiedene Waren (Fund 08.11., stele-107/161)', () => {
+  const g = [{ name: 'Color', values: ['white Triangle'] }];
+  const e = (skuId: string, price: number, stock: number): DedupeEntry => ({ skuId, attrs: { Color: 'white Triangle' }, price, stock });
+  const KNOPF = { maxEkSpread: DEDUPE_MAX_EK_SPREAD };
+  test('107: 2,19 (Lager 3) und 3,99 (Lager 7) → mehrdeutig, NICHTS zusammengelegt, Einträge unverändert', () => {
+    const p = planVariantDedupe(g, [e('7819', 2.19, 3), e('7820', 3.99, 7)], KNOPF);
+    expect(p.changes).toEqual([]);
+    expect(p.ambiguous).toHaveLength(1);
+    expect(p.ambiguous[0].reason).toContain('EK weichen stark ab');
+    expect(p.newEntries).toEqual([e('7819', 2.19, 3), e('7820', 3.99, 7)]);
+  });
+  test('ohne Option (Anhebung/Mengen im Speicher) → wie bisher zusammengelegt mit höchstem EK', () => {
+    const p = planVariantDedupe(g, [e('7819', 2.19, 3), e('7820', 3.99, 7)]);
+    expect(p.changes).toHaveLength(1);
+    expect(p.changes[0].newPrice).toBe(3.99);
+  });
+  test('Spanne genau 15 % → wird noch zusammengelegt (Grenze inklusive)', () => {
+    const p = planVariantDedupe(g, [e('A', 2.0, 3), e('B', 2.3, 7)], KNOPF);
+    expect(p.ambiguous).toEqual([]);
+    expect(p.changes).toHaveLength(1);
+  });
+  test('152-Fall 5,39 / 5,49 (+1,9 %) → zusammengelegt wie bisher', () => {
+    const p = planVariantDedupe(g, [e('X', 5.39, 3), e('Y', 5.49, 999)], KNOPF);
+    expect(p.changes[0]).toMatchObject({ newPrice: 5.49, newStock: 999 });
   });
 });
