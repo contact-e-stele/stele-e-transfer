@@ -233,6 +233,10 @@ describe('ABNAHME DESIGN S1: M1 Titelleiste, M2 keine doppelten Angaben', () => 
   test('M1: kurzer Titel bleibt unverändert', () => {
     expect(titleBarText('Einweg Frischhaltehauben, Lebensmittelabdeckung')).toBe('Einweg Frischhaltehauben, Lebensmittelabdeckung');
   });
+  test('Chip 1 = Kostenloser Versand (Inhaber 08.11. 19:40)', () => {
+    expect(SHIPPING_CHIP_TEXT).toBe('Kostenloser Versand');
+    expect(buildEbayHTMLv4({ title: 'Test' })).toContain('&#10003; Kostenloser Versand</span>');
+  });
   test('M2: Lieferzeit und Zahlungstext nur im Kasten, nicht in den Chips', () => {
     const h = buildEbayHTMLv4({ title: 'Test', deliveryTime: '7–12 Werktage', returnTerms: TERMS });
     const chips = h.split('class="stele-v4-chip"').slice(1).map(x => x.slice(0, x.indexOf('</span>'))).join(' ');

@@ -85,8 +85,9 @@ export function introSentence(input: DescriptionV3Input, introText: string | nul
 }
 
 // ABNAHME DESIGN S1 M2 (08.11.2026): Chips = kurzes Versprechen, Einzelheiten (Lieferzeit, Zahlungstext) NUR unten in den Kästen.
-// Kein "Kostenloser Versand": ob der Versand kostenlos ist, steht nicht in den Produktdaten (Regel 4 – nichts erfinden).
-export const SHIPPING_CHIP_TEXT = 'Versand mit Sendungsnummer';
+// Chip 1 = "Kostenloser Versand": Entscheidung Inhaber 08.11.2026 19:40 (alle Angebote kostenlos versendet; Aufsicht live
+// bei 226 gesehen: "Versand: Kostenlos"). Gilt für alle Angebote — eine Versandrichtlinie mit Kosten muss das hier ändern.
+export const SHIPPING_CHIP_TEXT = 'Kostenloser Versand';
 export const PAYMENT_PROMISE_CHIP_TEXT = 'Sicher bezahlen &uuml;ber eBay';
 
 /** Rückgabe-Chip nur aus der eBay-Richtlinie; ohne Daten neutral (keine erfundene Frist). */
