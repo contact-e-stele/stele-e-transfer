@@ -12,7 +12,7 @@ import {
   FileText, Upload, Unlock,
 } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
-import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
+import { buildEbayHTMLCurrent, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { productProfitRows, productTarget } from "../../shared/target-margin-bulk";
 import { matchesProductSearch, searchFromQuery } from "../../shared/product-search";
@@ -1354,7 +1354,7 @@ export default function Produkte() {
         };
         let liveHtml = "";
         try {
-          liveHtml = buildEbayHTMLLight(liveProduct);
+          liveHtml = buildEbayHTMLCurrent(liveProduct);
         } catch (err) {
           liveHtml = '<p style="color:red;font-size:13px;">Vorschau-Fehler: ' + String(err) + '</p>';
         }

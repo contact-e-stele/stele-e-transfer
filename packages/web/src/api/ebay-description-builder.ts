@@ -7,11 +7,11 @@
 // extrahiert. P71-C (30.09.2026): gpsrRaw wird an buildEbayHTMLLight weitergegeben, damit der
 // Tab "Produktsicherheit" erzeugt wird (Vorgabe Inhaber: 5 Tabs immer). Der Rohtext selbst landet
 // nie im HTML — die Vorlage druckt nur GPSR_DESCRIPTION_NOTICE, neutralizeGpsrTab sichert zusätzlich.
-import { buildEbayHTMLLight, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
+import { buildEbayHTMLCurrent, activeDescriptionMarker, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
+import { DESCRIPTION_V4_MARKER } from '../shared/description-v4';
 import { neutralizeGpsrTab } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { TEXT_VERSION_MARKER, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../shared/shipping-return-text';
-import { DESCRIPTION_V3_MARKER } from '../shared/description-v3';
 import type { VariantDetails } from '../shared/variant-measure';
 import { listingOrigin, deliveryTimeFor, type DeliveryTimes, type ListingOrigin } from '../shared/listing-origin';
 
@@ -34,12 +34,16 @@ export interface ProductDescriptionFields {
   usePurpose?: string | null;
   variantDetails?: string | null;  // JSON {skuId: {displayNameDe, pieces, measure}}
   manualAspects?: string | null;   // JSON {"Produktart": "…"}
+  // Beschreibung v4: Elektro-/Batterie-Hinweis (nur v4 zeigt ihn; v3 ignoriert die Felder)
+  isElectric?: number | boolean | null;
+  hasBattery?: number | boolean | null;
 }
 
 // OFFEN 029/030: was die Beschreibung von außen braucht (eBay-Rücknahme-Richtlinie, Lieferzeiten je Herkunft aus den Einstellungen).
 export interface DescriptionContext {
   returnTerms?: ReturnTerms | null;
   deliveryTimes?: DeliveryTimes;
+  weeeRegNr?: string | null;       // Beschreibung v4: WEEE-Zeile (nur bei Elektro = ja); v3 ignoriert sie
 }
 
 export interface BuiltProductDescription {
@@ -111,9 +115,13 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
     usePurpose: product.usePurpose ?? null,
     variantDetails: parseObj<VariantDetails>(product.variantDetails),
     manualAspects: parseObj<Record<string, string>>(product.manualAspects),
+    isElectric: product.isElectric ?? null,
+    hasBattery: product.hasBattery ?? null,
+    weeeRegNr: ctx.weeeRegNr ?? null,
   };
 
-  const html = neutralizeGpsrTab(buildEbayHTMLLight(templateProduct));
+  // Schalter DESCRIPTION_VERSION (shared/description-v4.ts, Default v3): v3 bzw. v4.
+  const html = neutralizeGpsrTab(buildEbayHTMLCurrent(templateProduct));
   const violations = findDescriptionComplianceViolations(html);
   return { html, violations, origin };
 }
@@ -124,12 +132,13 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
 // Verstoß bleibt nur, wenn auch der Neubau verstößt. Reine Funktion, damit ohne DB testbar.
 export function resolveListingDescription(product: ProductDescriptionFields, storedHtml: string | null | undefined, ctx: DescriptionContext = {}): BuiltProductDescription {
   const rawHtml = storedHtml ?? '';
-  const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs'));
+  const isFullTemplate = rawHtml.includes('STELE-E-TRANSFER') && (rawHtml.includes('stet-tabs') || rawHtml.includes('stet-l-tabs') || rawHtml.includes(DESCRIPTION_V4_MARKER));
   // Tab 5 (Produktsicherheit) gehört immer dazu: eine ältere gespeicherte Vorlage ohne ihn wird neu gebaut.
-  const hasTab5 = rawHtml.includes('id="stet-t5"') || rawHtml.includes('id="stet-l5"');
+  const hasTab5 = rawHtml.includes('id="stet-t5"') || rawHtml.includes('id="stet-l5"') || (rawHtml.includes(DESCRIPTION_V4_MARKER) && rawHtml.includes('<!-- TAB 5: Produktsicherheit (GPSR) -->'));
   // OFFEN 029: gespeicherte Vorlage ohne aktuelle Versand-/Rückgabe-Texte (alt: 3–10 Werktage, DHL, feste Rücksendekosten) → neu bauen.
   // Beschreibung v3 (06.11.2026): gespeicherte Vorlage ohne v3-Merkmal (alter Aufbau) → neu bauen.
-  const hasCurrentTexts = rawHtml.includes(TEXT_VERSION_MARKER) && rawHtml.includes(DESCRIPTION_V3_MARKER);
+  // Beschreibung v4 (08.11.2026): verlangt wird das Merkmal der AKTIVEN Vorlage (Schalter) — gespeicherte v3 bei Schalter v4 → neu bauen.
+  const hasCurrentTexts = rawHtml.includes(TEXT_VERSION_MARKER) && rawHtml.includes(activeDescriptionMarker());
   if (isFullTemplate && hasTab5 && hasCurrentTexts) {
     const html = neutralizeGpsrTab(rawHtml);
     const violations = findDescriptionComplianceViolations(html);

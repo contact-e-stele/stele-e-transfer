@@ -5,9 +5,11 @@
 
 import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
 
-import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
+import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, PAYMENT_TEXT, deliveryFooterText, returnFooterText, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
 import { DESCRIPTION_V3_MARKER, factRows, headingText, v3Bullets, type DescriptionV3Input } from '../../shared/description-v3';
 import type { VariantDetails } from '../../shared/variant-measure';
+import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, introSentence, trustChips, v4Rows, type DescriptionVersion } from '../../shared/description-v4';
+import { weeeLineForListing } from '../../shared/electric';
 
 export interface ScrapedProduct {
   title: string;
@@ -28,6 +30,10 @@ export interface ScrapedProduct {
   usePurpose?: string | null;
   variantDetails?: VariantDetails | null;
   manualAspects?: Record<string, string> | null;
+  // Beschreibung v4 (08.11.2026): Elektro-/Batterie-Hinweise. Fehlt → kein Hinweis (Bestandsprodukte: is_electric NULL, has_battery 0).
+  isElectric?: boolean | number | null;
+  hasBattery?: boolean | number | null;
+  weeeRegNr?: string | null;            // aus den Einstellungen (electric-settings.ts), nie vorbelegt
 }
 
 function decodeEntities(str: string): string {
@@ -401,7 +407,7 @@ ${TEXT_VERSION_MARKER}
       Alle Preise sind Endpreise in Euro (EUR).<br/>
       Als Kleinunternehmer gem. &sect;19 UStG wird keine Umsatzsteuer berechnet.</p>
       <p><strong>&sect; 4 Zahlung</strong><br/>
-      Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
+      ${PAYMENT_TEXT}</p>
       <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
       Lieferung innerhalb Deutschlands. Lieferzeit: ${FOOTER_REFERENCE}.<br/>
       Keine Haftung f&uuml;r Verz&ouml;gerungen durch den Versanddienstleister.</p>
@@ -446,6 +452,60 @@ ${TEXT_VERSION_MARKER}
 }
 
 
+
+// Beschreibung v4 (08.11.2026): Impressum/AGB der hellen Vorlage EINMAL — v3 (Reiter) und v4 (aufklappbar) nutzen denselben Text
+// (Grundgesetz 8). Reiner Extract: v3-Ausgabe byte-gleich (Vorher/Nachher-Vergleich im Commit-Bericht).
+const LIGHT_IMPRESSUM_HTML = `      <h3>Impressum</h3>
+      <p><strong>STELE-E-TRANSFER</strong><br/>
+      Inhaber: Evgenij Stele<br/>
+      Am Hochfeld 47<br/>
+      65205 Wiesbaden<br/>
+      Deutschland</p>
+      <p>Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
+      <p><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong><br/>
+      Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
+`;
+const LIGHT_AGB_HTML = `      <h3>Allgemeine Gesch&auml;ftsbedingungen (AGB)</h3>
+      <p><strong>&sect; 1 Geltungsbereich</strong><br/>
+      Diese AGB gelten f&uuml;r alle K&auml;ufe &uuml;ber den eBay-Shop von stele-e-transfer.<br/>
+      Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
+      <p><strong>&sect; 2 Vertragsschluss</strong><br/>
+      Mit dem Klick auf &quot;Sofort-Kaufen&quot; gibt der K&auml;ufer ein verbindliches Angebot ab.</p>
+      <p><strong>&sect; 3 Preise</strong><br/>
+      Alle Preise sind Endpreise in Euro (EUR). Als Kleinunternehmer gem. &sect;19 UStG wird keine Umsatzsteuer berechnet.</p>
+      <p><strong>&sect; 4 Zahlung</strong><br/>
+      ${PAYMENT_TEXT}</p>
+      <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
+      Lieferzeit: ${FOOTER_REFERENCE}.</p>
+      <p><strong>&sect; 6 Widerrufsrecht</strong><br/>
+      30 Tage Widerrufsrecht. Widerruf an: stele-e-transfer, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.<br/>
+      K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kauf&uuml;bersicht zur Verf&uuml;gung. R&uuml;cksendekosten: ${FOOTER_REFERENCE}.</p>
+      <p><strong>&sect; 7 Gew&auml;hrleistung</strong><br/>
+      Gesetzliche Gew&auml;hrleistung: 2 Jahre ab Lieferung.</p>
+      <p><strong>&sect; 8 Datenschutz</strong><br/>
+      Daten werden ausschlie&szlig;lich zur Vertragserf&uuml;llung genutzt. Es gelten eBay-Datenschutzbestimmungen und DSGVO.</p>
+      <p><strong>&sect; 9 Streitbeilegung</strong><br/>
+      Wir nehmen nicht an Streitbeilegungsverfahren teil.</p>
+      <p><em>Stand: Juni 2026</em></p>
+`;
+
+
+/** Stichpunkt-/Einleitungs-Quelle der hellen Vorlagen (v3 und v4): ###BULLETS###/###INTRO### aus der KI-Beschreibung, sonst product.bullets. */
+function lightBulletSource(product: ScrapedProduct): { bulletLines: string[]; introText: string } {
+  const desc = product.description ?? "";
+  let bulletLines: string[] = [];
+  let introText = "";
+  if (desc.includes("###BULLETS###") || desc.includes("###INTRO###")) {
+    const bulletsM = desc.match(/###BULLETS###\s*([\s\S]*?)(?:###OUTRO###|$)/);
+    const introM = desc.match(/###INTRO###\s*([\s\S]*?)(?:###BULLETS###|$)/);
+    introText = cleanText(introM?.[1]?.trim() ?? "");
+    if (bulletsM) bulletLines = bulletsM[1].split("\n").map(l => cleanText(l.replace(/^[\-\*•]\s*/, "").trim())).filter(l => l.length > 10 && !isGarbage(l));
+  } else if (product.bullets && product.bullets.length > 0) {
+    bulletLines = product.bullets.map(b => cleanText(b)).filter(c => c.length > 15 && !isGarbage(c));
+  }
+  return { bulletLines, introText };
+}
+
 /**
  * Helle Version — Beschreibung v3 "einfach" (7 App Schritt 5, 06.11.2026).
  * Aufbau (Handy zuerst): schmaler Kopf · Überschrift Name + Menge + Maß · Datentabelle · bis 5 Zeilen ✓ STICHWORT ·
@@ -470,17 +530,7 @@ export function buildEbayHTMLLight(product: ScrapedProduct): string {
   };
 
   // ── Stichpunkte: ###BULLETS### aus der KI-Beschreibung, sonst product.bullets ──
-  const desc = product.description ?? "";
-  let bulletLines: string[] = [];
-  let introText = "";
-  if (desc.includes("###BULLETS###") || desc.includes("###INTRO###")) {
-    const bulletsM = desc.match(/###BULLETS###\s*([\s\S]*?)(?:###OUTRO###|$)/);
-    const introM = desc.match(/###INTRO###\s*([\s\S]*?)(?:###BULLETS###|$)/);
-    introText = cleanText(introM?.[1]?.trim() ?? "");
-    if (bulletsM) bulletLines = bulletsM[1].split("\n").map(l => cleanText(l.replace(/^[\-\*•]\s*/, "").trim())).filter(l => l.length > 10 && !isGarbage(l));
-  } else if (product.bullets && product.bullets.length > 0) {
-    bulletLines = product.bullets.map(b => cleanText(b)).filter(c => c.length > 15 && !isGarbage(c));
-  }
+  const { bulletLines, introText } = lightBulletSource(product);
   const bullets = v3Bullets(bulletLines);
 
   let bulletsHtml = "";
@@ -572,42 +622,11 @@ ${DESCRIPTION_V3_MARKER}
 
     <!-- TAB 3: Impressum -->
     <div class="stet-l-content" id="stet-lc3">
-      <h3>Impressum</h3>
-      <p><strong>STELE-E-TRANSFER</strong><br/>
-      Inhaber: Evgenij Stele<br/>
-      Am Hochfeld 47<br/>
-      65205 Wiesbaden<br/>
-      Deutschland</p>
-      <p>Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
-      <p><strong>Hinweis gem&auml;&szlig; &sect;19 UStG:</strong><br/>
-      Als Kleinunternehmer im Sinne von &sect;19 Abs. 1 UStG wird keine Umsatzsteuer berechnet und ausgewiesen.</p>
-    </div>
+${LIGHT_IMPRESSUM_HTML}    </div>
 
     <!-- TAB 4: AGB -->
     <div class="stet-l-content" id="stet-lc4">
-      <h3>Allgemeine Gesch&auml;ftsbedingungen (AGB)</h3>
-      <p><strong>&sect; 1 Geltungsbereich</strong><br/>
-      Diese AGB gelten f&uuml;r alle K&auml;ufe &uuml;ber den eBay-Shop von stele-e-transfer.<br/>
-      Anbieter: Evgenij Stele, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.</p>
-      <p><strong>&sect; 2 Vertragsschluss</strong><br/>
-      Mit dem Klick auf &quot;Sofort-Kaufen&quot; gibt der K&auml;ufer ein verbindliches Angebot ab.</p>
-      <p><strong>&sect; 3 Preise</strong><br/>
-      Alle Preise sind Endpreise in Euro (EUR). Als Kleinunternehmer gem. &sect;19 UStG wird keine Umsatzsteuer berechnet.</p>
-      <p><strong>&sect; 4 Zahlung</strong><br/>
-      Zahlung &uuml;ber eBay-Zahlungsabwicklung. Der Betrag ist sofort nach Kauf f&auml;llig.</p>
-      <p><strong>&sect; 5 Lieferung &amp; Versand</strong><br/>
-      Lieferzeit: ${FOOTER_REFERENCE}.</p>
-      <p><strong>&sect; 6 Widerrufsrecht</strong><br/>
-      30 Tage Widerrufsrecht. Widerruf an: stele-e-transfer, Am Hochfeld 47, 65205 Wiesbaden. Kontakt &uuml;ber eBay-Nachrichten; vollst&auml;ndige Kontaktdaten unter &quot;Rechtliche Informationen des Verk&auml;ufers&quot; in diesem Angebot.<br/>
-      K&auml;ufer k&ouml;nnen den Widerruf per Brief, E-Mail oder Fax erkl&auml;ren. Zus&auml;tzlich steht die digitale Widerrufsfunktion &quot;Artikel zur&uuml;ckgeben&quot; in der eBay-Kauf&uuml;bersicht zur Verf&uuml;gung. R&uuml;cksendekosten: ${FOOTER_REFERENCE}.</p>
-      <p><strong>&sect; 7 Gew&auml;hrleistung</strong><br/>
-      Gesetzliche Gew&auml;hrleistung: 2 Jahre ab Lieferung.</p>
-      <p><strong>&sect; 8 Datenschutz</strong><br/>
-      Daten werden ausschlie&szlig;lich zur Vertragserf&uuml;llung genutzt. Es gelten eBay-Datenschutzbestimmungen und DSGVO.</p>
-      <p><strong>&sect; 9 Streitbeilegung</strong><br/>
-      Wir nehmen nicht an Streitbeilegungsverfahren teil.</p>
-      <p><em>Stand: Juni 2026</em></p>
-    </div>
+${LIGHT_AGB_HTML}    </div>
 
     <!-- TAB 5: Produktsicherheit (GPSR) -->
     <div class="stet-l-content" id="stet-lc5">
@@ -630,4 +649,104 @@ ${FOOTER_BLOCK_START}
 ${FOOTER_BLOCK_END}
 
 </div>`;
+}
+
+
+/**
+ * Beschreibung v4 "eine Seite" (Inhaber "v4 JA", 08.11.2026) — NEBEN v3, v3 bleibt unverändert.
+ * Aufbau: schmale Titelleiste · 3 Vertrauens-Chips · 1 Einleitungssatz (Menge/Maß) · max. 5 Stichwort-Zeilen
+ * MATERIAL/MASSE/LIEFERUMFANG/ANWENDUNG/BESONDERHEIT (ersetzen die Datentabelle) · 3 Kästen Versand/Rückgabe/Zahlung ·
+ * Elektro-/Batterie-Hinweis nur bei Elektro bzw. Batterie · Impressum/AGB/Produktsicherheit als <details> (statt Reiter).
+ * Keine Bilder (Galerie zeigt sie), kein <style>, kein JavaScript, nur Inline-CSS. Texte nur aus bestehenden Quellen.
+ * Produktsicherheit: wie v3 nur GPSR_DESCRIPTION_NOTICE — Hersteller-/EU-Kontaktdaten gehen in die eBay-`regulatory`-Felder
+ * (Dauerregel 3, description-compliance.ts). Kommentar "TAB 5" bleibt, damit neutralizeGpsrTab() und die Prüfung greifen.
+ */
+export function buildEbayHTMLv4(product: ScrapedProduct): string {
+  const title = cleanText(product.title || "");
+  const v3Input: DescriptionV3Input = {
+    title,
+    variants: product.variants,
+    specs: product.specs,
+    material: product.material,
+    usageNote: product.usageNote,
+    usePurpose: product.usePurpose,
+    variantDetails: product.variantDetails,
+    manualAspects: product.manualAspects,
+  };
+  const { bulletLines, introText } = lightBulletSource(product);
+  const rows = v4Rows(v3Input, v3Bullets(bulletLines));
+  const intro = introSentence(v3Input, introText);
+  const chips = trustChips(product.deliveryTime, product.returnTerms);
+  const foot = shippingReturnFooterLines(product.deliveryTime, product.returnTerms);
+
+  const chipsHtml = chips.map(c => `<span class="stele-v4-chip" style="display:inline-block;margin:3px 4px;padding:4px 10px;border:1px solid #e0d4b8;border-radius:14px;background:#fdf9f0;color:#5a4a20;font-size:12px;line-height:1.4;">&#10003; ${c}</span>`).join("");
+  const introHtml = intro ? `<p style="margin:0 0 12px 0;color:#333333;font-size:14px;line-height:1.6;">${intro}</p>` : "";
+  const rowsHtml = rows.length > 0 ? `
+  <table style="width:100%;border-collapse:collapse;margin:0 0 14px 0;font-size:14px;">
+    <tbody>
+      ${rows.map(r => `<tr class="stele-v4-row"><td style="padding:6px 10px 6px 0;width:32%;vertical-align:top;color:#8a6508;font-weight:bold;font-size:12px;letter-spacing:.5px;border-bottom:1px solid #f0e8d8;">${r.key}</td><td style="padding:6px 0;color:#333333;line-height:1.5;border-bottom:1px solid #f0e8d8;">${r.text}</td></tr>`).join("\n      ")}
+    </tbody>
+  </table>` : "";
+
+  const box = (head: string, body: string) => `<div class="stele-v4-box" style="flex:1 1 180px;margin:4px;padding:10px 12px;border:1px solid #e8e0d0;border-radius:6px;background:#ffffff;font-size:13px;line-height:1.5;color:#333333;"><div style="color:#8a6508;font-weight:bold;margin-bottom:4px;">${head}</div>${body}</div>`;
+  // Überschrift wie die v3-Fußzeile — die AGB verweisen auf „Versand &amp; Rückgabe“ (FOOTER_REFERENCE).
+  const boxesHtml = `${FOOTER_BLOCK_START}
+<div style="color:#8a6508;font-weight:bold;font-size:13px;letter-spacing:.5px;margin:0 0 4px 0;">Versand &amp; R&uuml;ckgabe</div>
+<div style="display:flex;flex-wrap:wrap;margin:0 -4px 14px -4px;">
+  ${box("Versand", deliveryFooterText(product.deliveryTime))}
+  ${box("R&uuml;ckgabe", returnFooterText(product.returnTerms))}
+  ${box("Zahlung", `${PAYMENT_TEXT}<br/>${foot.ustg19}`)}
+</div>
+${FOOTER_BLOCK_END}`;
+
+  // Elektro (WEEE) und Batterie getrennt: WEEE nur bei bestätigtem Elektro + gültiger Nummer, Batterie nur bei hasBattery.
+  const weeeLine = weeeLineForListing({ isElectric: product.isElectric }, product.weeeRegNr);
+  const hasBattery = product.hasBattery === true || product.hasBattery === 1;
+  const hints = [
+    weeeLine ? `<div class="stele-v4-weee">${weeeLine}</div>` : "",
+    hasBattery ? `<div class="stele-v4-battery">Batterie/Akku im Lieferumfang enthalten.</div>` : "",
+  ].filter(Boolean);
+  const hintsHtml = hints.length > 0 ? `<div style="margin:0 0 14px 0;padding:10px 12px;border:1px solid #e8e0d0;border-radius:6px;background:#fdf9f0;font-size:13px;line-height:1.5;color:#333333;">${hints.join("")}</div>` : "";
+
+  const det = (summary: string, body: string, comment = "") => `<details style="border-top:1px solid #e8e0d0;padding:8px 0;">
+  <summary style="cursor:pointer;color:#8a6508;font-weight:bold;font-size:13px;">${summary}</summary>
+  <div style="padding:8px 4px 0 4px;color:#444444;font-size:13px;line-height:1.7;">${comment}
+${body}
+  </div>
+</details>`;
+
+  return `<!-- STELE-E-TRANSFER eBay Vorlage - v4 eine Seite -->
+${TEXT_VERSION_MARKER}
+${DESCRIPTION_V4_MARKER}
+<div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;color:#333333;background:#ffffff;border:1px solid #e0d4b8;border-radius:8px;overflow:hidden;">
+
+<!-- TITELLEISTE (schmal) -->
+<div style="background:#fdf9f0;padding:8px 14px;border-bottom:2px solid #B8860B;">
+  <h1 style="margin:0;color:#222222;font-size:16px;line-height:1.35;font-weight:bold;">${title}</h1>
+</div>
+
+<div style="padding:12px 14px;">
+<div style="margin:0 -4px 12px -4px;">${chipsHtml}</div>
+${introHtml}
+${rowsHtml}
+${boxesHtml}
+${hintsHtml}
+${det("Impressum", LIGHT_IMPRESSUM_HTML)}
+${det("AGB", LIGHT_AGB_HTML)}
+${det("Produktsicherheit", `      <h3 style="color:#8a6508;font-size:14px;margin:0 0 6px 0;">Produktsicherheit (GPSR)</h3>
+      <p style="font-size:12px;color:#666;margin:0 0 8px 0;">Informationen gem&auml;&szlig; EU-Produktsicherheitsverordnung (GPSR)</p>
+      <pre style="white-space:pre-wrap;font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.8;background:#f9f6f0;padding:12px;border-radius:4px;border:1px solid #e5d9c0;margin:0;">${GPSR_DESCRIPTION_NOTICE}</pre>`, "\n<!-- TAB 5: Produktsicherheit (GPSR) -->")}
+</div>
+
+</div>`;
+}
+
+/** Schalter-Weiche (DESCRIPTION_VERSION, Default v3): EINE Stelle für Listen, Nachzieh-Weg und Vorschauen. */
+export function buildEbayHTMLCurrent(product: ScrapedProduct, version: DescriptionVersion = DESCRIPTION_VERSION): string {
+  return version === "v4" ? buildEbayHTMLv4(product) : buildEbayHTMLLight(product);
+}
+
+/** Merkmal der aktiven Vorlage — eine gespeicherte Vorlage ohne dieses Merkmal wird beim Listen neu gebaut. */
+export function activeDescriptionMarker(version: DescriptionVersion = DESCRIPTION_VERSION): string {
+  return version === "v4" ? DESCRIPTION_V4_MARKER : DESCRIPTION_V3_MARKER;
 }
