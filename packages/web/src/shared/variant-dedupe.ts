@@ -49,7 +49,15 @@ export interface DedupePlan {
 // haben Vorrang, sonst Wertevergleich getrimmt/ohne Groß-/Kleinschreibung, Versand-Attribute ignoriert) — Grundgesetz Regel 8.
 const isOriginal = (e: DedupeEntry) => !!e.displayValues || e.ebayPrice != null || !!e.imageUrl;
 
-export function planVariantDedupe(groups: VariantGroup[], entries: DedupeEntry[]): DedupePlan {
+// Fund 08.11. (Kalkulator 11:40, Aufsicht 11:45, stele-107/161): "Dubletten" mit stark abweichendem EK sind oft KEINE Dubletten,
+// sondern verschiedene Packungsgrößen, deren zweite Achse in attrs fehlt (107 white Triangle 2,19 = 10 Stück / 3,99 = 50 Stück).
+// Zusammenlegen mischte dann EK (Maximum) und Lager (frischester Eintrag) aus verschiedenen Waren. Ab dieser EK-Spanne (max ÷ min − 1)
+// wird NICHT zusammengelegt, sondern als mehrdeutig gemeldet (Prüfung von Hand). 15 % = dieselbe Grenze wie der Preissprung (OFFEN 010).
+// Gilt NUR für den Knopf (dauerhaftes Schreiben, opts.maxEkSpread). Die Anhebung/Mengen-Läufe fassen weiter im Speicher mit höchstem EK zusammen
+// (konservativ: höherer EK → höherer Preis), unverändert.
+export const DEDUPE_MAX_EK_SPREAD = 0.15;
+
+export function planVariantDedupe(groups: VariantGroup[], entries: DedupeEntry[], opts: { maxEkSpread?: number } = {}): DedupePlan {
   // Ohne Varianten-Gruppen gibt es keine Kombinationen, die sich zuordnen ließen — nichts anfassen.
   if (groups.length === 0) return { newEntries: [...entries], changes: [], unchangedCombos: 0, orphans: [], ambiguous: [] };
   const comboList = buildCombinations(groups);
@@ -85,6 +93,11 @@ export function planVariantDedupe(groups: VariantGroup[], entries: DedupeEntry[]
       return;
     }
     const maxPrice = Math.max(...validPrices);
+    const minPrice = Math.min(...validPrices);
+    if (opts.maxEkSpread != null && maxPrice / minPrice - 1 > opts.maxEkSpread + 1e-9) {
+      ambiguous.push({ label, reason: `EK weichen stark ab (${minPrice.toFixed(2)} bis ${maxPrice.toFixed(2)}) — vermutlich verschiedene Waren/Packungsgrößen, nichts zusammengelegt` });
+      return;
+    }
     const priceNote = Number.isFinite(freshest.price) && maxPrice > freshest.price + 1e-9
       ? `höherer EK ${maxPrice.toFixed(2)} statt ${freshest.price.toFixed(2)} (frischester Eintrag) gewählt — im Zweifel kein Verlust`
       : (Number.isFinite(freshest.price) ? null : `frischester Eintrag ohne gültigen EK — höchster gültiger EK ${maxPrice.toFixed(2)} gewählt`);

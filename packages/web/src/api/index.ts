@@ -4937,13 +4937,13 @@ async function variantDedupePlan(id: number) {
   const [row] = await db.select({ id: schema.products.id, variants: schema.products.variants, variantPrices: schema.products.variantPrices, variantSellPrices: schema.products.variantSellPrices })
     .from(schema.products).where(eq(schema.products.id, id)).limit(1);
   if (!row) return null;
-  const { planVariantDedupe, staleSellPriceNotes, dedupeStillAmbiguous } = await import('../shared/variant-dedupe');
+  const { planVariantDedupe, staleSellPriceNotes, dedupeStillAmbiguous, DEDUPE_MAX_EK_SPREAD } = await import('../shared/variant-dedupe');
   const { parseVariantGroupsJson } = await import('./price-monitor');
   const { parseVariantSellPrices } = await import('../shared/pricing');
   const groups = parseVariantGroupsJson(row.variants);
   let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number; stock?: number }> = [];
   try { const pv = row.variantPrices ? JSON.parse(row.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
-  const plan = planVariantDedupe(groups, entries);
+  const plan = planVariantDedupe(groups, entries, { maxEkSpread: DEDUPE_MAX_EK_SPREAD }); // Fund 08.11. (107/161): Knopf legt stark abweichende EK nicht zusammen
   return {
     db, schema, row, plan, before: entries.length,
     staleNotes: staleSellPriceNotes(plan.changes, parseVariantSellPrices(row.variantSellPrices)),
