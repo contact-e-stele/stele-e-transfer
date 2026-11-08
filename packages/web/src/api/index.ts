@@ -5107,6 +5107,45 @@ app.post('/products/:id/ali-attrs-sync', async (c) => {
   } catch (e) { return c.json({ error: String(e) }, 500); }
 });
 
+// ENTSCHEIDUNG INHABER 08.11. (Weg B) Schritt 1: NUR LESEN — Käuferpreis (GetItem StartPrice) und Angebotsdaten (Offer pricingSummary)
+// je SKU nebeneinander, OHNE Sperre zu setzen/aufzuheben und ohne Schreiben (anders als POST sell-prices-from-ebay). Zweck: prüfen, ob
+// eBay nach Standort China den StartPrice brutto (×1,19) oder netto liefert.
+app.get('/products/:id/buyer-offer-prices', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (!product.ebayListingId) return c.json({ error: 'Produkt ist nicht bei eBay gelistet' }, 422);
+    const { readEbaySellPrices } = await import('./ebay-price-readback');
+    const { parseVariantGroupsJson } = await import('./price-monitor');
+    const { getAccessToken, getInventoryItemGroupSkus, getItemBuyerPricesXml } = await import('./ebay');
+    const { parseGetItemBuyerPrices, priceMismatches } = await import('../shared/ebay-buyer-price');
+    const { isVariantProduct } = await import('../shared/variant-product');
+    const { parseVariantSellPrices } = await import('../shared/pricing');
+    let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
+    try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+    const token = await getAccessToken();
+    const rb = await readEbaySellPrices({
+      productId: id, groups: parseVariantGroupsJson(product.variants), entries: entries as never,
+      isVariant: isVariantProduct(product.variants, product.variantPrices), appSellPrices: parseVariantSellPrices(product.variantSellPrices), appSellPrice: product.sellPrice,
+      token, getGroupSkus: (g) => getInventoryItemGroupSkus(g, token),
+      getBuyerPrices: async () => {
+        const r = await getItemBuyerPricesXml(product.ebayListingId as string);
+        if (r.httpStatus !== 200) return { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` };
+        return parseGetItemBuyerPrices(r.xml);
+      },
+    });
+    const mism = priceMismatches(rb.rows.map(r => ({ ...r, buyerPrice: r.ebayPrice, offerPrice: r.offerPrice ?? null })));
+    return c.json({ productId: id, itemId: product.ebayListingId, nurLesen: true, ok: rb.ok,
+      rows: rb.rows.map(r => ({ sku: r.sku, label: r.label, kaeuferpreisGetItem: r.ebayPrice, angebotsdatenOffer: r.offerPrice ?? null })),
+      abweichungen: mism.length }, 200);
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.post('/products/:id/sell-prices-from-ebay', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
