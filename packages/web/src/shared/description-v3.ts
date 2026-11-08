@@ -109,7 +109,7 @@ function colorText(input: DescriptionV3Input): string | null {
   return fromVariants.length > 0 ? fromVariants.join(' / ') : null;
 }
 
-function materialText(input: DescriptionV3Input): string | null {
+export function materialText(input: DescriptionV3Input): string | null {
   if (clean(input.material)) return esc(clean(input.material));
   const spec = specValue(input.specs, ['material', 'materialien', 'main material', 'hauptmaterial']);
   return spec ? translateMaterial(spec) : null;
@@ -149,7 +149,7 @@ export function headingText(input: DescriptionV3Input): string {
 
 // Versand-/Rückgabe-Aussagen gehören in die EINE Fußzeile (Quelle shared/shipping-return-text.ts) — im Stichpunkt würden sie
 // ihr widersprechen (Beleg: Gemini-Füllsätze "Schnelle Lieferung aus dem EU-Lager", "30 Tage Rückgabe über eBay Käuferschutz").
-const FOOTER_TOPIC_RE = /\b(lieferung|lieferzeit|versand\w*|r(?:ü|ue)ckgabe\w*|r(?:ü|ue)cksend\w*|r(?:ü|ue)ckversand|k(?:ä|ae)uferschutz|eu-lager)\b/i;
+export const FOOTER_TOPIC_RE = /\b(lieferung|lieferzeit|versand\w*|r(?:ü|ue)ckgabe\w*|r(?:ü|ue)cksend\w*|r(?:ü|ue)ckversand|k(?:ä|ae)uferschutz|eu-lager)\b/i;
 const KEYWORD_RE = /^([^:]{2,40}?)\s*:\s+(.{3,})$/;
 
 /** Bis zu 5 Stichpunkte "✓ STICHWORT – Satz". Ein Stichwort gibt es nur, wenn der Text selbst eins trägt ("Stichwort: Satz"). */

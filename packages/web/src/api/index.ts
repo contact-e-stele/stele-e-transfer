@@ -1250,6 +1250,7 @@ const app = new Hono()
         },
         getReturnTerms: async () => (await import('./ebay')).fetchReturnTerms(), // OFFEN 029
         getDeliveryTimes: loadDeliveryTimes, // OFFEN 030
+        getWeeeRegNr: async () => (await getElectricSettings()).weeeRegNr, // Beschreibung v4 (nur bei Schalter v4 sichtbar)
       });
       if (!outcome.ok) {
         return c.json({ error: outcome.error, ...(outcome.violations ? { violations: outcome.violations } : {}) }, outcome.httpStatus);
@@ -1286,6 +1287,7 @@ const app = new Hono()
         },
         getReturnTerms: async () => (await import('./ebay')).fetchReturnTerms(), // OFFEN 029
         getDeliveryTimes: loadDeliveryTimes, // OFFEN 030
+        getWeeeRegNr: async () => (await getElectricSettings()).weeeRegNr, // Beschreibung v4 (nur bei Schalter v4 sichtbar)
       });
       return c.json({ results }, 200);
     } catch (e) {
@@ -2817,7 +2819,7 @@ const app = new Hono()
     // neu gebaut (P71-C Teil 2) — Fehler nur, wenn auch der Neubau verstößt. Dieselbe Rechenstelle
     // wie der Beschreibungs-Nachzieh-Weg (GRUNDGESETZ Regel 8).
     const { fetchReturnTerms } = await import('./ebay');
-    const listingDescription = resolveListingDescription(product, product.htmlDescription, { returnTerms: await fetchReturnTerms(), deliveryTimes: await loadDeliveryTimes() }); // OFFEN 029/030
+    const listingDescription = resolveListingDescription(product, product.htmlDescription, { returnTerms: await fetchReturnTerms(), deliveryTimes: await loadDeliveryTimes(), weeeRegNr: electricSettings.weeeRegNr }); // OFFEN 029/030; v4: WEEE-Zeile in der Vorlage
     // OFFEN 030 Punkt 1c / Gesetzbuch Nr 114: ein Angebot = ein Versandort. Gemischte Herkunft → nicht listen.
     const { mixedOriginError } = await import('../shared/listing-origin');
     const originError = listingDescription.origin ? mixedOriginError(listingDescription.origin) : null;
@@ -2827,7 +2829,8 @@ const app = new Hono()
     }
     // A-029: bei bestätigtem Elektro (Sperre oben bestanden) die WEEE-Reg.-Nr. als reine Textzeile — ohne Link/URL/E-Mail.
     const weeeLine = weeeLineForListing(product, electricSettings.weeeRegNr);
-    const fullDescription = weeeLine ? `${listingDescription.html}<p>${weeeLine}</p>` : listingDescription.html;
+    // v4 trägt die WEEE-Zeile schon in der Vorlage → nicht doppelt anhängen (v3: unverändert angehängt).
+    const fullDescription = weeeLine && !listingDescription.html.includes(weeeLine) ? `${listingDescription.html}<p>${weeeLine}</p>` : listingDescription.html;
     let complianceViolations: DescriptionComplianceViolation[] = listingDescription.violations;
     // Code-Review-Fund (eBay-Verstoßserie 2026-09-28): der Titel geht genauso an eBay wie die
     // Beschreibung (<Title>/Item-Titel) und lief bisher NICHT durch den Compliance-Validator —
@@ -5110,6 +5113,27 @@ app.post('/products/:id/ali-attrs-sync', async (c) => {
 // ENTSCHEIDUNG INHABER 08.11. (Weg B) Schritt 1: NUR LESEN — Käuferpreis (GetItem StartPrice) und Angebotsdaten (Offer pricingSummary)
 // je SKU nebeneinander, OHNE Sperre zu setzen/aufzuheben und ohne Schreiben (anders als POST sell-prices-from-ebay). Zweck: prüfen, ob
 // eBay nach Standort China den StartPrice brutto (×1,19) oder netto liefert.
+// Beschreibung v4 (PR 292): Vorschau je Produkt, NUR LESEN — baut v3 oder v4 aus den aktuellen Produktfeldern,
+// schreibt nichts, ruft eBay nicht auf (Rücknahme-Richtlinie wie beim Listen nur gelesen). Für Aufsicht/Design-Abnahme.
+app.get('/products/:id/description-preview', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const version = c.req.query('version') === 'v4' ? 'v4' : 'v3';
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const { fetchReturnTerms } = await import('./ebay');
+    const { buildProductDescriptionForEbay } = await import('./ebay-description-builder');
+    const electricSettings = await getElectricSettings();
+    const built = buildProductDescriptionForEbay(product, { returnTerms: await fetchReturnTerms(), deliveryTimes: await loadDeliveryTimes(), weeeRegNr: electricSettings.weeeRegNr, version });
+    if (c.req.query('format') === 'json') return c.json({ productId: id, version, nurLesen: true, violations: built.violations, origin: built.origin, html: built.html }, 200);
+    return c.html(built.html);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
 app.get('/products/:id/buyer-offer-prices', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);

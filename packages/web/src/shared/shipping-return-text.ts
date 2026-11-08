@@ -72,3 +72,8 @@ export function shippingReturnFooterLines(deliveryTime: string | null | undefine
     ustg19: USTG19_FOOTER_TEXT,
   };
 }
+
+// Beschreibung v4 (08.11.2026): Zahlungs-Text — wörtlich aus AGB § 4 der bisherigen Vorlagen herausgezogen (Grundgesetz 8),
+// kein neuer Text. Chip = erster Satz, Kasten = beide Sätze.
+export const PAYMENT_CHIP_TEXT = 'Zahlung &uuml;ber eBay-Zahlungsabwicklung';
+export const PAYMENT_TEXT = `${PAYMENT_CHIP_TEXT}. Der Betrag ist sofort nach Kauf f&auml;llig.`;

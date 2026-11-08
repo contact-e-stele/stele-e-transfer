@@ -3,7 +3,7 @@
  * Ersetzt AutoDS komplett für den Import-Schritt
  */
 import { useState, useCallback, useRef, useEffect } from "react";
-import { buildEbayHTML, buildEbayHTMLLight } from "../lib/ebay-description";
+import { buildEbayHTML, buildEbayHTMLCurrent } from "../lib/ebay-description";
 import { safeJson } from "../lib/safeFetch";
 import { emptyOverrides, overridesToFlat, effectiveForm, type GpsrFormOverrides } from "../../shared/gpsr-import-fields";
 import { gpsrFormGate } from "../../shared/gpsr-import-gate";
@@ -184,7 +184,7 @@ function buildHTML(product: ScrapedProduct, theme: "dark" | "light" = "light", o
     setContents,
     gpsrRaw: gpsrRaw ?? product.gpsrRaw ?? null,
   };
-  return theme === "light" ? buildEbayHTMLLight(enriched) : buildEbayHTML(enriched);
+  return theme === "light" ? buildEbayHTMLCurrent(enriched) : buildEbayHTML(enriched);
 }
 
 function parsePrice(raw: string): number {
@@ -568,7 +568,7 @@ export default function Lieferanten() {
       : undefined;
     const descToUse = generatedDescription || base.description || "";
     const enriched = { ...base, description: descToUse, skuVariants, gpsrRaw: gpsrHersteller.trim() || null, setContents: Object.keys(variantContents).length > 0 ? variantContents : undefined };
-    const updated = buildEbayHTMLLight(enriched);
+    const updated = buildEbayHTMLCurrent(enriched);
     setEditableHtml(updated);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gpsrHersteller, generatedDescription, variantContents]);

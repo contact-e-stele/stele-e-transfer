@@ -9,7 +9,7 @@ import {
   Search, Filter, Edit2, Check, X, Calendar, Clock, Tag, FileEdit, CheckSquare, Square,
   AlertTriangle,
 } from "lucide-react";
-import { buildEbayHTMLLight } from "../lib/ebay-description";
+import { buildEbayHTMLCurrent } from "../lib/ebay-description";
 import { DescriptionRefreshPanel } from "../components/description-refresh-panel";
 import { TargetBadge, postTierReprice, type RepriceResult, type TierPatch } from "../components/target-badge";
 import { TIER_REPRICE_MAX_PRODUCTS, expectedFromPlan } from "../../shared/tier-reprice";
@@ -507,7 +507,7 @@ export default function Listings() {
     try {
       const bullets = editBullets.split("\n").map(s => s.trim()).filter(Boolean);
       const html = bullets.length > 0
-        ? buildEbayHTMLLight({ title: editTitle, bullets })
+        ? buildEbayHTMLCurrent({ title: editTitle, bullets })
         : undefined;
       const res = await fetch(`/api/ebay/listings/${editListing.itemId}/content`, {
         method: "PATCH",
@@ -670,7 +670,7 @@ export default function Listings() {
       {editListing && (() => {
         const bullets = editBullets.split("\n").map(s => s.trim()).filter(Boolean);
         let liveHtml = "";
-        try { liveHtml = bullets.length > 0 ? buildEbayHTMLLight({ title: editTitle, bullets }) : ""; } catch { /* ignore */ }
+        try { liveHtml = bullets.length > 0 ? buildEbayHTMLCurrent({ title: editTitle, bullets }) : ""; } catch { /* ignore */ }
         return (
           <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setEditListing(null)}>
             <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 780, maxHeight: "90vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }} onClick={e => e.stopPropagation()}>

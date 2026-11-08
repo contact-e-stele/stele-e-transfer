@@ -59,6 +59,8 @@ export interface DescriptionRefreshDeps {
   // OFFEN 029/030: Rücknahme-Richtlinie + Lieferzeiten je Herkunft (optional; fehlt → neutrale Sätze)
   getReturnTerms?: () => Promise<ReturnTerms | null>;
   getDeliveryTimes?: () => Promise<DeliveryTimes>;
+  // Beschreibung v4: WEEE-Reg.-Nr. aus den Einstellungen (optional; fehlt → keine WEEE-Zeile). v3 ignoriert sie.
+  getWeeeRegNr?: () => Promise<string | null>;
 }
 
 // manufacturerMissing (P71-C Teil 3): fehlende Herstellerfelder — der Herstellerblock wird dann weggelassen.
@@ -106,7 +108,8 @@ export async function refreshOneProductDescription(
   const violationsBefore = findDescriptionComplianceViolations(before);
   const returnTerms = deps.getReturnTerms ? await deps.getReturnTerms().catch(() => null) : null;
   const deliveryTimes = deps.getDeliveryTimes ? await deps.getDeliveryTimes().catch(() => undefined) : undefined;
-  const { html: after, violations: descriptionViolations } = buildProductDescriptionForEbay(product, { returnTerms, deliveryTimes });
+  const weeeRegNr = deps.getWeeeRegNr ? await deps.getWeeeRegNr().catch(() => null) : null;
+  const { html: after, violations: descriptionViolations } = buildProductDescriptionForEbay(product, { returnTerms, deliveryTimes, weeeRegNr });
   // Code-Review-Fund (eBay-Verstoßserie 2026-09-28): der Titel geht bei confirm:true GENAUSO an
   // eBay (<Title>) wie die Beschreibung, lief aber nicht durch den Validator — ein alter, noch
   // verunreinigter Titel (dieselbe Quelle wie die zu bereinigenden Beschreibungen) hätte die
