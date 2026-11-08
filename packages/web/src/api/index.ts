@@ -5113,6 +5113,27 @@ app.post('/products/:id/ali-attrs-sync', async (c) => {
 // ENTSCHEIDUNG INHABER 08.11. (Weg B) Schritt 1: NUR LESEN — Käuferpreis (GetItem StartPrice) und Angebotsdaten (Offer pricingSummary)
 // je SKU nebeneinander, OHNE Sperre zu setzen/aufzuheben und ohne Schreiben (anders als POST sell-prices-from-ebay). Zweck: prüfen, ob
 // eBay nach Standort China den StartPrice brutto (×1,19) oder netto liefert.
+// Beschreibung v4 (PR 292): Vorschau je Produkt, NUR LESEN — baut v3 oder v4 aus den aktuellen Produktfeldern,
+// schreibt nichts, ruft eBay nicht auf (Rücknahme-Richtlinie wie beim Listen nur gelesen). Für Aufsicht/Design-Abnahme.
+app.get('/products/:id/description-preview', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const version = c.req.query('version') === 'v4' ? 'v4' : 'v3';
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const { fetchReturnTerms } = await import('./ebay');
+    const { buildProductDescriptionForEbay } = await import('./ebay-description-builder');
+    const electricSettings = await getElectricSettings();
+    const built = buildProductDescriptionForEbay(product, { returnTerms: await fetchReturnTerms(), deliveryTimes: await loadDeliveryTimes(), weeeRegNr: electricSettings.weeeRegNr, version });
+    if (c.req.query('format') === 'json') return c.json({ productId: id, version, nurLesen: true, violations: built.violations, origin: built.origin, html: built.html }, 200);
+    return c.html(built.html);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
 app.get('/products/:id/buyer-offer-prices', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);

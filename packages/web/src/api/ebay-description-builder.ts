@@ -7,6 +7,7 @@
 // extrahiert. P71-C (30.09.2026): gpsrRaw wird an buildEbayHTMLLight weitergegeben, damit der
 // Tab "Produktsicherheit" erzeugt wird (Vorgabe Inhaber: 5 Tabs immer). Der Rohtext selbst landet
 // nie im HTML — die Vorlage druckt nur GPSR_DESCRIPTION_NOTICE, neutralizeGpsrTab sichert zusätzlich.
+import type { DescriptionVersion } from '../shared/description-v4';
 import { buildEbayHTMLCurrent, activeDescriptionMarker, type ScrapedProduct as EbayScrapedProduct } from '../web/lib/ebay-description';
 import { DESCRIPTION_V4_MARKER } from '../shared/description-v4';
 import { neutralizeGpsrTab } from '../shared/gpsr-description';
@@ -44,6 +45,7 @@ export interface DescriptionContext {
   returnTerms?: ReturnTerms | null;
   deliveryTimes?: DeliveryTimes;
   weeeRegNr?: string | null;       // Beschreibung v4: WEEE-Zeile (nur bei Elektro = ja); v3 ignoriert sie
+  version?: DescriptionVersion;    // nur für die Vorschau (GET …/description-preview); Listen/Nachzieh-Weg nutzen den Schalter
 }
 
 export interface BuiltProductDescription {
@@ -121,7 +123,7 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
   };
 
   // Schalter DESCRIPTION_VERSION (shared/description-v4.ts, Default v3): v3 bzw. v4.
-  const html = neutralizeGpsrTab(buildEbayHTMLCurrent(templateProduct));
+  const html = neutralizeGpsrTab(buildEbayHTMLCurrent(templateProduct, ctx.version));
   const violations = findDescriptionComplianceViolations(html);
   return { html, violations, origin };
 }

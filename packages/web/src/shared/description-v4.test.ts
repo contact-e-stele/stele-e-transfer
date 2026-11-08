@@ -197,6 +197,17 @@ describe('8: WEEE nur bei Elektro, Batterie nur bei Batterie — getrennt', () =
     expect(v3.html).not.toContain('WEEE');
     expect(v3.html).not.toContain('stele-v4-battery');
   });
+
+  const P119_ROW = { title: P119.title, specs: JSON.stringify(P119.specs), variants: JSON.stringify(P119.variants) };
+  test('Vorschau: ctx.version = v4 baut v4 (Schalter bleibt v3), ohne version wie bisher v3', () => {
+    const v4 = buildProductDescriptionForEbay(P119_ROW, { version: 'v4' });
+    expect(v4.html).toContain(DESCRIPTION_V4_MARKER);
+    expect(v4.html).not.toContain('<img');
+    expect(v4.violations).toEqual([]);
+    const def = buildProductDescriptionForEbay(P119_ROW, {});
+    expect(def.html).toContain(DESCRIPTION_V3_MARKER);
+    expect(def.html).not.toContain(DESCRIPTION_V4_MARKER);
+  });
 });
 
 describe('9: Compliance grün, keine externen Ressourcen', () => {
