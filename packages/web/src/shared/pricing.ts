@@ -130,6 +130,7 @@ export interface PricingInput {
   profitFloorEur?: number;    // nur Modus 'floor95': Boden explizit setzen (sonst profitFloorFor(targetMarginEur))
   earUmlageEur?: number;      // A-029: EAR-Umlage je Stück, wird bei Elektro = ja zu K addiert (weggelassen/0 = Formel unverändert, siehe earUmlageFor())
   checkoutFactor?: number | null; // K-005: Kassen-Faktor des Produkts (activeCheckoutFactor); Ware = buyPrice × Faktor. Weggelassen/null = unverändert
+  ebayLocationFactor?: number;    // Formel je Standort: S explizit (Test/Sonderfall). Weggelassen = ebayLocationFactorFor(isChinaOrigin)
 }
 
 export interface PricingResult {
@@ -154,8 +155,9 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   const ali = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin); // K-005: Ware × Kassen-Faktor
   const { shipping, customs } = ali;
   const totalCost = ali.totalCost + (input.earUmlageEur ?? 0); // A-029: K + EAR-Umlage (nur bei Elektro = ja, sonst 0)
-  const baseFeeRateGross = (input.ebayFeeRatePercent / 100) * input.vatFactor;
-  const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
+  const s = input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin);
+  const baseFeeRateGross = (input.ebayFeeRatePercent / 100) * input.vatFactor * s;
+  const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor * s;
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   const rawMinSellPrice = (totalCost + input.targetMarginEur + input.safetyBufferEur + fixedFeeGross) / (1 - totalFeeRateGross);
   const minSellPrice = input.rounding === 'floor95'
@@ -251,6 +253,7 @@ export interface ProfitAtSellPriceInput {
   adRatePercent: number;
   earUmlageEur?: number;     // A-029: EAR-Umlage je Stück (Elektro = ja), 0/weggelassen = unverändert
   checkoutFactor?: number | null; // K-005: Kassen-Faktor (activeCheckoutFactor), weggelassen/null = unverändert
+  ebayLocationFactor?: number;    // Formel je Standort: S explizit, weggelassen = ebayLocationFactorFor(isChinaOrigin)
 }
 
 // Gewinn bei einem GEGEBENEN Verkaufspreis — die Umkehrung von computeMinSellPrice(), Formel v2 (A-014):
@@ -258,7 +261,7 @@ export interface ProfitAtSellPriceInput {
 //   K = Ware + Versand + Einfuhrabgaben (computeAliCosts)
 export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
   const totalCost = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0); // K-005
-  const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor;
+  const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor * (input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin));
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);
 }
@@ -636,6 +639,19 @@ export function evaluateVariantRule6c(input: VariantRule6cInput): VariantRule6cR
 // umgestellt) — aus einem gewünschten 2,00€-Zielgewinn wurden dadurch real 3,50-4,25€. Die
 // Konstante PRICE_SAFETY_BUFFER_EUR bleibt in shared/constants.ts definiert, wird aber ab hier
 // von KEINER Kalkulation mehr referenziert (bewusst kein Import mehr in dieser Datei).
+// ─── Formel je Standort (ENTSCHEIDUNG INHABER 08.11.2026 16:31; Kalkulator 10:35 / 17:30) ─────────────────────────
+// Liegt der eBay-Artikelstandort außerhalb der EU, schlägt eBay 19 % Einfuhr-USt (IOSS) auf den Käuferpreis auf; die Provision läuft
+// (Annahme Kalkulator, Beleg = erste CN-Bestellung, Gebührenzeile) auf den Bruttobetrag → Prozent-Anteil der eBay-Gebühr × S.
+// Fixgebühr 0,357 unverändert. F bei CN: 1 − 0,15 × 1,19 × 1,19 = 0,7876 (0 %) / 0,7168 (5 %); DE/EU unverändert 0,8215 / 0,762.
+// Standort = Herkunft: #285 setzt den Artikelstandort auf den Lagerort der Herkunft. Darum S aus derselben Herkunft wie die Kosten
+// (isChinaOrigin, je Variante "Ships From" vor Produkt-Herkunft; unbekannt = China = S 1,19, sichere Seite laut Inhaber).
+// Weicht der Beleg ab (Provision netto): IOSS_PROVISION_FACTOR = 1 setzen, kein Codeumbau.
+// Bekannte Abweichung: 208/235 haben China-Herkunft, Standort aber noch Wiesbaden → hier S 1,19 (Preis höher als nötig, kein Verlust).
+export const IOSS_PROVISION_FACTOR = 1.19;
+export function ebayLocationFactorFor(isChinaOrigin: boolean): number {
+  return isChinaOrigin ? IOSS_PROVISION_FACTOR : 1;
+}
+
 export const DEFAULT_PRICING_CONFIG = {
   ebayFeeRatePercent: 15,
   ebayFixedFeeEur: 0.30,
