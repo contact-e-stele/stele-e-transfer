@@ -1,7 +1,7 @@
 // K-018 PR B: runAutoLower mit Mocks (kein DB-/eBay-Zugriff) — Schalter AUS = nur Vorschau, AN = genau der Plan wird gesendet (down).
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setAliEinfuhrEur, ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR } from '../shared/constants';
-import { runAutoLower, autoLowerEnabled } from './auto-lower';
+import { runAutoLower, autoLowerEnabled, autoLowerPause } from './auto-lower';
 import type { VariantRepriceDeps } from './variant-reprice';
 import fx228 from '../shared/auto-lower-fx/fx228.json';
 
@@ -50,5 +50,41 @@ describe('runAutoLower', () => {
     const r = await runAutoLower(input(), { enabled: true, depsFor: () => m.d, savePreview: m.savePreview });
     expect(m.calls.store).toEqual([]);
     expect(r.gesendet[0].status).toBe('send_failed');
+  });
+});
+
+describe('runAutoLower — höchstens einmal je 20 h (Befund 08.11.: Preislauf nach jedem Neustart)', () => {
+  const NOW = new Date('2026-11-08T08:10:00Z');
+  test('AN, letztes echtes Senken vor 6 h → Pause: nichts gesendet, lastSentAt bleibt, Grund im Ergebnis', async () => {
+    const m = mocks();
+    const r = await runAutoLower(input(), { enabled: true, depsFor: () => m.d, savePreview: m.savePreview, now: NOW, lastSentAt: '2026-11-08T02:10:00Z' });
+    expect(m.calls.send).toEqual([]);
+    expect(m.calls.store).toEqual([]);
+    expect(r.lastSentAt).toBe('2026-11-08T02:10:00Z');
+    expect(r.pause).toContain('20 h');
+  });
+  test('AN, letztes echtes Senken vor 21 h → wird gesendet, lastSentAt = jetzt', async () => {
+    const m = mocks();
+    const r = await runAutoLower(input(), { enabled: true, depsFor: () => m.d, savePreview: m.savePreview, now: NOW, lastSentAt: '2026-11-07T11:10:00Z' });
+    expect(m.calls.send).toHaveLength(1);
+    expect(r.lastSentAt).toBe(NOW.toISOString());
+    expect(r.pause).toBeUndefined();
+  });
+  test('AN, noch nie gesendet → wird gesendet', async () => {
+    const m = mocks();
+    const r = await runAutoLower(input(), { enabled: true, depsFor: () => m.d, savePreview: m.savePreview, now: NOW, lastSentAt: null });
+    expect(m.calls.send).toHaveLength(1);
+    expect(r.lastSentAt).toBe(NOW.toISOString());
+  });
+  test('AUS → keine Pause-Meldung, lastSentAt unverändert', async () => {
+    const m = mocks();
+    const r = await runAutoLower(input(), { enabled: false, depsFor: () => m.d, savePreview: m.savePreview, now: NOW, lastSentAt: '2026-11-08T07:00:00Z' });
+    expect(r.pause).toBeUndefined();
+    expect(r.lastSentAt).toBe('2026-11-08T07:00:00Z');
+  });
+  test('autoLowerPause rein: Grenze genau 20 h → keine Pause; 19,9 h → Pause; ungültiges Datum → keine Pause', () => {
+    expect(autoLowerPause('2026-11-07T12:10:00Z', NOW)).toBeNull();
+    expect(autoLowerPause('2026-11-07T12:16:00Z', NOW)).not.toBeNull();
+    expect(autoLowerPause('kaputt', NOW)).toBeNull();
   });
 });

@@ -881,7 +881,10 @@ async function maybeAutoLower(
   priceHolds: PriceHolds,
   excluded: AutoPriceExclusions,
 ): Promise<void> {
-  const { runAutoLower, autoLowerEnabled, defaultSavePreview } = await import('./auto-lower');
+  const { runAutoLower, autoLowerEnabled, defaultSavePreview, readAutoLowerPreview } = await import('./auto-lower');
+  // Älterer Bericht (vor diesem Fix) hat kein lastSentAt: dann zählt ein Lauf mit enabled + gesendet als letztes echtes Senken.
+  const prev = await readAutoLowerPreview().catch(() => null);
+  const lastSentAt = prev?.lastSentAt ?? (prev?.enabled && (prev.gesendet?.length ?? 0) > 0 ? prev.at : null);
   const { buildVariantRepriceDeps } = await import('./variant-reprice-deps');
   const { getSentPromotions } = await import('./multi-rabatt');
   const rows = await db.select().from(schema.products).where(and(eq(schema.products.ebayStatus, 'listed'), isNotNull(schema.products.ebayListingId)));
@@ -902,7 +905,7 @@ async function maybeAutoLower(
   const promotions = new Map(Object.entries(sent).filter(([, v]) => v?.percents).map(([k, v]) => [Number(k), v.percents]));
   const products = rows.map(p => ({ ...p, generatedTitle: p.generatedTitle ?? p.title ?? '', ebayStatus: p.ebayStatus ?? 'none', groups: parseVariantGroupsJson(p.variants) }));
   await runAutoLower({ products: products as never, freshEk, changedThisRun, held, promotions, gesperrt }, {
-    enabled: autoLowerEnabled(), depsFor: (p) => buildVariantRepriceDeps(p as never), savePreview: defaultSavePreview,
+    enabled: autoLowerEnabled(), depsFor: (p) => buildVariantRepriceDeps(p as never), savePreview: defaultSavePreview, lastSentAt,
   });
 }
 
