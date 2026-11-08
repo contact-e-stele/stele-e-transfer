@@ -8,7 +8,7 @@ import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
 import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, PAYMENT_TEXT, deliveryFooterText, returnFooterText, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
 import { DESCRIPTION_V3_MARKER, factRows, headingText, v3Bullets, type DescriptionV3Input } from '../../shared/description-v3';
 import type { VariantDetails } from '../../shared/variant-measure';
-import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, introSentence, trustChips, v4Rows, type DescriptionVersion } from '../../shared/description-v4';
+import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, introSentence, trustChips, titleBarText, v4Rows, type DescriptionVersion } from '../../shared/description-v4';
 import { weeeLineForListing } from '../../shared/electric';
 
 export interface ScrapedProduct {
@@ -662,7 +662,7 @@ ${FOOTER_BLOCK_END}
  * (Dauerregel 3, description-compliance.ts). Kommentar "TAB 5" bleibt, damit neutralizeGpsrTab() und die Prüfung greifen.
  */
 export function buildEbayHTMLv4(product: ScrapedProduct): string {
-  const title = cleanText(product.title || "");
+  const title = titleBarText(cleanText(product.title || ""));
   const v3Input: DescriptionV3Input = {
     title,
     variants: product.variants,
