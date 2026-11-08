@@ -18,6 +18,7 @@ import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
 import { getPriceHolds, releasePriceHolds } from './price-holds';
 import { getAutoPriceExclusions } from './auto-price-exclusions';
+import { resolveAbPrice } from '../shared/ab-price';
 import { variantPriceAlarm } from '../shared/target-margin-bulk';
 import { isPriceJump, priceJumpMessage, type AutoPriceExclusions } from '../shared/price-jump';
 import { isProductPriceLocked, setPriceLock } from './price-locks';
@@ -1035,13 +1036,17 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         console.log(`[PriceMonitor] ${product.id}: shipsFrom=China — Einfuhrabgaben +${aliEinfuhrEur()}€ werden addiert`);
       }
 
-      if (!data.price) { errors++; return; }
+      // Fix 251: ohne Ab-Preis bei Varianten-Produkten den kleinsten Varianten-Preis nehmen; jedes Ende mit Log-Zeile (vorher still).
+      const isVariantForAb = isVariantProduct(product.variants, product.variantPrices);
+      const ab = resolveAbPrice(data.price ? parsePrice(data.price) : null, isVariantForAb, data.variantPrices);
+      if (!ab.ok) { errors++; console.warn(`[PriceMonitor] ${product.id}: ${ab.reason} — Lauf für dieses Produkt beendet`); return; }
+      if (ab.source !== 'data.price') console.log(`[PriceMonitor] ${product.id}: kein Ab-Preis von AliExpress — kleinster Varianten-Preis ${ab.price.toFixed(2)}€ als Ab-Preis`);
 
       // OFFEN 007: Einzelartikel als Pack → Ware je Angebot = Stückpreis × Packmenge (Varianten: im Eintrag, s. mergeFreshVariantPrices).
-      const singlePack = isVariantProduct(product.variants, product.variantPrices) ? 1 : normalizePackQty((await getSinglePackQtys())[String(product.id)]);
-      const unitBuyPrice = parsePrice(data.price);
-      const newBuyPrice = unitBuyPrice ? Math.round(unitBuyPrice * singlePack * 100) / 100 : unitBuyPrice;
-      if (!newBuyPrice || newBuyPrice <= 0) { errors++; return; }
+      const singlePack = isVariantForAb ? 1 : normalizePackQty((await getSinglePackQtys())[String(product.id)]);
+      const unitBuyPrice = ab.price;
+      const newBuyPrice = Math.round(unitBuyPrice * singlePack * 100) / 100;
+      if (!newBuyPrice || newBuyPrice <= 0) { errors++; console.warn(`[PriceMonitor] ${product.id}: Einkaufspreis ${newBuyPrice} ungültig — Lauf für dieses Produkt beendet`); return; }
 
       const oldBuyPrice = product.buyPrice ?? 0;
       const buyPriceDiff = Math.abs(newBuyPrice - oldBuyPrice);
