@@ -81,7 +81,7 @@ describe.skipIf(!IS_CHILD)('Pflicht-Daten (eigener Prozess, lokale Datei-DB)', (
     expect(d.gespeichert).toBeNull();
     expect(d.ergebnis.produktart).toMatchObject({ value: 'Servierplatte', source: 'b', herkunft: 'vorschlag' });
     expect(d.ampel.status).toBe('GELB');
-    expect(d.ampel.text).toBe('Pflicht-Daten fehlen: P4 Lieferumfang · Farbe unbekannt: Champagne');
+    expect(d.ampel.text).toBe('Pflicht-Daten fehlen: Lieferumfang · Farbe unbekannt: Champagne');
     expect(d.merkmale).toEqual({ Produktart: 'Servierplatte', Material: 'Edelstahl' });
     expect(await read()).toEqual(before);
     expect((await app.request('/api/products/999/pflichtdaten-preview', { headers: { Cookie: cookie } })).status).toBe(404);

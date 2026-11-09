@@ -13,6 +13,8 @@ import type { VariantGroup } from "../../shared/variant-resolver";
 
 export interface PflichtDatenFields {
   id: number;
+  title?: string | null;
+  generatedTitle?: string | null;
   specs?: string | null;
   variants?: unknown;
   variantPrices?: string | null;
@@ -27,7 +29,7 @@ export interface PflichtDatenFields {
 
 const VIOLET = "#96566B";
 const inp = { padding: "3px 6px", fontSize: 11, border: "1px solid #CBD5E1", borderRadius: 6, fontFamily: "inherit" } as const;
-const KIND_LABEL: Record<MeasureKind, string> = { D: "Ø", L: "L", BTH: "B × T × H", STRETCH: "↔ von–bis", MIXED: "gemischt" };
+const KIND_LABEL: Record<MeasureKind, string> = { D: "Ø", L: "L", BTH: "B × T × H", BH: "B × H", STRETCH: "↔ von–bis", MIXED: "gemischt" };
 
 interface EntryForm { value: string; source: "" | PflichtSource; location: string; wording: string }
 interface MeasureForm { kind: MeasureKind; values: string; source: "" | PflichtSource; location: string; wording: string }
@@ -42,6 +44,7 @@ function inputOf(p: PflichtDatenFields) {
   const vars = Array.isArray(p.variants) ? p.variants : j<unknown[]>(typeof p.variants === "string" ? p.variants : null, []);
   return {
     productId: p.id,
+    title: p.generatedTitle ?? p.title,
     specs: j<Record<string, string>>(p.specs, {}),
     variants: Array.isArray(vars) && vars.length > 0 && typeof vars[0] === "object" ? vars as VariantGroup[] : [],
     variantPrices: (() => { const v = j<unknown>(p.variantPrices, []); return Array.isArray(v) ? v as Array<{ skuId?: string; attrs?: Record<string, string> }> : []; })(),

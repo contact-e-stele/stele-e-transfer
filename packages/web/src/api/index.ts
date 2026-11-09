@@ -3058,7 +3058,7 @@ const app = new Hono()
         manualAspects,
         // Design-Sprint S2: Produktart/Material/Farbe aus den Pflicht-Daten (EINE Lesestelle resolvePflichtDaten, wie Beschreibung v4)
         pflichtAspects: pflichtAspects(resolvePflichtDaten({
-          productId: product.id, specs, variants: variantGroups, variantPrices: variantPricesForListing ?? [],
+          productId: product.id, title: product.generatedTitle ?? product.title, specs, variants: variantGroups, variantPrices: variantPricesForListing ?? [],
           material: product.material, materialSource: (() => { try { return product.materialSource ? JSON.parse(product.materialSource) : null; } catch { return null; } })(),
           usePurpose: product.usePurpose, usageNote: product.usageNote, variantDetails: readVariantDetails(product.variantDetails),
           manualAspects: manualAspects ?? null, pflichtDaten: readPflichtDaten(product.pflichtDaten),
@@ -4367,6 +4367,7 @@ app.get('/products/:id/pflichtdaten-preview', async (c) => {
       const j = <T,>(s: string | null | undefined, fb: T): T => { try { const v = JSON.parse(s ?? 'null'); return (v ?? fb) as T; } catch { return fb; } };
       const input = {
         productId: id,
+        title: p.generatedTitle ?? p.title,
         specs: j<Record<string, string>>(p.specs, {}),
         variants: (() => { const v = j<unknown[]>(p.variants, []); return Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' ? v as VariantGroup[] : []; })(),
         variantPrices: (() => { const v = j<unknown>(p.variantPrices, []); return Array.isArray(v) ? v as Array<{ skuId?: string; attrs?: Record<string, string> }> : []; })(),

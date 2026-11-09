@@ -96,18 +96,19 @@ describe('3: genau 3 Vertrauens-Chips, Text aus shipping-return-text.ts', () => 
   });
 });
 
-describe('4: ein Einleitungssatz mit Menge + Maß', () => {
-  test('Gemini-Einleitung (1. Satz) + Menge + Maß aus den Produktdaten', () => {
-    expect(introSentence({ ...P119, variantDetails: DETAILS_119 }, 'Praktische Abdeckung für Schüsseln. Zweiter Satz.'))
-      .toBe('Praktische Abdeckung für Schüsseln (100 / 200 Stück, Ma&szlig;e ↔ 14 – 29 cm).');
-    expect(html).toContain('>Praktische Abdeckung für Schüsseln und Teller (50 / 100 / 500 Stück).</p>');
+// Design-Antwort 09.11. 07:45 (Punkt 2): ohne Produktart (P1) GAR KEINE Einleitung — auch nicht die Gemini-Einleitung.
+// Vorher: 'Praktische Abdeckung für Schüsseln (100 / 200 Stück, Ma&szlig;e ↔ 14 – 29 cm).' bzw. 'Inhalt: 100 / 200 Stück.'
+describe('4: Einleitung nur mit Produktart', () => {
+  test('ohne P1: keine Einleitung, auch nicht aus Gemini oder Produktdaten', () => {
+    expect(introSentence({ ...P119, variantDetails: DETAILS_119 }, 'Praktische Abdeckung für Schüsseln. Zweiter Satz.')).toBeNull();
+    expect(introSentence(P225, 'Weiches Nackenkissen für unterwegs.')).toBeNull();
+    expect(introSentence(P119, '')).toBeNull();
+    expect(html).not.toContain('Praktische Abdeckung');
     expect(html).not.toContain('Zweiter Satz');
   });
-  test('ohne Maß/Menge: Satz ohne diese Angabe; ohne Einleitung nur Daten; ohne beides kein Satz', () => {
-    expect(introSentence(P225, 'Weiches Nackenkissen für unterwegs.')).toBe('Weiches Nackenkissen für unterwegs.');
-    expect(introSentence(P119, '')).toBe('Inhalt: 100 / 200 Stück.');
-    expect(introSentence(P225, '')).toBeNull();
-    expect(introSentence(P225, 'Schnelle Lieferung aus dem EU-Lager.')).toBeNull();
+  test('mit P1: "<Produktart> aus <Material>, <Menge>, <Maß>."', () => {
+    const pd = { produktart: { value: 'Frischhaltehaube', source: 'b' as const, location: 'Spezifikation "Type" – b, übersetzt (Liste)', wording: 'food cover' } };
+    expect(introSentence({ ...P119, material: 'PE', variantDetails: DETAILS_119, pflichtDaten: pd }, 'Gemini.')).toBe('Frischhaltehaube aus PE, 100 / 200 Stück, ↔ 14 – 29 cm.');
   });
 });
 

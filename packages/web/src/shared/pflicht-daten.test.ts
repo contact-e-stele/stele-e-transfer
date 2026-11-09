@@ -4,12 +4,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   checkMaterialEvidence, extractPflichtProposal, matchPflichtToCategoryAspects, parseMeasureText, parsePflichtDatenPatch,
-  pflichtAspects, pflichtDatenForImport, readPflichtDaten, resolvePflichtDaten, SINGLE_UNIT_KEY,
+  pflichtAspects, pflichtDatenForImport, readPflichtDaten, resolvePflichtDaten, SINGLE_UNIT_KEY, translateProductType, twoDimUnclear,
 } from './pflicht-daten';
 import { translateColorExact } from './variant-text-de';
 import { formatMeasure } from './variant-measure';
 import { parseMeasure } from './product-data-patch';
-import { introSentence, v4Rows } from './description-v4';
+import { introSentence, v4Content, v4Rows } from './description-v4';
 import { buildEbayHTMLLight, buildEbayHTMLv4 } from '../web/lib/ebay-description';
 import { buildAspects } from '../api/ebay';
 import type { CategoryAspectDef } from './spec-aspects';
@@ -45,7 +45,7 @@ describe('P5 Farbe: feste Liste EN→DE', () => {
     const r = resolvePflichtDaten(PLATTE);
     expect(r.farben['2']).toBeUndefined();
     expect(r.ampel.status).toBe('GELB');
-    expect(r.ampel.missing).toContain('P5 Farbe unbekannt (nicht übernommen): Champagne');
+    expect(r.ampel.missing).toContain('Farbe unbekannt (nicht übernommen): Champagne');
   });
   test('Farbe + Stückzahl im Variantenwert (127): "White 500pcs" → Weiß', () => {
     expect(extractPflichtProposal(P127).stored.farben?.['White 500pcs']?.value).toBe('Weiß');
@@ -90,7 +90,7 @@ describe('P3 Maße nach D2 (Zahl zuerst, immer cm)', () => {
 describe('leer → GELB, keine Platzhalter', () => {
   test('225: P1–P4 fehlen → GELB mit Klartext', () => {
     const r = resolvePflichtDaten(P225);
-    expect(r.ampel).toEqual({ status: 'GELB', missing: ['P1 Produktart', 'P2 Material', 'P3 Maße', 'P4 Lieferumfang'], text: 'Pflicht-Daten fehlen: P1 Produktart, P2 Material, P3 Maße, P4 Lieferumfang' });
+    expect(r.ampel).toEqual({ status: 'GELB', missing: ['Produktart', 'Material', 'Maße', 'Lieferumfang'], text: 'Pflicht-Daten fehlen: Produktart, Material, Maße, Lieferumfang' });
     expect(r.produktart).toBeNull();
     expect(r.material).toBeNull();
     expect(r.lieferumfang).toBeNull();
@@ -99,13 +99,13 @@ describe('leer → GELB, keine Platzhalter', () => {
     const r = resolvePflichtDaten(P127);
     expect(r.material?.value).toBe('Kunststoff');
     expect(r.lieferumfang?.value).toBe('50 / 100 / 500 Stück');
-    expect(r.ampel.text).toBe('Pflicht-Daten fehlen: P1 Produktart, P3 Maße');
+    expect(r.ampel.text).toBe('Pflicht-Daten fehlen: Produktart, Maße');
   });
   test('englische Typ-Angabe wird keine Produktart; Material unübersetzbar → leer + Hinweis', () => {
     const p = extractPflichtProposal({ specs: { Type: 'Travel Pillow', Material: 'Memory Foam' } });
     expect(p.stored.produktart).toBeUndefined();
     expect(p.stored.material).toBeUndefined();
-    expect(p.hinweise).toEqual(['Material „Memory Foam“ nicht eindeutig übersetzbar — nicht übernommen']);
+    expect(p.hinweise).toEqual(['Produktart „Travel Pillow“ nicht in der Übersetzungsliste — nicht übernommen', 'Material „Memory Foam“ nicht eindeutig übersetzbar — nicht übernommen']);
   });
   test('Stückzahl nur in einem Teil der Varianten → P4 leer', () => {
     expect(extractPflichtProposal({ variants: [{ name: 'Menge', values: ['100pcs', 'Set'] }] }).stored.lieferumfang).toBeUndefined();
@@ -236,5 +236,91 @@ describe('Handeingabe speichern (PATCH pflichtDaten)', () => {
   test('leere Werte und null → null (Feld leer)', () => {
     expect(parsePflichtDatenPatch(null, pm)).toEqual({ ok: true, json: null });
     expect(parsePflichtDatenPatch({ produktart: { value: '  ', source: 'c', location: 'x', wording: 'y' } }, pm)).toEqual({ ok: true, json: null });
+  });
+});
+
+// ─── Nachtrag Design-Antworten 09.11. 07:45 ────────────────────────────────────────────────────────────────────────────
+describe('Nachtrag 07:45 – P1 Produktart aus fester Liste EN→DE', () => {
+  test('Einträge der Liste, Quelle b "übersetzt (Liste)", Wortlaut = englischer Wert', () => {
+    expect(translateProductType('Strainer')).toBe('Küchensieb');
+    expect(translateProductType('colander')).toBe('Küchensieb');
+    expect(translateProductType('Food Cover')).toBe('Frischhaltehaube');
+    expect(translateProductType('luggage tag')).toBe('Gepäckanhänger');
+    expect(translateProductType('Hot Water Bottle')).toBe('Wärmflasche');
+    expect(extractPflichtProposal({ specs: { Type: 'Food Cover' } }).stored.produktart)
+      .toEqual({ value: 'Frischhaltehaube', source: 'b', location: 'Spezifikation "Type" – b, übersetzt (Liste)', wording: 'Food Cover' });
+  });
+  test('unbekannter Typ → nie frei übersetzt, leer + Hinweis, GELB "Pflicht-Daten fehlen: Produktart"', () => {
+    expect(translateProductType('Kitchen Sieve')).toBeNull();
+    const r = resolvePflichtDaten({ specs: { Type: 'Kitchen Sieve' } });
+    expect(r.produktart).toBeNull();
+    expect(r.hinweise).toContain('Produktart „Kitchen Sieve“ nicht in der Übersetzungsliste — nicht übernommen');
+    expect(r.ampel.text).toBe('Pflicht-Daten fehlen: Produktart, Material, Maße, Lieferumfang');
+  });
+  test('Abgleich mit dem Titel: Produktart wörtlich im Titel → kein Befund; sonst GELB + Hinweis (kein Raten bei Komposita)', () => {
+    const base = { specs: { Type: 'Strainer', Material: 'Plastic', 'Product Size': 'Diameter 20cm', Quantity: '1' } };
+    expect(resolvePflichtDaten({ ...base, title: 'Küchensieb Kunststoff faltbar' }).ampel).toEqual({ status: 'GRUEN', missing: [], text: null });
+    const off = resolvePflichtDaten({ ...base, title: 'Nudelsieb Kunststoff faltbar' });
+    expect(off.ampel.status).toBe('GELB');
+    expect(off.ampel.text).toBe('Produktart „Küchensieb“ steht nicht wörtlich im Titel — ein Wort durchgehend verwenden');
+    expect(off.produktart?.value).toBe('Küchensieb');
+  });
+  test('P6/P7 leer machen nie GELB', () => {
+    const r = resolvePflichtDaten({ specs: { Type: 'Strainer', Material: 'Plastic', 'Product Size': 'Diameter 20cm', Quantity: '1' } });
+    expect([r.anwendung, r.besonderheit, r.ampel.status]).toEqual([null, null, 'GRUEN']);
+  });
+});
+
+describe('Nachtrag 07:45 – D2 "B × H" für flache Maße', () => {
+  test('nur mit benannter Breite/Höhe; Schreibweise "45 × 50 cm"', () => {
+    expect(parseMeasureText('W45 x H50cm')).toEqual({ kind: 'BH', values: [45, 50] });
+    expect(parseMeasureText('H50 x W45cm')).toEqual({ kind: 'BH', values: [45, 50] });
+    expect(formatMeasure(parseMeasureText('Width 45cm x Height 50cm'))).toBe('45 × 50 cm');
+    expect(formatMeasure(parseMeasureText('Breite 45,5 cm × Höhe 50 cm'))).toBe('45,5 × 50 cm');
+    expect(formatMeasure({ kind: 'BH', values: [45, 50] })).toBe('45 × 50 cm');
+  });
+  test('unklar welcher Wert Breite/Höhe → null + Hinweis (GELB statt raten); 3 Maße bleiben B × T × H', () => {
+    expect(parseMeasureText('45x50cm')).toBeNull();
+    expect(twoDimUnclear('45x50cm')).toBe(true);
+    expect(twoDimUnclear('30x20x15cm')).toBe(false);
+    const p = extractPflichtProposal({ variantPrices: [{ skuId: '1', attrs: { Size: '45x50cm' } }] });
+    expect(p.stored.masse).toBeUndefined();
+    expect(p.hinweise).toEqual(['Maß „45x50cm“ (Variantenauswahl "Size"): unklar, welcher Wert Breite/Höhe ist — nicht übernommen']);
+    expect(resolvePflichtDaten({ variantPrices: [{ skuId: '1', attrs: { Size: '45x50cm' } }] }).ampel.missing).toContain('Maße');
+  });
+  test('Speichern: B × H mit genau 2 Werten', () => {
+    const pm = (k: string, m: unknown, at: string) => parseMeasure(k, m, at);
+    expect(parsePflichtDatenPatch({ masse: { '1': { kind: 'BH', values: [45, 50], source: 'c', location: 'Galeriebild 2', text: 'W45 x H50cm' } } }, pm).ok).toBe(true);
+    expect(parsePflichtDatenPatch({ masse: { '1': { kind: 'BH', values: [45], source: 'c', location: 'Galeriebild 2' } } }, pm)).toEqual({ ok: false, error: 'pflichtDaten.masse["1"].values: Art BH braucht 2 Wert(e), erhalten 1' });
+  });
+});
+
+describe('Nachtrag 07:45 – Maße/Material/Menge stehen im v4-Text nur EINMAL', () => {
+  const count = (h: string, s: string) => h.split(s).length - 1;
+  const PD = {
+    produktart: { value: 'Frischhaltehaube', source: 'b' as const, location: 'Spezifikation "Type" – b, übersetzt (Liste)', wording: 'food cover' },
+    masse: {
+      '100pcs': { kind: 'STRETCH' as const, values: [14, 29], source: 'c' as const, location: 'Beschreibungsbild 3', text: 'stretch 14-29cm' },
+      '200pcs': { kind: 'STRETCH' as const, values: [14, 29], source: 'c' as const, location: 'Beschreibungsbild 3', text: 'stretch 14-29cm' },
+    },
+  };
+  const P = { title: 'Frischhaltehaube dehnbar', variants: [{ name: 'Menge', values: ['100pcs', '200pcs'] }], specs: { Material: 'Plastic' }, pflichtDaten: PD,
+    description: '###INTRO### Material: Kunststoff Gemini.###BULLETS### - Material: Kunststoff, lebensmittelecht' };
+  test('Einleitung nennt Material/Menge/Maß → keine eigene Zeile dafür; jeder Wert genau 1× im HTML', () => {
+    const h = buildEbayHTMLv4(P);
+    expect(count(h, 'Kunststoff')).toBe(1);
+    expect(count(h, '↔ 14 – 29 cm')).toBe(1);
+    expect(count(h, '100 / 200 Stück')).toBe(1);
+    expect(h).toContain('>Frischhaltehaube aus Kunststoff, 100 / 200 Stück, ↔ 14 – 29 cm.</p>');
+    expect(v4Content(P).rows).toEqual([]);
+  });
+  test('Maß je Variante verschieden → nicht in der Einleitung, dafür genau einmal als Zeile MASSE', () => {
+    const Q = { ...P, pflichtDaten: { ...PD, masse: { ...PD.masse, '200pcs': { ...PD.masse['200pcs'], values: [20, 35] } } } };
+    const c = v4Content(Q);
+    expect(c.intro).toBe('Frischhaltehaube aus Kunststoff, 100 / 200 Stück.');
+    expect(c.rows.map(r => r.key)).toEqual(['MASSE']);
+    const h = buildEbayHTMLv4(Q);
+    expect(count(h, '↔ 14 – 29 cm')).toBe(1);
+    expect(count(h, 'Kunststoff')).toBe(1);
   });
 });

@@ -31,6 +31,9 @@ export const FIELD_LABEL: Record<ProductField | 'masse' | 'farben', string> = {
   farben: 'P5 Farbe', anwendung: 'P6 Anwendung', besonderheit: 'P7 Besonderheit',
 };
 
+/** Namen in der GELB-Liste ("Pflicht-Daten fehlen: Produktart, Maße"). */
+export const MISSING_NAME = { produktart: 'Produktart', material: 'Material', masse: 'Maße', lieferumfang: 'Lieferumfang' } as const;
+
 export interface PflichtDatenStored {
   produktart?: PflichtEntry;
   material?: PflichtEntry;
@@ -43,6 +46,7 @@ export interface PflichtDatenStored {
 
 export interface PflichtInput {
   productId?: number;
+  title?: string | null;               // nur für den Abgleich der Produktart mit dem Produktwort im Titel (nie als Quelle)
   specs?: Record<string, string> | null;
   variants?: VariantGroup[] | null;
   variantPrices?: Array<{ skuId?: string; attrs?: Record<string, string> }> | null;
@@ -111,7 +115,8 @@ function toCm(n: number, unit: string): { v: number; converted: boolean } {
  * Ein Maß aus einem Text nach D2 — nur eindeutige Fälle, sonst null (kein Raten):
  *   "30x20x15cm" → B × T × H · "Diameter 20cm"/"Ø20cm" → Ø · "Length: 150cm" → L · "stretch 14-29cm" → ↔ (nur mit Wort dehnbar/stretch/elastic)
  *   hint 'D'/'L' (Spezifikationsschlüssel "Diameter"/"Length"): ein einzelner Wert mit Einheit genügt.
- * Zwei Maße ("45x50cm") haben in D2 kein Zeichen → null. Einheit Pflicht (mm → cm, Zoll → cm mit converted).
+ * Zwei Maße: nur mit benannter Breite und Höhe ("W45 x H50cm", "Breite 45 cm × Höhe 50 cm") → B × H "45 × 50 cm"; ohne Benennung
+ * ("45x50cm") ist unklar, welcher Wert Breite/Höhe ist → null (twoDimUnclear() liefert dafür den Hinweis). Einheit Pflicht (mm → cm, Zoll → cm).
  */
 export function parseMeasureText(text: string, hint?: 'D' | 'L'): Pick<VariantMeasure, 'kind' | 'values' | 'converted'> | null {
   const t = clean(text).toLowerCase().replace(/(\d),(\d)/g, '$1.$2').replace(/\b(about|approx\.?|ca\.?)\s*/g, '');
@@ -123,6 +128,12 @@ export function parseMeasureText(text: string, hint?: 'D' | 'L'): Pick<VariantMe
   };
   let m = t.match(new RegExp(`${NUM}\\s*(?:cm|mm)?\\s*[x*×]\\s*${NUM}\\s*(?:cm|mm)?\\s*[x*×]\\s*${NUM}\\s*${UNIT}(?![a-z])`));
   if (m) return done('BTH', [m[1], m[2], m[3]], m[4]);
+  // B × H (flach, Design-Antwort 09.11. 07:45): nur wenn Breite UND Höhe benannt sind — sonst unklar → null (GELB statt raten).
+  const W = '(?:width|breite|w|b)', H = '(?:height|höhe|hoehe|h)';
+  m = t.match(new RegExp(`(?<![a-z])${W}\\s*:?\\s*${NUM}\\s*(?:cm|mm)?\\s*[x*×,]?\\s*${H}\\s*:?\\s*${NUM}\\s*${UNIT}(?![a-z])`));
+  if (m) return done('BH', [m[1], m[2]], m[3]);
+  m = t.match(new RegExp(`(?<![a-z])${H}\\s*:?\\s*${NUM}\\s*(?:cm|mm)?\\s*[x*×,]?\\s*${W}\\s*:?\\s*${NUM}\\s*${UNIT}(?![a-z])`));
+  if (m) return done('BH', [m[2], m[1]], m[3]);
   if (/stretch|elastic|dehnbar|expandable/.test(t)) {
     m = t.match(new RegExp(`${NUM}\\s*(?:cm|mm)?\\s*(?:-|–|~|to|bis)\\s*${NUM}\\s*${UNIT}(?![a-z])`));
     if (m && Number(m[1]) <= Number(m[2])) return done('STRETCH', [m[1], m[2]], m[3]);
@@ -138,12 +149,34 @@ export function parseMeasureText(text: string, hint?: 'D' | 'L'): Pick<VariantMe
   return null;
 }
 
+/** Zwei Zahlen mit Einheit ohne benannte Breite/Höhe ("45x50cm") — Hinweis statt Raten. */
+export function twoDimUnclear(text: string): boolean {
+  const t = clean(text).toLowerCase().replace(/(\d),(\d)/g, '$1.$2');
+  return parseMeasureText(text) === null && new RegExp(`(?:^|[^\\d.])${NUM}\\s*(?:cm|mm)?\\s*[x*×]\\s*${NUM}\\s*${UNIT}(?![a-z])`).test(t)
+    && !new RegExp(`${NUM}\\s*(?:cm|mm)?\\s*[x*×]\\s*${NUM}\\s*(?:cm|mm)?\\s*[x*×]`).test(t);
+}
+const twoDimHint = (where: string, text: string) => `Maß „${text}“ (${where}): unklar, welcher Wert Breite/Höhe ist — nicht übernommen`;
+
 const SIZE_GROUP = /^(size|sizes|größe|groesse|größen|dimensions?|maße|abmessungen|length|länge|diameter|durchmesser)$/i;
 const SPEC_MEASURE_KEYS: Array<[RegExp, 'D' | 'L' | undefined]> = [
   [/^(diameter|durchmesser)$/i, 'D'],
   [/^(length|länge)$/i, 'L'],
   [/^(size|dimensions?|product size|item size|product dimensions|maße|abmessungen|produktgröße)$/i, undefined],
 ];
+
+// ─── P1 Produktart: feste Übersetzungsliste EN→DE (wie Farbe; Design-Antwort 09.11. 07:45) ─────────────────────────────
+/** Nur diese Einträge werden übersetzt (ganzer Wert, Groß/Klein egal). Unbekannter Typ → leer + GELB, nie frei übersetzen. */
+export const PRODUCT_TYPE_DE: Readonly<Record<string, string>> = {
+  strainer: 'Küchensieb', colander: 'Küchensieb',
+  'food cover': 'Frischhaltehaube',
+  'luggage tag': 'Gepäckanhänger',
+  'hot water bottle': 'Wärmflasche',
+};
+const SPEC_TYPE_KEYS = /^(type|product type|item type|produkttyp)$/i;
+export const PRODUCT_TYPE_SOURCE_NOTE = 'b, übersetzt (Liste)';
+export function translateProductType(value: string): string | null {
+  return PRODUCT_TYPE_DE[clean(value).toLowerCase()] ?? null;
+}
 
 // ─── P4 Lieferumfang ───────────────────────────────────────────────────────────────────────────────────────────────────
 const PIECES_RE = /\b(\d+)\s*(?:pcs|pc|pieces|piece|stück|stk)\b\.?/i;
@@ -195,6 +228,12 @@ export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'vari
   // Der Schlüssel ist deutsch → der Wert gilt als deutsche Angabe des Händlers; höchstens 3 Wörter.
   if (pa && pa[1].split(/\s+/).length <= 3) {
     out.produktart = { value: pa[1], source: 'b', location: `Spezifikation "${pa[0]}"`, wording: pa[1] };
+  } else {
+    // Englischer Typ nur über die feste Liste (Quelle "b, übersetzt (Liste)"); unbekannt → leer + Hinweis.
+    const ty = specs.find(([k]) => SPEC_TYPE_KEYS.test(k));
+    const de = ty ? translateProductType(ty[1]) : null;
+    if (ty && de) out.produktart = { value: de, source: 'b', location: `Spezifikation "${ty[0]}" – ${PRODUCT_TYPE_SOURCE_NOTE}`, wording: ty[1] };
+    else if (ty) hinweise.push(`Produktart „${ty[1]}“ nicht in der Übersetzungsliste — nicht übernommen`);
   }
 
   // P2 Material: a (Varianten-Gruppe Material, für alle Varianten gleich) vor b (Spezifikation).
@@ -218,6 +257,7 @@ export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'vari
     for (const [g, v] of Object.entries(u.attrs)) {
       const m = parseMeasureText(v, /^(diameter|durchmesser)$/i.test(clean(g)) ? 'D' : /^(length|länge)$/i.test(clean(g)) ? 'L' : undefined);
       if (m) { masse[u.key] = { ...m, source: 'a', location: `Variantenauswahl "${clean(g)}"`, text: clean(v) }; break; }
+      if (twoDimUnclear(v)) hinweise.push(twoDimHint(`Variantenauswahl "${clean(g)}"`, clean(v)));
     }
   }
   const sizeAxis = units.some(u => Object.keys(u.attrs).some(g => SIZE_GROUP.test(clean(g))));
@@ -226,7 +266,7 @@ export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'vari
       const s = specs.find(([k]) => re.test(k));
       const m = s ? parseMeasureText(s[1], hint) : null;
       if (s && m) { for (const u of units) masse[u.key] = { ...m, source: 'b', location: `Spezifikation "${s[0]}"`, text: s[1] }; break; }
-      if (s && !m) hinweise.push(`Maß „${s[0]}: ${s[1]}“ nicht nach D2 lesbar — nicht übernommen`);
+      if (s && !m) hinweise.push(twoDimUnclear(s[1]) ? twoDimHint(`Spezifikation "${s[0]}"`, s[1]) : `Maß „${s[0]}: ${s[1]}“ nicht nach D2 lesbar — nicht übernommen`);
     }
   }
   if (Object.keys(masse).length > 0) out.masse = masse;
@@ -339,18 +379,31 @@ export function resolvePflichtDaten(input: PflichtInput): ResolvedPflichtDaten {
   }
   const unbekannteFarben = Object.keys(farben).length === units.length ? [] : proposal.unbekannteFarben;
 
+  // GELB nur für P1–P4 (P6/P7 sind Handeingabe und machen nie GELB) sowie für eine unbekannte Farbe (P5, nicht übernommen).
   const missing: string[] = [];
-  if (!produktart) missing.push(FIELD_LABEL.produktart);
-  if (!material) missing.push(FIELD_LABEL.material);
+  if (!produktart) missing.push(MISSING_NAME.produktart);
+  if (!material) missing.push(MISSING_NAME.material);
   const ohneMass = legacyOnly ? [] : units.filter(u => !masse[u.key]);
-  if (ohneMass.length > 0) missing.push(units.length > 1 && ohneMass.length < units.length ? `${FIELD_LABEL.masse} (${ohneMass.map(u => u.label).join(', ')})` : FIELD_LABEL.masse);
-  if (!lieferumfang) missing.push(FIELD_LABEL.lieferumfang);
+  if (ohneMass.length > 0) missing.push(units.length > 1 && ohneMass.length < units.length ? `${MISSING_NAME.masse} (${ohneMass.map(u => u.label).join(', ')})` : MISSING_NAME.masse);
+  if (!lieferumfang) missing.push(MISSING_NAME.lieferumfang);
   const problems = [...missing];
-  if (unbekannteFarben.length > 0) problems.push(`P5 Farbe unbekannt (nicht übernommen): ${unbekannteFarben.join(', ')}`);
+  // P1-Abgleich mit dem Produktwort im Titel (ein Wort durchgehend): steht die Produktart nicht wörtlich im Titel → GELB + Hinweis.
+  // Es wird NICHT geraten, welches Titelwort gemeint ist (Komposita, Plural …) — nur wörtlicher Treffer zählt.
+  const title = clean(input.title);
+  if (produktart && title && !title.toLowerCase().includes(produktart.value.toLowerCase())) {
+    const h = `Produktart „${produktart.value}“ steht nicht wörtlich im Titel — ein Wort durchgehend verwenden`;
+    problems.push(h);
+    hinweise.push(h);
+  }
+  if (unbekannteFarben.length > 0) problems.push(`Farbe unbekannt (nicht übernommen): ${unbekannteFarben.join(', ')}`);
   const ampel: PflichtAmpel = {
     status: problems.length === 0 ? 'GRUEN' : 'GELB',
     missing: problems,
-    text: problems.length === 0 ? null : [missing.length ? `Pflicht-Daten fehlen: ${missing.join(', ')}` : '', unbekannteFarben.length ? `Farbe unbekannt: ${unbekannteFarben.join(', ')}` : ''].filter(Boolean).join(' · '),
+    text: problems.length === 0 ? null : [
+      missing.length ? `Pflicht-Daten fehlen: ${missing.join(', ')}` : '',
+      problems.filter(x => x.startsWith('Produktart „')).join(''),
+      unbekannteFarben.length ? `Farbe unbekannt: ${unbekannteFarben.join(', ')}` : '',
+    ].filter(Boolean).join(' · '),
   };
 
   return {

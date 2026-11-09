@@ -8,7 +8,7 @@ import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
 import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, PAYMENT_TEXT, deliveryFooterText, returnFooterText, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
 import { DESCRIPTION_V3_MARKER, factRows, headingText, v3Bullets, type DescriptionV3Input } from '../../shared/description-v3';
 import type { VariantDetails } from '../../shared/variant-measure';
-import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, introSentence, trustChips, titleBarText, v4Rows, type DescriptionVersion, type DescriptionV4Input } from '../../shared/description-v4';
+import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, trustChips, titleBarText, v4Content, type DescriptionVersion, type DescriptionV4Input } from '../../shared/description-v4';
 import { weeeLineForListing } from '../../shared/electric';
 import type { PflichtDatenStored, PflichtInput } from '../../shared/pflicht-daten';
 
@@ -683,10 +683,9 @@ export function buildEbayHTMLv4(product: ScrapedProduct): string {
     materialSource: product.materialSource,
     pflichtDaten: product.pflichtDaten,
   };
-  const { introText } = lightBulletSource(product);
-  // Design-Sprint S2: Zeilen nur aus den Pflicht-Daten (P2/P3/P4/P6/P7), Gemini-Stichpunkte füllen keine Zeile mehr.
-  const rows = v4Rows(v4Input);
-  const intro = introSentence(v4Input, introText);
+  // Design-Sprint S2: Einleitung + Zeilen nur aus den Pflicht-Daten (P1–P4/P6/P7); keine Gemini-Stichpunkte/-Einleitung mehr.
+  // Was die Einleitung nennt (Material/Menge/Maß), steht nicht noch einmal als Zeile (v4Content).
+  const { intro, rows } = v4Content(v4Input);
   const chips = trustChips(product.deliveryTime, product.returnTerms);
   const foot = shippingReturnFooterLines(product.deliveryTime, product.returnTerms);
 
