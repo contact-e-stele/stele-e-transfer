@@ -5692,6 +5692,111 @@ app.post('/products/:id/align-offers-to-buyer-price', async (c) => {
   }
 });
 
+// AUFTRAG Kalkulator an 7 App – 162/208 (09.11.2026 07:00): "Käuferpreis auf Angebotsdaten heben" — Gegenstück zu "Angleichen".
+// GET = NUR LESEN (Plan je SKU mit Grund). POST = SCHREIBT den sichtbaren Käuferpreis bei eBay (Trading ReviseInventoryStatus), NUR mit
+// {confirm:true}; ohne confirm passiert nichts. Regeln (a) Offer > Käufer, (b) Offer == Zielpreis der App ± 0,01, (c) Sprung ≤ 15 %:
+// shared/kaeuferpreis-heben.ts. Danach GetItem zurücklesen; nur bestätigte SKUs → variant_sell_prices / sellPrice; Sperre nur aufheben,
+// wenn alle gleich. Keine Migration, normaler Preislauf unverändert.
+async function raiseBuyerPriceContext(id: number) {
+  const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+  const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+  if (!product) return { error: 'Produkt nicht gefunden', status: 404 as const };
+  if (product.ebayStatus !== 'listed' || !product.ebayListingId) return { error: 'Produkt ist nicht live bei eBay gelistet', status: 422 as const };
+  const { readEbaySellPrices } = await import('./ebay-price-readback');
+  const { parseVariantGroupsJson } = await import('./price-monitor');
+  const { getAccessToken, getInventoryItemGroupSkus, getItemBuyerPricesXml } = await import('./ebay');
+  const { parseGetItemBuyerPrices } = await import('../shared/ebay-buyer-price');
+  const { isVariantProduct } = await import('../shared/variant-product');
+  const { parseVariantSellPrices } = await import('../shared/pricing');
+  const { planTierReprice } = await import('../shared/tier-reprice');
+  const { productTarget } = await import('../shared/target-margin-bulk');
+  const { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY } = await import('../shared/price-hold');
+  const { getPriceHolds } = await import('./price-holds');
+  const { targetVkFor } = await import('../shared/kaeuferpreis-heben');
+  const groups = parseVariantGroupsJson(product.variants);
+  // Zielpreis der App: DIESELBE Rechnung wie Stufenwechsel/"Erwartet" (planTierReprice, Ziel des Produkts, Dubletten zusammengelegt).
+  const tierPlan = planTierReprice(product, productTarget(product), groups);
+  const held = resolvePriceHolds(product, (await getPriceHolds().catch((): Awaited<ReturnType<typeof getPriceHolds>> => ({})))[String(id)]).heldKeys;
+  let entries: Array<{ skuId: string; attrs?: Record<string, string>; price: number }> = [];
+  try { const pv = product.variantPrices ? JSON.parse(product.variantPrices) : []; entries = Array.isArray(pv) ? pv : []; } catch { entries = []; }
+  const token = await getAccessToken();
+  const readRows = async () => {
+    const rb = await readEbaySellPrices({
+      productId: id, groups, entries: entries as never,
+      isVariant: isVariantProduct(product.variants, product.variantPrices), appSellPrices: parseVariantSellPrices(product.variantSellPrices), appSellPrice: product.sellPrice,
+      token, getGroupSkus: (g) => getInventoryItemGroupSkus(g, token),
+      getBuyerPrices: async () => {
+        const r = await getItemBuyerPricesXml(product.ebayListingId as string);
+        if (r.httpStatus !== 200) return { isVariation: false, rows: [], error: `GetItem HTTP ${r.httpStatus}` };
+        return parseGetItemBuyerPrices(r.xml);
+      },
+    });
+    if (!rb.ok && rb.rows.length === 0) throw new Error(rb.reason ?? 'eBay-Preise nicht lesbar');
+    return rb.rows.map(r => ({
+      skuId: r.skuId, sku: r.sku, label: r.label, buyerPrice: r.ebayPrice, offerPrice: r.offerPrice ?? null,
+      targetVk: targetVkFor(tierPlan, r.skuId), held: held.has(r.skuId ?? SINGLE_ITEM_HOLD_KEY),
+    }));
+  };
+  return { product, readRows, db, schema };
+}
+
+app.get('/products/:id/raise-buyer-price', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const ctx = await raiseBuyerPriceContext(id);
+    if ('error' in ctx) return c.json({ error: ctx.error }, ctx.status);
+    const { previewBuyerPriceRaise } = await import('./kaeuferpreis-heben');
+    const { expectedFromRaisePlan } = await import('../shared/kaeuferpreis-heben');
+    const plan = await previewBuyerPriceRaise(id, { readRows: ctx.readRows, log: m => console.log(m) });
+    return c.json({ mode: 'preview', nurLesen: true, ...plan, expected: expectedFromRaisePlan(plan.actions) }, 200);
+  } catch (e) {
+    console.error('[raise-buyer-price GET]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post('/products/:id/raise-buyer-price', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: unknown = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  const { parseRaiseBuyerBody } = await import('../shared/kaeuferpreis-heben');
+  const parsed = parseRaiseBuyerBody(body);
+  if (!parsed.ok) return c.json({ ok: false, error: parsed.error }, 400);
+  try {
+    const ctx = await raiseBuyerPriceContext(id);
+    if ('error' in ctx) return c.json({ error: ctx.error }, ctx.status);
+    const { runBuyerPriceRaise } = await import('./kaeuferpreis-heben');
+    const { reviseBuyerPriceTrading } = await import('./ebay');
+    const { setPriceLock } = await import('./price-locks');
+    const { parseVariantSellPrices, serializeVariantSellPrices } = await import('../shared/pricing');
+    const { db, schema, product } = ctx;
+    const out = await runBuyerPriceRaise(id, {
+      readRows: ctx.readRows,
+      revise: (sku, price) => reviseBuyerPriceTrading(product.ebayListingId as string, sku, price),
+      store: async (confirmed) => {
+        // Frisch lesen und mergen (andere Einträge bleiben), wie variant-raise.
+        const [fresh] = await db.select({ variantSellPrices: schema.products.variantSellPrices }).from(schema.products).where(eq(schema.products.id, id)).limit(1);
+        const merged = parseVariantSellPrices(fresh?.variantSellPrices);
+        const single = confirmed.find(x => x.skuId == null);
+        for (const x of confirmed) if (x.skuId != null) merged[x.skuId] = x.price;
+        const patch: { variantSellPrices?: string; sellPrice?: number; updatedAt: string } = { updatedAt: new Date().toISOString() };
+        if (confirmed.some(x => x.skuId != null)) patch.variantSellPrices = serializeVariantSellPrices(Object.entries(merged).map(([skuId, sellPrice]) => ({ skuId, sellPrice })));
+        if (single) patch.sellPrice = single.price;
+        await db.update(schema.products).set(patch).where(eq(schema.products.id, id));
+      },
+      setLock: (still) => setPriceLock(id, still == null ? null : { at: new Date().toISOString(), rows: still }),
+      log: m => console.log(m),
+    }, parsed.expected);
+    if (out.status === 'abgelehnt') return c.json({ mode: 'apply', ...out }, 409);
+    return c.json({ mode: 'apply', ...out }, 200);
+  } catch (e) {
+    console.error('[raise-buyer-price POST]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // K-008: "Preis halten" je Variante — lesen und an/aus schalten. Schreibt NUR app_settings 'price_holds' (keine Migration),
 // sendet nichts an eBay, ändert keinen Preis. Gehalten wird der HEUTIGE VK der Variante (aus derselben Rechnung wie "Erwartet").
 // Außerhalb der Hono-Kette registriert (TS2589, siehe checkout-factor/sync); liegt hinter derselben Login-Middleware.

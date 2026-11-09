@@ -2776,6 +2776,35 @@ export async function getItemBuyerPricesXml(itemId: string): Promise<{ httpStatu
   return { httpStatus: res.status, xml: await res.text() };
 }
 
+// AUFTRAG Kalkulator 09.11.2026 07:00 ("Käuferpreis auf Angebotsdaten heben", 162/208): SCHREIBT den sichtbaren Käuferpreis EINER SKU
+// über die Trading API (ReviseInventoryStatus, ItemID + SKU + StartPrice; Einzelartikel ohne SKU). Bewusst OHNE K-011-Sperrprüfung — der
+// einzige Aufrufer ist der Knopf "Käuferpreis heben" (POST /products/:id/raise-buyer-price, nur mit confirm), der die Sperre auflösen
+// soll. XML/Antwort: shared/kaeuferpreis-heben.ts (rein, getestet). Nicht im normalen Preislauf verwendet.
+export async function reviseBuyerPriceTrading(itemId: string, sku: string | null, price: number, fetchFn: typeof fetch = fetch): Promise<{ ok: boolean; error?: string; errorCodes?: string[] }> {
+  const { buildReviseInventoryStatusPriceXml, parseTradingAck } = await import('../shared/kaeuferpreis-heben');
+  const token = await getAccessToken();
+  const res = await fetchFn('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml',
+      'X-EBAY-API-SITEID': '77',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus',
+      'X-EBAY-API-APP-NAME': EBAY_CLIENT_ID,
+    },
+    body: buildReviseInventoryStatusPriceXml(token, itemId, sku, price),
+    signal: AbortSignal.timeout(30000),
+  });
+  const text = await res.text();
+  const ack = parseTradingAck(text);
+  if (!ack.ok) {
+    const error = `ReviseInventoryStatus ${ack.ack ?? 'HTTP ' + res.status}${ack.errorCodes.length ? ' [' + ack.errorCodes.join(',') + ']' : ''}: ${ack.message ?? 'unbekannter Fehler'}`;
+    console.error('[eBay ReviseInventoryStatus]', itemId, sku ?? '(Artikel)', error);
+    return { ok: false, error, errorCodes: ack.errorCodes };
+  }
+  return { ok: true };
+}
+
 export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   const token = await getAccessToken();
   const results: EbaySellerListing[] = [];
