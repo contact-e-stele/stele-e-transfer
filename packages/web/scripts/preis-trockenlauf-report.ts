@@ -45,13 +45,13 @@ async function main() {
       const gewinnNeu = profitAtSellPrice({
         sellPrice: neuerVk, buyPrice: anchorRow.buyPrice, supplierShipping: versand,
         isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: zoll,
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
       });
       const gewinnHeute = heutigerVk == null ? null : profitAtSellPrice({
         sellPrice: heutigerVk, buyPrice: anchorRow.buyPrice, supplierShipping: versand,
         isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: zoll,
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
       });
       const diffEur = heutigerVk == null ? null : Math.round((neuerVk - heutigerVk) * 100) / 100;
@@ -72,7 +72,7 @@ async function main() {
     const neuerVk = computeMinSellPrice({
       buyPrice: p.buyPrice, supplierShipping: versand,
       isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
       targetMarginEur: p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
       rounding: 'nearest95',
@@ -80,13 +80,13 @@ async function main() {
     const gewinnNeu = profitAtSellPrice({
       sellPrice: neuerVk, buyPrice: p.buyPrice, supplierShipping: versand,
       isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: zoll,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     });
     const gewinnHeute = heutigerVk == null ? null : profitAtSellPrice({
       sellPrice: heutigerVk, buyPrice: p.buyPrice, supplierShipping: versand,
       isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: zoll,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     });
     const diffEur = heutigerVk == null ? null : Math.round((neuerVk - heutigerVk) * 100) / 100;

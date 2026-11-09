@@ -5,7 +5,7 @@ import { requireCategoryId } from '../shared/listing-category';
 import { postOrderAuthHeader } from '../shared/ebay-return-link';
 import { fixIdentifierAspects, isValidIdentifierValue } from '../shared/identifier-aspect';
 import { eq } from 'drizzle-orm';
-import { computeMinSellPrice, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { computeMinSellPrice, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } from '../shared/pricing';
 import type { ResolvedGpsr } from '../shared/gpsr-parser';
 import type { SentPrice } from '../shared/sent-prices';
 import { checkOutgoingListingText, formatComplianceViolations } from '../shared/description-compliance';
@@ -2026,7 +2026,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         ? computeMinSellPrice({
             earUmlageEur: input.earUmlageEur,
             buyPrice: varPriceEntry.price, isChinaOrigin: isChinaOriginForVariant(input.variantPrices?.find(v => v.skuId === varPriceEntry.skuId)?.attrs, input.shipsFrom), // K-004: Herkunft je Variante
-            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+            ebayFeeRatePercent: ebayFeeRatePercentFor(input.categoryId), // Bündel A+B: Satz der Listing-Kategorie
             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
             targetMarginEur: input.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
             rounding: 'floor95', checkoutFactor: input.checkoutFactor, // K-005

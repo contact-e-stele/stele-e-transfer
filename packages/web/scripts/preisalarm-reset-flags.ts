@@ -55,7 +55,7 @@ async function main() {
       currentSellPrice: p.sellPrice,
       variants,
       supplierShipping: versand, isChinaOrigin: isChina, customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
       targetMarginEur: margin,
     });

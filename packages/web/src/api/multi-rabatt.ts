@@ -3,7 +3,7 @@
 import { eq } from 'drizzle-orm';
 import { parseVolumeDiscountRule, planVolumeDiscount, buildVolumeDiscountPromotion, type VolumeDiscountRule, type VolumeDiscountPlan } from '../shared/volume-discount';
 import { productProfitRows, productTarget, type ProfitProduct } from '../shared/target-margin-bulk';
-import { profitFloorFor, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { profitFloorFor, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } from '../shared/pricing';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { earUmlageFor } from '../shared/electric';
 
@@ -49,6 +49,7 @@ export function planForProduct(p: PlanProduct, rule: VolumeDiscountRule): Volume
     floorEur: profitFloorFor(productTarget(p)),
     checkoutFactor: activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt),
     earUmlageEur: earUmlageFor({ isElectric: p.isElectric ?? null }),
+    ebayFeeRatePercent: ebayFeeRatePercentFor(p.ebayCategory), // Bündel A+B
   });
 }
 

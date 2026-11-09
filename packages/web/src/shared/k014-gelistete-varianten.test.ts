@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-014 Schritt 2 (Kalkulator 28.10.2026): "Erwartet" und Preisalarm nur über bei eBay angebotene Varianten mit eigenem VK.
 // Fixtures = Live-Daten 28.10.2026 (App /api/products, eBay-Artikelseiten, AliExpress-Seite), Einfuhr 5,95 (Betriebswert).
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -55,9 +57,9 @@ describe('K-014: Erwartet nur über gelistete Varianten mit eigenem VK', () => {
     const r = productProfitRows(p119());
     expect(r.rows.map(x => x.label)).toEqual(['200pcs / China Mainland', '100pcs / China Mainland']);
     const worst = Math.min(...r.rows.map(x => x.profit));
-    expect(worst).toBeCloseTo(1.585661, 6);
-    expect(Math.min(...r.rows.map(x => x.profitWithoutFactor ?? x.profit))).toBeCloseTo(1.275661, 6);
-    expect(evaluateTargetDisplay(1.5, worst).expectedEur).toBe(1.59);
+    expect(worst).toBeCloseTo(1.407161, 6);
+    expect(Math.min(...r.rows.map(x => x.profitWithoutFactor ?? x.profit))).toBeCloseTo(1.097161, 6);
+    expect(evaluateTargetDisplay(1.5, worst).expectedEur).toBe(1.41);
     expect(r.excluded.map(x => [x.skuId, x.reason])).toEqual([['12000050569622129', 'nicht bei eBay'], ['12000050569622127', 'nicht bei eBay']]);
     expect(variantPriceAlarm(p119()).isAlarm).toBe(false);
   });
@@ -66,7 +68,7 @@ describe('K-014: Erwartet nur über gelistete Varianten mit eigenem VK', () => {
     const r = productProfitRows(p189);
     expect(r.rows.map(x => [x.skuId, x.sellPrice])).toEqual([['12000060802123543', 19.95]]);
     expect(r.excluded.map(x => [x.skuId, x.reason])).toEqual([['12000060779140981', 'ohne eigenen VK'], ['12000060168465759', 'Dublette mit altem VK']]);
-    expect(r.rows[0].profit).toBeCloseTo(19.95 - (4.39 + 1.99 + 5.95) - (19.95 * 0.2 * 1.19 * 1.19 + 0.3 * 1.19), 9); // S 1,19 auf den Prozent-Anteil
+    expect(r.rows[0].profit).toBeCloseTo(19.95 - (4.39 + 1.99 + 5.95) - (19.95 * 0.2 * 1.19 * 1.19 + 0.45 * 1.19), 9); // AUFSICHT 045 A: Fix 0,45 (Bestellwert > 10 €) // S 1,19 auf den Prozent-Anteil
     expect(variantPriceAlarm(p189).isAlarm).toBe(false);
   });
 
@@ -74,7 +76,7 @@ describe('K-014: Erwartet nur über gelistete Varianten mit eigenem VK', () => {
     const r = productProfitRows(p107);
     expect(r.rows.map(x => x.skuId)).toEqual(['12000048597697819', '12000048597697818']);
     const d = evaluateTargetDisplay(2, Math.min(...r.rows.map(x => x.profit)));
-    expect(d.expectedEur).toBe(1.45);
+    expect(d.expectedEur).toBe(1.28);
     expect(d.level).toBe('yellow');
     expect(r.excluded.map(x => x.reason)).toEqual(['ohne eigenen VK', 'ohne eigenen VK']);
   });

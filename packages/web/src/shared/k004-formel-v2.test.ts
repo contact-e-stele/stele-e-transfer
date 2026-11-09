@@ -1,16 +1,21 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-004 (Kalkulator, 08.10.2026): Pflicht-Tests aus dem Auftrag, wörtlich. Abweichung ≤ 0,20 €, Rabatte nicht eingerechnet.
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3).
 import { describe, expect, test } from 'bun:test';
 import {
   profitAtSellPrice, computeMinSellPrice, computeAliCosts, computeOrderProfit, isChinaShipping, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG as C,
+  EBAY_FIXED_FEE_SCHEDULE_ALT,
 } from './pricing';
 import { MARGIN_TIERS } from './constants';
 import { computeOrderNettoErgebnis, matchOrderVariant } from '../api/order-matching';
 
-const fees = { ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor };
+const fees = { ebayFeeRatePercent: C.ebayFeeRatePercent, vatFactor: C.vatFactor };
 // Formel je Standort (08.11.2026): s = Standort-Faktor S explizit. Die Pflicht-Tests (Kalkulator 08.10.2026, echte Verkäufe mit Standort DE)
 // rechnen mit s = 1 und behalten ihre Zahlen; weggelassen = S aus der Herkunft (China 1,19).
 const profitChina5 = (sell: number, ware: number, s?: number) => profitAtSellPrice({ ...fees, sellPrice: sell, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, ebayLocationFactor: s });
+// Bündel A+B: die Pflicht-Tests sind echte Verkäufe bis 03.10.2026 (vor GEBUEHR_NEU_AB) → damalige Regel 15 % + 0,30 € (wie vor PR #304).
+const profitChina5Alt = (sell: number, ware: number, s?: number) => profitAtSellPrice({ ...fees, sellPrice: sell, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, ebayLocationFactor: s, fixedFeeSchedule: EBAY_FIXED_FEE_SCHEDULE_ALT });
 
 describe('K-004 Pflicht-Tests profitAtSellPrice (China, Anzeige 5 %)', () => {
   const cases: Array<[number, number, number]> = [
@@ -18,8 +23,8 @@ describe('K-004 Pflicht-Tests profitAtSellPrice (China, Anzeige 5 %)', () => {
   ];
   for (const [sell, ware, exp] of cases) {
     test(`VK ${sell} / Ware ${ware} → ${exp}`, () => {
-      expect(Math.abs(profitChina5(sell, ware, 1) - exp)).toBeLessThanOrEqual(0.20);
-      expect(profitChina5(sell, ware, 1)).toBeCloseTo(exp, 1);
+      expect(Math.abs(profitChina5Alt(sell, ware, 1) - exp)).toBeLessThanOrEqual(0.20);
+      expect(profitChina5Alt(sell, ware, 1)).toBeCloseTo(exp, 1);
     });
   }
 });
@@ -31,8 +36,8 @@ describe('K-004 Stufen floor95', () => {
 
   // K-006 (14.10.2026): Endungen ,45/,95; Mindestgewinn max(Boden − 0,10, 1,00). 13,45 × 0,762 − 0,357 − 8,71 = 1,1819 ≥ 1,10.
   test('Ware 3,15 Stufe B → 13,45 / Gewinn 1,18', () => {
-    expect(minSell(3.15, 1.5, 1)).toBe(13.45);       // Kalkulator-Beispiel (Standort DE) → s = 1
-    expect(profitChina5(13.45, 3.15, 1)).toBeCloseTo(1.18, 2);
+    expect(minSell(3.15, 1.5, 1)).toBe(13.95);       // Kalkulator-Beispiel (Standort DE) → s = 1
+    expect(profitChina5(13.45, 3.15, 1)).toBeCloseTo(1.00, 2);
   });
 
   // K-006: Schritt zwischen zwei erlaubten Endungen = 0,50 € VK = 0,50 × 0,762 = 0,381 € Gewinn (vorher 1 € = 0,762).
@@ -104,7 +109,7 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
       orderDate: '2026-09-24', // PLAN 7 Punkt 9: wie reale Bestellung 20-15127-76586 (Datenstand 24.09.) → vor Stichtag, S = 1
     });
     expect(r.nettoEinkauf).toBeCloseTo(10.35, 10);
-    expect(r.nettoErgebnis).toBe(0.68);
+    expect(r.nettoErgebnis).toBe(0.68); // Bündel A+B: 24.09. vor GEBUEHR_NEU_AB → 15 % + 0,30 (Wert wie vor PR #304)
     expect(r.nettoQuelle).toBe('automatisch');
   });
 
@@ -128,12 +133,17 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
 
   test('Anzeigensatz 0 (nicht beworben) senkt die Gebühren gegenüber 5 %', () => {
     // PLAN 7 Punkt 9: 4. Argument = Gebühr mit China-Standort? Hier false (S = 1, Bestellung vor Stichtag) — Werte unverändert.
-    const with5 = computeOrderProfit(14.95, 10.35, 5, false);
-    const with0 = computeOrderProfit(14.95, 10.35, 0, false);
+    // Bündel A+B: 5. Argument = Bestellzeitpunkt (reale Bestellung 24.09. → vor GEBUEHR_NEU_AB → 15 % + 0,30, Werte wie vor PR #304).
+    const alt = { orderDate: '2026-09-24' };
+    const with5 = computeOrderProfit(14.95, 10.35, 5, false, alt);
+    const with0 = computeOrderProfit(14.95, 10.35, 0, false, alt);
     expect(with5.profit).toBe(0.68);
     // 14,95 × (1 − 0,15 × 1,19) − 0,357 − 10,35 = 1,574425 → 1,57 (bun nachgerechnet)
     expect(with0.profit).toBe(1.57);
-    expect(computeOrderProfit(14.95, 10.35, undefined, false).profit).toBe(0.68); // weggelassen → Default 5 %
+    expect(computeOrderProfit(14.95, 10.35, undefined, false, alt).profit).toBe(0.68); // weggelassen → Default 5 %
+    // Ohne Zeitpunkt → neue Regel (15 % bei unbekannter Kategorie + 0,45): 0,51 / 1,40 (bun, wie PR #304 Teil A).
+    expect(computeOrderProfit(14.95, 10.35, 5, false).profit).toBe(0.51);
+    expect(computeOrderProfit(14.95, 10.35, 0, false).profit).toBe(1.4);
   });
 });
 
@@ -159,7 +169,7 @@ describe('K-004 Nachbesserung: unbekannte Herkunft + Scraper-Schlüssel', () => 
     expect(src).not.toContain('data.shipsFrom ?? product.shipsFrom');
   });
   test('Preisalarm rechnet je Variante mit ihrer Herkunft (EU-Variante kein Fehlalarm durch China-Kosten)', () => {
-    const base = { currentSellPrice: 15.95, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.3, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2 };
+    const base = { currentSellPrice: 15.95, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2 };
     // Ware 8,99: EU → Gewinn 2,8069 (kein Alarm); als China → 15,95×0,762−0,357−14,55 = −2,7531 (Alarm)
     expect(evaluatePriceAlarm({ ...base, variants: [{ buyPrice: 8.99, isChinaOrigin: false }], isChinaOrigin: true }).isAlarm).toBe(false);
     expect(evaluatePriceAlarm({ ...base, variants: [{ buyPrice: 8.99 }], isChinaOrigin: true }).isAlarm).toBe(true);

@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 import { describe, expect, test } from 'bun:test';
 import {
   planVolumeDiscount, percentForEur, discountedUnitPrice, parseVolumeDiscountRule, validateVolumeDiscountRule,
@@ -33,15 +35,15 @@ describe('Multi-Rabatt Plan (Formel v2)', () => {
     const p = planVolumeDiscount({ rule, variants: [v220], adRatePercent: 0, floorEur: 1 });
     expect(p.ok).toBe(true);
     expect(p.percents).toEqual({ 2: 8, 3: 9 });
-    expect(p.tiers[0].rows[0]).toMatchObject({ unitPrice: 19.27, total: 38.54, saving: 3.36, profit: 2.05, belowFloor: false });
-    expect(p.tiers[1].rows[0]).toMatchObject({ unitPrice: 19.06, total: 57.18, saving: 5.67, profit: 4.54 });
-    expect(p.singleRows[0].profit).toBe(0.38);
+    expect(p.tiers[0].rows[0]).toMatchObject({ unitPrice: 19.27, total: 38.54, saving: 3.36, profit: 1.87, belowFloor: false });
+    expect(p.tiers[1].rows[0]).toMatchObject({ unitPrice: 19.06, total: 57.18, saving: 5.67, profit: 4.36 });
+    expect(p.singleRows[0].profit).toBe(0.2);
   });
   test('stele-223: 13 % / 14 %, Gewinn 5,01 € / 10,22 €', () => {
     const p = planVolumeDiscount({ rule, variants: [v223], adRatePercent: 5, floorEur: 1 });
     expect(p.percents).toEqual({ 2: 13, 3: 14 });
-    expect(p.tiers[0].rows[0]).toMatchObject({ total: 20.8, saving: 3.1, profit: 5.01 });
-    expect(p.tiers[1].rows[0]).toMatchObject({ total: 30.84, saving: 5.01, profit: 10.22 });
+    expect(p.tiers[0].rows[0]).toMatchObject({ total: 20.8, saving: 3.1, profit: 4.83 });
+    expect(p.tiers[1].rows[0]).toMatchObject({ total: 30.84, saving: 5.01, profit: 10.04 });
   });
   test('Prozent am höchsten VK: billigere Variante bekommt weniger Euro-Rabatt', () => {
     const cheap = { ...v220, label: 'billig', sellPrice: 15.95, buyPrice: 8 }; // synthetisch
@@ -145,15 +147,15 @@ describe('Multi-Rabatt Sperre je Stück (Einfuhr 5,95)', () => {
   });
   test('Sperre Inhaber 25.10.: je Stück nie weniger als ein Einzelkauf — teurer Artikel (5 % > gesparte Einfuhr)', () => {
     const p = planVolumeDiscount({ rule, variants: [{ label: 'x', sellPrice: 99.95, buyPrice: 30, isChinaOrigin: true }], adRatePercent: 0, floorEur: 1 });
-    expect(p.singleRows[0].profit).toBe(42.41);
-    expect(p.tiers[0].rows[0].profit).toBe(83.26); // 41,63 je Stück < 42,41
+    expect(p.singleRows[0].profit).toBe(42.23);
+    expect(p.tiers[0].rows[0].profit).toBe(83.08); // 41,63 je Stück < 42,41
     expect(p.ok).toBe(false);
     expect(p.error).toMatch(/bringt jedes Stück weniger als ein Einzelkauf/);
   });
   test('Sperre: EU-Lager wie stele-77 (21,45 / 14,29 / Germany / 5 %) bei Regel 6 €/11 € → kein Mengenrabatt', () => {
     const p = planVolumeDiscount({ rule: { eur2: 6, eur3: 11 }, variants: [{ label: 'eu', sellPrice: 21.45, buyPrice: 14.29, isChinaOrigin: false }], adRatePercent: 5, floorEur: 1.3 });
-    expect(p.singleRows[0].profit).toBe(1.7);
-    expect(p.tiers[0].rows[0].profit).toBe(2.12); // 1,06 je Stück < 1,70
+    expect(p.singleRows[0].profit).toBe(1.52);
+    expect(p.tiers[0].rows[0].profit).toBe(1.94); // 1,06 je Stück < 1,70
     expect(p.tiers[0].reason).toBe('gesenkt: Gewinn je Stück sonst unter Einzelkauf');
     expect(p.ok).toBe(false);
   });
@@ -161,8 +163,8 @@ describe('Multi-Rabatt Sperre je Stück (Einfuhr 5,95)', () => {
     const p = planVolumeDiscount({ rule: { eur2: 6, eur3: 11 }, variants: [{ label: 'GRAY', sellPrice: 23.45, buyPrice: 12.39, isChinaOrigin: true }], adRatePercent: 0, floorEur: 1, checkoutFactor: 0.9338 });
     expect(p.ok).toBe(true);
     expect(p.percents).toEqual({ 2: 13, 3: 16 });
-    expect(p.singleRows[0].profit).toBe(0.59);
-    expect(p.tiers[0].rows[0]).toMatchObject({ total: 40.8, profit: 2.69 });
-    expect(p.tiers[1].rows[0]).toMatchObject({ total: 59.1, profit: 5.53 });
+    expect(p.singleRows[0].profit).toBe(0.41);
+    expect(p.tiers[0].rows[0]).toMatchObject({ total: 40.8, profit: 2.51 });
+    expect(p.tiers[1].rows[0]).toMatchObject({ total: 59.1, profit: 5.35 });
   });
 });

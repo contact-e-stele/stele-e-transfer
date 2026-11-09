@@ -39,6 +39,7 @@ export interface VolumeDiscountInput {
   floorEur: number;               // Boden der Margen-Stufe (profitFloorFor); geprüft wird effectiveProfitFloor(floorEur) je Bestellung
   checkoutFactor?: number | null; // K-005
   earUmlageEur?: number;          // A-029: je Stück
+  ebayFeeRatePercent?: number;    // Bündel A+B: Provision je Kategorie (ebayFeeRatePercentFor(product.ebayCategory)); fehlt → 15 %
 }
 export interface VolumeDiscountRow { label: string; skuId?: string; unitPrice: number; total: number; saving: number; profit: number; belowFloor: boolean }
 export interface VolumeDiscountTier { qty: 2 | 3; targetEur: number; wantedPercent: number; percent: number; reason: string | null; rows: VolumeDiscountRow[] }
@@ -59,12 +60,12 @@ export function discountedUnitPrice(sellPrice: number, percent: number): number 
 }
 
 // K-018 PR B: exportiert (reiner Extract, Grundgesetz 8) — „automatisch senken“ prüft den Gewinn je Stück mit den LIVE-Prozent.
-export function volumeOrderProfit(v: VolumeDiscountVariant, qty: number, percent: number, inp: Pick<VolumeDiscountInput, 'adRatePercent' | 'checkoutFactor' | 'earUmlageEur'>) {
+export function volumeOrderProfit(v: VolumeDiscountVariant, qty: number, percent: number, inp: Pick<VolumeDiscountInput, 'adRatePercent' | 'checkoutFactor' | 'earUmlageEur' | 'ebayFeeRatePercent'>) {
   const unitPrice = discountedUnitPrice(v.sellPrice, percent);
   const total = cents(unitPrice * qty);
   const profit = profitAtSellPrice({
     sellPrice: total, buyPrice: v.buyPrice * qty, isChinaOrigin: v.isChinaOrigin,
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    ebayFeeRatePercent: inp.ebayFeeRatePercent ?? DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: inp.adRatePercent, checkoutFactor: inp.checkoutFactor,
     earUmlageEur: (inp.earUmlageEur ?? 0) * qty,
   });

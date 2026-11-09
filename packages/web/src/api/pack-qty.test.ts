@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 import { describe, expect, test } from 'bun:test';
 import { applyAliUnitValues, setPackQty, normalizePackQty, aliOrderQuantity } from '../shared/pack-qty';
 import { computeAliCosts, profitAtSellPrice } from '../shared/pricing';
@@ -52,8 +54,8 @@ describe('Packmenge (OFFEN 007)', () => {
   });
   test('Gewinn eines 2er-Packs rechnet mit Pack-Ware (Formel v2)', () => {
     const p = setPackQty(blue, 2);
-    const g = profitAtSellPrice({ sellPrice: 12.95, buyPrice: p.price, isChinaOrigin: true, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.3, vatFactor: 1.19, adRatePercent: 5 });
-    const g1 = profitAtSellPrice({ sellPrice: 12.95, buyPrice: 1.49, isChinaOrigin: true, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.3, vatFactor: 1.19, adRatePercent: 5 });
+    const g = profitAtSellPrice({ sellPrice: 12.95, buyPrice: p.price, isChinaOrigin: true, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: 5 });
+    const g1 = profitAtSellPrice({ sellPrice: 12.95, buyPrice: 1.49, isChinaOrigin: true, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: 5 });
     expect(g1 - g).toBeCloseTo(1.49, 6); // genau ein Stückpreis mehr Einkauf, Nebenkosten unverändert
   });
 });

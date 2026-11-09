@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { aliEinfuhrEur } from "../../shared/constants";
-import { computeMinSellPrice, DEFAULT_PRICING_CONFIG, IOSS_PROVISION_FACTOR } from "../../shared/pricing";
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor, IOSS_PROVISION_FACTOR, ebayFixedFeeGrossForSellPrice, EBAY_FIXED_FEE_NET_SMALL_EUR, EBAY_FIXED_FEE_NET_EUR, EBAY_FIXED_FEE_THRESHOLD_EUR } from "../../shared/pricing";
 
 // Teil 2B (2026-09-10): reicht für die Anzeigengebühr-Zuordnung im Preisrechner — nur die hier
 // gebrauchten Felder, nicht das volle Product-Objekt aus produkte.tsx.
@@ -11,6 +11,7 @@ interface ProductForAdRate {
   generatedTitle: string;
   title: string;
   adRate: number | null;
+  ebayCategory?: string | null; // Bündel A+B: Provision je Kategorie als Startwert des Gebühr-Felds
 }
 
 function formatEuro(val: number) {
@@ -193,25 +194,28 @@ export default function Index() {
     // PLAN 7 Punkt 9 (09.11.2026): Formel je Standort (#291) — S folgt dem Herkunft-Schalter "aus China" dieses Rechners
     // (vorher fest false = S 1, d. h. bei China-Ware zu wenig Gebühr). buyPrice 0: hier werden nur die Sätze gebraucht.
     buyPrice: 0, isChinaOrigin: ausChina,
-    ebayFeeRatePercent: ebayFeeRatePercentInput, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+    ebayFeeRatePercent: ebayFeeRatePercentInput, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
     adRatePercent: anzeigegebuehrProzent * 100, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
   });
   // EBAY_FEE (nur Provision, ohne Anzeigegebühr) bleibt separat erhalten — wird weiterhin
   // für die Untergrenze (minPreis80) gebraucht, die bewusst unverändert bleibt.
   const EBAY_FEE = pricingRates.baseFeeRateGross;
-  const FIXBETRAG = pricingRates.fixedFeeGross; // 0,30 € + 19% MwSt. = 0,357 €
+  // AUFSICHT 045 Teil A (09.11.2026): Fixgebühr gestaffelt nach Bestellwert (VK × S ≤ 10 € → 0,35, sonst 0,45; × 19 % MwSt.) —
+  // hängt vom jeweiligen Preis ab, darum je Preis über die zentrale Funktion statt eines festen Betrags.
+  const FIXBETRAG = (preis: number) => ebayFixedFeeGrossForSellPrice(preis, ausChina, DEFAULT_PRICING_CONFIG.vatFactor);
+  const FIX_LABEL = `${EBAY_FIXED_FEE_NET_SMALL_EUR.toFixed(2).replace(".", ",")}/${EBAY_FIXED_FEE_NET_EUR.toFixed(2).replace(".", ",")} € Fix (Bestellwert bis/über ${EBAY_FIXED_FEE_THRESHOLD_EUR} €)`;
   // Gesamtgebührensatz: eBay-Provision + Anzeigegebühr zusammen, beide inkl. MwSt. (wie im Wizard)
   const GESAMT_FEE = pricingRates.totalFeeRateGross;
 
   // Netto = was du bekommst nach ALLEN eBay-Gebühren (Provision % + Anzeigegebühr % + Fixbetrag)
-  const nettoListen = listen > 0 ? listen * (1 - GESAMT_FEE) - FIXBETRAG : 0;
-  const nettoVorschlag = vorschlagVal > 0 ? vorschlagVal * (1 - GESAMT_FEE) - FIXBETRAG : 0;
+  const nettoListen = listen > 0 ? listen * (1 - GESAMT_FEE) - FIXBETRAG(listen) : 0;
+  const nettoVorschlag = vorschlagVal > 0 ? vorschlagVal * (1 - GESAMT_FEE) - FIXBETRAG(vorschlagVal) : 0;
   const rabattProzent = listen > 0 ? ((listen - vorschlagVal) / listen) * 100 : 0;
   const differenz = nettoListen - nettoVorschlag;
 
   // Gewinn basierend auf Vorschlag (wenn vorhanden) sonst Listenpreis
   const verkaufNetto = vorschlagVal > 0 ? nettoVorschlag : nettoListen;
-  const gesamtGebuehren = verkaufBrutto * GESAMT_FEE + FIXBETRAG; // GESAMT_FEE enthält Anzeigegebühr bereits
+  const gesamtGebuehren = verkaufBrutto * GESAMT_FEE + FIXBETRAG(verkaufBrutto); // GESAMT_FEE enthält Anzeigegebühr bereits
   const gewinn = wahrerEinkauf > 0 ? verkaufNetto - wahrerEinkauf : null;
   const gewinnProzent = wahrerEinkauf > 0
     ? ((verkaufNetto - wahrerEinkauf) / wahrerEinkauf) * 100
@@ -316,7 +320,12 @@ export default function Index() {
               </label>
               <select
                 value={selectedProductId}
-                onChange={e => setSelectedProductId(e.target.value)}
+                onChange={e => {
+                  setSelectedProductId(e.target.value);
+                  // Bündel A+B: Provision je eBay-Kategorie des Produkts als Startwert (bleibt frei editierbar); kein Produkt → 15 %.
+                  const prod = productsForAdRate.find(p => String(p.id) === e.target.value);
+                  setGebuehr(String(ebayFeeRatePercentFor(prod?.ebayCategory)));
+                }}
                 style={{ ...inputStyle, paddingLeft: 14, cursor: "pointer" }}
               >
                 <option value="">Kein Produkt ausgewählt</option>
@@ -560,7 +569,7 @@ export default function Index() {
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 700, color: "#0F172A" }}>{formatEuro(gesamtGebuehren)}</div>
                 <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>
-                  {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {DEFAULT_PRICING_CONFIG.ebayFixedFeeEur.toFixed(2)} € Fix{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} (inkl. 19% MwSt.{ausChina ? ` × ${String(IOSS_PROVISION_FACTOR).replace(".", ",")} Standort China` : ""})
+                  {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {FIX_LABEL}{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} (inkl. 19% MwSt.{ausChina ? ` × ${String(IOSS_PROVISION_FACTOR).replace(".", ",")} Standort China` : ""})
                 </div>
               </div>
             </div>
@@ -660,7 +669,7 @@ export default function Index() {
         )}
 
         <p style={{ textAlign: "center", color: "#CBD5E1", fontSize: 12, marginTop: 24 }}>
-          eBay: {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {DEFAULT_PRICING_CONFIG.ebayFixedFeeEur.toFixed(2)} € Fix + 19% MwSt.{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} · stele-e-transfer
+          eBay: {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {FIX_LABEL} + 19% MwSt.{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} · stele-e-transfer
         </p>
 
         {/* ─── Preisüberwachung ──────────────────────────────────────────────────── */}

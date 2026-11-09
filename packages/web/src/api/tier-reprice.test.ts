@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // A-017: runTierReprice mit Mock-Abhängigkeiten. Beweist die Kernregel: ein Stufenwechsel löst KEINEN eBay-Aufruf aus, solange nicht
 // ausdrücklich bestätigt UND gesendet wird; die App-Preise werden bei live gelisteten Produkten erst nach erfolgreichem Senden
 // gespeichert. Zusätzlich zählt ein globaler fetch-Spion, dass in keinem Fall ein Netzwerkaufruf passiert (die Deps sind Mocks).
@@ -80,7 +82,7 @@ describe('apply bei live gelisteten Produkten: nur mit ausdrücklichem sendToEba
       expect(groups).toHaveLength(2);
       // K-006, Stufe B, Formel je Standort (China S 1,19, f = 0,71678): a K 8,55 → Roh 14,5191 → 14,45 (Gewinn 1,4505);
       // b K 9,55 → Roh 15,9142 → 15,45 (Gewinn 1,1673 ≥ 1,10). Vorher (S 1): 13,45 / 14,95.
-      expect(rows.map(r => [r.skuId, r.correctSellPrice])).toEqual([['a', 14.45], ['b', 15.45]]);
+      expect(rows.map(r => [r.skuId, r.correctSellPrice])).toEqual([['a', 14.45], ['b', 15.95]]); // AUFSICHT 045 A: b 15,45 (0,9888 < 1,10) → 15,95 (bun 1,3471)
       return { ok: true, updatedCount: 2, errors: [] };
     };
     deps.store = async (id, patch) => { order.push('store'); calls.store++; storeArgs.push([id, patch]); };
@@ -90,7 +92,7 @@ describe('apply bei live gelisteten Produkten: nur mit ausdrücklichem sendToEba
     expect(order).toEqual(['send', 'store']);
     expect(storeArgs[0][0]).toBe(218);
     expect(storeArgs[0][1].targetMarginEur).toBe(1.5);
-    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 14.45, b: 15.45 });
+    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 14.45, b: 15.95 });
   });
 
   test('Senden schlägt (teilweise) fehl → App-Preise werden NICHT gespeichert (App nie weiter als eBay), Status send_failed', async () => {
@@ -114,8 +116,8 @@ describe('apply bei live gelisteten Produkten: nur mit ausdrücklichem sendToEba
     deps.sendSingle = async (id, listingId, price) => { calls.sendSingle++; sent = [id, listingId, price]; return { ok: true }; };
     const [r] = await runTierReprice(new Map([[5, single()]]), input('apply', { ids: [5], confirm: true, sendToEbay: true }), deps);
     expect(r.status).toBe('sent');
-    expect(sent).toEqual([5, '198600000001', 14.45]);
-    expect(storeArgs[0][1]).toEqual({ targetMarginEur: 1.5, sellPrice: 14.45 });
+    expect(sent).toEqual([5, '198600000001', 14.95]);
+    expect(storeArgs[0][1]).toEqual({ targetMarginEur: 1.5, sellPrice: 14.95 });
 
     calls.store = 0; storeArgs = [];
     deps.sendSingle = async () => ({ ok: false, error: 'HTTP 400' });
@@ -142,7 +144,7 @@ describe('nicht live gelistet (z. B. stele-218): Preise nur in der App speichern
     expect(r.isLive).toBe(false);
     expect(calls.sendVariants + calls.sendSingle).toBe(0);
     expect(calls.store).toBe(1);
-    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 14.45, b: 15.45 });
+    expect(JSON.parse(storeArgs[0][1].variantSellPrices as string)).toEqual({ a: 14.45, b: 15.95 });
     expect(fetchCount).toBe(0);
   });
 
@@ -281,7 +283,9 @@ describe('Verwaiste (nicht angebotene) Varianten zählen beim Senden nicht als F
       { skuId: '12000056068050015', attrs: { Color: 'GRAY' }, price: 8.89 },
       { skuId: '12000056068050016', attrs: { Color: 'green' }, price: 8.89 },
     ]),
-    variantSellPrices: JSON.stringify({ '12000056068050014': 22.45, '12000056068050015': 22.45, '12000056068050016': 22.45 }),
+    // AUFSICHT 045 A: mit Fix 0,45 ergibt Stufe A für Brown genau 22,45 (= gespeicherter VK → nichts zu senden, Status 'stored').
+    // EINGABE GEÄNDERT: Brown-VK 22,45 → 21,95, damit der Sende-Fall (Preis ändert sich) erhalten bleibt.
+    variantSellPrices: JSON.stringify({ '12000056068050014': 21.95, '12000056068050015': 22.45, '12000056068050016': 22.45 }),
     ...over,
   });
   test('1 von 1 angebotenen gesendet → sent, App-Preise gespeichert', async () => {

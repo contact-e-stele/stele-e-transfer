@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Package, ExternalLink, RefreshCw, ShoppingCart, Clock, CheckCircle, XCircle, Loader, TrendingUp, AlertTriangle } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
-import { profitAtSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { profitAtSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } from "../../shared/pricing";
 import { activeCheckoutFactor } from "../../shared/checkout-factor";
 
 interface Product {
@@ -23,6 +23,7 @@ interface Product {
   shipsFrom: string | null;
   aliCheckoutFactor?: number | null;   // K-005 (GET /api/products liefert alle Spalten)
   aliCheckoutFactorAt?: string | null;
+  ebayCategory?: string | null; // Bündel A+B: Provision je Kategorie
   priceChanged: boolean;
   lastPriceCheck: string | null;
   createdAt: string;
@@ -143,7 +144,7 @@ export default function Dashboard() {
             const adR = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
             const profit = profitAtSellPrice({
               sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, isChinaOrigin: isChinaShipping(p.shipsFrom),
-              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              ebayFeeRatePercent: ebayFeeRatePercentFor(p.ebayCategory), // Bündel A+B
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adR,
               checkoutFactor: activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt), // K-005
             });

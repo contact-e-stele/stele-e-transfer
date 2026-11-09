@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-018 PR B: automatisch senken — reine Planung. Fixtures = DB-Backup 05.11.2026 23:35 (stele-228, stele-119), Einfuhr 5,95.
 // Alle Zahlen frisch mit bun gerechnet (Grundgesetz 3).
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -25,8 +27,8 @@ describe('planAutoLower – Kandidaten (Schwelle Ziel + 0,20)', () => {
   test('228 pink 21,95 → 21,45 (+1,65 → +1,29); 119 100pcs 16,95 → 16,45 (+1,76 → +1,37) — niedrigste Endung mit Gewinn ≥ Ziel', () => {
     const r = planAutoLower({ ...base, products: [p228, p119], freshEk: fresh(p228, p119) });
     expect(r.senken.map(s => [s.productId, s.rows.map(x => [x.skuId, x.alt, x.neu, x.gewinnAlt, x.gewinnNeu])])).toEqual([
-      [119, [[PCS100, 16.95, 16.45, 1.76, 1.37]]],
-      [228, [[PINK, 21.95, 21.45, 1.65, 1.29]]],
+      [119, [[PCS100, 16.95, 16.45, 1.58, 1.19]]],
+      [228, [[PINK, 21.95, 21.45, 1.47, 1.11]]],
     ]);
     expect(r.nichtGesenkt).toEqual([]);
   });
@@ -58,7 +60,7 @@ describe('c4 Multi-Rabatt je Stück ≥ 1,00 (LIVE-Prozent)', () => {
   test('36 %/37 %: alter VK 21,95 ok (1,13 je Stück), neuer 21,45 → 2 Stück nur 0,90 € je Stück → nicht gesenkt', () => {
     const attrs = { Color: '2000ml pink' };
     expect(multiRabattPerPieceProblem(p228, 5.79, 21.95, attrs, { 2: 36, 3: 37 })).toBeNull();
-    expect(multiRabattPerPieceProblem(p228, 5.79, 21.45, attrs, { 2: 36, 3: 37 })).toContain('nur 0.90 € je Stück');
+    expect(multiRabattPerPieceProblem(p228, 5.79, 21.45, attrs, { 2: 36, 3: 37 })).toContain('nur 0.81 € je Stück'); // AUFSICHT 045 A: vorher 0.90 (Fix 0,30)
     const r = planAutoLower({ ...base, products: [p228], freshEk: fresh(p228), promotions: new Map([[228, { 2: 36, 3: 37 }]]) });
     expect(r.senken).toEqual([]);
     expect(r.nichtGesenkt[0].grund).toContain('c4');

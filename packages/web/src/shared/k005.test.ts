@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-005 (Kalkulator, 11.10.2026): Pflicht-Tests + Bausteine. Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3).
 import { describe, expect, test } from 'bun:test';
 import { planTierReprice } from './tier-reprice';
@@ -23,7 +25,7 @@ describe('K-005 Pflicht-Tests', () => {
   test('stele-97 Jasmine, Ware 12,59, EU (Ships From Poland), unbeworben, Stufe B → 17,45 / Gewinn 1,39', () => {
     const row = planTierReprice(p97, 1.5).rows.find(r => r.skuId === 'j')!;
     expect(row.newSell).toBe(17.45);
-    expect(row.newProfit).toBeCloseTo(1.39, 2); // 1,388175
+    expect(row.newProfit).toBeCloseTo(1.21, 2); // 1,388175
   });
   test('Bestellung 20-15262-74118 (VK 19,95, Einkauf manuell 12,59), unbeworben → 3,44 (Auftrag 3,50 ± 0,10)', () => {
     const r = computeOrderNettoErgebnis({
@@ -31,6 +33,7 @@ describe('K-005 Pflicht-Tests', () => {
       findProduct: () => ({ id: 97, buyPrice: 10.59, shipsFrom: 'China', adRate: 0, variants: [] }),
       orderDate: '2026-10-11', // PLAN 7 Punkt 9: reale Bestellung aus dem K-005-Auftrag vom 11.10. → spätestens 11.10., vor Stichtag (S = 1)
     });
+    // Bündel A+B: Bestellung 11.10. liegt vor GEBUEHR_NEU_AB → 15 % + 0,30 wie vor PR #304 (wieder ± 0,10 am Auftragswert).
     expect(r.nettoErgebnis).toBe(3.44);
     expect(Math.abs((r.nettoErgebnis as number) - 3.50)).toBeLessThanOrEqual(0.10);
   });
@@ -40,7 +43,7 @@ describe('K-005 Pflicht-Tests', () => {
       findProduct: () => ({ id: 97, buyPrice: 10.59, shipsFrom: 'China', adRate: 5, variants: [] }),
       orderDate: '2026-10-11', // wie oben
     });
-    expect(r.nettoErgebnis).toBe(2.25);
+    expect(r.nettoErgebnis).toBe(2.25); // Bündel A+B: alte Regel (vor Stichtag)
   });
 });
 
@@ -113,8 +116,8 @@ describe('K-005 Punkt 3: Senk-Kandidaten (Erwartet > Ziel + 1,00)', () => {
   test('stele-97 unbeworben: Jasmine 19,95 (Erwartet 3,44) → Vorschlag 17,45 / 1,39, erster Schritt mit 8-%-Bremse 18,95', () => {
     const k = buildSenkKandidaten([{ ...p97, groups: groups97 }]);
     expect(k.map(r => [r.skuId, r.currentSell, r.expectedEur, r.overTargetEur, r.suggestedSell, r.suggestedProfit, r.firstStepSell, r.firstStepCapped])).toEqual([
-      ['j', 19.95, 3.44, 1.94, 17.45, 1.39, 18.95, true],
-      ['v', 16.95, 2.98, 1.48, 14.95, 1.33, 15.95, true],
+      ['j', 19.95, 3.26, 1.76, 17.45, 1.21, 18.95, true],
+      ['v', 16.95, 2.8, 1.3, 14.95, 1.16, 15.95, true],
     ]);
   });
   test('mit adRate 5 liegt Jasmine (Erwartet 2,25) nicht über Ziel + 1,00 → kein Kandidat', () => {

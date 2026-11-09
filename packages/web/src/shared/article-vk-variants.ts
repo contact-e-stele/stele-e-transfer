@@ -4,7 +4,7 @@
 // (Kombination aus product.variants) übernommen — aber nur, wo er den Formel-Mindestpreis dieser Variante erreicht (nie darunter).
 // Nicht angebotene Einträge bleiben unberührt. Gelistete Produkte: nichts (eBay-Preise ändern sich nur über die bestehenden Sende-Wege).
 import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPriceEntry } from './variant-resolver';
-import { computeMinSellPrice, DEFAULT_PRICING_CONFIG, isChinaOriginForVariant, parseVariantSellPrices } from './pricing';
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG, isChinaOriginForVariant, parseVariantSellPrices, ebayFeeRatePercentFor } from './pricing';
 
 export interface ArticleVkEntry { skuId: string; attrs?: Record<string, string>; displayValues?: Record<string, string>; price: number }
 export interface ArticleVkInput {
@@ -16,6 +16,7 @@ export interface ArticleVkInput {
   adRatePercent: number;
   targetMarginEur: number;
   checkoutFactor: number | null;
+  ebayCategory?: string | null; // Bündel A+B: Provision je eBay-Kategorie (products.ebayCategory), fehlt → 15 %
 }
 export interface ArticleVkResult {
   variantSellPrices: Record<string, number>;
@@ -34,7 +35,7 @@ export function planArticleVkToVariants(input: ArticleVkInput): ArticleVkResult 
     const label = Object.values(e.displayValues ?? e.attrs ?? {}).filter(Boolean).join(' / ') || e.skuId;
     const minSell = computeMinSellPrice({
       buyPrice: e.price, isChinaOrigin: isChinaOriginForVariant(e.attrs, input.shipsFrom),
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: ebayFeeRatePercentFor(input.ebayCategory),
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRatePercent, targetMarginEur: input.targetMarginEur,
       safetyBufferEur: 0, rounding: 'floor95', checkoutFactor: input.checkoutFactor,
     }).minSellPrice;

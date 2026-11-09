@@ -12,7 +12,7 @@ import { aliEinfuhrEur, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { planVariantDedupe } from '../shared/variant-dedupe';
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, explainVariantRaisePlan, describeVariantRaiseExplanation, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED, ebayFeeRatePercentFor } from '../shared/pricing';
 import { earUmlageFor } from '../shared/electric';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
@@ -183,6 +183,7 @@ export function computeVariantPriceRows(
   adRate: number | null,
   targetMarginEur?: number | null, // Teil 2C: product.targetMarginEur — null/undefined → globaler Fallback
   checkoutFactor?: number | null,  // K-005: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); weggelassen = ohne Faktor
+  ebayCategory?: string | null,    // Bündel A+B: products.ebayCategory → Provision je Kategorie (ebayFeeRatePercentFor); weggelassen = 15 %
 ): VariantPriceRow[] {
   let raw: Array<{ skuId: string; attrs?: Record<string, string>; price: number; displayValues?: Record<string, string> }> = [];
   try { raw = variantPricesJson ? JSON.parse(variantPricesJson) : []; } catch { return []; }
@@ -198,7 +199,7 @@ export function computeVariantPriceRows(
       isChinaOrigin: isChinaOriginForVariant(v.attrs, shipsFrom),
       correctSellPrice: computeMinSellPrice({
         buyPrice: v.price, isChinaOrigin: isChinaOriginForVariant(v.attrs, shipsFrom), // K-004: Herkunft je Variante ("Ships From")
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: ebayFeeRatePercentFor(ebayCategory), // Bündel A+B
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
         targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'floor95', checkoutFactor,
@@ -312,10 +313,10 @@ export async function updateEbayVariantPricesIndividually(
 // Einkaufspreis nie in der normalen Vorschau auftauchen würden. `updateFn` als DI-Parameter,
 // damit dieser Aufruf in Tests ohne echten eBay-Zugriff geprüft werden kann.
 export async function repairVariantPricesForProduct(
-  product: { id: number; variants: string | null; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null; targetMarginEur?: number | null; aliCheckoutFactor?: number | null; aliCheckoutFactorAt?: string | null },
+  product: { id: number; variants: string | null; variantPrices: string | null; shippingCost: number | null; shipsFrom: string | null; adRate: number | null; targetMarginEur?: number | null; aliCheckoutFactor?: number | null; aliCheckoutFactorAt?: string | null; ebayCategory?: string | null },
   updateFn: typeof updateEbayVariantPricesIndividually = updateEbayVariantPricesIndividually
 ): Promise<{ ok: boolean; updatedSkuCount: number; error?: string }> {
-  const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt));
+  const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), product.ebayCategory);
   if (rows.length === 0) return { ok: false, updatedSkuCount: 0, error: 'Keine Varianten-Einkaufspreise vorhanden' };
   const variants = parseVariantGroupsJson(product.variants);
   const { ok, updatedCount, errors } = await updateFn(product.id, variants, rows);
@@ -548,14 +549,14 @@ export async function raiseSingleWithStoredBuyPrice(product: typeof schema.produ
     const target = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
     const raw = computeMinSellPrice({
       earUmlageEur: earUmlageFor(product), buyPrice: buy, isChinaOrigin: isChina,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target,
       safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95', checkoutFactor,
     }).minSellPrice;
     const hold = resolvePriceHolds(product, holdsForProduct);
     const alarmRes = evaluatePriceAlarm({
       currentSellPrice: product.sellPrice, variants: [{ buyPrice: buy }], isChinaOrigin: isChina,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target, checkoutFactor,
     });
     const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
@@ -617,6 +618,7 @@ export async function maybeRaiseVariants(
     id: number; variants: string | null; variantSellPrices: string | null; sellPrice: number | null; buyPrice: number | null;
     adRate: number | null; targetMarginEur: number | null; ebayStatus: string | null; ebayListingId: string | null;
     aliCheckoutFactor?: number | null; aliCheckoutFactorAt?: string | null; // K-005: über planTierReprice in die Formel
+    ebayCategory?: string | null; // Bündel A+B: Provision je Kategorie über planTierReprice
   },
   freshVariantPricesJson: string | null,
   shipsFrom: string | null,
@@ -1159,7 +1161,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         }
 
         const checkoutFactor = activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt); // K-005
-        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, shipsFromEff, adRate, product.targetMarginEur, checkoutFactor);
+        const rows = computeVariantPriceRows(freshVariantPricesJson, versand, shipsFromEff, adRate, product.targetMarginEur, checkoutFactor, product.ebayCategory);
         const safePrice = safeUniformVariantPrice(rows);
         // Fix "Preisalarm nur unter Mindestpreis" (2026-09-13): ob überhaupt ein Update lohnt
         // (Abweichung vom gespeicherten VK groß genug), bleibt unverändert an safePrice/
@@ -1220,7 +1222,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       const rawNewSellPrice = computeMinSellPrice({
         earUmlageEur: earUmlageFor(product), // A-029
         buyPrice: newBuyPrice, isChinaOrigin: isChina,
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'floor95',
@@ -1241,7 +1243,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         currentSellPrice: product.sellPrice,
         variants: [{ buyPrice: newBuyPrice }],
         isChinaOrigin: isChina,
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
         checkoutFactor,

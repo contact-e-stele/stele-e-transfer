@@ -50,7 +50,7 @@ for (const p of listedProducts) {
   const computedMinPrice = computeMinSellPrice({
     buyPrice: p.buyPrice, supplierShipping: p.shippingCost ?? 0,
     isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
     targetMarginEur: p.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
     safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,

@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // OFFEN 024. Fixtures = Live-Stand 03.11.2026 (App variantPrices/variantSellPrices) von stele-120/123/127/227; Soll = Tabelle
 // "FREIGABE INHABER 03.11.2026 08:23" (Fehlerarchiv), mit bun über planAdRateSwitch nachgerechnet: alle 23 Zeilen gleich (Preis + Gewinn).
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -14,21 +16,23 @@ const row = (label: string, buyPrice: number, sellPrice: number) => ({ skuId: la
 // planAdRateSwitch nimmt S aus der Herkunft (China 1,19, Verhältnis 0,71678 / 0,787585) und hat keinen Parameter dafür → VK neu und
 // Gewinn neu frisch mit bun neu gerechnet (VK alt/EK = Live-Stand unverändert). Vorher-Werte je Zeile siehe docs/formel-je-standort-testaenderungen.md.
 // Alle Zeilen bleiben send = true (Gewinn neu ≥ Gewinn heute, auch wo er unter dem Boden liegt).
+// AUFSICHT 045 Teil A (09.11.2026): Fixgebühr 0,45 statt 0,30 (alle VK > 10 €) → "Gewinn neu" aller 23 Zeilen mit bun neu gerechnet
+// (je Zeile −0,17/−0,18 €), VK neu und send unverändert. Vorher-Werte je Zeile: docs/fixgebuehr-testaenderungen.md.
 const t120: Array<[string, number, number, number, number]> = [
-  ['50PCS 40-42CM', 1.89, 14.95, 13.95, 0.80], ['50PCS 47CM', 3.05, 16.95, 15.95, 1.21], ['50PCS 52CM', 3.39, 17.45, 15.95, 0.87],
-  ['50PCS 60CM', 5.09, 19.95, 18.95, 1.54], ['50PCS 70CM', 5.19, 19.95, 18.95, 1.44], ['50PCS 120CM', 11.19, 25.45, 23.95, 1.37],
-  ['100PCS 40-42CM', 2.89, 16.45, 15.95, 1.37], ['100PCS 47CM', 5.09, 19.45, 17.95, 0.75], ['100PCS 52CM', 5.79, 20.95, 19.95, 1.63],
-  ['100PCS 60CM', 9.99, 25.45, 23.95, 0.58], ['100PCS 70CM', 9.39, 24.95, 22.95, 0.39], ['100PCS 120CM', 25.39, 44.95, 40.95, 0.55],
+  ['50PCS 40-42CM', 1.89, 14.95, 13.95, 0.62], ['50PCS 47CM', 3.05, 16.95, 15.95, 1.04], ['50PCS 52CM', 3.39, 17.45, 15.95, 0.70],
+  ['50PCS 60CM', 5.09, 19.95, 18.95, 1.36], ['50PCS 70CM', 5.19, 19.95, 18.95, 1.26], ['50PCS 120CM', 11.19, 25.45, 23.95, 1.19],
+  ['100PCS 40-42CM', 2.89, 16.45, 15.95, 1.20], ['100PCS 47CM', 5.09, 19.45, 17.95, 0.57], ['100PCS 52CM', 5.79, 20.95, 19.95, 1.45],
+  ['100PCS 60CM', 9.99, 25.45, 23.95, 0.40], ['100PCS 70CM', 9.39, 24.95, 22.95, 0.21], ['100PCS 120CM', 25.39, 44.95, 40.95, 0.38],
 ];
 const t123: Array<[string, number, number, number, number]> = [
-  ['10PCS', 2.09, 15.95, 14.95, 1.39], ['20PCS', 2.69, 16.95, 15.95, 1.57], ['30PCS', 4.19, 18.95, 17.95, 1.65],
-  ['50PCS', 6.09, 21.45, 19.95, 1.33], ['100PCS', 11.79, 25.95, 23.95, 0.77], ['200PCS', 20.39, 36.95, 33.95, 0.04],
+  ['10PCS', 2.09, 15.95, 14.95, 1.21], ['20PCS', 2.69, 16.95, 15.95, 1.40], ['30PCS', 4.19, 18.95, 17.95, 1.47],
+  ['50PCS', 6.09, 21.45, 19.95, 1.15], ['100PCS', 11.79, 25.95, 23.95, 0.59], ['200PCS', 20.39, 36.95, 33.95, -0.14],
 ];
 const t127: Array<[string, number, number, number, number]> = [
-  ['Multicolour 50pcs', 2.49, 15.95, 14.95, 0.99], ['Multicolour 100pcs', 3.35, 16.95, 15.95, 0.91],
-  ['White 500pcs', 10.39, 23.95, 21.95, 0.59], ['Multicolour 500pcs', 10.69, 24.45, 22.95, 1.08],
+  ['Multicolour 50pcs', 2.49, 15.95, 14.95, 0.81], ['Multicolour 100pcs', 3.35, 16.95, 15.95, 0.74],
+  ['White 500pcs', 10.39, 23.95, 21.95, 0.41], ['Multicolour 500pcs', 10.69, 24.45, 22.95, 0.90],
 ];
-const t227: Array<[string, number, number, number, number]> = [['Grey', 4.99, 18.95, 17.95, 0.85]];
+const t227: Array<[string, number, number, number, number]> = [['Grey', 4.99, 18.95, 17.95, 0.67]];
 
 describe('Anzeige-Rate 5 % → 0 % (OFFEN 024)', () => {
   test('Faktoren 0,762 / 0,8215', () => {

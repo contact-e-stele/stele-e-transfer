@@ -100,7 +100,7 @@ async function main() {
     const sellPriceAt = (zoll: number) => p.buyPrice == null ? null : computeMinSellPrice({
       buyPrice: p.buyPrice, supplierShipping: 0,
       isChinaOrigin: isChinaShipping(p.shipsFrom), customsFlat: zoll,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
       targetMarginEur: DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
       rounding: 'nearest95',

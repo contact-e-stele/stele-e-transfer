@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-009 (Kalkulator 15.10.2026): Anzeige 0 % wählbar; stele-220 ist seit 14.10. 21:12 bei eBay unbeworben, die App stand auf 5 %.
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3).
 import { describe, expect, test } from 'bun:test';
@@ -28,7 +30,9 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
     orderTotal: 20.95, lineItems: [{ sku: 'stele-220-BLACK', quantity: 1 }], manualBuyPrice: 15.14,
     findProduct: () => ({ id: 220, buyPrice: 12.19, shipsFrom: 'China', adRate, variants: [] }),
     // PLAN 7 Punkt 9: reale Bestellung, gemeldet am 15.10.2026 → Bestelltag spätestens 15.10., vor STANDORT_FORMEL_AB (S = 1).
-    orderDate: '2026-10-15',
+    // Bündel A+B: echter Bestellzeitpunkt 15.10.2026 05:43 UTC (Beleg Kalkulator, Minute genau) → VOR GEBUEHR_NEU_AB (08:00Z) →
+    // 15 % + 0,30. Nur das Datum '2026-10-15' wäre mehrdeutig und würde als NEU gelesen (s. orderUsesNewFeeRule).
+    orderDate: '2026-10-15T05:43:00Z',
   });
   test('Bestellung 19-15281-36243 (BLACK 20,95, Einkauf 15,14): adRate 0 → Gebühr 4,10, Gewinn 1,71', () => {
     expect(order(0)).toMatchObject({ nettoGebuehren: 4.1, nettoErgebnis: 1.71 });
@@ -52,7 +56,7 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
     expect(planVariantRaises(p220(0)).map(r => [r.skuId, r.newSell])).toEqual([['g', 21.45]]);
   });
   test('Preisprüfung adRate 5 (Fehlstand): alle drei würden angehoben', () => {
-    expect(planVariantRaises(p220(5)).map(r => [r.skuId, r.newSell])).toEqual([['g', 23.45], ['b', 24.45], ['k', 23.45]]);
+    expect(planVariantRaises(p220(5)).map(r => [r.skuId, r.newSell])).toEqual([['g', 23.45], ['b', 24.95], ['k', 23.45]]);
   });
 });
 

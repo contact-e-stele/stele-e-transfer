@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // PLAN 7 App an ALLE 09.11.2026 Punkt 9: Stellen mit "alter Formel" (ohne Standort-Faktor S aus #291) auf die zentrale Rechnung.
 // Prüfmaßstab Kalkulator: Gewinn = VK × (1 − (0,15 + Anzeige) × 1,19 × S) − 0,357 − Kosten, S = 1,19 bei China (unbekannt = China), sonst 1.
 // ALLE Ein-/Ausgabewerte hier sind TESTWERTE (keine Live-Daten): CN-Beispiel in der Struktur "China, Anzeige 5 %", DE-Beispiel
@@ -22,8 +24,8 @@ const VOR = '2026-11-04T10:00:00.000Z';        // Bestelltag vor Stichtag
 
 describe('Plan 7 Punkt 9 — Satz-Funktion (eine Stelle)', () => {
   test('Prozent-Anteil brutto: CN 5 % = 0,20 × 1,19 × 1,19 = 0,28322; DE 0 % = 0,1785', () => {
-    expect(defaultEbayFeeRateGross(5, true)).toBeCloseTo(0.28322, 12);
-    expect(defaultEbayFeeRateGross(0, false)).toBeCloseTo(0.1785, 12);
+    expect(defaultEbayFeeRateGross(5, true, null)).toBeCloseTo(0.28322, 12);
+    expect(defaultEbayFeeRateGross(0, false, null)).toBeCloseTo(0.1785, 12);
     expect(ebayPercentFeeRateGross({ ebayFeeRatePercent: 15, adRatePercent: 5, vatFactor: 1.19, isChinaOrigin: true, ebayLocationFactor: 1 })).toBeCloseTo(0.238, 12);
   });
   test('netFactor (Anzeige-Umschalter) läuft über dieselbe Funktion: CN 5 % 0,71678 · CN 0 % 0,787585 · DE 0,762 / 0,8215', () => {
@@ -37,16 +39,16 @@ describe('Plan 7 Punkt 9 — Satz-Funktion (eine Stelle)', () => {
 describe('Plan 7 Punkt 9 — Rechenbeispiele CN / DE (Kalkulator-Formel)', () => {
   test('CN 5 %: VK 19,95, K 13,25 → Gewinn 0,692761 (alte Formel ohne S: 1,5949)', () => {
     expect(computeAliCosts(CN.ware, true).totalCost).toBeCloseTo(13.25, 12);
-    const p = profitAtSellPrice({ sellPrice: CN.vk, buyPrice: CN.ware, isChinaOrigin: true, ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor, adRatePercent: CN.ad });
-    expect(p).toBeCloseTo(0.692761, 9);
+    const p = profitAtSellPrice({ sellPrice: CN.vk, buyPrice: CN.ware, isChinaOrigin: true, ebayFeeRatePercent: C.ebayFeeRatePercent, vatFactor: C.vatFactor, adRatePercent: CN.ad });
+    expect(p).toBeCloseTo(0.514261, 9);
     // Bestellungs-Gewinn (vorgerechnete Kosten) liefert für dieselben Eingaben denselben Wert
     expect(computeOrderProfitRaw(CN.vk, 13.25, CN.ad, true).profit).toBeCloseTo(p, 9);
-    expect(computeOrderProfitRaw(CN.vk, 13.25, CN.ad, true).feesDeducted).toBeCloseTo(6.007239, 9);
+    expect(computeOrderProfitRaw(CN.vk, 13.25, CN.ad, true).feesDeducted).toBeCloseTo(6.185739, 9);
   });
   test('DE 0 %: VK 16,95, K 9,38 → Gewinn 4,187425, Gebühr 3,382575 (S = 1, unverändert)', () => {
-    const p = profitAtSellPrice({ sellPrice: DE.vk, buyPrice: DE.ware, isChinaOrigin: false, ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor, adRatePercent: DE.ad });
-    expect(p).toBeCloseTo(4.187425, 9);
-    expect(computeOrderProfit(DE.vk, DE.ware, DE.ad, false)).toEqual({ profit: 4.19, feesDeducted: 3.38 });
+    const p = profitAtSellPrice({ sellPrice: DE.vk, buyPrice: DE.ware, isChinaOrigin: false, ebayFeeRatePercent: C.ebayFeeRatePercent, vatFactor: C.vatFactor, adRatePercent: DE.ad });
+    expect(p).toBeCloseTo(4.008925, 9);
+    expect(computeOrderProfit(DE.vk, DE.ware, DE.ad, false)).toEqual({ profit: 4.01, feesDeducted: 3.56 });
   });
 });
 
@@ -57,21 +59,21 @@ describe('Plan 7 Punkt 9 — Bestellungen-Tab (computeOrderNettoErgebnis)', () =
     orderTotal: vk, lineItems: [{ sku: `stele-${p.id}`, quantity: 1 }], manualBuyPrice: null, findProduct: () => p, orderDate,
   });
   test('CN ab Stichtag: Einkauf 13,25, Gebühren 6,01, Gewinn 0,69', () => {
-    expect(run(cnProduct, CN.vk, NACH)).toMatchObject({ nettoErgebnis: 0.69, nettoGebuehren: 6.01, nettoQuelle: 'automatisch' });
+    expect(run(cnProduct, CN.vk, NACH)).toMatchObject({ nettoErgebnis: 0.51, nettoGebuehren: 6.19, nettoQuelle: 'automatisch' });
     expect(run(cnProduct, CN.vk, NACH).nettoEinkauf).toBeCloseTo(13.25, 9);
   });
   test('CN ohne Bestelldatum → sichere Seite (S nach Herkunft): 0,69', () => {
-    expect(run(cnProduct, CN.vk).nettoErgebnis).toBe(0.69);
+    expect(run(cnProduct, CN.vk).nettoErgebnis).toBe(0.51);
   });
   test('CN vor Stichtag (Standort damals Wiesbaden) → S = 1: Gebühren 5,11, Gewinn 1,59', () => {
-    expect(run(cnProduct, CN.vk, VOR)).toMatchObject({ nettoErgebnis: 1.59, nettoGebuehren: 5.11 });
+    expect(run(cnProduct, CN.vk, VOR)).toMatchObject({ nettoErgebnis: 1.42, nettoGebuehren: 5.28 });
   });
   test('DE ab Stichtag: unverändert Gewinn 4,19, Gebühren 3,38', () => {
-    expect(run(deProduct, DE.vk, NACH)).toMatchObject({ nettoErgebnis: 4.19, nettoGebuehren: 3.38 });
+    expect(run(deProduct, DE.vk, NACH)).toMatchObject({ nettoErgebnis: 4.01, nettoGebuehren: 3.56 });
   });
   test('manueller Einkauf, CN ab Stichtag: VK 19,95, Einkauf 13,25 → 0,69 (S greift auch im manuellen Zweig)', () => {
     const r = computeOrderNettoErgebnis({ orderTotal: CN.vk, lineItems: [{ sku: 'stele-1', quantity: 1 }], manualBuyPrice: 13.25, findProduct: () => cnProduct, orderDate: NACH });
-    expect(r).toMatchObject({ nettoErgebnis: 0.69, nettoQuelle: 'manuell' });
+    expect(r).toMatchObject({ nettoErgebnis: 0.51, nettoQuelle: 'manuell' });
   });
   test('gemischte Bestellung (eine CN-, eine DE-Position) → S 1,19 (Gewinn nie zu hoch)', () => {
     const find = (sku: string | null) => (sku === 'stele-1' ? cnProduct : deProduct);
@@ -111,8 +113,8 @@ describe('Plan 7 Punkt 9 — Varianten-Verkaufszahlen (variant-sales.ts) rechnen
     products: [produkt], manualBuyPriceByOrderId: new Map(), now: Date.parse('2026-11-09T12:00:00Z'),
   }).salesBySku.get('110::v1')!.profitPerSale[0];
   test('CN ab Stichtag 0,692761 · vor Stichtag 1,5949', () => {
-    expect(profitAt(NACH)).toBeCloseTo(0.692761, 9);
-    expect(profitAt(VOR)).toBeCloseTo(1.5949, 9);
+    expect(profitAt(NACH)).toBeCloseTo(0.514261, 9);
+    expect(profitAt(VOR)).toBeCloseTo(1.4164, 9);
   });
 });
 

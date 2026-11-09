@@ -1,7 +1,7 @@
 // OFFEN 020 (Aufsicht 02.11.2026): Margen-Anzeige im Listings- und Produkte-Tab war nicht verlässlich.
 // Listings-Tab rechnete (VK − EK) / VK — ohne Gebühren, Anzeige, Versand und Einfuhr. Live-Fund 30.10.2026 stele-229:
 // Anzeige 84,4 % bei echt −1,36 € je Verkauf. Jetzt: dieselbe Formel v2 wie überall (profitAtSellPrice, Grundgesetz 8).
-import { profitAtSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG } from './pricing';
+import { profitAtSellPrice, isChinaShipping, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } from './pricing';
 import { productProfitRows, type ProfitProduct } from './target-margin-bulk';
 
 export interface MarginDisplayInput {
@@ -10,17 +10,18 @@ export interface MarginDisplayInput {
   shipsFrom?: string | null;
   adRatePercent?: number | null;   // null/undefined → DB-Standard 5 %
   checkoutFactor?: number | null;  // K-005, nur wenn aktiv bekannt
+  ebayCategory?: string | null;    // Bündel A+B: Provision je Kategorie, fehlt → 15 %
 }
 
 export interface MarginDisplay { profitEur: number; marginPct: number; tone: 'loss' | 'thin' | 'ok'; buyPriceEur?: number }
 
-/** Gewinn je Verkauf nach Formel v2 (Ware × Faktor, Versand 1,99 unter 10 €, Einfuhr, 15 % + 0,30 €, Anzeige, MwSt). */
+/** Gewinn je Verkauf nach Formel v2 (Ware × Faktor, Versand 1,99 unter 10 €, Einfuhr, Provision je Kategorie + Fixgebühr 0,35/0,45 €, Anzeige, MwSt). */
 export function marginDisplay(i: MarginDisplayInput): MarginDisplay | null {
   const sell = i.sellPrice ?? 0, buy = i.buyPrice ?? 0;
   if (!(sell > 0) || !(buy > 0)) return null;
   const profitEur = profitAtSellPrice({
     sellPrice: sell, buyPrice: buy, isChinaOrigin: isChinaShipping(i.shipsFrom),
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    ebayFeeRatePercent: ebayFeeRatePercentFor(i.ebayCategory), // Bündel A+B
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: i.adRatePercent ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
     checkoutFactor: i.checkoutFactor ?? null,
   });

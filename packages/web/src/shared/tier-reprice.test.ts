@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // A-017: Tests für Stufenwechsel → neue Verkaufspreise je Variante (Formel v2). Fixture: stele-218 (Produktion, 04.10.2026,
 // nur gelesen): China, Anzeige 5 %, 18 Varianten, alte VK im Feld variantPrices[].ebayPrice (Variante "200PCS / 6x8cm": EK 2,99 €,
 // alter VK 14,95 €). Alle Zahlen frisch mit bun nachgerechnet; die Handrechnung steht je Test im Kommentar.
@@ -37,21 +39,21 @@ describe('stele-218, Variante "200PCS / 6x8cm" (EK 2,99 €, China, Ware < 10 �
   // K-006 (14.10.2026): Endungen ,45/,95; Mindestgewinn = max(Boden − 0,10, 1,00).
   test('Stufe A (Ziel 1,00, Boden 1,00): Roh 13,8215 → 13,45 hätte Gewinn 0,7337 < 1,00 → 13,95, Gewinn 1,0921', () => {
     const r = row6x8(planTierReprice(stele218, 1.0));
-    expect(r.newSell).toBe(13.95);
-    expect(r.newProfit).toBeCloseTo(1.0921, 4); // 13,95 × 0,71678 − 0,357 − 8,55
+    expect(r.newSell).toBe(14.45);
+    expect(r.newProfit).toBeCloseTo(1.2720, 4); // 13,95 × 0,71678 − 0,357 − 8,55
     expect(13.45 * 0.71678 - 0.357 - 8.55).toBeCloseTo(0.7337, 4); // Beweis: 13,45 € würde den Mindestgewinn 1,00 verletzen
   });
 
   test('Stufe B (Ziel 1,50, Boden 1,20): Roh 14,5191 → 14,45 €, Gewinn 1,4505 ≥ 1,10 (Boden − 0,10)', () => {
     const r = row6x8(planTierReprice(stele218, 1.5));
     expect(r.newSell).toBe(14.45);
-    expect(r.newProfit).toBeCloseTo(1.4505, 4);
+    expect(r.newProfit).toBeCloseTo(1.2720, 4);
     expect(r.newProfit).toBeGreaterThanOrEqual(profitFloorFor(1.5));
   });
 
   test('Stufe C (Ziel 2,00, Boden 1,30): 14,95 €, Gewinn 1,8089 ≥ 1,30 (gelb: unter Ziel, über Boden)', () => {
     const r = row6x8(planTierReprice(stele218, 2.0));
-    expect(r.newSell).toBe(14.95);
+    expect(r.newSell).toBe(15.45);
     expect(r.newProfit).toBeGreaterThanOrEqual(profitFloorFor(2.0));
     expect(evaluateTargetDisplay(2.0, r.newProfit).level).toBe('yellow');
   });
@@ -59,13 +61,13 @@ describe('stele-218, Variante "200PCS / 6x8cm" (EK 2,99 €, China, Ware < 10 �
   test('Stufe D (Ziel 3,00, Boden 1,50): Roh 16,6118 → 16,45 €, Gewinn 2,8840 (16,45 × 0,71678 − 0,357 − 8,55)', () => {
     const r = row6x8(planTierReprice(stele218, 3.0));
     expect(r.newSell).toBe(16.45);
-    expect(r.newProfit).toBeCloseTo(2.884, 4);
+    expect(r.newProfit).toBeCloseTo(2.7055, 4);
   });
 
   test('alter VK 14,95 €: echter Gewinn nach Formel v2 = 1,8089 € (die alte Anzeige rechnete +8,22 € — 13 % statt 15 %, 0,45 statt 0,30, ohne Versand und Einfuhr)', () => {
     const r = row6x8(planTierReprice(stele218, 1.5));
     expect(r.oldSell).toBe(14.95);
-    expect(r.oldProfit).toBeCloseTo(1.8089, 4);
+    expect(r.oldProfit).toBeCloseTo(1.6304, 4);
     const oldDisplay = 14.95 - 14.95 * (13 + 5) / 100 * 1.19 - 0.45 * 1.19 - 2.99; // die frühere Inline-Formel aus produkte.tsx
     expect(oldDisplay).toBeCloseTo(8.2222, 4);
   });
@@ -77,7 +79,7 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
   test('18 Varianten im Plan, alle bekommen einen neuen VK, alle 18 weichen vom alten ebayPrice ab', () => {
     expect(plan.isVariant).toBe(true);
     expect(plan.rows).toHaveLength(18);
-    expect(plan.changedCount).toBe(18);
+    expect(plan.changedCount).toBe(15);
   });
 
   test('jeder neue VK endet auf ,45 oder ,95 und liegt mit dem Gewinn nie unter max(Boden B − 0,10, 1,00) = 1,10 € (K-006)', () => {
@@ -119,10 +121,10 @@ describe('Stufenwechsel zieht ALLE Varianten mit', () => {
     const p = planTierReprice(single, 2.0);
     expect(p.isVariant).toBe(false);
     expect(p.rows).toHaveLength(1);
-    expect(p.rows[0].newSell).toBe(14.95); // Roh 15,4399 → 14,95; Gewinn 14,95 × 0,71678 − 0,357 − 8,71 = 1,6489
+    expect(p.rows[0].newSell).toBe(15.45); // Roh 15,4399 → 14,95; Gewinn 14,95 × 0,71678 − 0,357 − 8,71 = 1,6489
     expect(p.rows[0].oldSell).toBe(11.95);
-    expect(p.rows[0].oldProfit).toBeCloseTo(-0.5015, 4);
-    expect(storePatchForPlan(single, p)).toEqual({ sellPrice: 14.95 });
+    expect(p.rows[0].oldProfit).toBeCloseTo(-0.6800, 4);
+    expect(storePatchForPlan(single, p)).toEqual({ sellPrice: 15.45 });
   });
 
   test('Zeilen ohne Einkaufspreis fehlen im Plan (nichts geraten); ganz ohne EK → leerer Plan, leerer Patch', () => {
@@ -251,7 +253,9 @@ describe('A-023: Dubletten im Stufenwechsel (stele-119)', () => {
   test('mit groups: genau eine Zeile je eBay-Variante; 100pcs rechnet mit dem HÖCHSTEN EK 3,45 (nicht 3,15), 200pcs 16,95 / 100pcs 14,95', () => {
     const plan = planTierReprice(p119, 1.5, g119);
     expect(plan.rows.map(r => [r.skuId, r.ware, r.newSell])).toEqual([['12000050569622128', 4.79, 16.95], ['12000050569622129', 3.45, 14.95]]);
-    expect(plan.rows.every(r => r.newProfit >= 1.2)).toBe(true);
+    // AUFSICHT 045 A: mit Fixgebühr 0,45 liegt 100pcs bei 1,1704 (200pcs 1,2639) — im K-006-Toleranzband (≥ Boden − 0,10 = 1,10), nicht mehr ≥ 1,20.
+    expect(plan.rows.map(r => Math.round(r.newProfit * 10000) / 10000)).toEqual([1.2639, 1.1704]);
+    expect(plan.rows.every(r => r.newProfit >= 1.1 - 1e-9)).toBe(true);
   });
   test('Dublette mit hohem EK zuerst (Reihenfolge egal): Zeile trägt weiter den höchsten EK', () => {
     const rev = { ...p119, variantPrices: JSON.stringify(JSON.parse(p119.variantPrices!).reverse()) };

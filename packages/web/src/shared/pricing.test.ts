@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // A-014 (04.10.2026): Die Tests zur Preisformel selbst (Kosten, Rundung/Boden, Stufen, Gewinn, Alarm, Varianten-Plan)
 // stehen in pricing-v2.test.ts. Diese Datei behält die formel-unabhängigen Bausteine (Rundungshelfer, Senkungsbremse,
 // Nur-Anheben, variant_sell_prices, Bestellungs-Gewinn). Die Alt-Fixtures der Formel bis v1 (Zoll 4,00 € + shippingCost) sind
@@ -19,13 +21,15 @@
 // bewusst dokumentierte Vereinfachung, keine Behauptung realer Feldwerte. stele-152 bleibt NICHT
 // enthalten (keine reale Zahl dafür im Chat verfügbar, siehe Teil-2A-Testdatei-Historie).
 import { describe, expect, test } from 'bun:test';
-import { applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, computeOrderProfit, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from './pricing';
+import { applyDecreaseCap, applyRaiseOnly, planCappedPriceSteps, computeVariantSellPrices, parseVariantSellPrices, serializeVariantSellPrices, resolveVariantSellPrice, roundUpToX95, roundToNearest95, computeOrderProfit, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED, EBAY_FIXED_FEE_NET_SMALL_EUR, EBAY_FIXED_FEE_NET_EUR, EBAY_FIXED_FEE_THRESHOLD_EUR, ebayFixedFeeGross } from './pricing';
 import { MAX_PRICE_DECREASE_PERCENT } from './constants';
 
 describe('DEFAULT_PRICING_CONFIG — Teil 2B/2C: real gemessene Werte, kein Sicherheitspuffer mehr', () => {
   test('Gebührensatz, Fixbetrag und MwSt-Faktor entsprechen den in 13 realen Bestellungen gemessenen Werten', () => {
     expect(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent).toBe(15);
-    expect(DEFAULT_PRICING_CONFIG.ebayFixedFeeEur).toBe(0.30);
+    // AUFSICHT 045 Teil A (09.11.2026): Fixbetrag 0,30 € entfällt — gestaffelt 0,35 € (Bestellwert ≤ 10 €) / 0,45 € netto.
+    expect('ebayFixedFeeEur' in DEFAULT_PRICING_CONFIG).toBe(false);
+    expect([EBAY_FIXED_FEE_NET_SMALL_EUR, EBAY_FIXED_FEE_NET_EUR, EBAY_FIXED_FEE_THRESHOLD_EUR]).toEqual([0.35, 0.45, 10]);
     expect(DEFAULT_PRICING_CONFIG.vatFactor).toBe(1.19);
   });
 
@@ -229,7 +233,7 @@ describe('variant_sell_prices — Teil 3: eigene Spalte für den VK je Variante 
     const plan = computeVariantSellPrices({
       variants: [{ skuId: 'v1', buyPrice: 7.69 }, { skuId: 'v2', buyPrice: 2.15 }],
       anchorSellPrice: 19.95, isChinaOrigin: true,
-      ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
+      ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2.00,
     });
     const wieder = parseVariantSellPrices(serializeVariantSellPrices(plan.rows));
     expect(wieder).toEqual({ v1: 19.95, v2: 13.95 }); // Formel je Standort (China S 1,19): v2 12,95 → 13,95 (bun, wie pricing-v2.test.ts)
@@ -283,9 +287,13 @@ describe('planCappedPriceSteps — Teil 3: Varianten-Umstellung unter der 8-%-Br
 });
 
 describe('computeOrderProfit — Bestellungs-Gewinn NACH eBay-Gebühren (PRIO-1-PAKET, Punkt "ERGEBNIS")', () => {
+  // Bündel A+B: die Auftragsvorgabe ist die reale Bestellung 09-15210-97703 (zwischen 12.08. und 03.10.2026, s. pricing-v2.test.ts) →
+  // vor GEBUEHR_NEU_AB → 15 % + 0,30. TESTWERT Zeitpunkt: 03.10.2026 = Ende des belegten Zeitraums (genauer Tag nicht im Test hinterlegt;
+  // jeder Tag davor ergibt dieselbe Regel). Ohne Zeitpunkt (neue Regel, 15 % + 0,45): 17,95 × 0,762 − 0,5355 − 11,56 = 1,5824 → 1,58.
   test('Auftragsvorgabe: 17,95 € Verkauf, 11,56 € wahrer Einkauf ergibt 1,76 € (Toleranz 1 Cent)', () => {
-    const { profit } = computeOrderProfit(17.95, 11.56, undefined, false);
+    const { profit } = computeOrderProfit(17.95, 11.56, undefined, false, { orderDate: '2026-10-03' });
     expect(Math.abs(profit - 1.76)).toBeLessThanOrEqual(0.01);
+    expect(computeOrderProfit(17.95, 11.56, undefined, false).profit).toBe(1.58);
   });
 
   // Regressions-Beweis (Grundgesetz Regel 5): eine Rechnung OHNE Gebührenabzug (Rohdifferenz, der
@@ -299,7 +307,8 @@ describe('computeOrderProfit — Bestellungs-Gewinn NACH eBay-Gebühren (PRIO-1-
 
   test('nutzt ausschließlich DEFAULT_PRICING_CONFIG — Gebührensatz+Anzeigentarif, Fixgebühr, MwSt.', () => {
     const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + DEFAULT_PRICING_CONFIG.defaultAdRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
-    const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
+    const fixedFeeGross = ebayFixedFeeGross(20); // AUFSICHT 045 A: Bestellwert 20 € > 10 € → 0,45 × 1,19
+    expect(fixedFeeGross).toBeCloseTo(0.5355, 12);
     const erwarteterGewinn = Math.round((20 * (1 - totalFeeRateGross) - fixedFeeGross - 10) * 100) / 100;
     const erwarteteGebuehren = Math.round((20 * totalFeeRateGross + fixedFeeGross) * 100) / 100;
     const { profit, feesDeducted } = computeOrderProfit(20, 10, undefined, false);

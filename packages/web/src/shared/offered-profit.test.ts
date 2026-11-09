@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // PLAN 7 Punkt 6 (Kalkulator 08.11. 20:25 + 09.11. 06:50): "Gewinn unter 1,00 €" nur über bei eBay angebotene Varianten.
 // STRUKTUR wie live (OFFEN 014, App /api/products 29.10.2026): 234 = 3 AliExpress-Einträge (Brown/GRAY/green), bei eBay nur Brown;
 // 235 = 3 Einträge (Orange 5PCS/10PCS/3PCS), bei eBay nur Orange 5PCS. EK aus dem Live-Stand 29.10.
@@ -22,7 +24,8 @@ const p234: ProfitProduct = {
     { skuId: '12000056068050015', attrs: { Color: 'GRAY' }, price: 8.89 },
     { skuId: '12000056068050016', attrs: { Color: 'green' }, price: 8.89 },
   ]),
-  variantSellPrices: JSON.stringify({ '12000056068050014': 25.45, '12000056068050015': 23.95 }), // Testwerte
+  // AUFSICHT 045 Teil A (09.11.2026): Fixgebühr 0,45 → Brown @ 25,45 läge bei 0,9766 (< 1,00). TESTWERT GEÄNDERT Brown 25,45 → 25,95.
+  variantSellPrices: JSON.stringify({ '12000056068050014': 25.95, '12000056068050015': 23.95 }), // Testwerte
 };
 
 const p235: ProfitProduct = {
@@ -37,11 +40,11 @@ const p235: ProfitProduct = {
 };
 
 describe('Gewinn unter 1,00 € nur über bei eBay angebotene Varianten (PLAN 7 Punkt 6)', () => {
-  test('stele-234: nur Brown zählt (1,16 €), GRAY/green "nicht bei eBay", 0 unter 1,00 €, kein Alarm', () => {
+  test('stele-234: nur Brown zählt (1,33 €), GRAY/green "nicht bei eBay", 0 unter 1,00 €, kein Alarm', () => {
     const s = offeredProfitSummary(p234);
     expect(s.isVariant).toBe(true);
     expect(s.counted.map(r => r.label)).toEqual(['Brown']);
-    expect(s.counted[0].profit).toBeCloseTo(1.155051, 6);
+    expect(s.counted[0].profit).toBeCloseTo(1.334941, 6);
     expect(s.belowOne).toEqual([]);
     expect(s.notOffered.map(x => x.label)).toEqual(['GRAY', 'green']);
     expect(s.otherExcluded).toEqual([]);
@@ -51,10 +54,10 @@ describe('Gewinn unter 1,00 € nur über bei eBay angebotene Varianten (PLAN 7 
     expect(variantPriceAlarm(p234).isAlarm).toBe(false);
   });
 
-  test('stele-235: nur Orange 5PCS zählt (1,34 €), 10PCS/3PCS "nicht bei eBay", 0 unter 1,00 €, kein Alarm', () => {
+  test('stele-235: nur Orange 5PCS zählt (1,16 €), 10PCS/3PCS "nicht bei eBay", 0 unter 1,00 €, kein Alarm', () => {
     const s = offeredProfitSummary(p235);
     expect(s.counted.map(r => r.label)).toEqual(['Orange 5PCS']);
-    expect(s.counted[0].profit).toBeCloseTo(1.337591, 6);
+    expect(s.counted[0].profit).toBeCloseTo(1.159091, 6);
     expect(s.belowOne).toEqual([]);
     expect(s.notOffered.map(x => x.label)).toEqual(['Orange 10PCS', 'Orange 3PCS']);
     expect(notOfferedLabel(s)).toBe('2 nicht bei eBay');
@@ -65,16 +68,16 @@ describe('Gewinn unter 1,00 € nur über bei eBay angebotene Varianten (PLAN 7 
   test('Fixture unterscheidet: die alte Karte (Produkt-EK/-VK) zeigte Verlust', () => {
     const alt234 = marginDisplay({ sellPrice: p234.sellPrice, buyPrice: p234.buyPrice, shipsFrom: p234.shipsFrom, adRatePercent: p234.adRate })!;
     const alt235 = marginDisplay({ sellPrice: p235.sellPrice, buyPrice: p235.buyPrice, shipsFrom: p235.shipsFrom, adRatePercent: p235.adRate })!;
-    expect(alt234.profitEur).toBeCloseTo(-0.020119, 6);
-    expect(alt235.profitEur).toBeCloseTo(-0.162409, 6);
+    expect(alt234.profitEur).toBeCloseTo(-0.198619, 6);
+    expect(alt235.profitEur).toBeCloseTo(-0.340909, 6);
     expect(alt234.tone).toBe('loss');
     expect(alt235.tone).toBe('loss');
   });
 
   test('angebotene Variante wirklich unter 1,00 € zählt weiter (kein Wegfiltern echter Fälle)', () => {
-    const s = offeredProfitSummary({ ...p234, variantSellPrices: JSON.stringify({ '12000056068050014': 23.95 }) }); // Testwert Brown 23,95
+    const s = offeredProfitSummary({ ...p234, variantSellPrices: JSON.stringify({ '12000056068050014': 24.45 }) }); // Testwert Brown 24,45 (045 A: vorher 23,95, läge jetzt bei −0,2771 = 'loss' statt 'thin')
     expect(s.belowOne.map(r => r.label)).toEqual(['Brown']);
-    expect(s.belowOne[0].profit).toBeCloseTo(0.079881, 6);
+    expect(s.belowOne[0].profit).toBeCloseTo(0.259771, 6);
     expect(s.card?.tone).toBe('thin');
     expect(s.notOffered).toHaveLength(2);
   });

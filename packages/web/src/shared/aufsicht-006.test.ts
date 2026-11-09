@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 import { describe, expect, test } from 'bun:test';
 import { ratingGate, parseMinRating, DEFAULT_MIN_RATING } from './rating-gate';
 import { preselectVariants } from './variant-preselect';
@@ -13,7 +15,7 @@ const vp213 = [
   e('12000043169280452', 'Black', 1.35, 77), e('12000043169280448', 'Yellow', 1.59, 62), e('12000043169280459', 'Brown', 1.59, 59),
   e('12000043169280458', 'Deep blue', 1.59, 52), e('12000043169280457', 'Pink', 1.59, 23), e('12000060829289109', 'White', 1.49, 14),
 ];
-const cfg = { ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5 };
+const cfg = { ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5 };
 const profitAtSuggested = (x: { price?: number }) => {
   const sell = computeMinSellPrice({ ...cfg, buyPrice: x.price!, isChinaOrigin: true, targetMarginEur: 2, safetyBufferEur: 0, rounding: 'floor95' }).minSellPrice;
   return profitAtSellPrice({ ...cfg, sellPrice: sell, buyPrice: x.price!, isChinaOrigin: true });
@@ -57,13 +59,15 @@ describe('OFFEN 006 R2 höchstens 5 Varianten, Vorauswahl', () => {
   });
   // Formel je Standort (08.11.2026): mit S 1,19 (China) sind die besten 5 jetzt Blue/Red/Gray/White/Light blue (bun: Gray 1,9753 … Red 1,8153;
   // Yellow/Brown 1,7753 nicht mehr dabei). EINGABE GEÄNDERT: geprüft werden Gray (Lager 4) und Red (Lager unbekannt) statt Yellow/Brown.
-  test('Lager < 5 oder unbekannt → nicht wählbar (Gray/Red wären sonst unter den besten 5)', () => {
+  // AUFSICHT 045 Teil A (09.11.2026): mit gestaffelter Fixgebühr (0,35 bei Bestellwert ≤ 10 €, sonst 0,45) sind die besten 5 jetzt
+  // Red/Yellow/Brown/Deep blue/Pink (bun). EINGABE GEÄNDERT: geprüft werden Yellow (Lager 4) und Red (Lager unbekannt) statt Gray/Red.
+  test('Lager < 5 oder unbekannt → nicht wählbar (Yellow/Red wären sonst unter den besten 5)', () => {
     const base = preselectVariants(g213, vp213, 5, profitAtSuggested);
-    expect(base.kept).toContain('Gray');
+    expect(base.kept).toContain('Yellow');
     expect(base.kept).toContain('Red');
-    const vp = vp213.map(x => (x.attrs.Color === 'Gray' ? { ...x, stock: 4 } : x.attrs.Color === 'Red' ? { ...x, stock: undefined as unknown as number } : x));
+    const vp = vp213.map(x => (x.attrs.Color === 'Yellow' ? { ...x, stock: 4 } : x.attrs.Color === 'Red' ? { ...x, stock: undefined as unknown as number } : x));
     const r = preselectVariants(g213, vp, 5, profitAtSuggested);
-    expect(r.kept).not.toContain('Gray');
+    expect(r.kept).not.toContain('Yellow');
     expect(r.kept).not.toContain('Red');
     expect(r.kept.length).toBe(5);
   });

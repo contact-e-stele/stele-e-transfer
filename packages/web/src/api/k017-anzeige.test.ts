@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-017 (Kalkulator 05.11.2026): Anzeige App ↔ eBay. Punkt 3 Zurücklesen, Punkt 4 Bestellungs-Gewinn nach eBay-Kennzeichen,
 // Punkt 5 täglicher Abgleich (Bericht/Kachel), Punkt 6 Karten-Gewinn aus derselben Quelle wie „Erwartet“.
 import { describe, test, expect } from 'bun:test';
@@ -19,18 +21,18 @@ const order127 = (soldViaAd: boolean | undefined, adRate = 0) => computeOrderNet
 
 describe('K-017 Punkt 4: Anzeigengebühr nach eBay-Kennzeichen', () => {
   test('127 über Anzeige verkauft, heute adRate 0 → Gebühr 1,01 abgezogen, Gewinn 3,18 statt 4,19', () => {
-    expect(order127(true)).toMatchObject({ nettoErgebnis: 3.18, nettoGebuehren: 4.39, nettoAnzeige: 1.01 });
+    expect(order127(true)).toMatchObject({ nettoErgebnis: 3, nettoGebuehren: 4.57, nettoAnzeige: 1.01 });
   });
   test('nicht über Anzeige verkauft → keine Anzeigengebühr, auch wenn das Produkt heute 5 % hat', () => {
-    expect(order127(false, 5)).toMatchObject({ nettoErgebnis: 4.19, nettoGebuehren: 3.38, nettoAnzeige: 0 });
+    expect(order127(false, 5)).toMatchObject({ nettoErgebnis: 4.01, nettoGebuehren: 3.56, nettoAnzeige: 0 });
   });
   test('über Anzeige mit heutigem Satz 3 % → dieser Satz (nicht 5 %)', () => {
     // 16,95 × (1 − 0,18 × 1,19) − 0,357 − 9,38
-    expect(order127(true, 3)).toMatchObject({ nettoErgebnis: 3.58, nettoAnzeige: 0.61 });
+    expect(order127(true, 3)).toMatchObject({ nettoErgebnis: 3.4, nettoAnzeige: 0.61 });
   });
   test('ohne Kennzeichen (alte Aufrufer) → wie bisher heutiger adRate', () => {
-    expect(order127(undefined, 5)).toMatchObject({ nettoErgebnis: 3.18, nettoAnzeige: null });
-    expect(order127(undefined, 0)).toMatchObject({ nettoErgebnis: 4.19, nettoAnzeige: null });
+    expect(order127(undefined, 5)).toMatchObject({ nettoErgebnis: 3, nettoAnzeige: null });
+    expect(order127(undefined, 0)).toMatchObject({ nettoErgebnis: 4.01, nettoAnzeige: null });
   });
   // PLAN 7 Punkt 9: Herkunft leer = China. Vor dem Stichtag STANDORT_FORMEL_AB (Standort Wiesbaden) S = 1 → 0,595;
   // ohne Datum/ab Stichtag Formel je Standort → 10,00 × 5 % × 1,19 × 1,19 = 0,70805 (bun).

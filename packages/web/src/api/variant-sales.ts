@@ -31,6 +31,8 @@ export interface SalesProduct {
   shippingCost: number | null;
   shipsFrom: string | null;
   adRate: number | null;
+  /** Bündel A+B: eBay-Kategorie (products.ebayCategory) → Provision je Kategorie ab GEBUEHR_NEU_AB; fehlt → 15 %. */
+  ebayCategory?: string | null;
   /** buyPrice = EK DIESER Variante (variantPrices[].price), nicht der Produkt-EK */
   variants: Array<{ skuId: string; attrs?: Record<string, string>; buyPrice: number }>;
   /** K-005: Kassen-Faktor (products.ali_checkout_factor/_at), wie im Bestellungs-Gewinn (order-matching.ts) — gilt nur ≤ 14 Tage alt. */
@@ -149,7 +151,8 @@ export function aggregateVariantSales(input: {
         // PLAN 7 Punkt 9: dieselbe Gewinnrechnung wie der Bestellungen-Tab (computeOrderProfitRaw, ungerundet) inkl. Formel je
         // Standort (#291, S = 1,19 bei China-Herkunft dieser Variante) statt einer eigenen Gebühren-Kopie ohne S.
         // Stichtag wie im Bestellungen-Tab: vor STANDORT_FORMEL_AB stand jedes Angebot in Wiesbaden (S = 1).
-        const profit = computeOrderProfitRaw(unitRevenue, unitCost, product.adRate, orderFeeChinaLocation(isChina, order.orderDate)).profit;
+        // Bündel A+B: Gebührenregel nach Bestellzeitpunkt (GEBUEHR_NEU_AB) und Kategorie des Produkts.
+        const profit = computeOrderProfitRaw(unitRevenue, unitCost, product.adRate, orderFeeChinaLocation(isChina, order.orderDate), { orderDate: order.orderDate, ebayCategory: product.ebayCategory }).profit;
         for (let i = 0; i < qty; i++) agg.profitPerSale.push(profit);
       }
 
