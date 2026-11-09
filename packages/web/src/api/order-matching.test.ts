@@ -31,6 +31,9 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
       lineItems: [{ sku: 'x', quantity: 1 }],
       manualBuyPrice: 11.56,
       findProduct: () => null, // manueller Zweig braucht findProduct nicht
+      // PLAN 7 Punkt 9: Werte = reale Bestellung 09-15210-97703 (Datenstand 24.09.2026) → Bestelltag spätestens 24.09., vor dem
+      // Stichtag STANDORT_FORMEL_AB (Standort damals Wiesbaden, S = 1). Ohne Datum gälte S nach Herkunft (unbekannt = China).
+      orderDate: '2026-09-24',
     });
     expect(result.nettoQuelle).toBe('manuell');
     expect(result.nettoEinkauf).toBe(11.56);
@@ -140,6 +143,9 @@ describe('computeOrderNettoErgebnis — Regressionsbeweis mit echten Live-Bestel
       lineItems: [{ sku: o.sku, quantity: 1 }],
       manualBuyPrice: o.manualBuyPrice,
       findProduct,
+      // PLAN 7 Punkt 9: eingefrorener Datenstand 24.09.2026 → jede dieser Bestellungen lag spätestens am 24.09. (Standort Wiesbaden,
+      // S = 1; Einfuhr 3,57 wie im Test-Preload). Ohne Datum rechnet die Funktion seit Plan 7 mit S nach Herkunft.
+      orderDate: '2026-09-24',
     }));
 
     const bekannt = results.filter(r => r.nettoErgebnis != null);

@@ -32,13 +32,20 @@ describe('K-017 Punkt 4: Anzeigengebühr nach eBay-Kennzeichen', () => {
     expect(order127(undefined, 5)).toMatchObject({ nettoErgebnis: 3.18, nettoAnzeige: null });
     expect(order127(undefined, 0)).toMatchObject({ nettoErgebnis: 4.19, nettoAnzeige: null });
   });
-  test('gemischt: nur Position 1 (10,00 €) über Anzeige → 10,00 × 5 % × 1,19 = 0,595', () => {
-    const r = orderAdFee(16.95, [
-      { sku: 'a', quantity: 1, soldViaAd: true, lineItemCost: 10 },
-      { sku: 'b', quantity: 1, soldViaAd: false, lineItemCost: 6.95 },
-    ], () => ({ buyPrice: 1, shipsFrom: null, adRate: 5 }));
+  // PLAN 7 Punkt 9: Herkunft leer = China. Vor dem Stichtag STANDORT_FORMEL_AB (Standort Wiesbaden) S = 1 → 0,595;
+  // ohne Datum/ab Stichtag Formel je Standort → 10,00 × 5 % × 1,19 × 1,19 = 0,70805 (bun).
+  const mixed = (orderDate?: string) => orderAdFee(16.95, [
+    { sku: 'a', quantity: 1, soldViaAd: true, lineItemCost: 10 },
+    { sku: 'b', quantity: 1, soldViaAd: false, lineItemCost: 6.95 },
+  ], () => ({ buyPrice: 1, shipsFrom: null, adRate: 5 }), orderDate);
+  test('gemischt: nur Position 1 (10,00 €) über Anzeige, Bestellung vor Stichtag → 10,00 × 5 % × 1,19 = 0,595', () => {
+    const r = mixed('2026-11-04');
     expect(r?.rate).toBeNull();
     expect(r?.adFee).toBeCloseTo(0.595, 9);
+  });
+  test('gemischt, China, ohne Datum → × S 1,19 = 0,70805', () => {
+    expect(mixed()?.adFee).toBeCloseTo(0.70805, 9);
+    expect(mixed('2026-11-07')?.adFee).toBeCloseTo(0.70805, 9);
   });
   test('Mapping: eBay properties.soldViaAdCampaign wird durchgereicht, fehlt → false', async () => {
     const src = await Bun.file(new URL('./ebay.ts', import.meta.url)).text();

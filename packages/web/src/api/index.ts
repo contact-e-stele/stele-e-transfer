@@ -1384,7 +1384,7 @@ const app = new Hono()
   .get('/ebay/listings/recalculate-preview', async (c) => {
     try {
       const { isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
-      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, defaultEbayFeeRateGross, ebayLocationFactorFor } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1426,8 +1426,8 @@ const app = new Hono()
         // (z.B. Alufolie +23€, Backpapier -6€) Schritt für Schritt nachrechnen lässt, statt raten
         // zu müssen. Reine Zusatzinfo — verändert keinen berechneten Preis.
         debug: {
-          buyPrice: number | null; versand: number; zoll: number; adRate: number; adRateWasNull: boolean;
-          feeRate: number; minGewinn: number; safetyBuffer: number; shipsFrom: string | null;
+          buyPrice: number | null; versand: number | null; zoll: number; adRate: number; adRateWasNull: boolean;
+          feeRate: number; locationFactor: number; minGewinn: number; safetyBuffer: number; shipsFrom: string | null;
         };
       };
       const preview: PreviewRow[] = [];
@@ -1461,9 +1461,13 @@ const app = new Hono()
             oldPrice, newPrice, diff, isVariant: true, uncappedNewPrice: rawNewPrice, wasCapped,
             variantBreakdown: rows.map(r => ({ attrs: r.attrs, buyPrice: r.buyPrice, correctSellPrice: r.correctSellPrice })),
             debug: {
-              buyPrice: null, versand: product.shippingCost ?? 0, zoll: variantZoll,
+              // PLAN 7 Punkt 9: Versand hängt seit A-014 je Variante an der Ware (computeAliCosts) — das Produktfeld shippingCost
+              // fließt in keine Formel mehr ein, die Diagnose zeigte es trotzdem als "versand" → null (Details: variantBreakdown).
+              // feeRate jetzt inkl. Formel je Standort (#291), S auf Produkt-Herkunft wie variantZoll.
+              buyPrice: null, versand: null, zoll: variantZoll,
               adRate: variantAdRate, adRateWasNull: product.adRate == null,
-              feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + variantAdRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
+              feeRate: defaultEbayFeeRateGross(variantAdRate, isChinaShipping(product.shipsFrom)),
+              locationFactor: ebayLocationFactorFor(isChinaShipping(product.shipsFrom)),
               minGewinn: product.targetMarginEur ?? MIN_GEWINN_EUR, safetyBuffer: 0, shipsFrom: product.shipsFrom,
             },
           });
@@ -1473,16 +1477,19 @@ const app = new Hono()
         if (product.buyPrice == null) continue;
         // adRate-Default vereinheitlicht auf 5 (P-27/P-28-Konsolidierung, 2026-09-08).
         // adRateWasNull im debug-Feld zeigt weiterhin an, ob der Default hier gerade greift.
-        const zoll = isChinaShipping(product.shipsFrom) ? aliEinfuhrEur() : 0;
-        const versand = product.shippingCost ?? 0;
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-        const rawNewPrice = computeMinSellPrice({
+        const calc = computeMinSellPrice({
           earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
           ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
           rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
-        }).minSellPrice;
+        });
+        const rawNewPrice = calc.minSellPrice;
+        // PLAN 7 Punkt 9: Diagnose zeigt die Werte, mit denen die Formel WIRKLICH rechnet (Versand/Einfuhr aus computeAliCosts,
+        // Gebührensatz inkl. S) — vorher shippingCost-Feld und Satz ohne S, beides nicht die gerechneten Werte.
+        const versand = calc.shipping;
+        const zoll = calc.customs;
         const oldPrice = listing.currentPrice;
         // Teil 2D ("Senkungsbremse"): computeMinSellPrice() liefert eine Untergrenze, keinen
         // Zielpreis — ohne Deckel würde "Preise neu berechnen" ein laufendes Angebot direkt auf
@@ -1498,7 +1505,7 @@ const app = new Hono()
           uncappedNewPrice: rawNewPrice, wasCapped,
           debug: {
             buyPrice: product.buyPrice, versand, zoll, adRate, adRateWasNull: product.adRate == null,
-            feeRate: (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor,
+            feeRate: calc.totalFeeRateGross, locationFactor: ebayLocationFactorFor(isChinaShipping(product.shipsFrom)),
             minGewinn: product.targetMarginEur ?? MIN_GEWINN_EUR, safetyBuffer: 0, shipsFrom: product.shipsFrom,
           },
         });

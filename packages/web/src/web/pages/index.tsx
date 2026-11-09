@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { aliEinfuhrEur } from "../../shared/constants";
-import { computeMinSellPrice, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG, IOSS_PROVISION_FACTOR } from "../../shared/pricing";
 
 // Teil 2B (2026-09-10): reicht für die Anzeigengebühr-Zuordnung im Preisrechner — nur die hier
 // gebrauchten Felder, nicht das volle Product-Objekt aus produkte.tsx.
@@ -190,7 +190,9 @@ export default function Index() {
   // jetzt. Ein Mindestpreis wird hier nicht gebraucht (buyPrice/targetMargin daher neutral 0).
   const ebayFeeRatePercentInput = parseFloat(gebuehr.replace(",", ".")) || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent;
   const pricingRates = computeMinSellPrice({
-    buyPrice: 0, isChinaOrigin: false,
+    // PLAN 7 Punkt 9 (09.11.2026): Formel je Standort (#291) — S folgt dem Herkunft-Schalter "aus China" dieses Rechners
+    // (vorher fest false = S 1, d. h. bei China-Ware zu wenig Gebühr). buyPrice 0: hier werden nur die Sätze gebraucht.
+    buyPrice: 0, isChinaOrigin: ausChina,
     ebayFeeRatePercent: ebayFeeRatePercentInput, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
     adRatePercent: anzeigegebuehrProzent * 100, targetMarginEur: 0, safetyBufferEur: 0, rounding: 'none',
   });
@@ -558,7 +560,7 @@ export default function Index() {
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 700, color: "#0F172A" }}>{formatEuro(gesamtGebuehren)}</div>
                 <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>
-                  {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {DEFAULT_PRICING_CONFIG.ebayFixedFeeEur.toFixed(2)} € Fix{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} (inkl. 19% MwSt.)
+                  {gebuehr || DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + {DEFAULT_PRICING_CONFIG.ebayFixedFeeEur.toFixed(2)} € Fix{!adRateIsUnset ? ` + ${selectedProductForAdRate!.adRate}% Anzeige` : ""} (inkl. 19% MwSt.{ausChina ? ` × ${String(IOSS_PROVISION_FACTOR).replace(".", ",")} Standort China` : ""})
                 </div>
               </div>
             </div>

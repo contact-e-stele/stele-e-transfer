@@ -27,6 +27,8 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
   const order = (adRate: number) => computeOrderNettoErgebnis({
     orderTotal: 20.95, lineItems: [{ sku: 'stele-220-BLACK', quantity: 1 }], manualBuyPrice: 15.14,
     findProduct: () => ({ id: 220, buyPrice: 12.19, shipsFrom: 'China', adRate, variants: [] }),
+    // PLAN 7 Punkt 9: reale Bestellung, gemeldet am 15.10.2026 → Bestelltag spätestens 15.10., vor STANDORT_FORMEL_AB (S = 1).
+    orderDate: '2026-10-15',
   });
   test('Bestellung 19-15281-36243 (BLACK 20,95, Einkauf 15,14): adRate 0 → Gebühr 4,10, Gewinn 1,71', () => {
     expect(order(0)).toMatchObject({ nettoGebuehren: 4.1, nettoErgebnis: 1.71 });
