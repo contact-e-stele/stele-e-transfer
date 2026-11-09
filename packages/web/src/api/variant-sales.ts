@@ -4,7 +4,7 @@
 // gesenkt werden, also müssen sie testbar sein. Das Berichtsskript reicht nur die Daten herein und
 // formatiert das Ergebnis.
 
-import { isChinaOriginForVariant, computeAliCosts, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { isChinaOriginForVariant, computeAliCosts, computeOrderProfitRaw, orderFeeChinaLocation } from '../shared/pricing';
 import { buildVariantSku } from './price-monitor';
 import { activeCheckoutFactor, applyCheckoutFactor } from '../shared/checkout-factor';
 import { buildProductLookups, findProductForSku, type UnmatchedReason } from './order-matching';
@@ -146,9 +146,10 @@ export function aggregateVariantSales(input: {
         // führen statt mit 0 zu rechnen.
         agg.notCalculable += qty;
       } else {
-        const feeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + (product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent)) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
-        const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
-        const profit = unitRevenue - unitCost - (unitRevenue * feeRateGross + fixedFeeGross);
+        // PLAN 7 Punkt 9: dieselbe Gewinnrechnung wie der Bestellungen-Tab (computeOrderProfitRaw, ungerundet) inkl. Formel je
+        // Standort (#291, S = 1,19 bei China-Herkunft dieser Variante) statt einer eigenen Gebühren-Kopie ohne S.
+        // Stichtag wie im Bestellungen-Tab: vor STANDORT_FORMEL_AB stand jedes Angebot in Wiesbaden (S = 1).
+        const profit = computeOrderProfitRaw(unitRevenue, unitCost, product.adRate, orderFeeChinaLocation(isChina, order.orderDate)).profit;
         for (let i = 0; i < qty; i++) agg.profitPerSale.push(profit);
       }
 

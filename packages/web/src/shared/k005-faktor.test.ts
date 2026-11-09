@@ -135,6 +135,9 @@ describe('order-matching: automatischer Zweig nutzt den Faktor', () => {
   });
   const run = (p: ReturnType<typeof product>) => computeOrderNettoErgebnis({
     orderTotal: 24.95, lineItems: [{ sku: 'stele-220', quantity: 1 }], manualBuyPrice: null, findProduct: () => p,
+    // PLAN 7 Punkt 9: TESTWERT Bestelltag vor STANDORT_FORMEL_AB (S = 1) — dieser Block prüft den Kassen-Faktor, nicht S.
+    // Einfuhr bleibt 3,57 (einfuhrForOrderDate bis 22.10. = Test-Preload).
+    orderDate: '2026-10-12',
   });
   test('ohne Faktor: Einkauf 15,76, Gewinn 2,89', () => {
     const r = run(product(null, null));

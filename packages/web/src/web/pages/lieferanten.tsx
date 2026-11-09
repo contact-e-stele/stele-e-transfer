@@ -12,7 +12,7 @@ import { BildsucheCard } from "../components/bildsuche-card";
 import { aliEinfuhrEur, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
-import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant } from "../../shared/pricing";
+import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant, defaultEbayFeeRateGross, ebayLocationFactorFor } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
 import { applyVariantRename, findDuplicateValues, renameContentKeys, translatedGroups, translateGroupName, translateVariantValue, valueKey } from "../../shared/variant-text-de";
 import { produkteSearchHref } from "../../shared/product-search";
@@ -495,10 +495,13 @@ export default function Lieferanten() {
   const einkaufStueck = parseFloat(buyPrice.replace(",", ".")) || parsePrice(product?.price ?? "");
   const einkauf = Math.round(einkaufStueck * normalizePackQty(singlePack) * 100) / 100;
   const verkauf = parseFloat(ebayPrice.replace(",", ".")) || 0;
-  const ebayFee = verkauf * (DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100 * DEFAULT_PRICING_CONFIG.vatFactor
+  // PLAN 7 Punkt 9 (09.11.2026): angezeigte Gebühr über die zentrale Satz-Funktion inkl. Formel je Standort (#291, S = 1,19 bei
+  // China-Herkunft) — vorher eigene Kopie ohne S, d. h. die Gebühr-Kachel passte bei China-Ware nicht zur Gewinn-Kachel daneben.
+  const ausChinaHaupt = isChinaShipping(shipsFromInfo?.country); // K-004: ohne Herkunft wie China
+  const ebayFee = verkauf * defaultEbayFeeRateGross(adRate, ausChinaHaupt)
     + DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
   const gewinn = profitAtSellPrice({
-    sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: isChinaShipping(shipsFromInfo?.country), // K-004: ohne Herkunft wie China
+    sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: ausChinaHaupt,
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
   });
@@ -1891,7 +1894,7 @@ export default function Lieferanten() {
                 </div>
                 <div style={{ marginTop: 5, fontSize: 10, color: "#94A3B8" }}>
                   {adRate > 0
-                    ? <>eBay {DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + Anzeige {adRate}% = {(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate)}% gesamt (× {DEFAULT_PRICING_CONFIG.vatFactor} MwSt)</>
+                    ? <>eBay {DEFAULT_PRICING_CONFIG.ebayFeeRatePercent}% + Anzeige {adRate}% = {(DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate)}% gesamt (× {DEFAULT_PRICING_CONFIG.vatFactor} MwSt{ausChinaHaupt ? <> × {ebayLocationFactorFor(true)} Standort China</> : null})</>
                     : "0% = keine Anzeige (Promoted Listings bleibt aus). Wird am Produkt gespeichert."}
                 </div>
               </div>

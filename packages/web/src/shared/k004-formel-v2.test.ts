@@ -101,6 +101,7 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
   test('SKU stele-119-200PCS, VK 14,95 → Einkauf 10,35, Gewinn 0,68 (nicht Produkt-EK 3,15)', () => {
     const r = computeOrderNettoErgebnis({
       orderTotal: 14.95, lineItems: [{ sku: 'stele-119-200PCS', quantity: 1 }], manualBuyPrice: null, findProduct: () => p119,
+      orderDate: '2026-09-24', // PLAN 7 Punkt 9: wie reale Bestellung 20-15127-76586 (Datenstand 24.09.) → vor Stichtag, S = 1
     });
     expect(r.nettoEinkauf).toBeCloseTo(10.35, 10);
     expect(r.nettoErgebnis).toBe(0.68);
@@ -126,12 +127,13 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
   });
 
   test('Anzeigensatz 0 (nicht beworben) senkt die Gebühren gegenüber 5 %', () => {
-    const with5 = computeOrderProfit(14.95, 10.35, 5);
-    const with0 = computeOrderProfit(14.95, 10.35, 0);
+    // PLAN 7 Punkt 9: 4. Argument = Gebühr mit China-Standort? Hier false (S = 1, Bestellung vor Stichtag) — Werte unverändert.
+    const with5 = computeOrderProfit(14.95, 10.35, 5, false);
+    const with0 = computeOrderProfit(14.95, 10.35, 0, false);
     expect(with5.profit).toBe(0.68);
     // 14,95 × (1 − 0,15 × 1,19) − 0,357 − 10,35 = 1,574425 → 1,57 (bun nachgerechnet)
     expect(with0.profit).toBe(1.57);
-    expect(computeOrderProfit(14.95, 10.35).profit).toBe(0.68); // weggelassen → Default 5 %
+    expect(computeOrderProfit(14.95, 10.35, undefined, false).profit).toBe(0.68); // weggelassen → Default 5 %
   });
 });
 

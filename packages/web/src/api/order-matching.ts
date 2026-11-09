@@ -7,7 +7,7 @@
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
 import { einfuhrForOrderDate } from '../shared/checkout-factor';
-import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant, ebayPercentFeeRateGross, orderFeeChinaLocation, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { activeCheckoutFactor, applyCheckoutFactor } from '../shared/checkout-factor';
 import { slugify, NON_VARIATION_ASPECTS, resolveVariantEntries, type VariantGroup } from '../shared/variant-resolver';
 
@@ -172,6 +172,25 @@ export function matchOrderVariant(sku: string | null, product: OrderProductInfo)
   return { price: best.price as number, attrs: best.attrs ?? {} };
 }
 
+/**
+ * PLAN 7 Punkt 9 (09.11.2026): Formel je Standort (#291) im Bestellungs-Gewinn. Herkunft einer Position wie überall
+ * (isChinaOriginForVariant: "Ships From" der verkauften Variante vor Produkt-Herkunft; leer/unbekannt = China).
+ * Position ohne zugeordnetes Produkt → China (sichere Seite, Gewinn nie zu hoch).
+ */
+export function lineItemIsChinaOrigin(sku: string | null, findProduct: OrderNettoInput['findProduct']): boolean {
+  const product = findProduct(sku);
+  if (!product) return true;
+  return isChinaOriginForVariant(matchOrderVariant(sku, product)?.attrs, product.shipsFrom);
+}
+/** Bestellung als Ganzes: China, sobald EINE Position China ist (bzw. keine Position da) — der Gewinn wird nie zu hoch gezeigt. */
+export function orderIsChinaOrigin(lineItems: OrderNettoInput['lineItems'], findProduct: OrderNettoInput['findProduct']): boolean {
+  return lineItems.length === 0 || lineItems.some(li => lineItemIsChinaOrigin(li.sku, findProduct));
+}
+/** S-Entscheidung für die Gebühr einer Bestellung: Herkunft UND Bestelltag (orderFeeChinaLocation, Stichtag STANDORT_FORMEL_AB). */
+export function orderFeeIsChina(lineItems: OrderNettoInput['lineItems'], findProduct: OrderNettoInput['findProduct'], orderDate?: string): boolean {
+  return orderFeeChinaLocation(orderIsChinaOrigin(lineItems, findProduct), orderDate);
+}
+
 export interface OrderNettoResult {
   nettoEinkauf: number | null;
   nettoErgebnis: number | null;
@@ -194,6 +213,7 @@ export function orderAdFee(
   orderTotal: number,
   lineItems: OrderNettoInput['lineItems'],
   findProduct: OrderNettoInput['findProduct'],
+  orderDate?: string, // PLAN 7 Punkt 9: Formel je Standort nur ab STANDORT_FORMEL_AB (ohne Datum: nach Herkunft)
 ): { adFee: number; rate: number | null } | null {
   if (lineItems.every(li => li.soldViaAd === undefined)) return null;
   const flagged = lineItems.filter(li => li.soldViaAd === true);
@@ -204,19 +224,21 @@ export function orderAdFee(
   };
   const rates = flagged.map(li => rateOf(li.sku));
   // Alle Positionen über die Anzeige mit demselben Satz → Satz auf den Gesamtbetrag (wie computeOrderProfit bisher).
+  // PLAN 7 Punkt 9: Anzeigen-Anteil = VK × Satz × 1,19 × S (S je Herkunft, #291) — über die zentrale Satz-Funktion (nur Anzeige, Provision 0).
+  const adRateGross = (rate: number, china: boolean) => ebayPercentFeeRateGross({ ebayFeeRatePercent: 0, adRatePercent: rate, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, isChinaOrigin: china });
   if (flagged.length === lineItems.length && rates.every(r => r === rates[0])) {
-    return { adFee: orderTotal * rates[0] / 100 * DEFAULT_PRICING_CONFIG.vatFactor, rate: rates[0] };
+    return { adFee: orderTotal * adRateGross(rates[0], orderFeeIsChina(lineItems, findProduct, orderDate)), rate: rates[0] };
   }
-  // Gemischt: je markierter Position ihr Positionsbetrag; fehlt er, der Gesamtbetrag (Gewinn nie zu hoch).
-  const adFee = flagged.reduce((a, li, i) => a + (li.lineItemCost ?? orderTotal) * rates[i] / 100 * DEFAULT_PRICING_CONFIG.vatFactor, 0);
+  // Gemischt: je markierter Position ihr Positionsbetrag; fehlt er, der Gesamtbetrag (Gewinn nie zu hoch). S je Position.
+  const adFee = flagged.reduce((a, li, i) => a + (li.lineItemCost ?? orderTotal) * adRateGross(rates[i], orderFeeChinaLocation(lineItemIsChinaOrigin(li.sku, findProduct), orderDate)), 0);
   return { adFee, rate: null };
 }
 
 /** Gewinn/Gebühren mit Anzeige nach Kennzeichen (ad) bzw. altem Weg (ad === null → Produkt-Satz). */
-function profitWithAd(orderTotal: number, einkauf: number, ad: ReturnType<typeof orderAdFee>, legacyRate: number | null | undefined) {
-  if (ad === null) return { ...computeOrderProfit(orderTotal, einkauf, legacyRate), nettoAnzeige: null };
-  if (ad.rate !== null) return { ...computeOrderProfit(orderTotal, einkauf, ad.rate), nettoAnzeige: Math.round(ad.adFee * 100) / 100 };
-  const base = computeOrderProfit(orderTotal, einkauf, 0);
+function profitWithAd(orderTotal: number, einkauf: number, ad: ReturnType<typeof orderAdFee>, legacyRate: number | null | undefined, isChina: boolean) {
+  if (ad === null) return { ...computeOrderProfit(orderTotal, einkauf, legacyRate, isChina), nettoAnzeige: null };
+  if (ad.rate !== null) return { ...computeOrderProfit(orderTotal, einkauf, ad.rate, isChina), nettoAnzeige: Math.round(ad.adFee * 100) / 100 };
+  const base = computeOrderProfit(orderTotal, einkauf, 0, isChina);
   return {
     profit: Math.round((base.profit - ad.adFee) * 100) / 100,
     feesDeducted: Math.round((base.feesDeducted + ad.adFee) * 100) / 100,
@@ -227,7 +249,7 @@ function profitWithAd(orderTotal: number, einkauf: number, ad: ReturnType<typeof
 export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoResult {
   if (input.manualBuyPrice != null) {
     const adRate = input.lineItems.map(li => input.findProduct(li.sku)?.adRate).find(a => a != null);
-    const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, input.manualBuyPrice, orderAdFee(input.orderTotal, input.lineItems, input.findProduct), adRate);
+    const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, input.manualBuyPrice, orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate), adRate, orderFeeIsChina(input.lineItems, input.findProduct, input.orderDate));
     return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell', nettoAnzeige };
   }
 
@@ -260,9 +282,9 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
     einkaufGesamt += costs.totalCost - costs.customs + (dated ?? costs.customs);
   }
   if (!einkaufBekannt) {
-    const ad = orderAdFee(input.orderTotal, input.lineItems, input.findProduct);
+    const ad = orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate);
     return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null, nettoAnzeige: ad ? Math.round(ad.adFee * 100) / 100 : null };
   }
-  const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, einkaufGesamt, orderAdFee(input.orderTotal, input.lineItems, input.findProduct), adRate);
+  const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, einkaufGesamt, orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate), adRate, orderFeeIsChina(input.lineItems, input.findProduct, input.orderDate));
   return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch', nettoAnzeige };
 }

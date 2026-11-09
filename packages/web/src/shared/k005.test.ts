@@ -29,6 +29,7 @@ describe('K-005 Pflicht-Tests', () => {
     const r = computeOrderNettoErgebnis({
       orderTotal: 19.95, lineItems: [{ sku: 'stele-97-JASMINE', quantity: 1 }], manualBuyPrice: 12.59,
       findProduct: () => ({ id: 97, buyPrice: 10.59, shipsFrom: 'China', adRate: 0, variants: [] }),
+      orderDate: '2026-10-11', // PLAN 7 Punkt 9: reale Bestellung aus dem K-005-Auftrag vom 11.10. → spätestens 11.10., vor Stichtag (S = 1)
     });
     expect(r.nettoErgebnis).toBe(3.44);
     expect(Math.abs((r.nettoErgebnis as number) - 3.50)).toBeLessThanOrEqual(0.10);
@@ -37,6 +38,7 @@ describe('K-005 Pflicht-Tests', () => {
     const r = computeOrderNettoErgebnis({
       orderTotal: 19.95, lineItems: [{ sku: 'stele-97-JASMINE', quantity: 1 }], manualBuyPrice: 12.59,
       findProduct: () => ({ id: 97, buyPrice: 10.59, shipsFrom: 'China', adRate: 5, variants: [] }),
+      orderDate: '2026-10-11', // wie oben
     });
     expect(r.nettoErgebnis).toBe(2.25);
   });

@@ -1,12 +1,15 @@
 // OFFEN 024 NACHTRAG (Inhaber 03.11.2026 08:26): Listings-Tab "Anzeige-Rate" 5 % ↔ 0 % nimmt das Angebot bei eBay aus der Kampagne
 // (bzw. nimmt es auf) UND rechnet die Variantenpreise um: neuer VK = alter VK × f(alt) / f(neu), auf x,95 AUFgerundet.
 // f(Satz) = 1 − (eBay-Gebühr + Anzeige) × MwSt = 0,762 bei 5 %, 0,8215 bei 0 %. Reine Regeln (Grundgesetz 2), kein eBay-Aufruf.
-import { DEFAULT_PRICING_CONFIG, profitAtSellPrice, profitFloorFor, ebayLocationFactorFor } from './pricing';
+import { DEFAULT_PRICING_CONFIG, profitAtSellPrice, profitFloorFor, ebayLocationFactorFor, ebayPercentFeeRateGross } from './pricing';
 
 /** Anteil des VK, der nach eBay-Gebühr + Anzeige (inkl. MwSt) bleibt: 5 % → 0,762 · 0 % → 0,8215. */
 // Formel je Standort (08.11.): bei China-Herkunft/-Standort S = 1,19 auf den Prozent-Anteil (CN: 0,7168 / 0,7876). Weggelassen = 1 (DE/EU).
 export function netFactor(adRatePercent: number, locationFactor = 1): number {
-  return 1 - ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor * locationFactor;
+  return 1 - ebayPercentFeeRateGross({
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, adRatePercent, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+    isChinaOrigin: locationFactor !== 1, ebayLocationFactor: locationFactor,
+  });
 }
 
 /** Kleinster Preis mit Endung ,95, der ≥ x ist (14,795 → 14,95 · 15,95 → 15,95 · 15,96 → 16,95). */

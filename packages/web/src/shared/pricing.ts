@@ -155,9 +155,8 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   const ali = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin); // K-005: Ware × Kassen-Faktor
   const { shipping, customs } = ali;
   const totalCost = ali.totalCost + (input.earUmlageEur ?? 0); // A-029: K + EAR-Umlage (nur bei Elektro = ja, sonst 0)
-  const s = input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin);
-  const baseFeeRateGross = (input.ebayFeeRatePercent / 100) * input.vatFactor * s;
-  const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor * s;
+  const baseFeeRateGross = ebayPercentFeeRateGross({ ...input, adRatePercent: 0 });
+  const totalFeeRateGross = ebayPercentFeeRateGross(input);
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   const rawMinSellPrice = (totalCost + input.targetMarginEur + input.safetyBufferEur + fixedFeeGross) / (1 - totalFeeRateGross);
   const minSellPrice = input.rounding === 'floor95'
@@ -261,7 +260,7 @@ export interface ProfitAtSellPriceInput {
 //   K = Ware + Versand + Einfuhrabgaben (computeAliCosts)
 export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
   const totalCost = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0); // K-005
-  const totalFeeRateGross = ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor * (input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin));
+  const totalFeeRateGross = ebayPercentFeeRateGross(input);
   const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
   return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);
 }
@@ -652,6 +651,41 @@ export function ebayLocationFactorFor(isChinaOrigin: boolean): number {
   return isChinaOrigin ? IOSS_PROVISION_FACTOR : 1;
 }
 
+// PLAN 7 Punkt 9 (09.11.2026, "alte Formel" nach #291): die EINE Stelle für den Prozent-Anteil der eBay-Gebühr (brutto, inkl. S).
+// Satz = (Provision + Anzeige)/100 × MwSt × S, S = ebayLocationFactor ?? ebayLocationFactorFor(isChinaOrigin). Fixgebühr bleibt außen vor.
+// computeMinSellPrice, profitAtSellPrice, computeOrderProfit, netFactor (ad-rate-switch) und alle Anzeigen rechnen hierüber —
+// keine eigene "(15 + Anzeige)/100 × 1,19"-Kopie mehr (Grundgesetz 8).
+export interface EbayFeeRateInput {
+  ebayFeeRatePercent: number;
+  adRatePercent: number;
+  vatFactor: number;
+  isChinaOrigin: boolean;
+  ebayLocationFactor?: number;
+}
+export function ebayPercentFeeRateGross(input: EbayFeeRateInput): number {
+  const s = input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin);
+  return ((input.ebayFeeRatePercent + input.adRatePercent) / 100) * input.vatFactor * s;
+}
+// PLAN 7 Punkt 9 — Bestellungen (Gewinn einer VERGANGENEN Bestellung): eBay rechnet die Provision nach dem Artikelstandort ZUM
+// VERKAUFSZEITPUNKT. Vor #267 (gemergt 05.11.2026 07:13: neue Angebote bekommen den Lagerort ihrer Herkunft) und #285 (07.11.:
+// Bestand umstellen) standen ALLE Angebote in Wiesbaden → S = 1, auch bei China-Ware (so belegen es die bisher geprüften
+// Bestellungen, z. B. stele-220 19-15281-36243: Gebühr 4,10 = 20,95 × 0,1785 + 0,357). Ab 05.11. kann ein China-Angebot den
+// China-Standort haben → S nach Herkunft. Je Angebot gespeichert ist der Standort-Wechsel NICHT — deshalb der früheste mögliche
+// Tag (Gewinn nie zu hoch). Ohne/ungültiges Bestelldatum → S nach Herkunft (sichere Seite).
+export const STANDORT_FORMEL_AB = '2026-11-05';
+export function orderFeeChinaLocation(isChinaOrigin: boolean, orderDate?: string | null): boolean {
+  if (!isChinaOrigin) return false;
+  const d = (orderDate ?? '').slice(0, 10);
+  return !(/^\d{4}-\d{2}-\d{2}$/.test(d) && d < STANDORT_FORMEL_AB);
+}
+
+/** Kurzform mit DEFAULT_PRICING_CONFIG (15 %, MwSt 1,19): Prozent-Anteil brutto inkl. S. */
+export function defaultEbayFeeRateGross(adRatePercent: number, isChinaOrigin: boolean): number {
+  return ebayPercentFeeRateGross({
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, adRatePercent, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, isChinaOrigin,
+  });
+}
+
 export const DEFAULT_PRICING_CONFIG = {
   ebayFeeRatePercent: 15,
   ebayFixedFeeEur: 0.30,
@@ -677,12 +711,18 @@ export interface OrderProfitResult {
 // inkl. Zoll (kommt vorgerechnet von der Aufrufstelle) — keine weitere Aufschlüsselung nötig, da
 // eine abgeschlossene Bestellung keinen hypothetischen Mindestpreis mehr braucht.
 // K-004 Punkt 4: Anzeigensatz des Produkts statt fest 5 % (0 = nicht beworben). Weggelassen/ungültig → DB-Default 5 %.
-export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number, adRatePercent?: number | null): OrderProfitResult {
+// PLAN 7 Punkt 9 (09.11.2026): Formel je Standort (#291) auch hier — isChinaOrigin ist PFLICHT (kein stiller Default S = 1).
+// Unbekannte Herkunft ruft der Aufrufer als China auf (sichere Seite, wie isChinaShipping).
+export function computeOrderProfitRaw(verkaufspreis: number, wahrerEinkauf: number, adRatePercent: number | null | undefined, isChinaOrigin: boolean): OrderProfitResult {
   const adRate = typeof adRatePercent === 'number' && Number.isFinite(adRatePercent) && adRatePercent >= 0 ? adRatePercent : DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
-  const totalFeeRateGross = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRate) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
+  const totalFeeRateGross = defaultEbayFeeRateGross(adRate, isChinaOrigin);
   const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
   const feesDeducted = verkaufspreis * totalFeeRateGross + fixedFeeGross;
   const profit = verkaufspreis * (1 - totalFeeRateGross) - fixedFeeGross - wahrerEinkauf;
+  return { profit, feesDeducted };
+}
+export function computeOrderProfit(verkaufspreis: number, wahrerEinkauf: number, adRatePercent: number | null | undefined, isChinaOrigin: boolean): OrderProfitResult {
+  const { profit, feesDeducted } = computeOrderProfitRaw(verkaufspreis, wahrerEinkauf, adRatePercent, isChinaOrigin);
   return {
     profit: Math.round(profit * 100) / 100,
     feesDeducted: Math.round(feesDeducted * 100) / 100,
