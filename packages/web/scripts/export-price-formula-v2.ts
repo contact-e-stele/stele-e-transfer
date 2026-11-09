@@ -15,6 +15,7 @@ const dbRows = await db.select({
   id: p.id, variants: p.variants, title: p.generatedTitle, ebayStatus: p.ebayStatus, buyPrice: p.buyPrice, sellPrice: p.sellPrice,
   variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices, shippingCost: p.shippingCost,
   shipsFrom: p.shipsFrom, adRate: p.adRate, targetMarginEur: p.targetMarginEur,
+  ebayCategory: p.ebayCategory, // Bündel A+B: Provision je Kategorie (Formel v2)
 }).from(p).orderBy(p.id);
 
 const products: ReportProduct[] = dbRows.map(r => ({ ...r, title: r.title ?? '' }));

@@ -30,15 +30,15 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
     orderTotal: 20.95, lineItems: [{ sku: 'stele-220-BLACK', quantity: 1 }], manualBuyPrice: 15.14,
     findProduct: () => ({ id: 220, buyPrice: 12.19, shipsFrom: 'China', adRate, variants: [] }),
     // PLAN 7 Punkt 9: reale Bestellung, gemeldet am 15.10.2026 → Bestelltag spätestens 15.10., vor STANDORT_FORMEL_AB (S = 1).
-    orderDate: '2026-10-15',
+    // Bündel A+B: echter Bestellzeitpunkt 15.10.2026 05:43 UTC (Beleg Kalkulator, Minute genau) → VOR GEBUEHR_NEU_AB (08:00Z) →
+    // 15 % + 0,30. Nur das Datum '2026-10-15' wäre mehrdeutig und würde als NEU gelesen (s. orderUsesNewFeeRule).
+    orderDate: '2026-10-15T05:43:00Z',
   });
-  // AUFSICHT 045 Teil A (09.11.2026): die echte eBay-Gebühr dieser Bestellung war 4,10 = 20,95 × 0,1785 + 0,357 (Fix 0,30, Beleg
-  // pricing.ts). Mit der Staffel (Fix 0,45 × 1,19 = 0,5355) rechnet die App für diese ALTE Bestellung 4,28 — kein Stichtag (Auftrag Punkt 2).
-  test('Bestellung 19-15281-36243 (BLACK 20,95, Einkauf 15,14): adRate 0 → Gebühr 4,28 (echt 4,10 mit Fix 0,30), Gewinn 1,53', () => {
-    expect(order(0)).toMatchObject({ nettoGebuehren: 4.28, nettoErgebnis: 1.53 });
+  test('Bestellung 19-15281-36243 (BLACK 20,95, Einkauf 15,14): adRate 0 → Gebühr 4,10, Gewinn 1,71', () => {
+    expect(order(0)).toMatchObject({ nettoGebuehren: 4.1, nettoErgebnis: 1.71 });
   });
-  test('mit adRate 5 (bisheriger App-Stand) → Gebühr 5,52, Gewinn 0,29 (vorher 5,34 / 0,47 mit Fix 0,30)', () => {
-    expect(order(5)).toMatchObject({ nettoGebuehren: 5.52, nettoErgebnis: 0.29 });
+  test('mit adRate 5 (bisheriger App-Stand) → Gebühr 5,34, Gewinn 0,47 (der gemeldete Fehlwert)', () => {
+    expect(order(5)).toMatchObject({ nettoGebuehren: 5.34, nettoErgebnis: 0.47 });
   });
   // Formel je Standort (08.11.2026): EINGABEN GEÄNDERT wie in k008-preis-halten.test.ts (GRAY-Ware 11,47 → 11,59, VK GRAY 19,95 → 20,95,
   // Blue 21,95 → 22,45, black 20,95 → 21,45) — sonst wären mit S 1,19 auch bei adRate 0 alle drei unter dem Boden. bun: adRate 0 GRAY 0,9829.

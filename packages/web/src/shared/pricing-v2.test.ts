@@ -11,6 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   computeAliCosts, computeMinSellPrice, profitAtSellPrice, profitFloorFor, evaluatePriceAlarm, evaluateTargetDisplay,
   evaluateVariantRule6c, computeVariantSellPrices, applyRaiseOnly, roundToProfitFloor, DEFAULT_PRICING_CONFIG,
+  EBAY_FIXED_FEE_SCHEDULE_ALT,
 } from './pricing';
 import {
   ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR, MARGIN_TIERS, HIDDEN_MARGIN_TIER, VARIANT_RULE_6C_ENABLED,
@@ -256,6 +257,8 @@ describe('Gewinn(VK) gegen die 16 echten Verkäufe (12.08.–03.10.2026) — Abw
   const formelGewinn = (s: Sale) => profitAtSellPrice({
     sellPrice: s.vk, buyPrice: s.ware, isChinaOrigin: true, ...FEES, adRatePercent: s.anzeige,
     ebayLocationFactor: 1, // Formel je Standort: echte Verkäufe mit Artikelstandort Deutschland → S = 1 (historische Zahlen)
+    // Bündel A+B: alle 16 Verkäufe (12.08.–03.10.) liegen vor GEBUEHR_NEU_AB → damalige Regel 15 % + 0,30 € (wie vor PR #304).
+    fixedFeeSchedule: EBAY_FIXED_FEE_SCHEDULE_ALT,
   });
 
   test('16 Verkäufe erfasst, davon 13 im Kostenmodell', () => {
@@ -263,24 +266,19 @@ describe('Gewinn(VK) gegen die 16 echten Verkäufe (12.08.–03.10.2026) — Abw
     expect(SALES.filter(s => !AUSGENOMMEN.has(s.nr)).length).toBe(13);
   });
 
-  // AUFSICHT 045 Teil A (09.11.2026): mit der gestaffelten Fixgebühr (0,35/0,45 statt 0,30) liegt die Formel bei allen 13 Verkäufen
-  // (12.08.–03.10.) UNTER dem echten Gewinn, um 0,0572 bis 0,2736 € (vorher |Abweichung| ≤ 0,0951 € mit 0,30). Befund: diese alten
-  // Verkäufe passen zu 0,30 € — die Staffel gilt laut Auftrag trotzdem für alle Bestellungen (kein erfundener Stichtag), die Formel
-  // ist für sie also konservativ (Gewinn zu niedrig, nie zu hoch). Offene Frage an die Aufsicht: ab wann gilt die Staffel?
-  test('alle 13 Verkäufe im Kostenmodell: Formel ≤ echt (konservativ), |Formel − echt| ≤ 0,28 € (größte Abweichung 0,2736 €)', () => {
+  test('alle 13 Verkäufe im Kostenmodell: |Formel − echt| ≤ 0,20 € (größte Abweichung 0,10 €)', () => {
     let maxDiff = 0;
     for (const s of SALES.filter(x => !AUSGENOMMEN.has(x.nr))) {
       const diff = Math.abs(formelGewinn(s) - s.echt);
       maxDiff = Math.max(maxDiff, diff);
-      expect(formelGewinn(s)).toBeLessThan(s.echt);
-      expect(diff).toBeLessThanOrEqual(0.28);
+      expect(diff).toBeLessThanOrEqual(0.20);
     }
-    expect(maxDiff).toBeCloseTo(0.2736, 4);
+    expect(maxDiff).toBeLessThan(0.11);
   });
 
   test('letzter Verkauf (03.10., stele-119 200pcs): App zeigte 4,30 €, Formel v2 ergibt 0,68 €, echt 0,78 €', () => {
     const s = SALES[15];
-    expect(formelGewinn(s)).toBeCloseTo(0.51, 2);
+    expect(formelGewinn(s)).toBeCloseTo(0.68, 2);
     expect(s.echt).toBe(0.78);
   });
 

@@ -7,7 +7,7 @@
 // Zahlen, auf deren Grundlage Preise gesenkt werden sollen, ist das nicht hinnehmbar.
 
 import { einfuhrForOrderDate } from '../shared/checkout-factor';
-import { computeOrderProfit, computeAliCosts, isChinaOriginForVariant, ebayPercentFeeRateGross, orderFeeChinaLocation, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
+import { computeOrderProfit, ebayFeeRatePercentForCategories, type OrderFeeContext, computeAliCosts, isChinaOriginForVariant, ebayPercentFeeRateGross, orderFeeChinaLocation, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { activeCheckoutFactor, applyCheckoutFactor } from '../shared/checkout-factor';
 import { slugify, NON_VARIATION_ASPECTS, resolveVariantEntries, type VariantGroup } from '../shared/variant-resolver';
 
@@ -108,7 +108,7 @@ export interface OrderNettoInput {
   lineItems: Array<{ sku: string | null; quantity: number; soldViaAd?: boolean; lineItemCost?: number | null }>;
   manualBuyPrice: number | null | undefined;
   findProduct: (sku: string | null) => OrderProductInfo | null;
-  orderDate?: string; // P-EINFUHR: Einfuhr nach Bestelltag (bis 22.10.2026: 3,57; ab 23.10.2026: 5,95)
+  orderDate?: string; // P-EINFUHR: Einfuhr nach Bestelltag (bis 22.10.2026: 3,57; ab 23.10.2026: 5,95); Bündel A+B: Gebührenregel nach Zeitpunkt (GEBUEHR_NEU_AB)
 }
 
 /** K-004: was der Bestellungs-Gewinn je Position braucht. id/variants/adRate sind optional (ältere Aufrufer). */
@@ -123,6 +123,8 @@ export interface OrderProductInfo {
   /** K-005: Kassen-Faktor des Produkts (products.ali_checkout_factor/_at); gilt nur, wenn ≤ 14 Tage alt (activeCheckoutFactor). */
   aliCheckoutFactor?: number | null;
   aliCheckoutFactorAt?: string | null;
+  /** Bündel A+B: eBay-Kategorie (products.ebayCategory) → Provision je Kategorie ab GEBUEHR_NEU_AB; fehlt → 15 %. */
+  ebayCategory?: string | null;
 }
 
 /** Eine DB-Produktzeile (products) → OrderProductInfo. EINE Stelle für /ebay/orders und den K-005-Faktor-Abgleich (Grundgesetz 8). */
@@ -130,6 +132,7 @@ export interface OrderProductRow {
   id: number; buyPrice: number | null; shipsFrom: string | null; adRate: number | null;
   variantPrices: string | null; variants: string | null;
   aliCheckoutFactor?: number | null; aliCheckoutFactorAt?: string | null;
+  ebayCategory?: string | null;
 }
 export function orderProductInfoFromRow(product: OrderProductRow): OrderProductInfo {
   // K-004: Varianten (EK je Variante + "Ships From") und Anzeigensatz des Produkts für den Bestellungs-Gewinn.
@@ -140,6 +143,7 @@ export function orderProductInfoFromRow(product: OrderProductRow): OrderProductI
   return {
     id: product.id, buyPrice: product.buyPrice, shipsFrom: product.shipsFrom, adRate: product.adRate, variants, groups,
     aliCheckoutFactor: product.aliCheckoutFactor ?? null, aliCheckoutFactorAt: product.aliCheckoutFactorAt ?? null,
+    ebayCategory: product.ebayCategory ?? null,
   };
 }
 
@@ -234,11 +238,19 @@ export function orderAdFee(
   return { adFee, rate: null };
 }
 
+/**
+ * Bündel A+B: Provision der Bestellung (ab GEBUEHR_NEU_AB) = Satz je eBay-Kategorie der Produkte; bei mehreren Produkten der HÖCHSTE
+ * Satz, Position ohne zugeordnetes Produkt = 15 % (Gewinn nie zu hoch). Vor dem Stichtag gilt ohnehin 15 % + 0,30 (orderFeeRuleFor).
+ */
+export function orderFeeRatePercent(lineItems: OrderNettoInput['lineItems'], findProduct: OrderNettoInput['findProduct']): number {
+  return ebayFeeRatePercentForCategories(lineItems.map(li => findProduct(li.sku)?.ebayCategory ?? null));
+}
+
 /** Gewinn/Gebühren mit Anzeige nach Kennzeichen (ad) bzw. altem Weg (ad === null → Produkt-Satz). */
-function profitWithAd(orderTotal: number, einkauf: number, ad: ReturnType<typeof orderAdFee>, legacyRate: number | null | undefined, isChina: boolean) {
-  if (ad === null) return { ...computeOrderProfit(orderTotal, einkauf, legacyRate, isChina), nettoAnzeige: null };
-  if (ad.rate !== null) return { ...computeOrderProfit(orderTotal, einkauf, ad.rate, isChina), nettoAnzeige: Math.round(ad.adFee * 100) / 100 };
-  const base = computeOrderProfit(orderTotal, einkauf, 0, isChina);
+function profitWithAd(orderTotal: number, einkauf: number, ad: ReturnType<typeof orderAdFee>, legacyRate: number | null | undefined, isChina: boolean, fee: OrderFeeContext) {
+  if (ad === null) return { ...computeOrderProfit(orderTotal, einkauf, legacyRate, isChina, fee), nettoAnzeige: null };
+  if (ad.rate !== null) return { ...computeOrderProfit(orderTotal, einkauf, ad.rate, isChina, fee), nettoAnzeige: Math.round(ad.adFee * 100) / 100 };
+  const base = computeOrderProfit(orderTotal, einkauf, 0, isChina, fee);
   return {
     profit: Math.round((base.profit - ad.adFee) * 100) / 100,
     feesDeducted: Math.round((base.feesDeducted + ad.adFee) * 100) / 100,
@@ -247,9 +259,11 @@ function profitWithAd(orderTotal: number, einkauf: number, ad: ReturnType<typeof
 }
 
 export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoResult {
+  // Bündel A+B: Gebührenregel nach Bestellzeitpunkt (GEBUEHR_NEU_AB) und Satz je Kategorie.
+  const feeCtx: OrderFeeContext = { orderDate: input.orderDate, ratePercent: orderFeeRatePercent(input.lineItems, input.findProduct) };
   if (input.manualBuyPrice != null) {
     const adRate = input.lineItems.map(li => input.findProduct(li.sku)?.adRate).find(a => a != null);
-    const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, input.manualBuyPrice, orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate), adRate, orderFeeIsChina(input.lineItems, input.findProduct, input.orderDate));
+    const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, input.manualBuyPrice, orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate), adRate, orderFeeIsChina(input.lineItems, input.findProduct, input.orderDate), feeCtx);
     return { nettoEinkauf: input.manualBuyPrice, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'manuell', nettoAnzeige };
   }
 
@@ -285,6 +299,6 @@ export function computeOrderNettoErgebnis(input: OrderNettoInput): OrderNettoRes
     const ad = orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate);
     return { nettoEinkauf: null, nettoErgebnis: null, nettoGebuehren: null, nettoQuelle: null, nettoAnzeige: ad ? Math.round(ad.adFee * 100) / 100 : null };
   }
-  const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, einkaufGesamt, orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate), adRate, orderFeeIsChina(input.lineItems, input.findProduct, input.orderDate));
+  const { profit, feesDeducted, nettoAnzeige } = profitWithAd(input.orderTotal, einkaufGesamt, orderAdFee(input.orderTotal, input.lineItems, input.findProduct, input.orderDate), adRate, orderFeeIsChina(input.lineItems, input.findProduct, input.orderDate), feeCtx);
   return { nettoEinkauf: einkaufGesamt, nettoErgebnis: profit, nettoGebuehren: feesDeducted, nettoQuelle: 'automatisch', nettoAnzeige };
 }

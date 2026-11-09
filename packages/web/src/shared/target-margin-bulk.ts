@@ -8,7 +8,7 @@ import { activeCheckoutFactor } from './checkout-factor';
 import {
   profitAtSellPrice, evaluateTargetDisplay, isChinaOriginForVariant,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
-  effectiveProfitFloor, profitFloorFor,
+  effectiveProfitFloor, profitFloorFor, ebayFeeRatePercentFor,
 } from './pricing';
 import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPriceEntry } from './variant-resolver';
 
@@ -24,6 +24,7 @@ export interface ProfitProduct {
   variantSellPrices?: string | null;  // JSON {skuId: VK}
   aliCheckoutFactor?: number | null;  // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt)
   aliCheckoutFactorAt?: string | null;
+  ebayCategory?: string | null;       // Bündel A+B: eBay-Kategorie → Provision je Kategorie, fehlt → 15 %
 }
 
 // skuId/sellPrice nur bei Varianten-Zeilen bzw. immer der VK, mit dem gerechnet wurde (A-017: Gewinn-Spalte der Varianten-Tabelle)
@@ -83,7 +84,7 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China.
   const profitWith = (f: number | null, sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitAtSellPrice({
     sellPrice, buyPrice, isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom),
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+    ebayFeeRatePercent: ebayFeeRatePercentFor(p.ebayCategory), // Bündel A+B
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, checkoutFactor: f,
   });
   const profitAt = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitWith(checkoutFactor, sellPrice, buyPrice, attrs);

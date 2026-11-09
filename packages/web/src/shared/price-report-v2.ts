@@ -7,7 +7,7 @@
 // Formel v2. "Gewinn neu (v2)" ist der Gewinn beim neuen VK.
 import {
   computeMinSellPrice, profitAtSellPrice, profitFloorFor, evaluateTargetDisplay, isChinaOriginForVariant,
-  parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG, ebayFixedFeeGross,
+  parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG, ebayFixedFeeGross, ebayFeeRatePercentFor,
 } from './pricing';
 import { MARGIN_TIERS, aliEinfuhrEur } from './constants';
 import { isVariantProduct } from './variant-product';
@@ -28,6 +28,7 @@ export interface ReportProduct {
   targetMarginEur: number | null;
   aliCheckoutFactor?: number | null;  // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt)
   aliCheckoutFactorAt?: string | null;
+  ebayCategory?: string | null;       // Bündel A+B: Provision je Kategorie (Formel v2), fehlt → 15 %
 }
 
 export interface PriceReportRow {
@@ -97,7 +98,7 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
     for (const line of lines) {
       const china = isChinaOriginForVariant(line.attrs, p.shipsFrom); // K-004: Herkunft je Variante
       const common = {
-        isChinaOrigin: china, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+        isChinaOrigin: china, ebayFeeRatePercent: ebayFeeRatePercentFor(p.ebayCategory), // Bündel A+B
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         checkoutFactor,
       };

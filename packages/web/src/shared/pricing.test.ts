@@ -287,11 +287,13 @@ describe('planCappedPriceSteps — Teil 3: Varianten-Umstellung unter der 8-%-Br
 });
 
 describe('computeOrderProfit — Bestellungs-Gewinn NACH eBay-Gebühren (PRIO-1-PAKET, Punkt "ERGEBNIS")', () => {
-  // AUFSICHT 045 A: mit Fixgebühr 0,45 (Bestellwert 17,95 > 10) 1,58 statt 1,76 (17,95 × 0,762 − 0,5355 − 11,56 = 1,5824).
-  // Die reale Bestellung 09-15210-97703 (September) ergab 1,79 — passt zu 0,30; die Staffel gilt laut Auftrag trotzdem für alle Bestellungen.
-  test('Auftragsvorgabe: 17,95 € Verkauf, 11,56 € wahrer Einkauf ergibt 1,58 € (vorher 1,76 € mit Fix 0,30; Toleranz 1 Cent)', () => {
-    const { profit } = computeOrderProfit(17.95, 11.56, undefined, false);
-    expect(Math.abs(profit - 1.58)).toBeLessThanOrEqual(0.01);
+  // Bündel A+B: die Auftragsvorgabe ist die reale Bestellung 09-15210-97703 (zwischen 12.08. und 03.10.2026, s. pricing-v2.test.ts) →
+  // vor GEBUEHR_NEU_AB → 15 % + 0,30. TESTWERT Zeitpunkt: 03.10.2026 = Ende des belegten Zeitraums (genauer Tag nicht im Test hinterlegt;
+  // jeder Tag davor ergibt dieselbe Regel). Ohne Zeitpunkt (neue Regel, 15 % + 0,45): 17,95 × 0,762 − 0,5355 − 11,56 = 1,5824 → 1,58.
+  test('Auftragsvorgabe: 17,95 € Verkauf, 11,56 € wahrer Einkauf ergibt 1,76 € (Toleranz 1 Cent)', () => {
+    const { profit } = computeOrderProfit(17.95, 11.56, undefined, false, { orderDate: '2026-10-03' });
+    expect(Math.abs(profit - 1.76)).toBeLessThanOrEqual(0.01);
+    expect(computeOrderProfit(17.95, 11.56, undefined, false).profit).toBe(1.58);
   });
 
   // Regressions-Beweis (Grundgesetz Regel 5): eine Rechnung OHNE Gebührenabzug (Rohdifferenz, der

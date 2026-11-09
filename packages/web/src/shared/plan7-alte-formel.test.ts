@@ -24,8 +24,8 @@ const VOR = '2026-11-04T10:00:00.000Z';        // Bestelltag vor Stichtag
 
 describe('Plan 7 Punkt 9 — Satz-Funktion (eine Stelle)', () => {
   test('Prozent-Anteil brutto: CN 5 % = 0,20 × 1,19 × 1,19 = 0,28322; DE 0 % = 0,1785', () => {
-    expect(defaultEbayFeeRateGross(5, true)).toBeCloseTo(0.28322, 12);
-    expect(defaultEbayFeeRateGross(0, false)).toBeCloseTo(0.1785, 12);
+    expect(defaultEbayFeeRateGross(5, true, null)).toBeCloseTo(0.28322, 12);
+    expect(defaultEbayFeeRateGross(0, false, null)).toBeCloseTo(0.1785, 12);
     expect(ebayPercentFeeRateGross({ ebayFeeRatePercent: 15, adRatePercent: 5, vatFactor: 1.19, isChinaOrigin: true, ebayLocationFactor: 1 })).toBeCloseTo(0.238, 12);
   });
   test('netFactor (Anzeige-Umschalter) läuft über dieselbe Funktion: CN 5 % 0,71678 · CN 0 % 0,787585 · DE 0,762 / 0,8215', () => {

@@ -1,13 +1,14 @@
 // OFFEN 024 NACHTRAG (Inhaber 03.11.2026 08:26): Listings-Tab "Anzeige-Rate" 5 % ↔ 0 % nimmt das Angebot bei eBay aus der Kampagne
 // (bzw. nimmt es auf) UND rechnet die Variantenpreise um: neuer VK = alter VK × f(alt) / f(neu), auf x,95 AUFgerundet.
 // f(Satz) = 1 − (eBay-Gebühr + Anzeige) × MwSt = 0,762 bei 5 %, 0,8215 bei 0 %. Reine Regeln (Grundgesetz 2), kein eBay-Aufruf.
-import { DEFAULT_PRICING_CONFIG, profitAtSellPrice, profitFloorFor, ebayLocationFactorFor, ebayPercentFeeRateGross } from './pricing';
+import { DEFAULT_PRICING_CONFIG, profitAtSellPrice, profitFloorFor, ebayLocationFactorFor, ebayPercentFeeRateGross, ebayFeeRatePercentFor } from './pricing';
 
 /** Anteil des VK, der nach eBay-Gebühr + Anzeige (inkl. MwSt) bleibt: 5 % → 0,762 · 0 % → 0,8215. */
 // Formel je Standort (08.11.): bei China-Herkunft/-Standort S = 1,19 auf den Prozent-Anteil (CN: 0,7168 / 0,7876). Weggelassen = 1 (DE/EU).
-export function netFactor(adRatePercent: number, locationFactor = 1): number {
+// Bündel A+B: ebayFeeRatePercent = Provision je Kategorie (ebayFeeRatePercentFor); weggelassen = 15 %.
+export function netFactor(adRatePercent: number, locationFactor = 1, ebayFeeRatePercent: number = DEFAULT_PRICING_CONFIG.ebayFeeRatePercent): number {
   return 1 - ebayPercentFeeRateGross({
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, adRatePercent, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
+    ebayFeeRatePercent, adRatePercent, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
     isChinaOrigin: locationFactor !== 1, ebayLocationFactor: locationFactor,
   });
 }
@@ -25,6 +26,7 @@ export interface AdSwitchInput {
   isChinaOrigin: boolean;
   checkoutFactor?: number | null;
   targetMarginEur?: number | null;
+  ebayCategory?: string | null;   // Bündel A+B: Provision je Kategorie, fehlt → 15 %
 }
 export interface AdSwitchRow {
   skuId: string; label: string; buyPrice: number;
@@ -38,7 +40,7 @@ export interface AdSwitchRow {
 
 const profit = (sell: number, buy: number, rate: number, i: AdSwitchInput) => profitAtSellPrice({
   sellPrice: sell, buyPrice: buy, isChinaOrigin: i.isChinaOrigin,
-  ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+  ebayFeeRatePercent: ebayFeeRatePercentFor(i.ebayCategory), // Bündel A+B
   vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate, checkoutFactor: i.checkoutFactor ?? null,
 });
 
@@ -49,7 +51,8 @@ const profit = (sell: number, buy: number, rate: number, i: AdSwitchInput) => pr
 export function planAdRateSwitch(i: AdSwitchInput): AdSwitchRow[] {
   const floorEur = profitFloorFor(i.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur);
   const sLoc = ebayLocationFactorFor(i.isChinaOrigin);
-  const ratio = netFactor(i.fromRate, sLoc) / netFactor(i.toRate, sLoc);
+  const feePct = ebayFeeRatePercentFor(i.ebayCategory);
+  const ratio = netFactor(i.fromRate, sLoc, feePct) / netFactor(i.toRate, sLoc, feePct);
   return i.rows.map(r => {
     const newVk = roundUpTo95(r.sellPrice * ratio);
     const profitOld = profit(r.sellPrice, r.buyPrice, i.fromRate, i);

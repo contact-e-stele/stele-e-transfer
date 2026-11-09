@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   profitAtSellPrice, computeMinSellPrice, computeAliCosts, computeOrderProfit, isChinaShipping, isChinaOriginForVariant, DEFAULT_PRICING_CONFIG as C,
+  EBAY_FIXED_FEE_SCHEDULE_ALT,
 } from './pricing';
 import { MARGIN_TIERS } from './constants';
 import { computeOrderNettoErgebnis, matchOrderVariant } from '../api/order-matching';
@@ -13,17 +14,17 @@ const fees = { ebayFeeRatePercent: C.ebayFeeRatePercent, vatFactor: C.vatFactor 
 // Formel je Standort (08.11.2026): s = Standort-Faktor S explizit. Die Pflicht-Tests (Kalkulator 08.10.2026, echte Verkäufe mit Standort DE)
 // rechnen mit s = 1 und behalten ihre Zahlen; weggelassen = S aus der Herkunft (China 1,19).
 const profitChina5 = (sell: number, ware: number, s?: number) => profitAtSellPrice({ ...fees, sellPrice: sell, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, ebayLocationFactor: s });
+// Bündel A+B: die Pflicht-Tests sind echte Verkäufe bis 03.10.2026 (vor GEBUEHR_NEU_AB) → damalige Regel 15 % + 0,30 € (wie vor PR #304).
+const profitChina5Alt = (sell: number, ware: number, s?: number) => profitAtSellPrice({ ...fees, sellPrice: sell, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, ebayLocationFactor: s, fixedFeeSchedule: EBAY_FIXED_FEE_SCHEDULE_ALT });
 
 describe('K-004 Pflicht-Tests profitAtSellPrice (China, Anzeige 5 %)', () => {
   const cases: Array<[number, number, number]> = [
-    // AUFSICHT 045 Teil A (09.11.2026): Fixgebühr 0,45 statt 0,30 (alle VK > 10 €) → je −0,18 € (bun: 1,3844 / 0,5064 / 1,7064 / 2,0844 / 1,5924).
-    // Vorher 1,56 / 0,68 / 1,88 / 2,26 / 1,77 (passten zu den echten Verkäufen bis 03.10. mit 0,30).
-    [13.95, 3.15, 1.38], [14.95, 4.79, 0.51], [14.95, 3.59, 1.71], [13.95, 2.45, 2.08], [17.95, 5.99, 1.59],
+    [13.95, 3.15, 1.56], [14.95, 4.79, 0.68], [14.95, 3.59, 1.88], [13.95, 2.45, 2.26], [17.95, 5.99, 1.77],
   ];
   for (const [sell, ware, exp] of cases) {
     test(`VK ${sell} / Ware ${ware} → ${exp}`, () => {
-      expect(Math.abs(profitChina5(sell, ware, 1) - exp)).toBeLessThanOrEqual(0.20);
-      expect(profitChina5(sell, ware, 1)).toBeCloseTo(exp, 1);
+      expect(Math.abs(profitChina5Alt(sell, ware, 1) - exp)).toBeLessThanOrEqual(0.20);
+      expect(profitChina5Alt(sell, ware, 1)).toBeCloseTo(exp, 1);
     });
   }
 });
@@ -108,7 +109,7 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
       orderDate: '2026-09-24', // PLAN 7 Punkt 9: wie reale Bestellung 20-15127-76586 (Datenstand 24.09.) → vor Stichtag, S = 1
     });
     expect(r.nettoEinkauf).toBeCloseTo(10.35, 10);
-    expect(r.nettoErgebnis).toBe(0.51);
+    expect(r.nettoErgebnis).toBe(0.68); // Bündel A+B: 24.09. vor GEBUEHR_NEU_AB → 15 % + 0,30 (Wert wie vor PR #304)
     expect(r.nettoQuelle).toBe('automatisch');
   });
 
@@ -132,12 +133,17 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
 
   test('Anzeigensatz 0 (nicht beworben) senkt die Gebühren gegenüber 5 %', () => {
     // PLAN 7 Punkt 9: 4. Argument = Gebühr mit China-Standort? Hier false (S = 1, Bestellung vor Stichtag) — Werte unverändert.
-    const with5 = computeOrderProfit(14.95, 10.35, 5, false);
-    const with0 = computeOrderProfit(14.95, 10.35, 0, false);
-    expect(with5.profit).toBe(0.51);
+    // Bündel A+B: 5. Argument = Bestellzeitpunkt (reale Bestellung 24.09. → vor GEBUEHR_NEU_AB → 15 % + 0,30, Werte wie vor PR #304).
+    const alt = { orderDate: '2026-09-24' };
+    const with5 = computeOrderProfit(14.95, 10.35, 5, false, alt);
+    const with0 = computeOrderProfit(14.95, 10.35, 0, false, alt);
+    expect(with5.profit).toBe(0.68);
     // 14,95 × (1 − 0,15 × 1,19) − 0,357 − 10,35 = 1,574425 → 1,57 (bun nachgerechnet)
-    expect(with0.profit).toBe(1.4);
-    expect(computeOrderProfit(14.95, 10.35, undefined, false).profit).toBe(0.51); // weggelassen → Default 5 %
+    expect(with0.profit).toBe(1.57);
+    expect(computeOrderProfit(14.95, 10.35, undefined, false, alt).profit).toBe(0.68); // weggelassen → Default 5 %
+    // Ohne Zeitpunkt → neue Regel (15 % bei unbekannter Kategorie + 0,45): 0,51 / 1,40 (bun, wie PR #304 Teil A).
+    expect(computeOrderProfit(14.95, 10.35, 5, false).profit).toBe(0.51);
+    expect(computeOrderProfit(14.95, 10.35, 0, false).profit).toBe(1.4);
   });
 });
 

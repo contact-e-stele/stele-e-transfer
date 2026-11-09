@@ -33,9 +33,9 @@ describe('K-005 Pflicht-Tests', () => {
       findProduct: () => ({ id: 97, buyPrice: 10.59, shipsFrom: 'China', adRate: 0, variants: [] }),
       orderDate: '2026-10-11', // PLAN 7 Punkt 9: reale Bestellung aus dem K-005-Auftrag vom 11.10. → spätestens 11.10., vor Stichtag (S = 1)
     });
-    expect(r.nettoErgebnis).toBe(3.26);
-    // AUFSICHT 045 A: mit Fix 0,45 liegt die App 0,24 € unter dem Auftragswert 3,50 (vorher 3,44, ± 0,10) — alte Bestellung (11.10.).
-    expect(Math.round((3.50 - (r.nettoErgebnis as number)) * 100) / 100).toBe(0.24);
+    // Bündel A+B: Bestellung 11.10. liegt vor GEBUEHR_NEU_AB → 15 % + 0,30 wie vor PR #304 (wieder ± 0,10 am Auftragswert).
+    expect(r.nettoErgebnis).toBe(3.44);
+    expect(Math.abs((r.nettoErgebnis as number) - 3.50)).toBeLessThanOrEqual(0.10);
   });
   test('dieselbe Bestellung mit gespeichertem adRate 5 → 2,25 (heutiger Live-Wert, beweist: der Satz macht den Unterschied)', () => {
     const r = computeOrderNettoErgebnis({
@@ -43,7 +43,7 @@ describe('K-005 Pflicht-Tests', () => {
       findProduct: () => ({ id: 97, buyPrice: 10.59, shipsFrom: 'China', adRate: 5, variants: [] }),
       orderDate: '2026-10-11', // wie oben
     });
-    expect(r.nettoErgebnis).toBe(2.08);
+    expect(r.nettoErgebnis).toBe(2.25); // Bündel A+B: alte Regel (vor Stichtag)
   });
 });
 

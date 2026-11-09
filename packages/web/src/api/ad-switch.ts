@@ -9,6 +9,7 @@ import { ebayRateCheck, planAdRateSwitch, type AdSwitchRow } from '../shared/ad-
 export interface AdSwitchProduct {
   id: number; title: string; ebayListingId: string; adRate: number | null; targetMarginEur: number | null;
   isChinaOrigin: boolean; checkoutFactor: number | null; isVariant: boolean;
+  ebayCategory?: string | null; // Bündel A+B: Provision je Kategorie
   /** Satz laut eBay (0 = nicht beworben, null = andere Werbeart, undefined = nicht gelesen). Weicht er ab → eBay wird an die App angeglichen. */
   ebayRate?: number | null;
   groups: Array<{ name: string; values: string[] }>;
@@ -56,7 +57,7 @@ export async function runAdSwitch(
       out.push(await retryMissing(p, input.retryFromRate, input.toRate, input.confirm, input.expected ?? {}, deps));
       continue;
     }
-    const rows = planAdRateSwitch({ fromRate, toRate: input.toRate, rows: p.rows, isChinaOrigin: p.isChinaOrigin, checkoutFactor: p.checkoutFactor, targetMarginEur: p.targetMarginEur });
+    const rows = planAdRateSwitch({ fromRate, toRate: input.toRate, rows: p.rows, isChinaOrigin: p.isChinaOrigin, checkoutFactor: p.checkoutFactor, targetMarginEur: p.targetMarginEur, ebayCategory: p.ebayCategory });
     const base = { productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate, toRate: input.toRate, rows, ...(chk.note ? { note: chk.note } : {}) };
     if (!input.confirm) { out.push({ ...base, status: 'preview' }); continue; }
     if (fromRate === input.toRate) { out.push({ ...base, status: 'unchanged', error: `steht schon auf ${input.toRate} %` }); continue; }
@@ -124,7 +125,7 @@ export function planRetryRows(rows: AdSwitchRow[], expected: Record<string, numb
 }
 
 async function retryMissing(p: AdSwitchProduct, retryFromRate: number, toRate: number, confirm: boolean, expected: Record<string, number>, deps: AdSwitchDeps): Promise<AdSwitchResult> {
-  const planned = planAdRateSwitch({ fromRate: retryFromRate, toRate, rows: p.rows, isChinaOrigin: p.isChinaOrigin, checkoutFactor: p.checkoutFactor, targetMarginEur: p.targetMarginEur });
+  const planned = planAdRateSwitch({ fromRate: retryFromRate, toRate, rows: p.rows, isChinaOrigin: p.isChinaOrigin, checkoutFactor: p.checkoutFactor, targetMarginEur: p.targetMarginEur, ebayCategory: p.ebayCategory });
   const rows = planRetryRows(planned, expected);
   const base = { productId: p.id, listingId: p.ebayListingId, title: p.title, fromRate: retryFromRate, toRate, rows };
   if (!confirm) return { ...base, status: 'preview' };

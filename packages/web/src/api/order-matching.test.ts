@@ -1,5 +1,3 @@
-// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
-// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // PRIO-1-PAKET (2026-09-24): Tests für computeOrderNettoErgebnis() (Punkte "A9"/"ERGEBNIS"/"ZOLL")
 // und die Zoll-Einstellung (Punkt "ZOLL").
 import { describe, expect, test } from 'bun:test';
@@ -39,7 +37,7 @@ describe('computeOrderNettoErgebnis — Punkte "A9"/"ERGEBNIS": eine Rechenstell
     });
     expect(result.nettoQuelle).toBe('manuell');
     expect(result.nettoEinkauf).toBe(11.56);
-    expect(Math.abs((result.nettoErgebnis ?? 0) - 1.58)).toBeLessThanOrEqual(0.01); // AUFSICHT 045 A: Fix 0,45 statt 0,30 → 1,58 statt 1,76 (alte Bestellung)
+    expect(Math.abs((result.nettoErgebnis ?? 0) - 1.76)).toBeLessThanOrEqual(0.01);
     expect(result.nettoGebuehren).not.toBeNull();
   });
 
@@ -154,7 +152,7 @@ describe('computeOrderNettoErgebnis — Regressionsbeweis mit echten Live-Bestel
     expect(bekannt.length).toBe(15);
 
     const neuSumme = Math.round(bekannt.reduce((a, r) => a + (r.nettoErgebnis ?? 0), 0) * 100) / 100;
-    expect(neuSumme).toBe(28.92);
+    expect(neuSumme).toBe(31.43);
 
     // ALT (vor diesem PR): Rohdifferenz ohne eBay-Gebühren, Zoll 4,00€ — zum Vergleich, exakt die
     // bisherige index.ts-Formel, hier separat nachgerechnet (nicht Teil der neuen Funktion).

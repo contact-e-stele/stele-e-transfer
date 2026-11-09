@@ -51,6 +51,7 @@ interface EbayListing {
     variantSellPrices?: string | null;
     aliCheckoutFactor?: number | null;   // K-005: Kassen-Faktor (productProfitRows rechnet ihn ein, wenn ≤ 14 Tage alt)
     aliCheckoutFactorAt?: string | null;
+    ebayCategory?: string | null;        // Bündel A+B: Provision je eBay-Kategorie (productProfitRows)
     // Paket 4: true, wenn die gespeicherte Beschreibung heute einen fremden Kontakt (E-Mail-Adresse
     // eines Lieferanten/Herstellers) enthält — reine Anzeige, kein Knopf lädt hier etwas hoch.
     hasForeignContact?: boolean;

@@ -146,16 +146,16 @@ describe('order-matching: automatischer Zweig nutzt den Faktor', () => {
   test('ohne Faktor: Einkauf 15,76, Gewinn 2,89', () => {
     const r = run(product(null, null));
     expect(r.nettoEinkauf).toBeCloseTo(15.76, 9);
-    expect(r.nettoErgebnis).toBe(2.72);
+    expect(r.nettoErgebnis).toBe(2.89); // Bündel A+B: Bestellung vor GEBUEHR_NEU_AB → wieder 15 % + 0,30 (Wert wie vor PR #304)
   });
   test('mit Faktor 0,9508 von heute: Einkauf 15,16, Gewinn 3,49', () => {
     const r = run(product(0.9508, new Date().toISOString()));
     expect(r.nettoEinkauf).toBeCloseTo(15.16, 9);
-    expect(r.nettoErgebnis).toBe(3.32);
+    expect(r.nettoErgebnis).toBe(3.49); // Bündel A+B: alte Regel (vor Stichtag)
     expect(r.nettoQuelle).toBe('automatisch');
   });
   test('Faktor älter als 14 Tage → wie ohne Faktor', () => {
-    expect(run(product(0.9508, new Date(Date.now() - 15 * DAY).toISOString())).nettoErgebnis).toBe(2.72);
+    expect(run(product(0.9508, new Date(Date.now() - 15 * DAY).toISOString())).nettoErgebnis).toBe(2.89);
   });
 });
 

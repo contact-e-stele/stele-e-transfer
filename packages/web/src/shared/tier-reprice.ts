@@ -13,7 +13,7 @@ import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPr
 import { activeCheckoutFactor } from './checkout-factor';
 import {
   computeMinSellPrice, profitAtSellPrice, isChinaOriginForVariant, parseVariantSellPrices, resolveVariantSellPrice,
-  serializeVariantSellPrices, DEFAULT_PRICING_CONFIG,
+  serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor,
 } from './pricing';
 
 export interface RepriceProduct {
@@ -28,6 +28,7 @@ export interface RepriceProduct {
   isElectric?: number | boolean | null; // A-029: Elektro = ja → EAR-Umlage in K (nicht gesetzt = 0)
   aliCheckoutFactor?: number | null;    // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt, s. activeCheckoutFactor)
   aliCheckoutFactorAt?: string | null;
+  ebayCategory?: string | null;         // Bündel A+B: eBay-Kategorie → Provision je Kategorie (ebayFeeRatePercentFor), fehlt → 15 %
 }
 
 export interface TierPlanRow {
@@ -63,7 +64,7 @@ export function repriceFeesFor(p: RepriceProduct) {
   const checkoutFactor = activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt); // K-005: Ware × Kassen-Faktor (in der Formel)
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China. feesFor(attrs) statt einer Herkunft fürs ganze Produkt.
   return (attrs?: Record<string, string>) => ({
-    isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom), ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+    isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom), ebayFeeRatePercent: ebayFeeRatePercentFor(p.ebayCategory), // Bündel A+B
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     earUmlageEur: earUmlageFor(p.isElectric), // A-029: nur Elektro = ja
     checkoutFactor,

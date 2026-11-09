@@ -174,7 +174,7 @@ function PriceBadge({ buy, sell, shipsFrom, adRate, product }: { buy: number | n
   // offeredProfitSummary) — vorher products.buyPrice/sellPrice, dessen EK von einer nicht angebotenen Variante stammen kann
   // (234 GRAY/green, 235 Orange 10PCS/3PCS → "Gewinn unter 1,00 €"/Verlust ohne echten Verlust). Einzelartikel unverändert.
   const offered = offeredProfitSummary(product);
-  const margin = offered.isVariant ? offered.card : marginDisplay({ sellPrice: sell, buyPrice: buy, shipsFrom, adRatePercent: adRate });
+  const margin = offered.isVariant ? offered.card : marginDisplay({ sellPrice: sell, buyPrice: buy, shipsFrom, adRatePercent: adRate, ebayCategory: product.ebayCategory }); // Bündel A+B: Satz je Kategorie
   const notOffered = notOfferedLabel(offered);
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>

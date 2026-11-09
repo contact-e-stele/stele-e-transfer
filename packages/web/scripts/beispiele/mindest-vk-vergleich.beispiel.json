@@ -1,0 +1,33 @@
+[
+  {
+    "_hinweis": "BEISPIEL, keine Live-Daten. Werte von stele-162 aus kaeuferpreis-heben.test.ts (EK 2,35, China, Anzeige 5 %, Kategorie 10900, Käuferpreis 15,45); targetMarginEur 1,5 = TESTWERT.",
+    "id": 162,
+    "ebayStatus": "listed",
+    "ebayCategory": "10900",
+    "shipsFrom": "China",
+    "adRate": 5,
+    "targetMarginEur": 1.5,
+    "sellPrice": 15.45,
+    "buyPrice": 2.35,
+    "variants": [{ "name": "Farbe", "values": ["10"] }],
+    "variantPrices": "[{\"skuId\":\"12000056749494569\",\"attrs\":{\"Farbe\":\"10\"},\"price\":2.35}]",
+    "variantSellPrices": "{\"12000056749494569\":15.45}",
+    "aliCheckoutFactor": null,
+    "aliCheckoutFactorAt": null,
+    "isElectric": null
+  },
+  {
+    "_hinweis": "BEISPIEL, erfundener Einzelartikel (EU-Lager, ohne Kategorie → 15 %), nur zum Ausprobieren.",
+    "id": 9001,
+    "ebayStatus": "listed",
+    "ebayCategory": null,
+    "shipsFrom": "Germany",
+    "adRate": 0,
+    "targetMarginEur": 2,
+    "sellPrice": 14.45,
+    "buyPrice": 9.38,
+    "variants": [],
+    "variantPrices": null,
+    "variantSellPrices": null
+  }
+]

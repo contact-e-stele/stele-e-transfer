@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Calculator, TrendingDown, Euro, Percent, Copy, Check, ShoppingCart, Tag, RefreshCw, AlertCircle, CheckCircle, Truck, Globe } from "lucide-react";
 import { safeJson } from "../lib/safeFetch";
 import { aliEinfuhrEur } from "../../shared/constants";
-import { computeMinSellPrice, DEFAULT_PRICING_CONFIG, IOSS_PROVISION_FACTOR, ebayFixedFeeGrossForSellPrice, EBAY_FIXED_FEE_NET_SMALL_EUR, EBAY_FIXED_FEE_NET_EUR, EBAY_FIXED_FEE_THRESHOLD_EUR } from "../../shared/pricing";
+import { computeMinSellPrice, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor, IOSS_PROVISION_FACTOR, ebayFixedFeeGrossForSellPrice, EBAY_FIXED_FEE_NET_SMALL_EUR, EBAY_FIXED_FEE_NET_EUR, EBAY_FIXED_FEE_THRESHOLD_EUR } from "../../shared/pricing";
 
 // Teil 2B (2026-09-10): reicht für die Anzeigengebühr-Zuordnung im Preisrechner — nur die hier
 // gebrauchten Felder, nicht das volle Product-Objekt aus produkte.tsx.
@@ -11,6 +11,7 @@ interface ProductForAdRate {
   generatedTitle: string;
   title: string;
   adRate: number | null;
+  ebayCategory?: string | null; // Bündel A+B: Provision je Kategorie als Startwert des Gebühr-Felds
 }
 
 function formatEuro(val: number) {
@@ -319,7 +320,12 @@ export default function Index() {
               </label>
               <select
                 value={selectedProductId}
-                onChange={e => setSelectedProductId(e.target.value)}
+                onChange={e => {
+                  setSelectedProductId(e.target.value);
+                  // Bündel A+B: Provision je eBay-Kategorie des Produkts als Startwert (bleibt frei editierbar); kein Produkt → 15 %.
+                  const prod = productsForAdRate.find(p => String(p.id) === e.target.value);
+                  setGebuehr(String(ebayFeeRatePercentFor(prod?.ebayCategory)));
+                }}
                 style={{ ...inputStyle, paddingLeft: 14, cursor: "pointer" }}
               >
                 <option value="">Kein Produkt ausgewählt</option>

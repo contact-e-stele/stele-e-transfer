@@ -46,6 +46,25 @@ describe('Zielpreis der App aus planTierReprice (Formel v2, China, 5 %)', () => 
   });
 });
 
+// Bündel A+B (Teil B): 162 hat laut Auftrag die eBay-Kategorie 10900 (14 %). Mit dem Kategorie-Satz rechnet planTierReprice
+// (bun): Ziel 16,45 € = Angebotsdaten 16,45 → 162 würde wieder gehoben. Gewinn bei 16,45 (China, S 1,19, 5 %, Fix 0,45): 1,1984794.
+// Zielgewinn 1,50 bleibt TESTWERT (Stufe A 1,00 ergibt dieselben 16,45; Stufe C 2,00 → 17,45).
+describe('Bündel A+B: stele-162 mit Kategorie 10900 (14 %)', () => {
+  const mk162 = (t: number) => ({ ...mk(162, SKU162, 2.35, '10', t), ebayCategory: '10900' });
+  const t162neu = target(mk162(1.5), SKU162);
+  test('Ziel 16,45 € (ohne Kategorie 16,95); Stufe A 16,45, Stufe C 17,45', () => {
+    expect(t162neu).toBe(16.45);
+    expect(target(mk162(1.0), SKU162)).toBe(16.45);
+    expect(target(mk162(2.0), SKU162)).toBe(17.45);
+    expect(planTierReprice(mk162(1.5), 1.5, [{ name: 'Farbe', values: ['10'] }]).rows[0].newProfit).toBeCloseTo(1.1984794, 6);
+  });
+  test('Plan 162/208: 162 wieder gehoben 15,45 → 16,45 (+6,47 %), 208 (Kategorie unbekannt → 15 %) gehoben 16,95 → 17,45', () => {
+    const plan = planBuyerPriceRaise([row162({ targetVk: t162neu }), row208()]);
+    expect(plan.raiseCount).toBe(2);
+    expect(plan.actions.map(a => [a.status, a.to, a.jumpPct])).toEqual([['heben', 16.45, 6.47], ['heben', 17.45, 2.95]]);
+  });
+});
+
 describe('Plan 162/208 mit den echten Werten', () => {
   const plan = planBuyerPriceRaise([row162({ targetVk: t162 }), row208()]);
   // AUFSICHT 045 A: vorher wurden beide gehoben (raiseCount 2); jetzt Ziel 162 = 16,95 ≠ Angebotsdaten 16,45 → nur 208.

@@ -98,10 +98,39 @@ describe('Vorschau Mindest-VK je gelisteter Variante (GET /api/reports/fixgebueh
   const draft = { ...single, id: 2, ebayStatus: 'draft' };
   test('alt 9,95 (Fix 0,30) → neu 10,45 (Fix 0,45), Δ +0,50; heute 11,95 nicht darunter', () => {
     const v = buildFixgebuehrVorschau([single, draft]);
-    expect(v.summary).toEqual({ products: 1, rows: 1, minSellRaised: 1, minSellUnchanged: 0, currentBelowNewMin: 0 });
+    expect(v.summary).toEqual({ products: 1, rows: 1, minSellRaised: 1, minSellLowered: 0, minSellUnchanged: 0, currentBelowNewMin: 0 });
     // alt: Roh (7,81 + 0,357) / 0,8215 = 9,9416 → 9,45 (0,5962 < 1,00) → 9,95 (1,0069 ≥ 1,00)
     // neu: Roh 10,1589 → 9,95 (Fix 0,35: 9,95 × 0,8215 − 0,4165 − 6,81 = 0,9474 < 1,00) → 10,45 (Fix 0,45: 1,2392)
     expect(v.rows.map(r => [r.productId, r.minSellOld, r.minSellNew, r.deltaMinSell, r.fixNetCurrentEur, r.currentBelowNewMin]))
       .toEqual([[1, 9.95, 10.45, 0.5, 0.45, false]]);
+  });
+});
+
+// Bündel A+B: ALT = 15 % + 0,30 (Stand main vor PR #304), NEU = Satz je Kategorie + 0,35/0,45. Eingabe wie /api/products
+// (Beispieldatei scripts/beispiele/mindest-vk-vergleich.beispiel.json). Einfuhr Betriebswert 5,95 (Test-Preload setzt sonst 3,57).
+import { setAliEinfuhrEur, ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR } from './constants';
+import { vorschauProductsFromApi, MINDEST_VK_INPUT_FIELDS } from './fixgebuehr-vorschau';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+describe('Mindest-VK-Vergleich (scripts/mindest-vk-vergleich.ts) mit der Beispieldatei', () => {
+  test('162 (10900, 14 %): ALT 16,45 → NEU 16,45; 9001 (ohne Kategorie, 15 %): ALT 13,95 → NEU 14,45', () => {
+    setAliEinfuhrEur(ALI_EINFUHR_EUR);
+    try {
+      const raw = JSON.parse(readFileSync(resolve(import.meta.dir, '../../scripts/beispiele/mindest-vk-vergleich.beispiel.json'), 'utf8'));
+      const v = buildFixgebuehrVorschau(vorschauProductsFromApi(raw));
+      // bun: 162 ALT Roh 16,9466 → 16,45; NEU (14 %, S 1,19, Fix 0,45) → 16,45 · 9001 ALT (9,38 + 2 + 0,357)/0,8215 = 14,2873 → 13,95,
+      // NEU (9,38 + 2 + 0,5355)/0,8215 = 14,5046 → 14,45
+      expect(v.rows.map(r => [r.productId, r.ebayCategory, r.ratePercentOld, r.ratePercentNew, r.currentSellPrice, r.minSellOld, r.minSellNew, r.deltaMinSell, r.currentBelowNewMin]))
+        .toEqual([[162, '10900', 15, 14, 15.45, 16.45, 16.45, 0, true], [9001, null, 15, 15, 14.45, 13.95, 14.45, 0.5, false]]);
+      expect(v.summary).toEqual({ products: 2, rows: 2, minSellRaised: 1, minSellLowered: 0, minSellUnchanged: 1, currentBelowNewMin: 1 });
+    } finally { setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR); }
+  });
+  test('Felder: nur die dokumentierten werden gelesen; id Pflicht; keine Liste → Fehler', () => {
+    expect(MINDEST_VK_INPUT_FIELDS.length).toBe(14);
+    const [p] = vorschauProductsFromApi([{ id: 1, generatedTitle: 'X', ebayStatus: 'listed', fremd: 'ignoriert' }]);
+    expect(p).toMatchObject({ id: 1, title: 'X', ebayCategory: null, adRate: null, variants: null });
+    expect('fremd' in p).toBe(false);
+    expect(() => vorschauProductsFromApi([{ title: 'ohne id' }])).toThrow('id fehlt');
+    expect(() => vorschauProductsFromApi({})).toThrow('JSON-Liste');
   });
 });

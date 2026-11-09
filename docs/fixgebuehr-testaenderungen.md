@@ -9,6 +9,34 @@ nachgerechnet (z. B. 14,45 × 0,71678 − 0,45 × 1,19 − 8,71 = 1,111971; 19,9
 
 Typische Verschiebung: Gewinn je Bestellung über 10 € um **−0,1785 €** ((0,45 − 0,30) × 1,19), unter 10 € um −0,0595 €.
 
+## NACHTRAG Bündel A+B (Stichtag + Provision je Kategorie, 09.11.2026) — gilt VOR allem darunter
+
+Seit Bündel A+B gibt es einen **Stichtag `GEBUEHR_NEU_AB = 2026-10-15T08:00:00Z`**. Bestellungen davor: 15 % + 0,30 € fix; ab dann Provision je
+eBay-Kategorie (`EBAY_CATEGORY_FEE_RATES`, unbekannt 15 %) + 0,35/0,45 €. Preisberechnung für künftige Verkäufe = immer neue Regel.
+Darum sind die Tests mit **alten echten Bestellungen/Verkäufen wieder auf ihren Wert vor PR #304 zurückgesetzt** (Erwartungswerte UND
+Toleranzen exakt wie auf `main`, jeder Wert mit `bun test` bestätigt). Die Einträge dazu in Abschnitt 3 und in der Liste unten sind überholt:
+
+| Datei | Test | PR #304 (Teil A) | jetzt (= main) | Grund |
+|---|---|---|---|---|
+| `src/api/order-matching.test.ts` | manueller Zweig (09-15210-97703) / Summe 15 Bestellungen | 1,58 / 28,92 | 1,76 / 31,43 | Bestellungen vor Stichtag; Datei wieder identisch mit main |
+| `src/api/variant-sales.test.ts` | Gewinn je Verkauf (Bestellungen Sept.) | 1,4164 / 4,1164 / 9,6664 | 1,5949 / 4,2949 / 9,8449 | vor Stichtag; Datei wieder identisch mit main |
+| `src/shared/k005-faktor.test.ts` | order-matching mit/ohne Faktor | 2,72 / 3,32 / 2,72 | 2,89 / 3,49 / 2,89 | vor Stichtag |
+| `src/shared/k005.test.ts` | Bestellung 20-15262-74118 (11.10.) | 3,26 (Auftrag 3,50 − 0,24) / 2,08 | 3,44 (± 0,10) / 2,25 | vor Stichtag |
+| `src/shared/k004-formel-v2.test.ts` | Pflicht-Tests (echte Verkäufe bis 03.10.) | 1,38/0,51/1,71/2,08/1,59 | 1,56/0,68/1,88/2,26/1,77 | über `fixedFeeSchedule: EBAY_FIXED_FEE_SCHEDULE_ALT` |
+| `src/shared/k004-formel-v2.test.ts` | Bestellung stele-119-200PCS (24.09.) + computeOrderProfit | 0,51 / 1,40 / 0,51 | 0,68 / 1,57 / 0,68 | `orderDate 2026-09-24`; zusätzlich geprüft: ohne Zeitpunkt 0,51/1,40 |
+| `src/shared/k009-anzeige-0.test.ts` | 19-15281-36243 (15.10. 05:43Z) | 4,28 / 1,53 · 5,52 / 0,29 | 4,10 / 1,71 · 5,34 / 0,47 | `orderDate` von '2026-10-15' (nur Datum = mehrdeutig, gilt als neu) auf den echten Zeitpunkt '2026-10-15T05:43:00Z' |
+| `src/shared/pricing-v2.test.ts` | 13 echte Verkäufe 12.08.–03.10. | Toleranz 0,28, „Formel < echt“, max 0,2736 | Toleranz 0,20, max < 0,11 | `fixedFeeSchedule: EBAY_FIXED_FEE_SCHEDULE_ALT` |
+| `src/shared/pricing-v2.test.ts` | letzter Verkauf 03.10. stele-119 | 0,51 | 0,68 | wie oben |
+| `src/shared/pricing.test.ts` | Auftragsvorgabe 17,95/11,56 (09-15210-97703) | 1,58 | 1,76 | `orderDate '2026-10-03'` (TESTWERT: Ende des belegten Zeitraums 12.08.–03.10.); ohne Zeitpunkt zusätzlich 1,58 geprüft |
+
+Weiter auf 0,35/0,45 (neue Regel, korrekt so): alle Tests zu Mindest-VK, Zielpreis, Preislauf, Anzeigen/„Erwartet“ (künftige Verkäufe),
+`k017-anzeige.test.ts` (Bestellung 01.11., nach dem Stichtag; Kategorie im Test unbekannt → 15 %).
+Zusätzlich angepasst: `plan7-alte-formel.test.ts` (`defaultEbayFeeRateGross` hat jetzt den 3. Parameter Kategorie → `null` = 15 %, Werte gleich),
+`fixgebuehr.test.ts` (`summary.minSellLowered` neu, 0), `kaeuferpreis-heben.test.ts` (neuer Block: 162 mit Kategorie 10900 → Ziel 16,45).
+Neue Testdatei: `src/shared/gebuehr-stichtag-kategorie.test.ts` (Kategorietabelle, Stichtag-Grenze, 10 echte Belege, Durchreichen der Kategorie).
+
+Zählung (`git diff origin/main -- 'src/**/*.test.ts'`, entfernte Nicht-Kommentarzeilen): Stand PR #304 Teil A 305, jetzt 289.
+
 ## Arten der Änderung
 
 1. **Nur Erwartungswert neu** (Gewinn/Gebühr/Mindest-VK) — der überwiegende Teil, Zeilen unten.
@@ -25,7 +53,7 @@ Typische Verschiebung: Gewinn je Bestellung über 10 € um **−0,1785 €** ((
    - `api/tier-reprice.test.ts`: Brown-VK 22,45 → 21,95 (sonst keine Preisänderung → kein Senden).
    - `kaeuferpreis-heben.test.ts`: Regel-Tests mit TESTWERT Ziel 16,45; mit den echten Werten rechnet die App für 162 jetzt
      16,95 ≠ Angebotsdaten 16,45 → 162 wird übersprungen (`ziel_abweichend`), nur 208 gehoben (echte Konsequenz, Test angepasst).
-3. **Grenze/Toleranz geändert, weil alte echte Bestellungen zu 0,30 passen** (Auftrag Punkt 2: kein Stichtag, eine Regel für alle):
+3. ~~**Grenze/Toleranz geändert, weil alte echte Bestellungen zu 0,30 passen**~~ — **ÜBERHOLT durch Bündel A+B (Stichtag), s. Nachtrag oben; alle Punkte hier wieder auf main-Werten:**
    - `pricing-v2.test.ts`: 13 echte Verkäufe 12.08.–03.10.: vorher |Formel − echt| ≤ 0,0951, jetzt Formel 0,0572–0,2736 € UNTER echt
      (Toleranz 0,20 → 0,28, zusätzlich „Formel < echt“ geprüft).
    - `k004-formel-v2.test.ts`: Pflichtwerte 1,56/0,68/1,88/2,26/1,77 → 1,38/0,51/1,71/2,08/1,59.

@@ -1,5 +1,3 @@
-// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
-// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // Teil 3B (2026-09-13): Tests für die Verkaufs-Aggregation je Varianten-SKU. Diese Zahlen
 // entscheiden darüber, ob Preise gesenkt werden — sie müssen belegbar stimmen, nicht plausibel
 // aussehen. eBay ist aus der Sandbox nicht erreichbar, deshalb ist die Aggregation eine reine
@@ -62,7 +60,7 @@ describe('aggregateVariantSales — Verkäufe je Varianten-SKU', () => {
     const r = run([{ orderId: 'o1', orderDate: tageHer(5), lineItems: [{ sku: skuRot, title: 'Rot', quantity: 1, lineItemCost: 19.95 }] }]);
     // A-014 (Formel v2): EK 7,69 + Versand 1,99 (Ware < 10) + Einfuhrabgaben 3,57 = 13,25; Gebühr = 19,95 × 20% × 1,19 + 0,30 × 1,19 = 5,1051
     // Gewinn = 19,95 − 13,25 − 5,1051 = 1,5949
-    expect(r.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(1.4164, 3);
+    expect(r.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(1.5949, 3);
   });
 
   // Regressionsschutz fuer einen Fehler, der beim ersten echten Lauf des Berichts auffiel: die
@@ -75,9 +73,9 @@ describe('aggregateVariantSales — Verkäufe je Varianten-SKU', () => {
       { orderId: 'oBlau', orderDate: tageHer(5), lineItems: [{ sku: skuBlau, title: 'Blau', quantity: 1, lineItemCost: 19.95 }] },
     ]);
     // Rot: EK 7,69 + 1,99 Versand + 3,57 Einfuhr → 19,95 − 13,25 − 5,1051 = 1,5949
-    expect(r.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(1.4164, 3);
+    expect(r.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(1.5949, 3);
     // Blau: EK 4,99 + 1,99 + 3,57 = 10,55 → 19,95 − 10,55 − 5,1051 = 4,2949 (mit Produkt-EK waeren es faelschlich 1,5949)
-    expect(r.salesBySku.get('110::v2')!.profitPerSale[0]).toBeCloseTo(4.1164, 3);
+    expect(r.salesBySku.get('110::v2')!.profitPerSale[0]).toBeCloseTo(4.2949, 3);
   });
 
   test('P-49-Altbestand: fehlender Einkaufspreis ergibt "nicht berechenbar", NICHT 0', () => {
@@ -98,7 +96,7 @@ describe('aggregateVariantSales — Verkäufe je Varianten-SKU', () => {
       new Map([['o1', 5.00]]),
     );
     // EK 5,00 (manuell = AliExpress-Gesamtsumme, KEIN Aufschlag) → Gewinn = 19,95 − 5,00 − 5,1051 = 9,8449
-    expect(einePos.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(9.6664, 3);
+    expect(einePos.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(9.8449, 3);
 
     // Mehrere Positionen: der manuelle Gesamt-EK ist keiner einzelnen Position zuzuordnen →
     // Rückfall auf den Produkt-EK statt einer willkürlichen Aufteilung.
@@ -109,7 +107,7 @@ describe('aggregateVariantSales — Verkäufe je Varianten-SKU', () => {
       ] }],
       new Map([['o2', 5.00]]),
     );
-    expect(mehrPos.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(1.4164, 3);
+    expect(mehrPos.salesBySku.get('110::v1')!.profitPerSale[0]).toBeCloseTo(1.5949, 3);
   });
 
   test('fehlender Positionsbetrag: Umsatz wird als unvollständig markiert, Gewinn nicht berechenbar', () => {

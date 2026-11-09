@@ -673,6 +673,7 @@ const app = new Hono()
         variantSellPrices: schema.products.variantSellPrices,
         aliCheckoutFactor: schema.products.aliCheckoutFactor,     // K-005: "Erwartet" im Listings-Tab mit Kassen-Faktor
         aliCheckoutFactorAt: schema.products.aliCheckoutFactorAt, // K-005
+        ebayCategory: schema.products.ebayCategory,               // Bündel A+B: Provision je Kategorie für "Erwartet"
         htmlDescription: schema.products.htmlDescription,
       }).from(schema.products).all();
 
@@ -831,6 +832,7 @@ const app = new Hono()
         adRate: schema.products.adRate,
         aliCheckoutFactor: schema.products.aliCheckoutFactor,     // K-005
         aliCheckoutFactorAt: schema.products.aliCheckoutFactorAt, // K-005
+        ebayCategory: schema.products.ebayCategory,               // Bündel A+B: Provision je Kategorie im Bestellungs-Gewinn
       }).from(schema.products).all();
       // Teil 3B (2026-09-13): Matching-Regeln nach src/api/order-matching.ts ausgelagert (reiner
       // Extract, identische Logik), damit das Verkaufszahlen-Berichtsskript dieselbe Zuordnung nutzt.
@@ -1385,7 +1387,7 @@ const app = new Hono()
   .get('/ebay/listings/recalculate-preview', async (c) => {
     try {
       const { isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
-      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, defaultEbayFeeRateGross, ebayLocationFactorFor } = await import('../shared/pricing');
+      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, defaultEbayFeeRateGross, ebayLocationFactorFor, ebayFeeRatePercentFor } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1407,6 +1409,7 @@ const app = new Hono()
         variants: schema.products.variants,
         aliCheckoutFactor: schema.products.aliCheckoutFactor,     // K-005
         aliCheckoutFactorAt: schema.products.aliCheckoutFactorAt, // K-005
+        ebayCategory: schema.products.ebayCategory,               // Bündel A+B: Provision je Kategorie
       }).from(schema.products).all();
       const dbByListingId = new Map(dbProducts.filter(p => p.ebayListingId).map(p => [p.ebayListingId!, p]));
 
@@ -1444,7 +1447,7 @@ const app = new Hono()
           // unten.
           const variantAdRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
           const variantZoll = isChinaShipping(product.shipsFrom) ? aliEinfuhrEur() : 0;
-          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt)); // K-005
+          const rows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), product.ebayCategory); // K-005, Bündel A+B
           const rawNewPrice = safeUniformVariantPrice(rows);
           if (rawNewPrice == null) continue;
           const oldPrice = listing.currentPrice;
@@ -1467,7 +1470,7 @@ const app = new Hono()
               // feeRate jetzt inkl. Formel je Standort (#291), S auf Produkt-Herkunft wie variantZoll.
               buyPrice: null, versand: null, zoll: variantZoll,
               adRate: variantAdRate, adRateWasNull: product.adRate == null,
-              feeRate: defaultEbayFeeRateGross(variantAdRate, isChinaShipping(product.shipsFrom)),
+              feeRate: defaultEbayFeeRateGross(variantAdRate, isChinaShipping(product.shipsFrom), product.ebayCategory), // Bündel A+B
               locationFactor: ebayLocationFactorFor(isChinaShipping(product.shipsFrom)),
               minGewinn: product.targetMarginEur ?? MIN_GEWINN_EUR, safetyBuffer: 0, shipsFrom: product.shipsFrom,
             },
@@ -1481,7 +1484,7 @@ const app = new Hono()
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
         const calc = computeMinSellPrice({
           earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
-          ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+          ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
           rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -1537,7 +1540,7 @@ const app = new Hono()
         updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading,
         parseVariantGroupsJson,
       } = await import('./price-monitor');
-      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1560,7 +1563,7 @@ const app = new Hono()
         let newPrice: number | null;
         let variantRows: ReturnType<typeof computeVariantPriceRows> = [];
         if (isVariant) {
-          variantRows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt)); // K-005
+          variantRows = computeVariantPriceRows(product.variantPrices, product.shippingCost, product.shipsFrom, product.adRate, product.targetMarginEur, activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), product.ebayCategory); // K-005, Bündel A+B
           // newPrice bleibt informativ das Maximum (für DB-Speicherung/UI) — der tatsächliche
           // eBay-Schreibvorgang unten nutzt für jede Variante ihren EIGENEN Preis (P-27/P-28-Fix,
           // Live-Fund stele-138: vorher schrieb dieser Zweig denselben Einheitspreis auf jede SKU).
@@ -1574,7 +1577,7 @@ const app = new Hono()
           const rawNewPrice = product.buyPrice != null
             ? computeMinSellPrice({
                 earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
-                ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+                ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
                 targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
                 rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -1806,6 +1809,7 @@ const app = new Hono()
           id: p.id, title: (p.generatedTitle || p.title || '').slice(0, 80), ebayListingId: itemId, adRate: p.adRate, targetMarginEur: p.targetMarginEur,
           isChinaOrigin: isChinaShipping(p.shipsFrom), checkoutFactor: activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt), isVariant,
           groups: parseVariantGroupsJson(p.variants), rows: prodRows, ebayRate: ebayRateOf(itemId),
+          ebayCategory: p.ebayCategory, // Bündel A+B
         });
       }
       const cookie = c.req.header('Cookie') ?? '';
@@ -2792,12 +2796,12 @@ const app = new Hono()
     // product.sellPrice ungeprüft zu übernehmen. Nur wenn kein buyPrice bekannt ist (z.B. manuell
     // angelegtes Produkt ohne AliExpress-Quelle), bleibt der gespeicherte sellPrice die Quelle.
     const { isChinaShipping: isChinaShippingForListing } = await import('./price-monitor');
-    const { computeMinSellPrice, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+    const { computeMinSellPrice, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } = await import('../shared/pricing');
     const adRateForListing = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
       earUmlageEur: earUmlageFor(product), // A-029: nur Elektro = ja, sonst 0 → Formel unverändert
       buyPrice, isChinaOrigin: isChinaShippingForListing(product.shipsFrom),
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+      ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B (Kategorie fehlt → 15 %)
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
       targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
       rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -3233,7 +3237,7 @@ const app = new Hono()
       // (evaluatePriceAlarm() in shared/pricing.ts). Dieser Endpunkt setzt weiterhin NIE
       // eigenständig einen neuen Verkaufspreis — nur die priceChanged-Bedeutung wird korrigiert.
       const { isChinaShipping } = await import('./price-monitor');
-      const { evaluatePriceAlarm, DEFAULT_PRICING_CONFIG } = await import('../shared/pricing');
+      const { evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } = await import('../shared/pricing');
       // K-008: gehaltener Preis (Gewinn ≥ 0,90 €) löst keinen Alarm aus (gleiche Regel wie die Preisprüfung).
       const { getPriceHolds } = await import('./price-holds');
       const { resolvePriceHolds } = await import('../shared/price-hold');
@@ -3245,7 +3249,7 @@ const app = new Hono()
         currentSellPrice: old.sellPrice,
         variants: [{ buyPrice: body.buyPrice }],
         isChinaOrigin: isChinaShipping(old.shipsFrom),
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+        ebayFeeRatePercent: ebayFeeRatePercentFor(old.ebayCategory), // Bündel A+B
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: old.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
         targetMarginEur: old.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
         checkoutFactor: activeCheckoutFactor(old.aliCheckoutFactor, old.aliCheckoutFactorAt), // K-005
@@ -3414,6 +3418,7 @@ const app = new Hono()
           shipsFrom: prod.shipsFrom, adRatePercent: prod.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
           targetMarginEur: prod.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
           checkoutFactor: activeCheckoutFactor(prod.aliCheckoutFactor, prod.aliCheckoutFactorAt),
+          ebayCategory: prod.ebayCategory, // Bündel A+B: Provision je Kategorie
         });
         if (plan.set.length > 0) {
           patch.variantSellPrices = serializeVariantSellPrices(Object.entries(plan.variantSellPrices).map(([skuId, sellPrice]) => ({ skuId, sellPrice })));
@@ -3756,6 +3761,7 @@ const app = new Hono()
         variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices, variants: p.variants,
         ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId, isElectric: p.isElectric,
         aliCheckoutFactor: p.aliCheckoutFactor, aliCheckoutFactorAt: p.aliCheckoutFactorAt, // K-005: Kassen-Faktor in planTierReprice
+        ebayCategory: p.ebayCategory, // Bündel A+B: Provision je Kategorie in planTierReprice
       }).from(p).where(inArray(p.id, parsed.productIds)).all();
       const byId = new Map<number, TierRepriceProductRow>(rows.map(r => [r.id, { ...r, ebayStatus: r.ebayStatus ?? 'none' }]));
       const { updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading } = await import('./price-monitor');
@@ -3819,6 +3825,7 @@ const app = new Hono()
         adRate: p.adRate, targetMarginEur: p.targetMarginEur, variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices,
         variants: p.variants, ebayStatus: p.ebayStatus, ebayListingId: p.ebayListingId, isElectric: p.isElectric,
         aliCheckoutFactor: p.aliCheckoutFactor, aliCheckoutFactorAt: p.aliCheckoutFactorAt, // K-005: Kassen-Faktor in planTierReprice
+        ebayCategory: p.ebayCategory, // Bündel A+B: Provision je Kategorie in planTierReprice
       }).from(p).where(eq(p.ebayStatus, 'listed')).all();
       const { buildSenkBericht, SENK_SCHWELLE_EUR, SENK_BREMSE_PROZENT } = await import('../shared/senk-kandidaten');
       const { parseGroups } = await import('./tier-reprice');
@@ -4182,7 +4189,7 @@ const app = new Hono()
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
         const { isChinaShipping } = await import('./price-monitor');
-        const { computeMinSellPrice, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } = await import('../shared/pricing');
+        const { computeMinSellPrice, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED, ebayFeeRatePercentFor } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         // K-008: "Preis halten" (app_settings) einmal je Lauf laden; Fehler → ohne Halten (Verhalten wie bisher).
         const { getPriceHolds, releasePriceHolds } = await import('./price-holds');
@@ -4229,7 +4236,7 @@ const app = new Hono()
             // diesem Endpunkt.
             const rawNewSellPrice = computeMinSellPrice({
               earUmlageEur: earUmlageFor(product), buyPrice: newPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
-              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+              ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
               rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -4251,7 +4258,7 @@ const app = new Hono()
               currentSellPrice: product.sellPrice,
               variants: [{ buyPrice: newPrice }],
               isChinaOrigin: isChinaShipping(product.shipsFrom),
-              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
+              ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
               checkoutFactor,
@@ -4373,6 +4380,7 @@ app.get('/reports/fixgebuehr-vorschau', async (c) => {
       id: p.id, generatedTitle: p.generatedTitle, title: p.title, buyPrice: p.buyPrice, sellPrice: p.sellPrice, shipsFrom: p.shipsFrom,
       adRate: p.adRate, targetMarginEur: p.targetMarginEur, variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices,
       variants: p.variants, ebayStatus: p.ebayStatus, aliCheckoutFactor: p.aliCheckoutFactor, aliCheckoutFactorAt: p.aliCheckoutFactorAt,
+      ebayCategory: p.ebayCategory, isElectric: p.isElectric, // Bündel A+B: Satz je Kategorie für "neu"; EAR-Umlage wie im Betrieb
     }).from(p).where(eq(p.ebayStatus, 'listed')).all();
     const { buildFixgebuehrVorschau } = await import('../shared/fixgebuehr-vorschau');
     return c.json(buildFixgebuehrVorschau(rows.map(r => ({ ...r, title: r.generatedTitle ?? r.title }))), 200);
