@@ -14,6 +14,7 @@ import { neutralizeGpsrTab } from '../shared/gpsr-description';
 import { findDescriptionComplianceViolations, type DescriptionComplianceViolation } from '../shared/description-compliance';
 import { TEXT_VERSION_MARKER, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../shared/shipping-return-text';
 import type { VariantDetails } from '../shared/variant-measure';
+import { readPflichtDaten } from '../shared/pflicht-daten';
 import { listingOrigin, deliveryTimeFor, type DeliveryTimes, type ListingOrigin } from '../shared/listing-origin';
 
 export interface ProductDescriptionFields {
@@ -35,6 +36,10 @@ export interface ProductDescriptionFields {
   usePurpose?: string | null;
   variantDetails?: string | null;  // JSON {skuId: {displayNameDe, pieces, measure}}
   manualAspects?: string | null;   // JSON {"Produktart": "…"}
+  // Design-Sprint S2: Pflicht-Daten (nur v4 liest sie)
+  id?: number;
+  materialSource?: string | null;  // JSON {source, location}
+  pflichtDaten?: string | null;    // JSON PflichtDatenStored (shared/pflicht-daten.ts)
   // Beschreibung v4: Elektro-/Batterie-Hinweis (nur v4 zeigt ihn; v3 ignoriert die Felder)
   isElectric?: number | boolean | null;
   hasBattery?: number | boolean | null;
@@ -87,6 +92,12 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
     } catch { /* ignore */ }
     return [];
   })();
+  const variantEntriesParsed: Array<{ skuId?: string; attrs?: Record<string, string> }> = (() => {
+    try {
+      const parsed = JSON.parse(product.variantPrices ?? '[]');
+      return Array.isArray(parsed) ? parsed.filter(v => v && typeof v === 'object').map((v: { skuId?: string; attrs?: Record<string, string> }) => ({ skuId: v.skuId, attrs: v.attrs })) : [];
+    } catch { return []; }
+  })();
   const specsParsed: Record<string, string> = (() => {
     try { return JSON.parse(product.specs ?? '{}') as Record<string, string>; } catch { return {}; }
   })();
@@ -120,6 +131,10 @@ export function buildProductDescriptionForEbay(product: ProductDescriptionFields
     isElectric: product.isElectric ?? null,
     hasBattery: product.hasBattery ?? null,
     weeeRegNr: ctx.weeeRegNr ?? null,
+    productId: product.id,
+    variantPrices: variantEntriesParsed,
+    materialSource: parseObj<{ source?: string; location?: string }>(product.materialSource),
+    pflichtDaten: readPflichtDaten(product.pflichtDaten),
   };
 
   // Schalter DESCRIPTION_VERSION (shared/description-v4.ts, Default v3): v3 bzw. v4.

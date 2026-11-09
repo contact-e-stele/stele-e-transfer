@@ -77,7 +77,7 @@ export function formatPieces(pieces: number[]): string | null {
 }
 
 /** Maße nach D2: einheitlich → ein Wert; je Variante verschieden → "Name: Maß" je Variante. */
-export function measureText(details: VariantDetails | null | undefined): { uniform: string | null; perVariant: string | null } {
+export function measureText(details: Record<string, { displayNameDe?: string; pieces?: number; measure?: VariantDetails[string]['measure'] }> | null | undefined): { uniform: string | null; perVariant: string | null } {
   const entries = Object.values(details ?? {})
     .map(d => ({ name: esc(clean(d?.displayNameDe)), m: formatMeasure(d?.measure ?? null) }))
     .filter((e): e is { name: string; m: string } => !!e.m);

@@ -20,6 +20,7 @@ import { matchesProductSearch, searchFromQuery } from "../../shared/product-sear
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
 import { ProductDataPanel } from "../components/product-data-panel";
+import { PflichtDatenPanel } from "../components/pflicht-daten-panel";
 import { VariantTextPanel } from "../components/variant-text-panel";
 import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../../shared/gpsr-parser";
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
@@ -95,6 +96,9 @@ interface Product {
   usePurpose?: string | null;
   materialSource?: string | null;
   variantDetails?: string | null;
+  // Design-Sprint S2: Pflicht-Daten P1–P7 (JSON, shared/pflicht-daten.ts) + AliExpress-Spezifikationen (Quelle b)
+  pflichtDaten?: string | null;
+  specs?: string | null;
   ean: string | null;
   handlingTimeDays: number | null;
   gpsrName: string | null;
@@ -2157,6 +2161,8 @@ export default function Produkte() {
               )}
               {/* A-045: Produktdaten für die Beschreibung v2 (Material, Verwendung, Maße je Variante) + Ampel R8 — nur Daten, die Beschreibung bleibt unverändert */}
               <ProductDataPanel key={`pd-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
+              {/* Design-Sprint S2: Pflicht-Daten P1–P7 mit Quelle a–d + GELB „Pflicht-Daten fehlen: …“ — Grundlage für Beschreibung v4 und eBay-Merkmale */}
+              <PflichtDatenPanel key={`pf-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               {/* EAN/GTIN manuell setzen — viele eBay-Kategorien verlangen einen Produkt-Identifier */}
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
                 <span style={{ fontSize: 10, color: "#94A3B8", whiteSpace: "nowrap" }}>EAN/GTIN</span>

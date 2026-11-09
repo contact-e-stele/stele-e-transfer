@@ -65,6 +65,28 @@ const GERMAN_KNOWN: Record<string, string> = (() => {
   return out;
 })();
 
+/** Deutsche Farbnamen der festen Liste (Ziel-Werte von COLORS/COLOR_PHRASES) — Design-Sprint S2 (P5 Farbe, Handeingabe-Prüfung). */
+export const GERMAN_COLOR_NAMES: ReadonlySet<string> = new Set([...Object.values(COLORS), ...COLOR_PHRASES.map(([, de]) => de), 'Weiss']);
+
+/**
+ * Design-Sprint S2 (P5 Farbe): EINE Farbe EN→DE nach der festen Liste (dieselbe Tabelle wie translateVariantValue, Grundgesetz 8).
+ * Der GANZE Wert muss eine bekannte Farbe sein ("Navy Blue" → "Marineblau", "WHITE" → "Weiß", "Grau" → "Grau").
+ * Unbekannt oder mehr als eine Farbe ("Champagne", "Black Red") → null (Aufrufer: GELB, nicht übernehmen).
+ */
+export function translateColorExact(input: string): string | null {
+  const v = collapse(String(input ?? ''));
+  if (!v) return null;
+  for (const [re, de] of COLOR_PHRASES) {
+    re.lastIndex = 0;
+    const whole = new RegExp(`^(?:${re.source})$`, 'i');
+    if (whole.test(v)) return de;
+  }
+  const low = v.toLowerCase();
+  if (COLORS[low]) return COLORS[low];
+  for (const de of GERMAN_COLOR_NAMES) if (de.toLowerCase() === low) return de === 'Weiss' ? 'Weiß' : de;
+  return null;
+}
+
 // Größen bleiben (Großbuchstaben), Maßeinheiten bleiben.
 const SIZES = new Set(['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL']);
 const UNITS = new Set(['cm', 'mm', 'm', 'ml', 'l', 'kg', 'g']);

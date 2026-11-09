@@ -91,6 +91,9 @@ export const products = sqliteTable('products', {
   usePurpose: text('use_purpose'),                                     // Einsatzzweck, z. B. "Frischhaltehaube, auch als Duschhaube nutzbar"
   variantDetails: text('variant_details'),                             // JSON {"<skuId>": {displayNameDe, pieces, measure: {kind, values, text?, converted?, source, location}}}
   materialSource: text('material_source'),                             // JSON {source: a-d, location}
+  // Design-Sprint S2 (Auftrag Aufsicht 043, 09.11.2026): Pflicht-Daten P1–P7 mit Quelle a–d, Fundstelle und Wortlaut (JSON PflichtDatenStored,
+  // shared/pflicht-daten.ts). Additiv/nullable; Bestandsprodukte: NULL (keine Schreibung) — v4/Merkmale lesen dann Altfelder + Live-Vorschlag.
+  pflichtDaten: text('pflicht_daten'),
   aliCheckoutFactor: real('ali_checkout_factor'),            // K-005: Kasse ÷ App-Preis (≤ 1,00), aus der letzten AliExpress-Rechnung
   aliCheckoutFactorAt: text('ali_checkout_factor_at'),       // K-005: Datum der Rechnung (Bestelldatum), älter als 14 Tage = ohne Faktor
   aliCheckoutFactorOrder: text('ali_checkout_factor_order'), // K-005: eBay-Bestellnummer der Quelle (Nachweis)
