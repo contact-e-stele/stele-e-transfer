@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // A-014 Punkt 6: Tests für den Preisvergleich-Bericht (reine Funktionen). Die Zahlen sind frisch mit bun nachgerechnet.
 //
 // Fixture stele-119: Wares 3,15 € (100pcs) und 4,79 € (200pcs), heutige VK 11,95 € / 14,95 €, China, Anzeige 5 %, shippingCost 0 —
@@ -28,21 +30,21 @@ describe('buildPriceReportRows — stele-119 gegen die Zahlen der Kalkulator-Üb
   // mit S 1,19 (f = 0,71678). Vorher (Standort DE): Roh 14,5236 → 14,45 / Roh 16,6759 → 16,45; Übergabe vor K-006: 13,95 / 15,95.
   // Stufe C: 100pcs K 8,71 → Roh 15,4399 → 14,95; 200pcs K 10,35 → Roh 17,7279 → 17,45.
   test('neuer VK nach Formel v2 (K-006, S 1,19): 100pcs 14,95 €, 200pcs 17,45 €', () => {
-    expect(rows.map(r => [r.variantLabel, r.newSell])).toEqual([['100PCS', 14.95], ['200PCS', 17.45]]);
-    expect(rows.map(r => r.deltaSell)).toEqual([3, 2.5]);
+    expect(rows.map(r => [r.variantLabel, r.newSell])).toEqual([['100PCS', 15.45], ['200PCS', 17.95]]);
+    expect(rows.map(r => r.deltaSell)).toEqual([3.5, 3]); // AUFSICHT 045 A: vorher [3, 2.5]
   });
 
   test('Gewinn alt (v1) = was die App bisher zeigte: 1,5989 € (Übergabe: "bis 1,60") und 2,2449 € (Übergabe: "≈ 2,24")', () => {
-    expect(rows[0].oldProfitV1).toBeCloseTo(1.5989, 4);
-    expect(rows[1].oldProfitV1).toBeCloseTo(2.2449, 4);
+    expect(rows[0].oldProfitV1).toBeCloseTo(1.4204, 4);
+    expect(rows[1].oldProfitV1).toBeCloseTo(2.0664, 4);
   });
 
   test('Gewinn heute (v2, S 1,19): −0,5015 € und 0,0089 € — beide unter dem Boden 1,30 € → rot; neu 1,6489 € und 1,8008 €', () => {
-    expect(rows[0].profitNowV2).toBeCloseTo(-0.5015, 4);
-    expect(rows[1].profitNowV2).toBeCloseTo(0.0089, 4);
+    expect(rows[0].profitNowV2).toBeCloseTo(-0.6800, 4);
+    expect(rows[1].profitNowV2).toBeCloseTo(-0.1696, 4);
     expect(rows.map(r => r.level)).toEqual(['red', 'red']);
-    expect(rows[0].newProfitV2).toBeCloseTo(1.6489, 4); // 14,95 × 0,71678 − 0,357 − 8,71
-    expect(rows[1].newProfitV2).toBeCloseTo(1.8008, 4); // 17,45 × 0,71678 − 0,357 − 10,35
+    expect(rows[0].newProfitV2).toBeCloseTo(1.8288, 4); // 14,95 × 0,71678 − 0,357 − 8,71
+    expect(rows[1].newProfitV2).toBeCloseTo(1.9807, 4); // 17,45 × 0,71678 − 0,357 − 10,35
     expect(rows.every(r => r.newProfitV2 >= r.floorEur)).toBe(true);
   });
 });
@@ -60,13 +62,13 @@ describe('buildPriceReportRows — Randfälle', () => {
     expect(rows[0].tierLabel).toBe('4,50 (alt)');
     expect(rows[0].floorEur).toBe(2);
     expect(rows[0].newSell).toBe(28.45);
-    expect(rows[0].newProfitV2).toBeCloseTo(4.4654, 4);
+    expect(rows[0].newProfitV2).toBeCloseTo(4.2869, 4);
     expect(rows[0].targetEur).toBe(4.5); // der gespeicherte Zielgewinn bleibt, der Bericht stellt nichts um
   });
 
   test('Gewinn alt (v1) berücksichtigt shippingCost 1,99 € + Zoll 4,00 €: Ware 12 bei VK 21,95 → −1,6211 €', () => {
-    expect(rows[0].oldProfitV1).toBeCloseTo(-1.6211, 4);
-    expect(profitOldFormulaV1(21.95, 12, 1.99, true, 5)).toBeCloseTo(-1.6211, 4);
+    expect(rows[0].oldProfitV1).toBeCloseTo(-1.7996, 4);
+    expect(profitOldFormulaV1(21.95, 12, 1.99, true, 5)).toBeCloseTo(-1.7996, 4);
   });
 
   test('tierLabelFor: A–D, 4,50 (alt), sonst "andere"', () => {
@@ -80,7 +82,7 @@ describe('renderPriceReportMarkdown', () => {
 
   test('enthält Kopf, Tabellenzeilen mit alt/neu, Zusammenfassung, 4,50-Liste und nicht berechenbare Produkte', () => {
     expect(md).toContain('keine Preisänderung');
-    expect(md).toContain('| 119 Backpapier | 100PCS | 3,15 | ja | C (2,00/1,30) | 11,95 | 14,95 | +3,00 | 1,60 | -0,50 | 1,65 | ROT (unter Boden) |');
+    expect(md).toContain('| 119 Backpapier | 100PCS | 3,15 | ja | C (2,00/1,30) | 11,95 | 15,45 | +3,50 | 1,42 | -0,68 | 1,83 | ROT (unter Boden) |');
     expect(md).toContain('Zeilen: 3 (Produkte/Varianten); davon mit heutigem VK: 3.');
     expect(md).toContain('Anzeige beim heutigen VK: 3 rot (Gewinn unter Boden), 0 gelb (unter Ziel, über Boden), 0 ok.');
     expect(md).toContain('- 200 Einzel');

@@ -7,7 +7,7 @@
 // Formel v2. "Gewinn neu (v2)" ist der Gewinn beim neuen VK.
 import {
   computeMinSellPrice, profitAtSellPrice, profitFloorFor, evaluateTargetDisplay, isChinaOriginForVariant,
-  parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
+  parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG, ebayFixedFeeGross,
 } from './pricing';
 import { MARGIN_TIERS, aliEinfuhrEur } from './constants';
 import { isVariantProduct } from './variant-product';
@@ -60,7 +60,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // Die bis A-014 gültige Formel (nur zum Vergleich): Gewinn = VK − (Ware + shippingCost + Zoll 4,00) − Gebühren.
 export function profitOldFormulaV1(sell: number, ware: number, shippingCost: number, china: boolean, adRatePercent: number): number {
   const feeRate = ((DEFAULT_PRICING_CONFIG.ebayFeeRatePercent + adRatePercent) / 100) * DEFAULT_PRICING_CONFIG.vatFactor;
-  const fixed = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
+  const fixed = ebayFixedFeeGross(sell); // AUFSICHT 045 A: gestaffelte Fixgebühr (v1 kannte keinen Standort-Faktor → Bestellwert = VK)
   return sell - (ware + shippingCost + (china ? 4.00 : 0)) - (sell * feeRate + fixed);
 }
 
@@ -98,7 +98,7 @@ export function buildPriceReportRows(products: ReportProduct[]): { rows: PriceRe
       const china = isChinaOriginForVariant(line.attrs, p.shipsFrom); // K-004: Herkunft je Variante
       const common = {
         isChinaOrigin: china, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
-        ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+        vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         checkoutFactor,
       };
       const newSell = computeMinSellPrice({
@@ -130,7 +130,7 @@ export function renderPriceReportMarkdown(
     '',
     `Lauf: ${generatedAt}`,
     '',
-    `Formel v2: K = Ware + Versand (1,99 € bei Ware < 10 €) + Einfuhrabgaben (bei China ${aliEinfuhrEur().toFixed(2).replace('.', ',')} €); Gewinn = VK × (1 − (15 % + Anzeige) × 1,19) − 0,357 − K;`,
+    `Formel v2: K = Ware + Versand (1,99 € bei Ware < 10 €) + Einfuhrabgaben (bei China ${aliEinfuhrEur().toFixed(2).replace('.', ',')} €); Gewinn = VK × (1 − (15 % + Anzeige) × 1,19) − Fixgebühr (0,35 bei Bestellwert ≤ 10 €, sonst 0,45; × 1,19) − K;`,
     'Rundung auf ,45/,95 unter dem Rohpreis, bei Gewinn < Boden − 0,10 (nie unter 1,00 €) die nächste Endung darüber. "neuer VK" ist der Formelpreis je Variante (Varianten-Regel 6c',
     'ist AUS — im Betrieb würde keine Variante allein über die Formel erhöht, außer sie liegt unter dem Boden). "Gewinn alt (v1)" = bis A-014 gültige',
     'Formel (Ware + shippingCost + 4,00 € Zoll bei China) beim heutigen VK; "Gewinn heute (v2)" = echter Gewinn beim heutigen VK nach v2.',

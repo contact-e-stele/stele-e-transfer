@@ -12,7 +12,7 @@ import { BildsucheCard } from "../components/bildsuche-card";
 import { aliEinfuhrEur, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
-import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant, defaultEbayFeeRateGross, ebayLocationFactorFor } from "../../shared/pricing";
+import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant, defaultEbayFeeRateGross, ebayLocationFactorFor, ebayFixedFeeGrossForSellPrice } from "../../shared/pricing";
 import { syncDisplayValuesOnRename } from "../../shared/variant-resolver";
 import { applyVariantRename, findDuplicateValues, renameContentKeys, translatedGroups, translateGroupName, translateVariantValue, valueKey } from "../../shared/variant-text-de";
 import { produkteSearchHref } from "../../shared/product-search";
@@ -499,11 +499,10 @@ export default function Lieferanten() {
   // China-Herkunft) — vorher eigene Kopie ohne S, d. h. die Gebühr-Kachel passte bei China-Ware nicht zur Gewinn-Kachel daneben.
   const ausChinaHaupt = isChinaShipping(shipsFromInfo?.country); // K-004: ohne Herkunft wie China
   const ebayFee = verkauf * defaultEbayFeeRateGross(adRate, ausChinaHaupt)
-    + DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
+    + ebayFixedFeeGrossForSellPrice(verkauf, ausChinaHaupt); // AUFSICHT 045 A: Fixgebühr gestaffelt nach Bestellwert (VK × S)
   const gewinn = profitAtSellPrice({
     sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: ausChinaHaupt,
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
-    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
   });
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
   // A-014: "Ziel <Stufe> · Erwartet <echter Gewinn beim gesetzten VK nach Formel v2>"; gelb = Erwartet < Ziel, rot = Erwartet < Boden.
@@ -648,7 +647,7 @@ export default function Lieferanten() {
       const pre = preselectVariants(startGroups, data.variantPrices ?? [], importRules.maxVariants, (e) => {
         if (typeof e.price !== "number" || e.price <= 0) return null;
         const isChina = isChinaOriginForVariant(e.attrs, data.shipsFrom);
-        const cfg = { ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate };
+        const cfg = { ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate };
         const sell = computeMinSellPrice({ ...cfg, buyPrice: e.price, isChinaOrigin: isChina, targetMarginEur: minGewinn, safetyBufferEur: 0, rounding: "floor95" }).minSellPrice;
         return profitAtSellPrice({ ...cfg, sellPrice: sell, buyPrice: e.price, isChinaOrigin: isChina });
       });
@@ -1786,7 +1785,7 @@ export default function Lieferanten() {
                           // Formel (P-27/P-28-Konsolidierung, 2026-09-08; Teil 2A+2B, 2026-09-10).
                           const recommended = computeMinSellPrice({
                             buyPrice: einkauf, isChinaOrigin: isChinaShipping(shipsFromInfo?.country), // K-004: ohne Herkunft wie China
-                            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                             targetMarginEur: minGewinn, safetyBufferEur: 0,
                             rounding: 'floor95',
@@ -1993,7 +1992,7 @@ export default function Lieferanten() {
                 // Kein Sicherheitspuffer (Teil 2C: global entfernt, safetyBufferEur immer 0)
                 return computeMinSellPrice({
                   buyPrice: v.price, isChinaOrigin: ausChinaV,
-                  ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                  ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
                   vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                   targetMarginEur: minGewinn, safetyBufferEur: 0,
                   rounding: 'floor95',
@@ -2061,7 +2060,7 @@ export default function Lieferanten() {
                       const varProfit = varEbay > 0
                         ? profitAtSellPrice({
                             sellPrice: varEbay, buyPrice: v.price, isChinaOrigin: ausChinaV,
-                            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                           })
                         : null;

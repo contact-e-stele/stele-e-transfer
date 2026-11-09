@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // AUFTRAG Kalkulator an 7 App – 162/208 (09.11.2026 07:00): "Käuferpreis auf Angebotsdaten heben".
 // ECHTE beobachtete Werte (Kalkulator): stele-162 Variante "10" (skuId 12000056749494569, EK 2,35, China, Anzeige 5 %): Käufer (GetItem)
 // 15,45, Angebotsdaten (Offer) 16,45. stele-208 SILVER (skuId 12000048693957042, EK 2,89, China, 5 %): Käufer 16,95, Angebotsdaten 17,45.
@@ -28,28 +30,33 @@ const target = (p: ReturnType<typeof mk>, skuId: string) =>
 
 const t162 = target(mk(162, SKU162, 2.35, '10'), SKU162);
 const t208 = target(mk(208, SKU208, 2.89, 'SILVER'), SKU208);
-const row162 = (o: Partial<RaiseBuyerInputRow> = {}): RaiseBuyerInputRow => ({ skuId: SKU162, sku: 'stele-162-10', label: '10', buyerPrice: 15.45, offerPrice: 16.45, targetVk: t162, ...o });
+// AUFSICHT 045 Teil A (09.11.2026): mit gestaffelter Fixgebühr (0,45) rechnet die App für 162 jetzt 16,95 (bun) ≠ Angebotsdaten 16,45 →
+// mit den echten Werten wird 162 übersprungen (ziel_abweichend), siehe "Plan 162/208 mit den echten Werten". Die Regel-Tests unten
+// prüfen die Mechanik (a)–(c) und brauchen Ziel = Angebotsdaten: dort TESTWERT targetVk 16,45 (vorher = t162, damals 16,45).
+const row162 = (o: Partial<RaiseBuyerInputRow> = {}): RaiseBuyerInputRow => ({ skuId: SKU162, sku: 'stele-162-10', label: '10', buyerPrice: 15.45, offerPrice: 16.45, targetVk: 16.45, ...o });
 const row208 = (o: Partial<RaiseBuyerInputRow> = {}): RaiseBuyerInputRow => ({ skuId: SKU208, sku: 'stele-208-SILVER', label: 'SILVER', buyerPrice: 16.95, offerPrice: 17.45, targetVk: t208, ...o });
 
 describe('Zielpreis der App aus planTierReprice (Formel v2, China, 5 %)', () => {
-  test('stele-162 "10" EK 2,35 → 16,45 € = Angebotsdaten', () => { expect(t162).toBe(16.45); });
+  test('stele-162 "10" EK 2,35 → 16,95 € (045 A: vorher 16,45 = Angebotsdaten, jetzt ≠)', () => { expect(t162).toBe(16.95); });
   test('stele-208 SILVER EK 2,89 → 17,45 € = Angebotsdaten', () => { expect(t208).toBe(17.45); });
-  test('Stufe A (1,00) ergibt denselben Zielpreis, Stufe C (2,00) nicht (17,45 / 17,95)', () => {
-    expect(target(mk(162, SKU162, 2.35, '10', 1.0), SKU162)).toBe(16.45);
+  test('Stufe A (1,00) ergibt denselben Zielpreis, Stufe C (2,00) nicht (17,45 / 18,45)', () => {
+    expect(target(mk(162, SKU162, 2.35, '10', 1.0), SKU162)).toBe(16.95);
     expect(target(mk(162, SKU162, 2.35, '10', 2.0), SKU162)).toBe(17.45);
-    expect(target(mk(208, SKU208, 2.89, 'SILVER', 2.0), SKU208)).toBe(17.95);
+    expect(target(mk(208, SKU208, 2.89, 'SILVER', 2.0), SKU208)).toBe(18.45);
   });
 });
 
 describe('Plan 162/208 mit den echten Werten', () => {
-  const plan = planBuyerPriceRaise([row162(), row208()]);
-  test('beide werden gehoben: 15,45 → 16,45 (+6,47 %), 16,95 → 17,45 (+2,95 %)', () => {
-    expect(plan.raiseCount).toBe(2);
-    expect(plan.skipCount).toBe(0);
-    expect(plan.actions.map(a => [a.status, a.to, a.jumpPct])).toEqual([['heben', 16.45, 6.47], ['heben', 17.45, 2.95]]);
+  const plan = planBuyerPriceRaise([row162({ targetVk: t162 }), row208()]);
+  // AUFSICHT 045 A: vorher wurden beide gehoben (raiseCount 2); jetzt Ziel 162 = 16,95 ≠ Angebotsdaten 16,45 → nur 208.
+  test('echte Werte nach 045 A: 162 übersprungen (ziel_abweichend, Ziel 16,95 ≠ 16,45), 208 gehoben 16,95 → 17,45 (+2,95 %)', () => {
+    expect(plan.raiseCount).toBe(1);
+    expect(plan.skipCount).toBe(1);
+    expect(plan.actions.map(a => [a.status, a.to, a.jumpPct])).toEqual([['uebersprungen', null, 6.47], ['heben', 17.45, 2.95]]);
+    expect(plan.actions[0].code).toBe('ziel_abweichend');
   });
   test('expected aus der Vorschau = { sku: neuer Käuferpreis }', () => {
-    expect(expectedFromRaisePlan(plan.actions)).toEqual({ 'stele-162-10': 16.45, 'stele-208-SILVER': 17.45 });
+    expect(expectedFromRaisePlan(plan.actions)).toEqual({ 'stele-208-SILVER': 17.45 }); // 045 A: 162 nicht mehr enthalten
   });
 });
 

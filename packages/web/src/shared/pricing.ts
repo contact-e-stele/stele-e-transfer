@@ -121,7 +121,6 @@ export interface PricingInput {
   buyPrice: number;          // Ware: AliExpress-Preis (ohne Rabatte/Gutscheine/Münzen)
   isChinaOrigin: boolean;    // Herkunft: China (Einfuhrabgaben ALI_EINFUHR_EUR werden angesetzt) oder EU/sonstige (keine)
   ebayFeeRatePercent: number; // eBay-Gebührensatz in % (Default 15, siehe DEFAULT_PRICING_CONFIG)
-  ebayFixedFeeEur: number;    // eBay-Fixbetrag in EUR, netto (vor MwSt)
   vatFactor: number;          // MwSt-Faktor (z.B. 1.19 = 19% MwSt.)
   adRatePercent: number;      // Anzeigentarif in % (Promoted Listings) — 0, wenn nicht wirklich beworben
   targetMarginEur: number;    // Zielgewinn in EUR (Stufe A–D); der Boden dazu kommt aus profitFloorFor()
@@ -131,6 +130,7 @@ export interface PricingInput {
   earUmlageEur?: number;      // A-029: EAR-Umlage je Stück, wird bei Elektro = ja zu K addiert (weggelassen/0 = Formel unverändert, siehe earUmlageFor())
   checkoutFactor?: number | null; // K-005: Kassen-Faktor des Produkts (activeCheckoutFactor); Ware = buyPrice × Faktor. Weggelassen/null = unverändert
   ebayLocationFactor?: number;    // Formel je Standort: S explizit (Test/Sonderfall). Weggelassen = ebayLocationFactorFor(isChinaOrigin)
+  fixedFeeSchedule?: EbayFixedFeeSchedule; // AUFSICHT 045 A: NUR für Vorher/Nachher-Berichte (fixgebuehr-vorschau). Weggelassen = EBAY_FIXED_FEE_SCHEDULE (Betrieb)
 }
 
 export interface PricingResult {
@@ -139,7 +139,7 @@ export interface PricingResult {
   customs: number;           // tatsächlich angesetzte Einfuhrabgaben (0 oder ALI_EINFUHR_EUR)
   baseFeeRateGross: number;  // ebayFeeRatePercent/100 × vatFactor — OHNE Anzeigentarif
   totalFeeRateGross: number; // (ebayFeeRatePercent + adRatePercent)/100 × vatFactor — MIT Anzeigentarif
-  fixedFeeGross: number;     // ebayFixedFeeEur × vatFactor
+  fixedFeeGross: number;     // Fixgebühr brutto beim gerundeten minSellPrice (gestaffelt, ebayFixedFeeGross — 0,35/0,45 × MwSt)
   rawMinSellPrice: number;   // Mindest-Verkaufspreis vor Rundung
   minSellPrice: number;      // Mindest-Verkaufspreis nach `rounding`
 }
@@ -157,11 +157,23 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   const totalCost = ali.totalCost + (input.earUmlageEur ?? 0); // A-029: K + EAR-Umlage (nur bei Elektro = ja, sonst 0)
   const baseFeeRateGross = ebayPercentFeeRateGross({ ...input, adRatePercent: 0 });
   const totalFeeRateGross = ebayPercentFeeRateGross(input);
-  const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
-  const rawMinSellPrice = (totalCost + input.targetMarginEur + input.safetyBufferEur + fixedFeeGross) / (1 - totalFeeRateGross);
+  // AUFSICHT 045 Teil A (09.11.2026): die Fixgebühr hängt vom Bestellwert ab (≤ 10 € → 0,35, sonst 0,45 netto), der Bestellwert
+  // vom VK (VK × S). Auflösung nach VK: erst mit der kleinen Stufe rechnen; liegt deren Bestellwert ≤ 10 €, ist das der kleinste
+  // Preis mit Gewinn ≥ Ziel (darunter ist der Gewinn kleiner). Sonst liegt jeder Preis ≤ 10 € unter dem Ziel → mit der großen Stufe
+  // rechnen (der Rohpreis liegt dann noch höher, also ebenfalls über 10 €, widerspruchsfrei). Grenze: Bestellwert auf Cent gerundet,
+  // genau 10,00 € = kleine Stufe (ebayFixedFeeNet).
+  const s = input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin);
+  const schedule = input.fixedFeeSchedule ?? EBAY_FIXED_FEE_SCHEDULE;
+  const fixedAt = (sellPrice: number) => ebayFixedFeeGross(ebayOrderTotal(sellPrice, s), input.vatFactor, schedule);
+  const zaehler = totalCost + input.targetMarginEur + input.safetyBufferEur;
+  const rawLow = (zaehler + schedule.smallEur * input.vatFactor) / (1 - totalFeeRateGross);
+  const rawMinSellPrice = ebayOrderTotal(rawLow, s) <= schedule.thresholdEur
+    ? rawLow
+    : (zaehler + schedule.normalEur * input.vatFactor) / (1 - totalFeeRateGross);
   const minSellPrice = input.rounding === 'floor95'
-    ? roundToProfitFloor(rawMinSellPrice, p => p * (1 - totalFeeRateGross) - fixedFeeGross - totalCost, input.profitFloorEur ?? profitFloorFor(input.targetMarginEur))
+    ? roundToProfitFloor(rawMinSellPrice, p => p * (1 - totalFeeRateGross) - fixedAt(p) - totalCost, input.profitFloorEur ?? profitFloorFor(input.targetMarginEur))
     : applyRounding(rawMinSellPrice, input.rounding);
+  const fixedFeeGross = fixedAt(minSellPrice);
   return { totalCost, shipping, customs, baseFeeRateGross, totalFeeRateGross, fixedFeeGross, rawMinSellPrice, minSellPrice };
 }
 
@@ -247,7 +259,6 @@ export interface ProfitAtSellPriceInput {
   buyPrice: number;
   isChinaOrigin: boolean;
   ebayFeeRatePercent: number;
-  ebayFixedFeeEur: number;
   vatFactor: number;
   adRatePercent: number;
   earUmlageEur?: number;     // A-029: EAR-Umlage je Stück (Elektro = ja), 0/weggelassen = unverändert
@@ -256,12 +267,13 @@ export interface ProfitAtSellPriceInput {
 }
 
 // Gewinn bei einem GEGEBENEN Verkaufspreis — die Umkehrung von computeMinSellPrice(), Formel v2 (A-014):
-//   Gewinn = Preis × f − Fix − K,  f = 1 − (15% + adRate) × 1,19,  Fix = 0,30 × 1,19,
+//   Gewinn = Preis × f − Fix − K,  f = 1 − (15% + adRate) × 1,19 × S,  Fix = ebayFixedFeeGross(Preis × S) (0,35/0,45 × 1,19),
 //   K = Ware + Versand + Einfuhrabgaben (computeAliCosts)
 export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
   const totalCost = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0); // K-005
   const totalFeeRateGross = ebayPercentFeeRateGross(input);
-  const fixedFeeGross = input.ebayFixedFeeEur * input.vatFactor;
+  const s = input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin);
+  const fixedFeeGross = ebayFixedFeeGross(ebayOrderTotal(input.sellPrice, s), input.vatFactor);
   return input.sellPrice - totalCost - (input.sellPrice * totalFeeRateGross + fixedFeeGross);
 }
 
@@ -293,7 +305,6 @@ export interface PriceAlarmInput {
   variants: Array<{ buyPrice: number; isChinaOrigin?: boolean }>; // K-004: Herkunft je Variante (fehlt → isChinaOrigin unten)
   isChinaOrigin: boolean;
   ebayFeeRatePercent: number;
-  ebayFixedFeeEur: number;
   vatFactor: number;
   adRatePercent: number;
   targetMarginEur: number;
@@ -317,7 +328,6 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
     buyPrice: v.buyPrice,
     isChinaOrigin: v.isChinaOrigin ?? input.isChinaOrigin,
     ebayFeeRatePercent: input.ebayFeeRatePercent,
-    ebayFixedFeeEur: input.ebayFixedFeeEur,
     vatFactor: input.vatFactor,
     adRatePercent: input.adRatePercent,
     checkoutFactor,
@@ -338,7 +348,6 @@ export interface VariantSellPriceInput {
   anchorSellPrice: number;    // heutiger Verkaufspreis des Produkts — den behält die teuerste Variante exakt
   isChinaOrigin: boolean;
   ebayFeeRatePercent: number;
-  ebayFixedFeeEur: number;
   vatFactor: number;
   adRatePercent: number;
   targetMarginEur: number;    // Untergrenze, falls der Ankergewinn darunter liegt
@@ -391,7 +400,6 @@ export function computeVariantSellPrices(input: VariantSellPriceInput): VariantS
   const costContext = {
     isChinaOrigin: input.isChinaOrigin,
     ebayFeeRatePercent: input.ebayFeeRatePercent,
-    ebayFixedFeeEur: input.ebayFixedFeeEur,
     vatFactor: input.vatFactor,
     adRatePercent: input.adRatePercent,
   };
@@ -591,7 +599,6 @@ export interface VariantRule6cInput {
   variants: Array<{ skuId: string; buyPrice: number; currentSellPrice: number | null }>;
   isChinaOrigin: boolean;
   ebayFeeRatePercent: number;
-  ebayFixedFeeEur: number;
   vatFactor: number;
   adRatePercent: number;
   targetMarginEur: number;
@@ -609,7 +616,7 @@ export function evaluateVariantRule6c(input: VariantRule6cInput): VariantRule6cR
     if (v.currentSellPrice == null) return { skuId: v.skuId, currentSellPrice: null, profitAtCurrent: null, action: 'keep' as const, newSellPrice: null };
     const common = {
       isChinaOrigin: input.isChinaOrigin, ebayFeeRatePercent: input.ebayFeeRatePercent,
-      ebayFixedFeeEur: input.ebayFixedFeeEur, vatFactor: input.vatFactor, adRatePercent: input.adRatePercent,
+      vatFactor: input.vatFactor, adRatePercent: input.adRatePercent,
     };
     const profitAtCurrent = profitAtSellPrice({ ...common, sellPrice: v.currentSellPrice, buyPrice: v.buyPrice });
     if (profitAtCurrent >= floor - 1e-9) {
@@ -641,7 +648,7 @@ export function evaluateVariantRule6c(input: VariantRule6cInput): VariantRule6cR
 // ─── Formel je Standort (ENTSCHEIDUNG INHABER 08.11.2026 16:31; Kalkulator 10:35 / 17:30) ─────────────────────────
 // Liegt der eBay-Artikelstandort außerhalb der EU, schlägt eBay 19 % Einfuhr-USt (IOSS) auf den Käuferpreis auf; die Provision läuft
 // (Annahme Kalkulator, Beleg = erste CN-Bestellung, Gebührenzeile) auf den Bruttobetrag → Prozent-Anteil der eBay-Gebühr × S.
-// Fixgebühr 0,357 unverändert. F bei CN: 1 − 0,15 × 1,19 × 1,19 = 0,7876 (0 %) / 0,7168 (5 %); DE/EU unverändert 0,8215 / 0,762.
+// Fixgebühr: seit AUFSICHT 045 Teil A gestaffelt nach Bestellwert (ebayFixedFeeGross, s. u.). F bei CN: 1 − 0,15 × 1,19 × 1,19 = 0,7876 (0 %) / 0,7168 (5 %); DE/EU unverändert 0,8215 / 0,762.
 // Standort = Herkunft: #285 setzt den Artikelstandort auf den Lagerort der Herkunft. Darum S aus derselben Herkunft wie die Kosten
 // (isChinaOrigin, je Variante "Ships From" vor Produkt-Herkunft; unbekannt = China = S 1,19, sichere Seite laut Inhaber).
 // Weicht der Beleg ab (Provision netto): IOSS_PROVISION_FACTOR = 1 setzen, kein Codeumbau.
@@ -681,6 +688,40 @@ export function orderFeeChinaLocation(isChinaOrigin: boolean, orderDate?: string
   return !(/^\d{4}-\d{2}-\d{2}$/.test(d) && d < STANDORT_FORMEL_AB);
 }
 
+// ─── eBay-Fixgebühr je Bestellung (AUFSICHT an 7 App 045 Teil A, 09.11.2026 12:50 — GELD-LOGIK) ───────────────────────────
+// eBay-Gebührenseite (gelesen von der Aufsicht): Fixgebühr je Bestellung 0,35 € netto, wenn der Bestellwert ≤ 10 € ist, sonst
+// 0,45 € netto; beides × MwSt 1,19 (Kleinunternehmer, keine Vorsteuer). Vorher galt in der App überall 0,30 € netto (0,357 brutto).
+// Bestellwert = VK × S (S = ebayLocationFactorFor: 1,19 bei China-Standort wegen IOSS-Aufschlag, sonst 1) — derselbe Betrag, auf den
+// die Provision läuft. Die EINE Stelle für die Fixgebühr (Grundgesetz 8): computeMinSellPrice, profitAtSellPrice,
+// computeOrderProfit(Raw), Bestellungen, Varianten-Verkäufe, Anzeige-Umschalter, Preise-Tab und Lieferanten-Tab rechnen hierüber.
+// Stichtag: KEINER (Auftrag Punkt 2) — die Staffel gilt für alle Bestellungen, auch für alte (dort hatte die App 0,30).
+export const EBAY_FIXED_FEE_NET_SMALL_EUR = 0.35;  // Bestellwert ≤ EBAY_FIXED_FEE_THRESHOLD_EUR
+export const EBAY_FIXED_FEE_NET_EUR = 0.45;        // Bestellwert > EBAY_FIXED_FEE_THRESHOLD_EUR
+export const EBAY_FIXED_FEE_THRESHOLD_EUR = 10;
+export interface EbayFixedFeeSchedule { smallEur: number; normalEur: number; thresholdEur: number }
+/** Die im Betrieb gültige Staffel. */
+export const EBAY_FIXED_FEE_SCHEDULE: EbayFixedFeeSchedule = {
+  smallEur: EBAY_FIXED_FEE_NET_SMALL_EUR, normalEur: EBAY_FIXED_FEE_NET_EUR, thresholdEur: EBAY_FIXED_FEE_THRESHOLD_EUR,
+};
+/** NUR für den Vorher/Nachher-Bericht (GET /api/reports/fixgebuehr-vorschau): der bis 09.11.2026 in der App gerechnete Fixbetrag 0,30 €. */
+export const EBAY_FIXED_FEE_SCHEDULE_ALT: EbayFixedFeeSchedule = { smallEur: 0.30, normalEur: 0.30, thresholdEur: EBAY_FIXED_FEE_THRESHOLD_EUR };
+/** Bestellwert, auf den eBay Provision und Fixgebühr berechnet: VK × S, auf Cent gerundet (eBay rechnet in Cent). */
+export function ebayOrderTotal(sellPrice: number, locationFactor: number): number {
+  return Math.round(sellPrice * locationFactor * 100) / 100;
+}
+/** Fixgebühr netto zum Bestellwert: ≤ 10,00 € → 0,35, darüber 0,45. */
+export function ebayFixedFeeNet(orderTotal: number, schedule: EbayFixedFeeSchedule = EBAY_FIXED_FEE_SCHEDULE): number {
+  return Math.round(orderTotal * 100) / 100 <= schedule.thresholdEur ? schedule.smallEur : schedule.normalEur;
+}
+/** Fixgebühr brutto (× MwSt) zum Bestellwert. */
+export function ebayFixedFeeGross(orderTotal: number, vatFactor: number = DEFAULT_PRICING_CONFIG.vatFactor, schedule: EbayFixedFeeSchedule = EBAY_FIXED_FEE_SCHEDULE): number {
+  return ebayFixedFeeNet(orderTotal, schedule) * vatFactor;
+}
+/** Fixgebühr brutto zu einem VK und einer Herkunft/einem Standort (Bestellwert = VK × S). */
+export function ebayFixedFeeGrossForSellPrice(sellPrice: number, isChinaOrigin: boolean, vatFactor: number = DEFAULT_PRICING_CONFIG.vatFactor): number {
+  return ebayFixedFeeGross(ebayOrderTotal(sellPrice, ebayLocationFactorFor(isChinaOrigin)), vatFactor);
+}
+
 /** Kurzform mit DEFAULT_PRICING_CONFIG (15 %, MwSt 1,19): Prozent-Anteil brutto inkl. S. */
 export function defaultEbayFeeRateGross(adRatePercent: number, isChinaOrigin: boolean): number {
   return ebayPercentFeeRateGross({
@@ -690,7 +731,6 @@ export function defaultEbayFeeRateGross(adRatePercent: number, isChinaOrigin: bo
 
 export const DEFAULT_PRICING_CONFIG = {
   ebayFeeRatePercent: 15,
-  ebayFixedFeeEur: 0.30,
   vatFactor: 1.19,
   defaultAdRatePercent: 5,                    // DB-Default (schema.ts ad_rate.default(5))
   targetMarginEur: MIN_GEWINN_EUR,            // 2,00 € — globaler Fallback, wenn product.targetMarginEur null ist (Teil 2C)
@@ -718,7 +758,7 @@ export interface OrderProfitResult {
 export function computeOrderProfitRaw(verkaufspreis: number, wahrerEinkauf: number, adRatePercent: number | null | undefined, isChinaOrigin: boolean): OrderProfitResult {
   const adRate = typeof adRatePercent === 'number' && Number.isFinite(adRatePercent) && adRatePercent >= 0 ? adRatePercent : DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
   const totalFeeRateGross = defaultEbayFeeRateGross(adRate, isChinaOrigin);
-  const fixedFeeGross = DEFAULT_PRICING_CONFIG.ebayFixedFeeEur * DEFAULT_PRICING_CONFIG.vatFactor;
+  const fixedFeeGross = ebayFixedFeeGross(ebayOrderTotal(verkaufspreis, ebayLocationFactorFor(isChinaOrigin))); // AUFSICHT 045 A: gestaffelt
   const feesDeducted = verkaufspreis * totalFeeRateGross + fixedFeeGross;
   const profit = verkaufspreis * (1 - totalFeeRateGross) - fixedFeeGross - wahrerEinkauf;
   return { profit, feesDeducted };

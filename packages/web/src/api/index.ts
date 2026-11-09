@@ -1481,7 +1481,7 @@ const app = new Hono()
         const adRate = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
         const calc = computeMinSellPrice({
           earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
-          ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+          ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
           rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -1574,7 +1574,7 @@ const app = new Hono()
           const rawNewPrice = product.buyPrice != null
             ? computeMinSellPrice({
                 earUmlageEur: earUmlageFor(product), buyPrice: product.buyPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
-                ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+                ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
                 targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
                 rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -2797,7 +2797,7 @@ const app = new Hono()
     const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
       earUmlageEur: earUmlageFor(product), // A-029: nur Elektro = ja, sonst 0 → Formel unverändert
       buyPrice, isChinaOrigin: isChinaShippingForListing(product.shipsFrom),
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
       targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
       rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -3245,7 +3245,7 @@ const app = new Hono()
         currentSellPrice: old.sellPrice,
         variants: [{ buyPrice: body.buyPrice }],
         isChinaOrigin: isChinaShipping(old.shipsFrom),
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: old.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
         targetMarginEur: old.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
         checkoutFactor: activeCheckoutFactor(old.aliCheckoutFactor, old.aliCheckoutFactorAt), // K-005
@@ -4229,7 +4229,7 @@ const app = new Hono()
             // diesem Endpunkt.
             const rawNewSellPrice = computeMinSellPrice({
               earUmlageEur: earUmlageFor(product), buyPrice: newPrice, isChinaOrigin: isChinaShipping(product.shipsFrom),
-              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
               rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
@@ -4251,7 +4251,7 @@ const app = new Hono()
               currentSellPrice: product.sellPrice,
               variants: [{ buyPrice: newPrice }],
               isChinaOrigin: isChinaShipping(product.shipsFrom),
-              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
               checkoutFactor,
@@ -4364,6 +4364,24 @@ const app = new Hono()
   // Punkt C (25.10.2026): AliExpress-Merkmale nachladen. Standard Trockenlauf; {apply:true} schreibt NUR leere products.specs.
   // Design-Sprint S2: Pflicht-Daten-Vorschau — NUR LESEN, schreibt nichts. Zeigt je Feld Wert + Quelle + Fundstelle + Wortlaut,
   // den Vorschlag aus den AliExpress-Daten (a/b) und die Ampel (GELB, wenn P1–P4 fehlen oder eine Farbe unbekannt ist).
+// AUFSICHT 045 Teil A (09.11.2026): Mindest-VK je gelisteter Variante alt (Fix 0,30) ↔ neu (Fix gestaffelt 0,35/0,45). NUR LESEN.
+app.get('/reports/fixgebuehr-vorschau', async (c) => {
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const p = schema.products;
+    const rows = await db.select({
+      id: p.id, generatedTitle: p.generatedTitle, title: p.title, buyPrice: p.buyPrice, sellPrice: p.sellPrice, shipsFrom: p.shipsFrom,
+      adRate: p.adRate, targetMarginEur: p.targetMarginEur, variantPrices: p.variantPrices, variantSellPrices: p.variantSellPrices,
+      variants: p.variants, ebayStatus: p.ebayStatus, aliCheckoutFactor: p.aliCheckoutFactor, aliCheckoutFactorAt: p.aliCheckoutFactorAt,
+    }).from(p).where(eq(p.ebayStatus, 'listed')).all();
+    const { buildFixgebuehrVorschau } = await import('../shared/fixgebuehr-vorschau');
+    return c.json(buildFixgebuehrVorschau(rows.map(r => ({ ...r, title: r.generatedTitle ?? r.title }))), 200);
+  } catch (e) {
+    console.error('[fixgebuehr-vorschau]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.get('/products/:id/pflichtdaten-preview', async (c) => {
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'Ungültige Produkt-ID' }, 400);

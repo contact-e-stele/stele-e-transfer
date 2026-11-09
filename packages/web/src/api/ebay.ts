@@ -2026,7 +2026,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
         ? computeMinSellPrice({
             earUmlageEur: input.earUmlageEur,
             buyPrice: varPriceEntry.price, isChinaOrigin: isChinaOriginForVariant(input.variantPrices?.find(v => v.skuId === varPriceEntry.skuId)?.attrs, input.shipsFrom), // K-004: Herkunft je Variante
-            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+            ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
             targetMarginEur: input.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
             rounding: 'floor95', checkoutFactor: input.checkoutFactor, // K-005

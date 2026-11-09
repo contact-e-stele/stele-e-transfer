@@ -198,7 +198,7 @@ export function computeVariantPriceRows(
       isChinaOrigin: isChinaOriginForVariant(v.attrs, shipsFrom),
       correctSellPrice: computeMinSellPrice({
         buyPrice: v.price, isChinaOrigin: isChinaOriginForVariant(v.attrs, shipsFrom), // K-004: Herkunft je Variante ("Ships From")
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
         targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'floor95', checkoutFactor,
@@ -548,14 +548,14 @@ export async function raiseSingleWithStoredBuyPrice(product: typeof schema.produ
     const target = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
     const raw = computeMinSellPrice({
       earUmlageEur: earUmlageFor(product), buyPrice: buy, isChinaOrigin: isChina,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target,
       safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95', checkoutFactor,
     }).minSellPrice;
     const hold = resolvePriceHolds(product, holdsForProduct);
     const alarmRes = evaluatePriceAlarm({
       currentSellPrice: product.sellPrice, variants: [{ buyPrice: buy }], isChinaOrigin: isChina,
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target, checkoutFactor,
     });
     const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
@@ -1220,7 +1220,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       const rawNewSellPrice = computeMinSellPrice({
         earUmlageEur: earUmlageFor(product), // A-029
         buyPrice: newBuyPrice, isChinaOrigin: isChina,
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'floor95',
@@ -1241,7 +1241,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         currentSellPrice: product.sellPrice,
         variants: [{ buyPrice: newBuyPrice }],
         isChinaOrigin: isChina,
-        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+        ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
         checkoutFactor,

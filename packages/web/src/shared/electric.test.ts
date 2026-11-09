@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // A-029 (P-E01): Tests für Elektro Kat. 5 — Listing-Sperre (jede Bedingung), Nicht-Elektro unverändert, Import-Vorschlag, EAR-Umlage in der Preisformel
 // (Beispiel Ware 6,00 / Umlage 1,50 / Stufe C, China, Anzeige 5 % — alle Zahlen mit bun nachgerechnet), WEEE-Format, Patch-/Einstellungs-Validierung, CSV.
 import { describe, expect, test } from 'bun:test';
@@ -115,7 +117,7 @@ describe('suggestElectric (nur vorschlagen)', () => {
 
 describe('EAR-Umlage in der Preisformel v2 (Beispiel Ware 6,00, Umlage 1,50, Stufe C = Ziel 2,00 / Boden 1,30; China, Anzeige 5 %)', () => {
   const base = {
-    buyPrice: 6.00, isChinaOrigin: true, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    buyPrice: 6.00, isChinaOrigin: true, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5, targetMarginEur: 2.00, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95' as const,
   };
   // Handrechnung: K = 6,00 + 1,99 + 3,57 = 11,56 (+ 1,50 = 13,06); Fix = 0,30 × 1,19 = 0,357;
@@ -125,8 +127,8 @@ describe('EAR-Umlage in der Preisformel v2 (Beispiel Ware 6,00, Umlage 1,50, Stu
     for (const u of [undefined, 0, earUmlageFor(null), earUmlageFor({ isElectric: 0 }), earUmlageFor({}), earUmlageFor(false, 1.5)]) {
       const r = computeMinSellPrice({ ...base, earUmlageEur: u });
       expect(r.totalCost).toBeCloseTo(11.56, 9);
-      expect(r.rawMinSellPrice).toBeCloseTo(19.415999330338458, 9);
-      expect(r.minSellPrice).toBe(18.95);
+      expect(r.rawMinSellPrice).toBeCloseTo(19.665029716230926, 9);
+      expect(r.minSellPrice).toBe(19.45);
     }
   });
   test('Elektro = ja mit Umlage 1,50: K = 13,06, Mindestpreis 21,45 (statt 18,95)', () => {
@@ -134,14 +136,14 @@ describe('EAR-Umlage in der Preisformel v2 (Beispiel Ware 6,00, Umlage 1,50, Stu
     expect(umlage).toBe(1.5);
     const r = computeMinSellPrice({ ...base, earUmlageEur: umlage });
     expect(r.totalCost).toBeCloseTo(13.06, 9);
-    expect(r.rawMinSellPrice).toBeCloseTo(21.50869164876252, 9);
+    expect(r.rawMinSellPrice).toBeCloseTo(21.75772203465499, 9);
     expect(r.minSellPrice).toBe(21.45);
   });
   test('Gewinn bei 21,45 € mit Umlage = 1,96 € (≥ Boden 1,30); der alte Preis 18,95 € ließe mit Umlage nur 0,17 € (unter dem Boden)', () => {
-    const p = { sellPrice: 21.45, buyPrice: 6, isChinaOrigin: true, ebayFeeRatePercent: base.ebayFeeRatePercent, ebayFixedFeeEur: base.ebayFixedFeeEur, vatFactor: base.vatFactor, adRatePercent: 5 };
-    expect(profitAtSellPrice({ ...p, earUmlageEur: 1.5 })).toBeCloseTo(1.9579, 4);
-    expect(profitAtSellPrice(p)).toBeCloseTo(3.4579, 4); // ohne Umlage unverändert
-    expect(profitAtSellPrice({ ...p, sellPrice: 18.95, earUmlageEur: 1.5 })).toBeCloseTo(0.166, 4);
+    const p = { sellPrice: 21.45, buyPrice: 6, isChinaOrigin: true, ebayFeeRatePercent: base.ebayFeeRatePercent, vatFactor: base.vatFactor, adRatePercent: 5 };
+    expect(profitAtSellPrice({ ...p, earUmlageEur: 1.5 })).toBeCloseTo(1.7794, 4);
+    expect(profitAtSellPrice(p)).toBeCloseTo(3.2794, 4); // ohne Umlage unverändert
+    expect(profitAtSellPrice({ ...p, sellPrice: 18.95, earUmlageEur: 1.5 })).toBeCloseTo(-0.0125, 4);
   });
   test('earUmlageFor: nur bestätigtes Elektro (ja); Standardbetrag ist 0,00; ungültige Beträge → 0', () => {
     expect(earUmlageFor({ isElectric: 1 })).toBe(0); // EAR_UMLAGE_EUR = 0,00 bis der Inhaber den Betrag setzt

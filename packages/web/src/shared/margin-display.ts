@@ -20,7 +20,7 @@ export function marginDisplay(i: MarginDisplayInput): MarginDisplay | null {
   if (!(sell > 0) || !(buy > 0)) return null;
   const profitEur = profitAtSellPrice({
     sellPrice: sell, buyPrice: buy, isChinaOrigin: isChinaShipping(i.shipsFrom),
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: i.adRatePercent ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
     checkoutFactor: i.checkoutFactor ?? null,
   });

@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // A-016: Tests für die reinen Bausteine hinter Listings-Tab "Stufe für alle" und Filter "Neu eingestellt".
 // Alle Zahlen frisch mit bun nachgerechnet (Formel v2, Anzeige 5 %). Fixtures: Produkt 95 (Ware 8,99 €, EU, VK 15,95 €) und
 // 119 (100pcs Ware 3,15 € @ 11,95 €, 200pcs Ware 4,79 € @ 14,95 €, China) entsprechen den Werten aus dem A-014-Bericht;
@@ -22,8 +24,9 @@ const p95: ProfitProduct = {
 }; // K-004: Variante "Ships From: Germany" = EU → K = 8,99 (kein Versand, keine Einfuhr) → Gewinn 2,8069 (vorher fälschlich 0,8169)
 // Formel je Standort (08.11.2026): China mit S 1,19 (f = 0,71678) — erfundene Fixtures so verschoben, dass die Grenzfälle bleiben
 // (vorher pGrenze 13,45/3,15 = 1,1819, pYellow 13,95/3,15 = 1,5629; mit S 1,19 wären es 0,5737 / 0,9321).
-const pGrenze = single(1, 14.45, 3.29, true);               // Gewinn 1,1505 (14,45×0,71678−0,357−8,85) — K-006: über B−0,10 (1,10), unter C−0,10 (1,20)
-const pYellow = single(2, 14.95, 3.15, true);               // Gewinn 1,6489
+// AUFSICHT 045 Teil A (09.11.2026): Fixgebühr 0,45 → mit Ware 3,29 läge pGrenze bei 0,9720 (unter Stufe-A-Boden). EINGABE GEÄNDERT 3,29 → 3,15.
+const pGrenze = single(1, 14.45, 3.15, true);               // Gewinn 1,1120 (14,45×0,71678−0,5355−8,71) — K-006: über B−0,10 (1,10), unter C−0,10 (1,20)
+const pYellow = single(2, 14.95, 3.15, true);               // Gewinn 1,4704 (045 A; vorher 1,6489 mit Fix 0,30)
 const pOhneVk = single(3, null, null, true);                // nicht berechenbar
 const p119: ProfitProduct = {
   id: 119, variants: '[{"name":"Menge","values":["100PCS","200PCS"]}]', targetMarginEur: 2, shipsFrom: 'China', adRate: 5, sellPrice: 14.95, buyPrice: 3.15,
@@ -33,19 +36,19 @@ const p119: ProfitProduct = {
 const ALL = [p95, pGrenze, pYellow, p119, pOhneVk];
 
 describe('productProfitRows', () => {
-  test('Produkt 95 (Varianten-Gruppen, nur 1 variantPrices-Eintrag): Varianten-Produkt; K-004: Herkunft der Variante (Germany) → Gewinn 2,8069 €', () => {
+  test('Produkt 95 (Varianten-Gruppen, nur 1 variantPrices-Eintrag): Varianten-Produkt; K-004: Herkunft der Variante (Germany) → Gewinn 2,6284 €', () => {
     const r = productProfitRows(p95);
     expect(r.isVariant).toBe(true);
     expect(r.rows).toHaveLength(1);
-    expect(r.rows[0].profit).toBeCloseTo(2.8069, 4);
+    expect(r.rows[0].profit).toBeCloseTo(2.6284, 4);
   });
 
   test('Varianten-Produkt: je Variante mit ihrem VK aus variant_sell_prices (119: −0,5015 € und 0,0089 €)', () => {
     const r = productProfitRows(p119);
     expect(r.isVariant).toBe(true);
     expect(r.rows.map(x => x.label)).toEqual(['100PCS', '200PCS']);
-    expect(r.rows[0].profit).toBeCloseTo(-0.5015, 4);
-    expect(r.rows[1].profit).toBeCloseTo(0.0089, 4);
+    expect(r.rows[0].profit).toBeCloseTo(-0.6800, 4);
+    expect(r.rows[1].profit).toBeCloseTo(-0.1696, 4);
   });
 
   // K-014 Schritt 2 (Kalkulator 28.10.2026): vorher griff hier der Produkt-VK (14,95) — genau der Falschalarm von stele-119.
@@ -60,23 +63,23 @@ describe('productProfitRows', () => {
 
 describe('previewTierChange — "N Listings → Stufe X. Davon rot nach Wechsel: M"', () => {
   // K-004: 95 rechnet jetzt mit EU-Herkunft der Variante (Gewinn 2,8069) und ist in keiner Stufe mehr rot.
-  test('Stufe A (1,00/1,00): rot ist nur 119 (Variante); 95 (2,8069) und Grenzfall-Produkt (1,1505) nicht', () => {
+  test('Stufe A (1,00/1,00): rot ist nur 119 (Variante); 95 (2,6284) und Grenzfall-Produkt (1,1120) nicht', () => {
     const p = previewTierChange(ALL, 1.0);
     expect(p).toEqual({ total: 5, red: 1, redSingle: 0, redVariant: 1, yellow: 0, unknown: 1, redIds: [119] });
   });
 
-  test('Stufe B (1,50/1,20, rot unter 1,10): Grenzfall (1,1505 ≥ 1,10) ist gelb statt rot', () => {
+  test('Stufe B (1,50/1,20, rot unter 1,10): Grenzfall (1,1120 ≥ 1,10) ist gelb statt rot', () => {
     const p = previewTierChange(ALL, 1.5);
     expect(p.red).toBe(1);
-    expect(p.yellow).toBe(1);
+    expect(p.yellow).toBe(2); // AUFSICHT 045 A: 14,95-Produkt jetzt 1,4704 < Ziel 1,50 → ebenfalls gelb (vorher 1,6489, ok)
   });
 
-  test('Stufe C (2,00/1,30, rot unter 1,20): Grenzfall-Produkt (1,1505 < 1,20) wird rot — der Stufenwechsel verändert die Zahl M', () => {
+  test('Stufe C (2,00/1,30, rot unter 1,20): Grenzfall-Produkt (1,1120 < 1,20) wird rot — der Stufenwechsel verändert die Zahl M', () => {
     const p = previewTierChange(ALL, 2.0);
     expect(p).toEqual({ total: 5, red: 2, redSingle: 1, redVariant: 1, yellow: 1, unknown: 1, redIds: [1, 119] });
   });
 
-  test('Stufe D (3,00/1,50): rot 2 (Grenzfall, 119); 14,95-Produkt (1,6489) und 95 (2,8069 < 3,00) gelb', () => {
+  test('Stufe D (3,00/1,50): rot 2 (Grenzfall, 119); 14,95-Produkt (1,4704) und 95 (2,6284 < 3,00) gelb', () => {
     const p = previewTierChange(ALL, 3.0);
     expect(p.red).toBe(2);
     expect(p.yellow).toBe(2);

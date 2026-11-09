@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR, aliEinfuhrEur, setAliEinfuhrEur } from './constants';
 import { computeAliCosts } from './pricing';
@@ -70,15 +72,15 @@ describe('P-EINFUHR: Varianten-Anhebung stele-127 (raise-only)', () => {
     const r = planVariantRaises(p127 as never).map(x => [x.label, x.oldSell, x.newSell]);
     expect(r).toEqual([
       // Formel je Standort (08.11.2026, China S 1,19): neue VK frisch mit bun (vorher 16,95 / 15,95 / 23,95 / 24,45)
-      ['Multicolour 100pcs', 13.95, 17.95],
+      ['Multicolour 100pcs', 13.95, 18.45],
       ['Multicolour 50pcs', 12.95, 16.95],
-      ['White 500pcs', 20.95, 25.45],
-      ['Multicolour 500pcs', 20.95, 25.95],
+      ['White 500pcs', 20.95, 25.95],
+      ['Multicolour 500pcs', 20.95, 26.45],
     ]);
   });
   test('Gewinn nach Anhebung je Variante ≥ 1,00 (Boden Stufe A)', () => {
     for (const x of planVariantRaises(p127 as never)) expect(x.newProfit).toBeGreaterThanOrEqual(1.00);
-    expect(planVariantRaises(p127 as never)[0].oldProfit).toBeCloseTo(-1.7879, 4); // Formel je Standort (S 1,19); vorher −1,1571 (Befund Nachrichten: −1,17)
+    expect(planVariantRaises(p127 as never)[0].oldProfit).toBeCloseTo(-1.9664, 4); // Formel je Standort (S 1,19); vorher −1,1571 (Befund Nachrichten: −1,17)
   });
   // Formel je Standort (08.11.2026): mit S 1,19 lägen beim Live-VK vom 24.10. auch mit 3,57 alle 4 Varianten unter dem Boden — der Unterschied
   // 3,57 ↔ 5,95 wäre nicht mehr zu sehen. EINGABE GEÄNDERT: VK 13,95 / 12,95 / 20,95 / 20,95 → 14,95 / 13,95 / 22,45 / 20,95

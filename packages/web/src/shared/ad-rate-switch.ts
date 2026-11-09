@@ -38,7 +38,7 @@ export interface AdSwitchRow {
 
 const profit = (sell: number, buy: number, rate: number, i: AdSwitchInput) => profitAtSellPrice({
   sellPrice: sell, buyPrice: buy, isChinaOrigin: i.isChinaOrigin,
-  ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+  ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
   vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate, checkoutFactor: i.checkoutFactor ?? null,
 });
 

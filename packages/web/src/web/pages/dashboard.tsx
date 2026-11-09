@@ -143,7 +143,7 @@ export default function Dashboard() {
             const adR = p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
             const profit = profitAtSellPrice({
               sellPrice: p.sellPrice!, buyPrice: p.buyPrice!, isChinaOrigin: isChinaShipping(p.shipsFrom),
-              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+              ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adR,
               checkoutFactor: activeCheckoutFactor(p.aliCheckoutFactor, p.aliCheckoutFactorAt), // K-005
             });

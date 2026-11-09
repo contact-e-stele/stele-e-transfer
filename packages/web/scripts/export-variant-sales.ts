@@ -100,7 +100,6 @@ for (const { product, variants } of multiVariant) {
     isChinaOrigin: isChinaShipping(product.shipsFrom),
     customsFlat: DEFAULT_PRICING_CONFIG.chinaCustomsFlatEur,
     ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
-    ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor,
     adRatePercent: adRate,
   };

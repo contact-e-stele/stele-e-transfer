@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-009 (Kalkulator 15.10.2026): Anzeige 0 % wählbar; stele-220 ist seit 14.10. 21:12 bei eBay unbeworben, die App stand auf 5 %.
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3).
 import { describe, expect, test } from 'bun:test';
@@ -30,11 +32,13 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
     // PLAN 7 Punkt 9: reale Bestellung, gemeldet am 15.10.2026 → Bestelltag spätestens 15.10., vor STANDORT_FORMEL_AB (S = 1).
     orderDate: '2026-10-15',
   });
-  test('Bestellung 19-15281-36243 (BLACK 20,95, Einkauf 15,14): adRate 0 → Gebühr 4,10, Gewinn 1,71', () => {
-    expect(order(0)).toMatchObject({ nettoGebuehren: 4.1, nettoErgebnis: 1.71 });
+  // AUFSICHT 045 Teil A (09.11.2026): die echte eBay-Gebühr dieser Bestellung war 4,10 = 20,95 × 0,1785 + 0,357 (Fix 0,30, Beleg
+  // pricing.ts). Mit der Staffel (Fix 0,45 × 1,19 = 0,5355) rechnet die App für diese ALTE Bestellung 4,28 — kein Stichtag (Auftrag Punkt 2).
+  test('Bestellung 19-15281-36243 (BLACK 20,95, Einkauf 15,14): adRate 0 → Gebühr 4,28 (echt 4,10 mit Fix 0,30), Gewinn 1,53', () => {
+    expect(order(0)).toMatchObject({ nettoGebuehren: 4.28, nettoErgebnis: 1.53 });
   });
-  test('mit adRate 5 (bisheriger App-Stand) → Gebühr 5,34, Gewinn 0,47 (der gemeldete Fehlwert)', () => {
-    expect(order(5)).toMatchObject({ nettoGebuehren: 5.34, nettoErgebnis: 0.47 });
+  test('mit adRate 5 (bisheriger App-Stand) → Gebühr 5,52, Gewinn 0,29 (vorher 5,34 / 0,47 mit Fix 0,30)', () => {
+    expect(order(5)).toMatchObject({ nettoGebuehren: 5.52, nettoErgebnis: 0.29 });
   });
   // Formel je Standort (08.11.2026): EINGABEN GEÄNDERT wie in k008-preis-halten.test.ts (GRAY-Ware 11,47 → 11,59, VK GRAY 19,95 → 20,95,
   // Blue 21,95 → 22,45, black 20,95 → 21,45) — sonst wären mit S 1,19 auch bei adRate 0 alle drei unter dem Boden. bun: adRate 0 GRAY 0,9829.
@@ -52,7 +56,7 @@ describe('K-009 Wirkung adRate 0 (stele-220)', () => {
     expect(planVariantRaises(p220(0)).map(r => [r.skuId, r.newSell])).toEqual([['g', 21.45]]);
   });
   test('Preisprüfung adRate 5 (Fehlstand): alle drei würden angehoben', () => {
-    expect(planVariantRaises(p220(5)).map(r => [r.skuId, r.newSell])).toEqual([['g', 23.45], ['b', 24.45], ['k', 23.45]]);
+    expect(planVariantRaises(p220(5)).map(r => [r.skuId, r.newSell])).toEqual([['g', 23.45], ['b', 24.95], ['k', 23.45]]);
   });
 });
 

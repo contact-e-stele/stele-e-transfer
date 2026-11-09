@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-004 (Kalkulator, 08.10.2026): Pflicht-Tests aus dem Auftrag, wörtlich. Abweichung ≤ 0,20 €, Rabatte nicht eingerechnet.
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3).
 import { describe, expect, test } from 'bun:test';
@@ -7,14 +9,16 @@ import {
 import { MARGIN_TIERS } from './constants';
 import { computeOrderNettoErgebnis, matchOrderVariant } from '../api/order-matching';
 
-const fees = { ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor };
+const fees = { ebayFeeRatePercent: C.ebayFeeRatePercent, vatFactor: C.vatFactor };
 // Formel je Standort (08.11.2026): s = Standort-Faktor S explizit. Die Pflicht-Tests (Kalkulator 08.10.2026, echte Verkäufe mit Standort DE)
 // rechnen mit s = 1 und behalten ihre Zahlen; weggelassen = S aus der Herkunft (China 1,19).
 const profitChina5 = (sell: number, ware: number, s?: number) => profitAtSellPrice({ ...fees, sellPrice: sell, buyPrice: ware, isChinaOrigin: true, adRatePercent: 5, ebayLocationFactor: s });
 
 describe('K-004 Pflicht-Tests profitAtSellPrice (China, Anzeige 5 %)', () => {
   const cases: Array<[number, number, number]> = [
-    [13.95, 3.15, 1.56], [14.95, 4.79, 0.68], [14.95, 3.59, 1.88], [13.95, 2.45, 2.26], [17.95, 5.99, 1.77],
+    // AUFSICHT 045 Teil A (09.11.2026): Fixgebühr 0,45 statt 0,30 (alle VK > 10 €) → je −0,18 € (bun: 1,3844 / 0,5064 / 1,7064 / 2,0844 / 1,5924).
+    // Vorher 1,56 / 0,68 / 1,88 / 2,26 / 1,77 (passten zu den echten Verkäufen bis 03.10. mit 0,30).
+    [13.95, 3.15, 1.38], [14.95, 4.79, 0.51], [14.95, 3.59, 1.71], [13.95, 2.45, 2.08], [17.95, 5.99, 1.59],
   ];
   for (const [sell, ware, exp] of cases) {
     test(`VK ${sell} / Ware ${ware} → ${exp}`, () => {
@@ -31,8 +35,8 @@ describe('K-004 Stufen floor95', () => {
 
   // K-006 (14.10.2026): Endungen ,45/,95; Mindestgewinn max(Boden − 0,10, 1,00). 13,45 × 0,762 − 0,357 − 8,71 = 1,1819 ≥ 1,10.
   test('Ware 3,15 Stufe B → 13,45 / Gewinn 1,18', () => {
-    expect(minSell(3.15, 1.5, 1)).toBe(13.45);       // Kalkulator-Beispiel (Standort DE) → s = 1
-    expect(profitChina5(13.45, 3.15, 1)).toBeCloseTo(1.18, 2);
+    expect(minSell(3.15, 1.5, 1)).toBe(13.95);       // Kalkulator-Beispiel (Standort DE) → s = 1
+    expect(profitChina5(13.45, 3.15, 1)).toBeCloseTo(1.00, 2);
   });
 
   // K-006: Schritt zwischen zwei erlaubten Endungen = 0,50 € VK = 0,50 × 0,762 = 0,381 € Gewinn (vorher 1 € = 0,762).
@@ -104,7 +108,7 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
       orderDate: '2026-09-24', // PLAN 7 Punkt 9: wie reale Bestellung 20-15127-76586 (Datenstand 24.09.) → vor Stichtag, S = 1
     });
     expect(r.nettoEinkauf).toBeCloseTo(10.35, 10);
-    expect(r.nettoErgebnis).toBe(0.68);
+    expect(r.nettoErgebnis).toBe(0.51);
     expect(r.nettoQuelle).toBe('automatisch');
   });
 
@@ -130,10 +134,10 @@ describe('K-004 Punkt 1 + 4: Bestellungs-Gewinn je verkaufter Variante, Anzeigen
     // PLAN 7 Punkt 9: 4. Argument = Gebühr mit China-Standort? Hier false (S = 1, Bestellung vor Stichtag) — Werte unverändert.
     const with5 = computeOrderProfit(14.95, 10.35, 5, false);
     const with0 = computeOrderProfit(14.95, 10.35, 0, false);
-    expect(with5.profit).toBe(0.68);
+    expect(with5.profit).toBe(0.51);
     // 14,95 × (1 − 0,15 × 1,19) − 0,357 − 10,35 = 1,574425 → 1,57 (bun nachgerechnet)
-    expect(with0.profit).toBe(1.57);
-    expect(computeOrderProfit(14.95, 10.35, undefined, false).profit).toBe(0.68); // weggelassen → Default 5 %
+    expect(with0.profit).toBe(1.4);
+    expect(computeOrderProfit(14.95, 10.35, undefined, false).profit).toBe(0.51); // weggelassen → Default 5 %
   });
 });
 
@@ -159,7 +163,7 @@ describe('K-004 Nachbesserung: unbekannte Herkunft + Scraper-Schlüssel', () => 
     expect(src).not.toContain('data.shipsFrom ?? product.shipsFrom');
   });
   test('Preisalarm rechnet je Variante mit ihrer Herkunft (EU-Variante kein Fehlalarm durch China-Kosten)', () => {
-    const base = { currentSellPrice: 15.95, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.3, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2 };
+    const base = { currentSellPrice: 15.95, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 2 };
     // Ware 8,99: EU → Gewinn 2,8069 (kein Alarm); als China → 15,95×0,762−0,357−14,55 = −2,7531 (Alarm)
     expect(evaluatePriceAlarm({ ...base, variants: [{ buyPrice: 8.99, isChinaOrigin: false }], isChinaOrigin: true }).isAlarm).toBe(false);
     expect(evaluatePriceAlarm({ ...base, variants: [{ buyPrice: 8.99 }], isChinaOrigin: true }).isAlarm).toBe(true);

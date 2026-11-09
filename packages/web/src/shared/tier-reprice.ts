@@ -64,7 +64,7 @@ export function repriceFeesFor(p: RepriceProduct) {
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China. feesFor(attrs) statt einer Herkunft fürs ganze Produkt.
   return (attrs?: Record<string, string>) => ({
     isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom), ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
-    ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     earUmlageEur: earUmlageFor(p.isElectric), // A-029: nur Elektro = ja
     checkoutFactor,
   });

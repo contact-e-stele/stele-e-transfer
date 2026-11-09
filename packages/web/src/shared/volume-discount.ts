@@ -64,7 +64,7 @@ export function volumeOrderProfit(v: VolumeDiscountVariant, qty: number, percent
   const total = cents(unitPrice * qty);
   const profit = profitAtSellPrice({
     sellPrice: total, buyPrice: v.buyPrice * qty, isChinaOrigin: v.isChinaOrigin,
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: inp.adRatePercent, checkoutFactor: inp.checkoutFactor,
     earUmlageEur: (inp.earUmlageEur ?? 0) * qty,
   });

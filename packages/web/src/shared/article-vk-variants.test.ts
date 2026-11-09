@@ -1,7 +1,11 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // OFFEN 014: Artikel-VK auf angebotene Varianten übernehmen. Fixtures = Live-Stand 29.10.2026 (App /api/products) stele-234/235,
 // Anzeige 5 %, Stufe 1,00, China, kein Kassen-Faktor. Mindestpreise mit bun nachgerechnet (Einfuhr 5,95): Brown 23,95 · Orange 5PCS 16,95.
 // Formel je Standort (08.11.2026): mit S 1,19 Mindestpreise neu (bun) Brown 25,45 · Orange 5PCS 18,45 → EINGABE GEÄNDERT: die Artikel-VK der
 // Tests um denselben Abstand zum Mindestpreis verschoben (23,95 → 25,45 · 16,95 → 18,45 · 22,95 → 24,45 · 17,45 → 19,45).
+// AUFSICHT 045 Teil A (09.11.2026): Fixgebühr 0,45 → Mindestpreis Brown 25,45 → 25,95 (bun), Orange 5PCS bleibt 18,45. EINGABE GEÄNDERT:
+// 234-Artikel-VK 25,45 → 25,95 und 24,45 → 24,95 (gleicher Abstand zum Mindestpreis).
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { planArticleVkToVariants } from './article-vk-variants';
 import { setAliEinfuhrEur, aliEinfuhrEur } from './constants';
@@ -30,10 +34,10 @@ const p235 = (sellPrice: number) => ({
 });
 
 describe('Artikel-VK → angebotene Varianten (OFFEN 014)', () => {
-  test('234: 25,45 → nur Brown gesetzt (GRAY/green nicht angeboten)', () => {
-    const r = planArticleVkToVariants(p234(25.45));
-    expect(r.variantSellPrices).toEqual({ '12000056068050014': 25.45 });
-    expect(r.set).toEqual([{ skuId: '12000056068050014', label: 'Brown', from: null, to: 25.45 }]);
+  test('234: 25,95 → nur Brown gesetzt (GRAY/green nicht angeboten)', () => {
+    const r = planArticleVkToVariants(p234(25.95));
+    expect(r.variantSellPrices).toEqual({ '12000056068050014': 25.95 });
+    expect(r.set).toEqual([{ skuId: '12000056068050014', label: 'Brown', from: null, to: 25.95 }]);
     expect(r.belowMin).toEqual([]);
   });
   test('235: 18,45 → nur Orange 5PCS gesetzt, 10PCS bleibt unberührt', () => {
@@ -41,9 +45,9 @@ describe('Artikel-VK → angebotene Varianten (OFFEN 014)', () => {
     expect(r.variantSellPrices).toEqual({ '12000037060310498': 18.45 });
   });
   test('unter Mindestpreis → nicht gesetzt, gemeldet', () => {
-    const r = planArticleVkToVariants(p234(24.45));
+    const r = planArticleVkToVariants(p234(24.95));
     expect(r.set).toEqual([]);
-    expect(r.belowMin).toEqual([{ skuId: '12000056068050014', label: 'Brown', minSell: 25.45 }]);
+    expect(r.belowMin).toEqual([{ skuId: '12000056068050014', label: 'Brown', minSell: 25.95 }]);
   });
   test('vorhandene Einträge bleiben, angebotene werden überschrieben', () => {
     const r = planArticleVkToVariants({ ...p235(19.45), variantSellPricesJson: JSON.stringify({ '12000037060310498': 14.95, '12000037060310500': 18.95 }) });

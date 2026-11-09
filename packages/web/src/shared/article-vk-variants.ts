@@ -34,7 +34,7 @@ export function planArticleVkToVariants(input: ArticleVkInput): ArticleVkResult 
     const label = Object.values(e.displayValues ?? e.attrs ?? {}).filter(Boolean).join(' / ') || e.skuId;
     const minSell = computeMinSellPrice({
       buyPrice: e.price, isChinaOrigin: isChinaOriginForVariant(e.attrs, input.shipsFrom),
-      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+      ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: input.adRatePercent, targetMarginEur: input.targetMarginEur,
       safetyBufferEur: 0, rounding: 'floor95', checkoutFactor: input.checkoutFactor,
     }).minSellPrice;

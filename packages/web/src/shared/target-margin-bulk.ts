@@ -83,7 +83,7 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
   // K-004: Herkunft je Variante ("Ships From"), sonst Produkt-Herkunft; leer → China.
   const profitWith = (f: number | null, sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitAtSellPrice({
     sellPrice, buyPrice, isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom),
-    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent, ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur,
+    ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, checkoutFactor: f,
   });
   const profitAt = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitWith(checkoutFactor, sellPrice, buyPrice, attrs);

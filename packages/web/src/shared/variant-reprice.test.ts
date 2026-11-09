@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // OFFEN 033 "Auswahl senken" — Regeln 1–4. Fixture: stele-225 aus dem DB-Backup 05.11.2026 23:35 (Ware Blue 13,59 / black+GRAY 11,99,
 // VK 26,95 / 24,95 / 24,95, Anzeige 0 %, China, Kassen-Faktor 0,9733). Erwartete Gewinne frisch mit bun nachgerechnet (Grundgesetz 3):
 //   Blue 26,95 → 2,60 · 25,45 → 1,37 · 24,45 → 0,55 | black 24,95 → 2,52 · 23,45 → 1,29 · 25,95 → 3,34 | GRAY 22,95 → 0,88 (ohne Faktor 0,56)
@@ -38,15 +40,15 @@ describe('planVariantDecrease – Regeln', () => {
   test('Senken ohne Faktor (K-018 c1): Blue 28,45 → 26,95 (+1,33) ok, black 26,45 → 24,45 (+0,96) abgelehnt', () => {
     const r = plan({ [BLUE]: 26.95, [BLACK]: 24.45 }, undefined, { variantSellPrices: VSP_HOCH });
     expect(r.map(x => [x.skuId, x.alt, x.neu, x.gewinnAlt, x.gewinnNeu, x.status])).toEqual([
-      [BLUE, 28.45, 26.95, 2.51, 1.33, 'ok'],
-      [BLACK, 26.45, 24.45, 2.53, 0.96, 'abgelehnt'],
+      [BLUE, 28.45, 26.95, 2.33, 1.15, 'ok'],
+      [BLACK, 26.45, 24.45, 2.36, 0.78, 'abgelehnt'],
     ]);
   });
   test('Senken: Ergebnis mit und ohne gespeicherten Faktor gleich (Faktor wird beim Senken nicht benutzt)', () => {
     const mit = plan({ [BLUE]: 26.95, [BLACK]: 24.95 }, undefined, { variantSellPrices: VSP_HOCH });
     const ohne = plan({ [BLUE]: 26.95, [BLACK]: 24.95 }, undefined, { aliCheckoutFactor: null, variantSellPrices: VSP_HOCH });
     expect(mit.map(x => [x.gewinnNeu, x.status])).toEqual(ohne.map(x => [x.gewinnNeu, x.status]));
-    expect(mit.map(x => x.gewinnNeu)).toEqual([1.33, 1.35]);
+    expect(mit.map(x => x.gewinnNeu)).toEqual([1.15, 1.17]);
   });
   test('Regel 1: Anheben abgelehnt (black 24,95 → 25,95), gleicher Preis abgelehnt', () => {
     const r = plan({ [BLACK]: 25.95, [GRAY]: 24.95 });
@@ -59,8 +61,8 @@ describe('planVariantDecrease – Regeln', () => {
     expect(r[1].grund ?? '').not.toContain('Senkungsbremse');
   });
   test('Regel 3: Gewinn unter 1,00 abgelehnt — GRAY 22,95 = −0,22 (Senken ohne Faktor)', () => {
-    expect(plan({ [GRAY]: 22.95 })[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -0.22 });
-    expect(plan({ [GRAY]: 22.95 }, undefined, { aliCheckoutFactor: null })[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -0.22 });
+    expect(plan({ [GRAY]: 22.95 })[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -0.4 });
+    expect(plan({ [GRAY]: 22.95 }, undefined, { aliCheckoutFactor: null })[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -0.4 });
   });
   test('Regel 4: "Preis halten" → gehalten (auch wenn die Senkung sonst ok wäre)', () => {
     const r = plan({ [BLUE]: 26.95, [BLACK]: 24.95 }, new Set([BLUE]), { variantSellPrices: VSP_HOCH }); // black 24,95 → +1,35 ok
@@ -88,19 +90,21 @@ describe('OFFEN 033b (Kalkulator 07.11. 11:05)', () => {
     const a = planVariantDecrease(p225({ targetMarginEur: 1.5, variantSellPrices: VSP_HOCH }), { [BLUE]: 26.95, [BLACK]: 24.95 }, GROUPS).rows;
     expect(a.map(r => [r.status, r.mindestGewinn])).toEqual([['abgelehnt', 1.5], ['abgelehnt', 1.5]]);
     expect(a[1].grund).toContain('1.50');
-    expect(planVariantDecrease(p225({ targetMarginEur: 1.5, variantSellPrices: VSP_HOCH }), { [BLUE]: 27.45 }, GROUPS).rows[0]).toMatchObject({ status: 'ok', gewinnNeu: 1.72 });
+    expect(planVariantDecrease(p225({ targetMarginEur: 1.5, variantSellPrices: VSP_HOCH }), { [BLUE]: 27.45 }, GROUPS).rows[0]).toMatchObject({ status: 'ok', gewinnNeu: 1.54 });
     expect(planVariantDecrease(p225({ targetMarginEur: 1 }), { [BLACK]: 23.45 }, GROUPS).rows[0].mindestGewinn).toBe(1);
   });
   test('Punkt 2: gewinnOhneFaktor je Zeile; beim Senken = gewinnNeu (ohne Faktor gerechnet) → keine Warnung', () => {
     const r = planVariantDecrease(p225({ variantSellPrices: VSP_HOCH }), { [BLUE]: 26.95, [BLACK]: 24.95 }, GROUPS).rows;
-    expect(r.map(x => [x.gewinnNeu, x.gewinnOhneFaktor, x.status])).toEqual([[1.33, 1.33, 'ok'], [1.35, 1.35, 'ok']]);
+    expect(r.map(x => [x.gewinnNeu, x.gewinnOhneFaktor, x.status])).toEqual([[1.15, 1.15, 'ok'], [1.17, 1.17, 'ok']]);
     expect(r.every(x => x.hinweis === undefined)).toBe(true);
   });
   // Formel je Standort: Ziel 2,70 → 2,00 (Eingabe geändert), damit „mit Faktor ≥ Ziel > ohne Faktor“ weiter gilt.
-  test('Warnung „ohne Kassen-Faktor“ gibt es nur noch beim Anheben: Blue 26,95 → 27,45 mit Ziel 2,00 (mit +2,08, ohne +1,72)', () => {
-    const r = planVariantReprice(p225({ targetMarginEur: 2.0 }), { [BLUE]: 27.45 }, GROUPS, new Set(), 'up').rows[0];
-    expect(r).toMatchObject({ status: 'ok', gewinnNeu: 2.08, gewinnOhneFaktor: 1.72 });
-    expect(r.hinweis).toContain('ohne Kassen-Faktor nur 1.72');
+  // AUFSICHT 045 A: Fixgebühr 0,45 → mit Faktor nur noch +1,90 (< Ziel 2,00) → Ziel 2,00 → 1,80 (Eingabe geändert), damit
+  // „mit Faktor ≥ Ziel > ohne Faktor“ weiter gilt.
+  test('Warnung „ohne Kassen-Faktor“ gibt es nur noch beim Anheben: Blue 26,95 → 27,45 mit Ziel 1,80 (mit +1,90, ohne +1,54)', () => {
+    const r = planVariantReprice(p225({ targetMarginEur: 1.8 }), { [BLUE]: 27.45 }, GROUPS, new Set(), 'up').rows[0];
+    expect(r).toMatchObject({ status: 'ok', gewinnNeu: 1.9, gewinnOhneFaktor: 1.54 });
+    expect(r.hinweis).toContain('ohne Kassen-Faktor nur 1.54');
   });
 });
 
@@ -108,7 +112,7 @@ describe('OFFEN 034 "Auswahl anheben" (direction up)', () => {
   // Frisch mit bun gerechnet (Backup-Fixture 225, Faktor 0,9733, Einfuhr 5,95, S 1,19): Blue 27,45 → +2,08 (ohne Faktor +1,72); black 28,95 → +16 %.
   const up = (prices: Record<string, number>, held?: Set<string>, over?: Parameters<typeof p225>[0]) => planVariantReprice(p225(over), prices, GROUPS, held, 'up').rows;
   test('anheben ok: Blue 26,95 → 27,45 (+2,08)', () => {
-    expect(up({ [BLUE]: 27.45 })[0]).toMatchObject({ status: 'ok', alt: 26.95, neu: 27.45, gewinnNeu: 2.08, gewinnOhneFaktor: 1.72 });
+    expect(up({ [BLUE]: 27.45 })[0]).toMatchObject({ status: 'ok', alt: 26.95, neu: 27.45, gewinnNeu: 1.9, gewinnOhneFaktor: 1.54 });
   });
   test('nur anheben: Senken und gleicher Preis abgelehnt', () => {
     const r = up({ [BLUE]: 25.45, [BLACK]: 24.95 });
@@ -121,19 +125,19 @@ describe('OFFEN 034 "Auswahl anheben" (direction up)', () => {
   // OFFEN 035 (Kalkulator 13:50): Anheben, das den Gewinn verbessert, ist auch unter max(1,00; Ziel) ok — mit Hinweis. Senken bleibt streng.
   test('OFFEN 035: Ziel 3,50 → Blue 26,95 → 27,45 (+1,69 → +2,08) ok mit Hinweis „noch unter Mindestgewinn“', () => {
     const r = up({ [BLUE]: 27.45 }, undefined, { targetMarginEur: 3.5 })[0];
-    expect(r).toMatchObject({ status: 'ok', mindestGewinn: 3.5, gewinnAlt: 1.69, gewinnNeu: 2.08 });
+    expect(r).toMatchObject({ status: 'ok', mindestGewinn: 3.5, gewinnAlt: 1.51, gewinnNeu: 1.9 });
     expect(r.hinweis).toContain('noch unter Mindestgewinn');
   });
   test('OFFEN 035: VK unter 1,00 (Blue 22,95 = −1,46, black 21,45 = −1,08) → Blue 23,45 (−1,07) und black 21,95 (−0,69) ok + Hinweis', () => {
     const vsp = JSON.stringify({ [BLUE]: 22.95, [BLACK]: 21.45 });
     const r = up({ [BLUE]: 23.45, [BLACK]: 21.95 }, undefined, { variantSellPrices: vsp });
-    expect(r.map(x => [x.gewinnAlt, x.gewinnNeu, x.status])).toEqual([[-1.46, -1.07, 'ok'], [-1.08, -0.69, 'ok']]);
+    expect(r.map(x => [x.gewinnAlt, x.gewinnNeu, x.status])).toEqual([[-1.64, -1.25, 'ok'], [-1.26, -0.87, 'ok']]);
     expect(r.every(x => x.hinweis?.includes('noch unter Mindestgewinn'))).toBe(true);
   });
   test('OFFEN 035: Gewinn steigt nicht (gleicher Preis) → abgelehnt; Senken unter Mindestgewinn bleibt abgelehnt (Blue 22,95 → 22,45 = −2,22, ohne Faktor seit #281)', () => {
     const vsp = JSON.stringify({ [BLUE]: 22.95, [BLACK]: 21.45 });
     expect(up({ [BLUE]: 22.95 }, undefined, { variantSellPrices: vsp })[0].status).toBe('abgelehnt');
-    expect(planVariantReprice(p225({ variantSellPrices: vsp }), { [BLUE]: 22.45 }, GROUPS, new Set(), 'down').rows[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -2.22 });
+    expect(planVariantReprice(p225({ variantSellPrices: vsp }), { [BLUE]: 22.45 }, GROUPS, new Set(), 'down').rows[0]).toMatchObject({ status: 'abgelehnt', gewinnNeu: -2.39 });
   });
   test('"Preis halten" → gehalten', () => {
     expect(up({ [BLUE]: 27.45 }, new Set([BLUE]))[0].status).toBe('gehalten');

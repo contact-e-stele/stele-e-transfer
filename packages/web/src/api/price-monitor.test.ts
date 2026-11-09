@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // P-27/P-28-Fix (2026-09-08, Live-Fund stele-138): "Preise neu berechnen" schrieb bei
 // Varianten-Listings denselben Einheitspreis (Maximum) auf JEDE eBay-Varianten-SKU, obwohl
 // computeVariantPriceRows() für jede Variante bereits ihren eigenen korrekten Preis berechnet.
@@ -145,11 +147,11 @@ describe('computeVariantPriceRows (Varianten-fähige Preisprüfung)', () => {
     // K-006 (Endungen ,45/,95): an diesen vier Stellen liegt keine ,45 zwischen ,95-Marke und Rohpreis — außer China Ziel 3,00 (s. u.).
     expect(rowsDefault[0].correctSellPrice).toBe(7.95);
     expect(rowsMargin2[0].correctSellPrice).toBe(7.95);
-    expect(rowsMargin3[0].correctSellPrice).toBe(8.95); // Stufe D
+    expect(rowsMargin3[0].correctSellPrice).toBe(9.45); // Stufe D
     // Herkunft leer → wie China (K = 3,80 + 1,99 + 3,57 = 9,36), Formel je Standort (08.11.2026) S 1,19 → f = 0,71678:
     // Ziel 2,00 Roh 16,3467 → 15,95 (Gewinn 1,7156; vorher S 1: 14,95); Ziel 3,00 Roh 17,7418 → 17,45 (Gewinn 2,7908; vorher 16,45).
-    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5)[0].correctSellPrice).toBe(15.95);
-    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00)[0].correctSellPrice).toBe(17.45);
+    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5)[0].correctSellPrice).toBe(16.45);
+    expect(computeVariantPriceRows(variantPricesJson, 0, null, 5, 3.00)[0].correctSellPrice).toBe(17.95);
     expect(rowsMargin3[0].correctSellPrice).toBeGreaterThan(rowsDefault[0].correctSellPrice);
   });
 

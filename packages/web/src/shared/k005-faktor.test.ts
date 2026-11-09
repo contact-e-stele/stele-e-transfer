@@ -1,3 +1,5 @@
+// AUFSICHT 045 Teil A (09.11.2026, gestaffelte eBay-Fixgebühr 0,35/0,45 statt 0,30): Erwartungswerte in dieser Datei mit bun neu gerechnet.
+// Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-005c: Kassen-Faktor (Kasse ÷ App-Preis) — Gültigkeit, Anwendung, Ableitung, Einbau in die EINE Formel und in den Bestellungs-Gewinn.
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3), nicht geschätzt.
 import { describe, expect, test } from 'bun:test';
@@ -90,15 +92,16 @@ describe('Prüfwerte des Inhabers (stele-220, Faktor 0,9508 = 11,59 ÷ 12,19)', 
 
 describe('Formel: checkoutFactor in computeMinSellPrice/profitAtSellPrice = Ware × Faktor', () => {
   const base = (buyPrice: number, isChinaOrigin: boolean, adRatePercent: number, targetMarginEur: number): PricingInput => ({
-    buyPrice, isChinaOrigin, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent, targetMarginEur,
+    buyPrice, isChinaOrigin, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent, targetMarginEur,
     safetyBufferEur: 0, rounding: 'floor95',
   });
   // [App-Ware, China, Anzeige %, Ziel, Faktor, Ware×Faktor, VK ohne Faktor, VK mit Faktor, Gewinn bei 19,95 ohne/mit] — alles bun.
   // Formel je Standort (08.11.2026): China-Zeilen mit S 1,19 neu gerechnet; EU-Zeile unverändert.
   const cases: Array<[number, boolean, number, number, number, number, number, number, number, number]> = [
-    [12.19, true, 5, 1.00, 0.9508, 11.59, 23.95, 23.45, -1.817239, -1.217239],
-    [13.79, false, 5, 2.00, 0.913, 12.59, 20.95, 19.45, 1.0549, 2.2549],
-    [9.50, true, 0, 1.50, 0.8, 7.60, 21.45, 18.95, 0.295321, 2.195321],
+    // AUFSICHT 045 Teil A (09.11.2026): Fixgebühr gestaffelt (alle VK hier > 10 € → 0,45) — VK/Gewinne mit bun neu gerechnet.
+    [12.19, true, 5, 1.00, 0.9508, 11.59, 24.45, 23.45, -1.995739, -1.395739],
+    [13.79, false, 5, 2.00, 0.913, 12.59, 20.95, 19.45, 0.8764, 2.0764],
+    [9.50, true, 0, 1.50, 0.8, 7.60, 21.45, 18.95, 0.116821, 2.016821],
   ];
   for (const [ware, china, ad, target, f, wareF, vkOhne, vkMit, gOhne, gMit] of cases) {
     test(`Ware ${ware} × ${f}: VK ${vkOhne} → ${vkMit}`, () => {
@@ -107,7 +110,7 @@ describe('Formel: checkoutFactor in computeMinSellPrice/profitAtSellPrice = Ware
       expect(mit).toEqual(gleich);
       expect(computeMinSellPrice(base(ware, china, ad, target)).minSellPrice).toBe(vkOhne);
       expect(mit.minSellPrice).toBe(vkMit);
-      const pIn = { sellPrice: 19.95, isChinaOrigin: china, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: ad };
+      const pIn = { sellPrice: 19.95, isChinaOrigin: china, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: ad };
       const pMit = profitAtSellPrice({ ...pIn, buyPrice: ware, checkoutFactor: f });
       expect(pMit).toBe(profitAtSellPrice({ ...pIn, buyPrice: wareF }));
       expect(profitAtSellPrice({ ...pIn, buyPrice: ware })).toBeCloseTo(gOhne, 6);
@@ -117,12 +120,13 @@ describe('Formel: checkoutFactor in computeMinSellPrice/profitAtSellPrice = Ware
   test('ohne Faktor (null/weggelassen) identisch', () => {
     expect(computeMinSellPrice({ ...base(12.19, true, 5, 1), checkoutFactor: null })).toEqual(computeMinSellPrice(base(12.19, true, 5, 1)));
   });
-  test('evaluatePriceAlarm reicht den Faktor durch (19,95 €, Ziel 1,00: −1,82 → Alarm; mit 0,9508: bun −1,217239 → Alarm; mit 0,6: Ware 7,31 → Gewinn bun 1,072761 → kein Alarm)', () => {
-    const a = { currentSellPrice: 19.95, variants: [{ buyPrice: 12.19 }], isChinaOrigin: true, ebayFeeRatePercent: 15, ebayFixedFeeEur: 0.30, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 1.00 };
+  // AUFSICHT 045 A: mit Fix 0,45 läge Faktor 0,6 bei 0,894261 (< 1,00, Alarm) → EINGABE Faktor 0,6 → 0,55 (Szenario „kein Alarm“ erhalten).
+  test('evaluatePriceAlarm reicht den Faktor durch (19,95 €, Ziel 1,00: −2,00 → Alarm; mit 0,9508: bun −1,395739 → Alarm; mit 0,55: Ware 6,70 → Gewinn bun 1,504261 → kein Alarm)', () => {
+    const a = { currentSellPrice: 19.95, variants: [{ buyPrice: 12.19 }], isChinaOrigin: true, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 1.00 };
     expect(evaluatePriceAlarm(a).isAlarm).toBe(true);
-    expect(evaluatePriceAlarm({ ...a, checkoutFactor: 0.9508 }).worstProfit).toBeCloseTo(-1.217239, 6);
-    const r = evaluatePriceAlarm({ ...a, checkoutFactor: 0.6 });
-    expect(r.worstProfit).toBeCloseTo(1.072761, 6);
+    expect(evaluatePriceAlarm({ ...a, checkoutFactor: 0.9508 }).worstProfit).toBeCloseTo(-1.395739, 6);
+    const r = evaluatePriceAlarm({ ...a, checkoutFactor: 0.55 });
+    expect(r.worstProfit).toBeCloseTo(1.504261, 6);
     expect(r.isAlarm).toBe(false);
   });
 });
@@ -142,16 +146,16 @@ describe('order-matching: automatischer Zweig nutzt den Faktor', () => {
   test('ohne Faktor: Einkauf 15,76, Gewinn 2,89', () => {
     const r = run(product(null, null));
     expect(r.nettoEinkauf).toBeCloseTo(15.76, 9);
-    expect(r.nettoErgebnis).toBe(2.89);
+    expect(r.nettoErgebnis).toBe(2.72);
   });
   test('mit Faktor 0,9508 von heute: Einkauf 15,16, Gewinn 3,49', () => {
     const r = run(product(0.9508, new Date().toISOString()));
     expect(r.nettoEinkauf).toBeCloseTo(15.16, 9);
-    expect(r.nettoErgebnis).toBe(3.49);
+    expect(r.nettoErgebnis).toBe(3.32);
     expect(r.nettoQuelle).toBe('automatisch');
   });
   test('Faktor älter als 14 Tage → wie ohne Faktor', () => {
-    expect(run(product(0.9508, new Date(Date.now() - 15 * DAY).toISOString())).nettoErgebnis).toBe(2.89);
+    expect(run(product(0.9508, new Date(Date.now() - 15 * DAY).toISOString())).nettoErgebnis).toBe(2.72);
   });
 });
 
@@ -233,25 +237,25 @@ describe('K-005 Grenze 0,85 + Warnhinweis ohne Faktor', () => {
     expect(r.übersprungen.some(s => s.reason.includes('0.8203'))).toBe(true);
   });
   const base = { variants: [{ buyPrice: 12.19 }], isChinaOrigin: true, ebayFeeRatePercent: DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
-    ebayFixedFeeEur: DEFAULT_PRICING_CONFIG.ebayFixedFeeEur, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5, targetMarginEur: 1 };
+    vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: 5, targetMarginEur: 1 };
   // Formel je Standort (08.11.2026): EINGABE GEÄNDERT VK 20,95 → 21,95 und 21,45 → 22,95 — bei 20,95 wäre auch der Gewinn MIT Faktor negativ
   // (−0,3805), das Szenario „mit Faktor positiv, ohne negativ“ läge nicht mehr vor.
   test('stele-220 VK 21,95, Faktor 0,9409: mit Faktor +0,3363, ohne −0,3837 → Warnhinweis', () => {
     const a = evaluatePriceAlarm({ ...base, currentSellPrice: 21.95, checkoutFactor: 0.9409 });
-    expect(a.worstProfit).toBeCloseTo(0.3363, 4);
-    expect(a.worstProfitWithoutFactor).toBeCloseTo(-0.3837, 4);
+    expect(a.worstProfit).toBeCloseTo(0.1578, 4);
+    expect(a.worstProfitWithoutFactor).toBeCloseTo(-0.5622, 4);
     expect(a.lossWithoutFactor).toBe(true);
   });
   test('VK 22,95: ohne Faktor +0,3331 → kein Warnhinweis; ohne Faktor gerechnet → nie Warnhinweis', () => {
     expect(evaluatePriceAlarm({ ...base, currentSellPrice: 22.95, checkoutFactor: 0.9409 }).lossWithoutFactor).toBe(false);
     const n = evaluatePriceAlarm({ ...base, currentSellPrice: 21.95, checkoutFactor: null });
     expect(n.lossWithoutFactor).toBe(false);
-    expect(n.worstProfitWithoutFactor).toBeCloseTo(-0.3837, 4);
+    expect(n.worstProfitWithoutFactor).toBeCloseTo(-0.5622, 4);
   });
   test('Listings/Produkte-Anzeige: profitWithoutFactor je Zeile', () => {
     const { rows } = productProfitRows({ id: 220, variants: null, adRate: 5, shipsFrom: 'China', sellPrice: 21.95, buyPrice: 12.19,
       variantPrices: null, aliCheckoutFactor: 0.9409, aliCheckoutFactorAt: today });
-    expect(rows[0].profit).toBeCloseTo(0.3363, 4);
-    expect(rows[0].profitWithoutFactor).toBeCloseTo(-0.3837, 4);
+    expect(rows[0].profit).toBeCloseTo(0.1578, 4);
+    expect(rows[0].profitWithoutFactor).toBeCloseTo(-0.5622, 4);
   });
 });

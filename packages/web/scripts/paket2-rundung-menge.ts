@@ -37,7 +37,7 @@ for (const p of products) {
   const isChina = isChinaShipping(p.shipsFrom);
   const base = {
     supplierShipping: p.shippingCost ?? 0, isChinaOrigin: isChina, customsFlat: C.chinaCustomsFlatEur,
-    ebayFeeRatePercent: C.ebayFeeRatePercent, ebayFixedFeeEur: C.ebayFixedFeeEur, vatFactor: C.vatFactor,
+    ebayFeeRatePercent: C.ebayFeeRatePercent, vatFactor: C.vatFactor,
     adRatePercent: p.adRate ?? C.defaultAdRatePercent, targetMarginEur: margin, safetyBufferEur: 0,
   };
   lines.push(`## Produkt ${p.id} (Zielgewinn ${f2(margin)} €)`, '');
