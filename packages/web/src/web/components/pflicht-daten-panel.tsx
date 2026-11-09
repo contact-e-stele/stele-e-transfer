@@ -29,7 +29,7 @@ export interface PflichtDatenFields {
 
 const VIOLET = "#96566B";
 const inp = { padding: "3px 6px", fontSize: 11, border: "1px solid #CBD5E1", borderRadius: 6, fontFamily: "inherit" } as const;
-const KIND_LABEL: Record<MeasureKind, string> = { D: "Ø", L: "L", BTH: "B × T × H", BH: "B × H", STRETCH: "↔ von–bis", MIXED: "gemischt" };
+const KIND_LABEL: Record<MeasureKind, string> = { D: "Ø", L: "L", BTH: "B × T × H", BH: "B × H", STRETCH: "↔ von–bis", MIXED: "gemischt", M: "cm (ohne Richtung)", SPANNE: "von–bis" };
 
 interface EntryForm { value: string; source: "" | PflichtSource; location: string; wording: string }
 interface MeasureForm { kind: MeasureKind; values: string; source: "" | PflichtSource; location: string; wording: string }

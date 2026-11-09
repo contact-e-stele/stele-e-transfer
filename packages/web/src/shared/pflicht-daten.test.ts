@@ -257,13 +257,23 @@ describe('Nachtrag 07:45 – P1 Produktart aus fester Liste EN→DE', () => {
     expect(r.hinweise).toContain('Produktart „Kitchen Sieve“ nicht in der Übersetzungsliste — nicht übernommen');
     expect(r.ampel.text).toBe('Pflicht-Daten fehlen: Produktart, Material, Maße, Lieferumfang');
   });
-  test('Abgleich mit dem Titel: Produktart wörtlich im Titel → kein Befund; sonst GELB + Hinweis (kein Raten bei Komposita)', () => {
+  // Geändert durch DESIGN an 7 App 09.11. 12:41 Punkt 1: "Sieb bleibt Sieb" (Kernwort) und "passt nicht zum Titel → nicht übernehmen".
+  // Vorher (07:45): "Nudelsieb" → GELB "steht nicht wörtlich im Titel", Produktart trotzdem "Küchensieb".
+  test('Abgleich mit dem Titel: Listenwort/Kernwort im Titel → übernommen; sonst NICHT übernommen + GELB', () => {
     const base = { specs: { Type: 'Strainer', Material: 'Plastic', 'Product Size': 'Diameter 20cm', Quantity: '1' } };
     expect(resolvePflichtDaten({ ...base, title: 'Küchensieb Kunststoff faltbar' }).ampel).toEqual({ status: 'GRUEN', missing: [], text: null });
-    const off = resolvePflichtDaten({ ...base, title: 'Nudelsieb Kunststoff faltbar' });
-    expect(off.ampel.status).toBe('GELB');
-    expect(off.ampel.text).toBe('Produktart „Küchensieb“ steht nicht wörtlich im Titel — ein Wort durchgehend verwenden');
-    expect(off.produktart?.value).toBe('Küchensieb');
+    const nudel = resolvePflichtDaten({ ...base, title: 'Nudelsieb Kunststoff faltbar' });
+    expect(nudel.ampel).toEqual({ status: 'GRUEN', missing: [], text: null });
+    expect([nudel.produktart?.value, nudel.produktart?.titelwort]).toEqual(['Küchensieb', 'Nudelsieb']);
+    const off = resolvePflichtDaten({ ...base, title: 'Küchenhelfer Kunststoff faltbar' });
+    expect(off.produktart).toBeNull();
+    expect(off.ampel.text).toBe('Pflicht-Daten fehlen: Produktart');
+    expect(off.hinweise).toContain('Produktart „Küchensieb“ (Liste, aus „Strainer“) passt nicht zum Titel — nicht übernommen');
+  });
+  test('Handeingabe (gespeichert), die nicht zum Titel passt → bleibt, aber GELB + Hinweis (wie bisher)', () => {
+    const r = resolvePflichtDaten({ title: 'Küchenhelfer faltbar', pflichtDaten: { produktart: { value: 'Küchensieb', source: 'c', location: 'Galeriebild 1', wording: 'strainer' } } });
+    expect(r.produktart?.value).toBe('Küchensieb');
+    expect(r.ampel.missing).toContain('Produktart „Küchensieb“ steht nicht wörtlich im Titel — ein Wort durchgehend verwenden');
   });
   test('P6/P7 leer machen nie GELB', () => {
     const r = resolvePflichtDaten({ specs: { Type: 'Strainer', Material: 'Plastic', 'Product Size': 'Diameter 20cm', Quantity: '1' } });

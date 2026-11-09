@@ -17,7 +17,7 @@ export function parseMeasure(skuId: string, m: unknown, at = `variantDetails["${
   if (!Array.isArray(m.values) || !m.values.every(v => typeof v === 'number' && Number.isFinite(v) && v > 0)) return { ok: false, error: `${at}.values muss eine Liste von Zahlen größer 0 sein (cm)` };
   const [min, max] = MEASURE_VALUE_COUNT[kind];
   if (m.values.length < min || m.values.length > max) return { ok: false, error: `${at}.values: Art ${kind} braucht ${min === max ? min : `${min}–${max}`} Wert(e), erhalten ${m.values.length}` };
-  if (kind === 'STRETCH' && (m.values as number[])[0] > (m.values as number[])[1]) return { ok: false, error: `${at}.values: bei STRETCH muss der erste Wert kleiner oder gleich dem zweiten sein` };
+  if ((kind === 'STRETCH' || kind === 'SPANNE') && (m.values as number[])[0] > (m.values as number[])[1]) return { ok: false, error: `${at}.values: bei ${kind} muss der erste Wert kleiner oder gleich dem zweiten sein` };
   if (!MEASURE_SOURCES.includes(m.source as MeasureSource)) return { ok: false, error: `${at}.source muss a, b, c oder d sein` };
   if (typeof m.location !== 'string' || !m.location.trim()) return { ok: false, error: `${at}.location (Fundstelle) ist Pflicht` };
   if (m.location.trim().length > PRODUCT_DATA_MAX.location) return { ok: false, error: `${at}.location ist zu lang (max. ${PRODUCT_DATA_MAX.location} Zeichen)` };
