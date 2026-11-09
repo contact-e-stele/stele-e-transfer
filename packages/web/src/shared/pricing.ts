@@ -670,9 +670,11 @@ export function ebayPercentFeeRateGross(input: EbayFeeRateInput): number {
 // VERKAUFSZEITPUNKT. Vor #267 (gemergt 05.11.2026 07:13: neue Angebote bekommen den Lagerort ihrer Herkunft) und #285 (07.11.:
 // Bestand umstellen) standen ALLE Angebote in Wiesbaden → S = 1, auch bei China-Ware (so belegen es die bisher geprüften
 // Bestellungen, z. B. stele-220 19-15281-36243: Gebühr 4,10 = 20,95 × 0,1785 + 0,357). Ab 05.11. kann ein China-Angebot den
-// China-Standort haben → S nach Herkunft. Je Angebot gespeichert ist der Standort-Wechsel NICHT — deshalb der früheste mögliche
-// Tag (Gewinn nie zu hoch). Ohne/ungültiges Bestelldatum → S nach Herkunft (sichere Seite).
-export const STANDORT_FORMEL_AB = '2026-11-05';
+// China-Standort haben → S nach Herkunft. Je Angebot gespeichert ist der Standort-Wechsel NICHT.
+// Kalkulator 09.11. 07:55: Stichtag 07.11.2026 (#285 "Bestand umstellen"). Beleg: Bestellung 01-15409-64180 (stele-225, 05.11.,
+// China-Ware, Angebot noch in Wiesbaden) – echte Gebühr 4,69 passt zu S = 1 (4,81), nicht zu S = 1,19 (5,66). Ab 08.11. ist der
+// sichtbare Preis × 1,19 belegt (70 = 29,69, 226 = 17,79). Ohne/ungültiges Bestelldatum → S nach Herkunft (sichere Seite).
+export const STANDORT_FORMEL_AB = '2026-11-07';
 export function orderFeeChinaLocation(isChinaOrigin: boolean, orderDate?: string | null): boolean {
   if (!isChinaOrigin) return false;
   const d = (orderDate ?? '').slice(0, 10);

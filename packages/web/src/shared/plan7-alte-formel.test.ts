@@ -88,9 +88,11 @@ describe('Plan 7 Punkt 9 — Bestellungen-Tab (computeOrderNettoErgebnis)', () =
 
 describe('Plan 7 Punkt 9 — Stichtag', () => {
   test(`Stichtag ${STANDORT_FORMEL_AB}: davor S = 1, ab dann nach Herkunft; ohne/ungültiges Datum nach Herkunft`, () => {
-    expect(STANDORT_FORMEL_AB).toBe('2026-11-05');
-    expect(orderFeeChinaLocation(true, '2026-11-04T23:59:59Z')).toBe(false);
-    expect(orderFeeChinaLocation(true, '2026-11-05T00:00:00Z')).toBe(true);
+    expect(STANDORT_FORMEL_AB).toBe('2026-11-07');
+    expect(orderFeeChinaLocation(true, '2026-11-06T23:59:59Z')).toBe(false);
+    expect(orderFeeChinaLocation(true, '2026-11-07T00:00:00Z')).toBe(true);
+    // Beleg Kalkulator: Bestellung 01-15409-64180 (stele-225 SCHWARZ, 05.11. 19:40, China-Ware, Angebot in Wiesbaden) → S = 1
+    expect(orderFeeChinaLocation(true, '2026-11-05T18:40:00Z')).toBe(false);
     expect(orderFeeChinaLocation(true, '')).toBe(true);
     expect(orderFeeChinaLocation(true, undefined)).toBe(true);
     expect(orderFeeChinaLocation(true, 'kaputt')).toBe(true);

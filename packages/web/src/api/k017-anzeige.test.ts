@@ -45,7 +45,7 @@ describe('K-017 Punkt 4: Anzeigengebühr nach eBay-Kennzeichen', () => {
   });
   test('gemischt, China, ohne Datum → × S 1,19 = 0,70805', () => {
     expect(mixed()?.adFee).toBeCloseTo(0.70805, 9);
-    expect(mixed('2026-11-05')?.adFee).toBeCloseTo(0.70805, 9);
+    expect(mixed('2026-11-07')?.adFee).toBeCloseTo(0.70805, 9);
   });
   test('Mapping: eBay properties.soldViaAdCampaign wird durchgereicht, fehlt → false', async () => {
     const src = await Bun.file(new URL('./ebay.ts', import.meta.url)).text();
