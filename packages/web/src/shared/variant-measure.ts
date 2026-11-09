@@ -8,9 +8,11 @@
 //   BH (B × H, flach) → "45 × 50 cm"   (Design-Antwort 09.11. 07:45; nur wenn Breite/Höhe belegt zugeordnet sind)
 //   STRETCH (dehnbar) → "↔ 10 – 37 cm"
 //   MIXED (gemischt)  → "Ø 10 / 15 / 20 cm"
+//   M (Maß ohne Richtung)  → "120 cm"      (DESIGN an 7 App 09.11. 12:41: Wert der Variantenauswahl "120CM" — KEIN Ø, solange die
+//   SPANNE (von–bis)       → "40–42 cm"     Quelle nicht diameter/Durchmesser sagt; Spanne ohne ↔, solange kein stretch/dehnbar dasteht)
 // Zoll → cm: 1 Zoll = 2,54 cm, Ergebnis auf 1 Nachkommastelle (inchesToCm), die Variante bekommt converted = true.
 
-export const MEASURE_KINDS = ['D', 'L', 'BTH', 'BH', 'STRETCH', 'MIXED'] as const;
+export const MEASURE_KINDS = ['D', 'L', 'BTH', 'BH', 'STRETCH', 'MIXED', 'M', 'SPANNE'] as const;
 export type MeasureKind = typeof MEASURE_KINDS[number];
 export const MEASURE_SOURCES = ['a', 'b', 'c', 'd'] as const;
 export type MeasureSource = typeof MEASURE_SOURCES[number];
@@ -32,7 +34,7 @@ export type VariantDetails = Record<string, VariantDetail>;
 
 /** Anzahl Werte je Maß-Art: [min, max]. */
 export const MEASURE_VALUE_COUNT: Record<MeasureKind, [number, number]> = {
-  D: [1, 1], L: [1, 1], BTH: [3, 3], BH: [2, 2], STRETCH: [2, 2], MIXED: [2, 12],
+  D: [1, 1], L: [1, 1], BTH: [3, 3], BH: [2, 2], STRETCH: [2, 2], MIXED: [2, 12], M: [1, 1], SPANNE: [2, 2],
 };
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
@@ -60,6 +62,8 @@ export function formatMeasure(measure: Pick<VariantMeasure, 'kind' | 'values'> |
     case 'BH': return v.length === 2 ? `${num(v[0])} × ${num(v[1])} cm` : null;
     case 'STRETCH': return v.length === 2 ? `↔ ${num(v[0])} – ${num(v[1])} cm` : null;
     case 'MIXED': return v.length >= 2 ? `Ø ${v.map(num).join(' / ')} cm` : null;
+    case 'M': return v.length === 1 ? `${num(v[0])} cm` : null;
+    case 'SPANNE': return v.length === 2 ? `${num(v[0])}–${num(v[1])} cm` : null;
     default: return null;
   }
 }

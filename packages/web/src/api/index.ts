@@ -2675,6 +2675,7 @@ const app = new Hono()
         // Design-Sprint S2: Pflicht-Daten beim Import NUR aus Quelle a (Variantenauswahl) / b (Spezifikationen); fehlt etwas → leer (GELB).
         // Nur beim Neuanlegen — ein erneuter Import eines bestehenden Produkts (Zweig oben) schreibt keine Pflicht-Daten.
         pflichtDaten: pflichtDatenForImport({
+          title: germanTitle, // Titel-Abgleich (= generatedTitle, wie Vorschau/Listen) der Produktart-Liste (DESIGN 09.11. 12:41)
           specs: body.specs ?? null,
           variants: Array.isArray(body.variants) ? body.variants as unknown as VariantGroup[] : null,
           variantPrices: Array.isArray(body.variantPrices) ? body.variantPrices as unknown as Array<{ skuId?: string; attrs?: Record<string, string> }> : null,

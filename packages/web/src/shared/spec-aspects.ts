@@ -48,6 +48,8 @@ const MATERIAL_DE: Record<string, string> = {
   leather: 'Leder', 'non-woven fabric': 'Vliesstoff', 'non-woven fabrics': 'Vliesstoff', fiber: 'Faser', 'cubic zirconia': 'Zirkonia',
   silicone: 'Silikon', wood: 'Holz', glass: 'Glas', rubber: 'Gummi', bamboo: 'Bambus', ceramic: 'Keramik',
 };
+/** Schlüssel der Material-Tabelle (für den Quelle-c-VORSCHLAG in pflicht-daten.ts, Lücke 3 — dieselbe Tabelle, Grundgesetz 8). */
+export const MATERIAL_TEXT_KEYS: readonly string[] = Object.keys(MATERIAL_DE);
 const PATTERN_DE: Record<string, string> = { solid: 'Einfarbig', floral: 'Blumen', cartoon: 'Cartoon', print: 'Bedruckt', geometric: 'Geometrisch' };
 const SHAPE_DE: Record<string, string> = { square: 'Quadratisch', round: 'Rund', rectangle: 'Rechteckig', rectangular: 'Rechteckig', heart: 'Herz' };
 

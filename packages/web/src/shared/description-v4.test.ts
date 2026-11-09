@@ -6,8 +6,9 @@ import { buildProductDescriptionForEbay, resolveListingDescription } from '../ap
 import { findDescriptionComplianceViolations } from './description-compliance';
 import { neutralizeGpsrTab, GPSR_DESCRIPTION_NOTICE } from './gpsr-description';
 import { DESCRIPTION_V3_MARKER } from './description-v3';
-import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, V4_KEYS, v4Rows, introSentence, trustChips, titleBarText, SHIPPING_CHIP_TEXT, PAYMENT_PROMISE_CHIP_TEXT } from './description-v4';
+import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, V4_KEYS, v4Rows, introSentence, pflichtOf, trustChips, titleBarText, SHIPPING_CHIP_TEXT, PAYMENT_PROMISE_CHIP_TEXT } from './description-v4';
 import { NEUTRAL_RETURN_TEXT } from './shipping-return-text';
+import { pflichtAspects } from './pflicht-daten';
 import { deliveryFooterText, returnFooterText, PAYMENT_TEXT, PAYMENT_CHIP_TEXT, USTG19_FOOTER_TEXT, FOOTER_BLOCK_START, FOOTER_BLOCK_END } from './shipping-return-text';
 
 const P225 = {
@@ -108,7 +109,9 @@ describe('4: Einleitung nur mit Produktart', () => {
   });
   test('mit P1: "<Produktart> aus <Material>, <Menge>, <Maß>."', () => {
     const pd = { produktart: { value: 'Frischhaltehaube', source: 'b' as const, location: 'Spezifikation "Type" – b, übersetzt (Liste)', wording: 'food cover' } };
-    expect(introSentence({ ...P119, material: 'PE', variantDetails: DETAILS_119, pflichtDaten: pd }, 'Gemini.')).toBe('Frischhaltehaube aus PE, 100 / 200 Stück, ↔ 14 – 29 cm.');
+    expect(introSentence({ ...P119, material: 'PE', variantDetails: DETAILS_119, pflichtDaten: pd }, 'Gemini.')).toBe('Frischhaltehauben aus PE, 100 / 200 Stück, ↔ 14 – 29 cm.');
+    // DESIGN 09.11. 12:41: Produktwort der Einleitung = Wort aus dem Titel ("Einweg Frischhaltehauben, …"), Merkmal bleibt "Frischhaltehaube".
+    expect(pflichtAspects(pflichtOf({ ...P119, pflichtDaten: pd }))['Produktart']).toBe('Frischhaltehaube');
   });
 });
 

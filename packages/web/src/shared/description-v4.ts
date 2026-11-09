@@ -6,7 +6,7 @@
 //   WEEE              : weeeLineForListing (shared/electric.ts), nur bei bestätigtem Elektro
 // Grundgesetz 4: fehlt ein Wert, fällt die Zeile/Angabe weg — kein Platzhalter, kein Füllsatz.
 import { measureText, type DescriptionV3Input } from './description-v3';
-import { resolvePflichtDaten, type PflichtInput, type ResolvedPflichtDaten } from './pflicht-daten';
+import { isVariantPlainMeasure, resolvePflichtDaten, type PflichtInput, type ResolvedPflichtDaten } from './pflicht-daten';
 import { NEUTRAL_RETURN_TEXT, type ReturnTerms } from './shipping-return-text';
 
 /** Merkmal der v4-Vorlage — beim Listen wird eine gespeicherte Vorlage nur übernommen, wenn sie das AKTIVE Merkmal trägt. */
@@ -64,12 +64,16 @@ export interface V4Content { intro: string | null; rows: V4Row[] }
 function introParts(r: ResolvedPflichtDaten): { intro: string | null; used: V4Key[] } {
   if (!r.produktart) return { intro: null, used: [] };
   const t = (f: { value: string } | null): string => (f ? esc(clean(f.value)) : '');
-  const uniform = measureText(Object.fromEntries(Object.entries(r.masse).map(([k, m]) => [k, { measure: m }]))).uniform;
+  // Maß aus der Variantenauswahl ohne Richtung (M/SPANNE) bleibt als Zeile MASSE mit "(laut Variante)" — nicht in die Einleitung (DESIGN 12:41).
+  const uniform = Object.values(r.masse).some(isVariantPlainMeasure) ? null
+    : measureText(Object.fromEntries(Object.entries(r.masse).map(([k, m]) => [k, { measure: m }]))).uniform;
   const mat = t(r.material);
   const menge = t(r.lieferumfang);
   const facts = [menge, uniform].filter((x): x is string => !!x);
   const used: V4Key[] = [...(mat ? ['MATERIAL' as const] : []), ...(menge ? ['LIEFERUMFANG' as const] : []), ...(uniform ? ['MASSE' as const] : [])];
-  return { intro: `${t(r.produktart)}${mat ? ` aus ${mat}` : ''}${facts.length ? `, ${facts.join(', ')}` : ''}.`, used };
+  // DESIGN 12:41: Produktwort der Einleitung = Wort aus dem Titel (70: Titelwort statt Listenwort "Küchensieb"); Merkmal bleibt das Listenwort.
+  const wort = r.produktart.titelwort ? esc(clean(r.produktart.titelwort)) : t(r.produktart);
+  return { intro: `${wort}${mat ? ` aus ${mat}` : ''}${facts.length ? `, ${facts.join(', ')}` : ''}.`, used };
 }
 
 /**

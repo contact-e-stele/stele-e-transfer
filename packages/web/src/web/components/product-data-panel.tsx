@@ -15,7 +15,7 @@ export interface ProductDataFields {
   variantPrices?: string | null; // JSON [{skuId, attrs, ...}] — Quelle der Varianten-SKUs
 }
 
-const KIND_LABEL: Record<MeasureKind, string> = { D: "Ø Durchmesser", L: "L Länge", BTH: "B × T × H", BH: "B × H (flach)", STRETCH: "↔ dehnbar von–bis", MIXED: "gemischt Ø a / b / c" };
+const KIND_LABEL: Record<MeasureKind, string> = { D: "Ø Durchmesser", L: "L Länge", BTH: "B × T × H", BH: "B × H (flach)", STRETCH: "↔ dehnbar von–bis", MIXED: "gemischt Ø a / b / c", M: "Maß ohne Richtung (cm)", SPANNE: "Spanne von–bis (cm)" };
 const VIOLET = "#96566B"; // nur in der App für fehlende Werte (Design-Vorgabe v2.3)
 const input = { padding: "3px 6px", fontSize: 11, border: "1px solid #CBD5E1", borderRadius: 6, fontFamily: "inherit" } as const;
 

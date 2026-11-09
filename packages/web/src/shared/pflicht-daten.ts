@@ -12,7 +12,7 @@
 // Lesereihenfolge je Feld: gespeichert (pflicht_daten) → bestehendes Altfeld (material/material_source, variant_details,
 // use_purpose/usage_note, manualAspects.Produktart) → Vorschlag live aus den AliExpress-Daten (a vor b) → leer.
 import { formatMeasure, inchesToCm, MEASURE_SOURCES, type MeasureSource, type VariantMeasure, type VariantDetails } from './variant-measure';
-import { translateMaterial, ASPECT_VALUE_MAX, type CategoryAspectDef } from './spec-aspects';
+import { translateMaterial, MATERIAL_TEXT_KEYS, ASPECT_VALUE_MAX, type CategoryAspectDef } from './spec-aspects';
 import { translateColorExact, translateVariantValue } from './variant-text-de';
 import { buildCombinations, NON_VARIATION_ASPECTS, type VariantGroup } from './variant-resolver';
 import { formatPieces, measureText } from './description-v3';
@@ -57,10 +57,14 @@ export interface PflichtInput {
   variantDetails?: VariantDetails | null;
   manualAspects?: Record<string, string> | null;
   pflichtDaten?: PflichtDatenStored | null;
+  /** Lücke 3: Text der Quelle c (Bild-/Beschreibungstext) mit Fundstelle — nur für einen Material-VORSCHLAG (nie übernommen). */
+  textC?: { text: string; location: string } | null;
 }
 
 export type Herkunft = 'gespeichert' | 'altfeld' | 'vorschlag';
-export interface ResolvedField { value: string; source: PflichtSource | null; location: string | null; wording: string | null; herkunft: Herkunft; hinweis?: string }
+export interface ResolvedField { value: string; source: PflichtSource | null; location: string | null; wording: string | null; herkunft: Herkunft; hinweis?: string;
+  /** Nur Produktart: das Produktwort aus dem Titel für die Einleitung (DESIGN 09.11. 12:41: Einleitung = Titelwort, Merkmal = Listenwort). */
+  titelwort?: string }
 export interface Unit { key: string; label: string; labelDe: string; attrs: Record<string, string> }
 export interface PflichtAmpel { status: 'GRUEN' | 'GELB'; missing: string[]; text: string | null }
 export interface ResolvedPflichtDaten {
@@ -72,6 +76,8 @@ export interface ResolvedPflichtDaten {
   besonderheit: ResolvedField | null;
   masse: Record<string, VariantMeasure & { herkunft: Herkunft }>;
   masseText: string | null;
+  /** Lücke 3 (DESIGN 12:41): Material-Vorschlag aus Quelle c — NUR Hinweis, nie gespeichert/übernommen; Ampel GELB "bitte bestätigen". */
+  materialVorschlagC: { value: string; wording: string; location: string } | null;
   farben: Record<string, ResolvedField>;
   unbekannteFarben: string[];
   hinweise: string[];
@@ -157,6 +163,28 @@ export function twoDimUnclear(text: string): boolean {
 }
 const twoDimHint = (where: string, text: string) => `Maß „${text}“ (${where}): unklar, welcher Wert Breite/Höhe ist — nicht übernommen`;
 
+/**
+ * DESIGN an 7 App 09.11. 12:41 Punkt 2: ein Wert der Variantenauswahl, der NUR aus Zahl + Einheit besteht ("120CM") bzw. einer
+ * Spanne ("40-42CM"), ist ein Maß der Variante (Quelle a) — ohne Ø (Richtung nicht belegt) und ohne ↔ (dehnbar nicht belegt).
+ * Ganzer Wert muss passen (cm/mm); alles andere ("50PCS", "S", "Pack of 100") → null, nie schätzen.
+ */
+export function parseVariantPlainMeasure(value: string): Pick<VariantMeasure, 'kind' | 'values'> | null {
+  const t = clean(value).toLowerCase().replace(/(\d),(\d)/g, '$1.$2');
+  let m = t.match(new RegExp(`^${NUM}\\s*(cm|mm)$`));
+  if (m) { const v = toCm(Number(m[1]), m[2]).v; return v > 0 ? { kind: 'M', values: [v] } : null; }
+  m = t.match(new RegExp(`^${NUM}\\s*(?:cm|mm)?\\s*(?:-|–)\\s*${NUM}\\s*(cm|mm)$`));
+  if (m) {
+    const a = toCm(Number(m[1]), m[3]).v, b = toCm(Number(m[2]), m[3]).v;
+    return a > 0 && a < b ? { kind: 'SPANNE', values: [a, b] } : null;
+  }
+  return null;
+}
+/** Maß aus der Variantenauswahl ohne benannte Richtung (Art M/SPANNE, Quelle a). */
+export const isVariantPlainMeasure = (m: Pick<VariantMeasure, 'kind' | 'source'> | null | undefined): boolean =>
+  !!m && (m.kind === 'M' || m.kind === 'SPANNE') && m.source === 'a';
+export const MASSE_LAUT_VARIANTE = '(laut Variante)';
+export const MASSE_JE_VARIANTE = 'je nach Variante, siehe Auswahl';
+
 const SIZE_GROUP = /^(size|sizes|größe|groesse|größen|dimensions?|maße|abmessungen|length|länge|diameter|durchmesser)$/i;
 const SPEC_MEASURE_KEYS: Array<[RegExp, 'D' | 'L' | undefined]> = [
   [/^(diameter|durchmesser)$/i, 'D'],
@@ -166,16 +194,42 @@ const SPEC_MEASURE_KEYS: Array<[RegExp, 'D' | 'L' | undefined]> = [
 
 // ─── P1 Produktart: feste Übersetzungsliste EN→DE (wie Farbe; Design-Antwort 09.11. 07:45) ─────────────────────────────
 /** Nur diese Einträge werden übersetzt (ganzer Wert, Groß/Klein egal). Unbekannter Typ → leer + GELB, nie frei übersetzen. */
+// DESIGN an 7 App 09.11. 12:41 Punkt 1: "colanders & strainers"/"colander"/"strainer" → Küchensieb · "luggage tag" → Gepäckanhänger ·
+// 120 (echte Spezifikation "Disposable Food Cove": "Food Cover Plastic") → Frischhaltehaube; "bowl cover" ist im Design-Text genannt.
 export const PRODUCT_TYPE_DE: Readonly<Record<string, string>> = {
-  strainer: 'Küchensieb', colander: 'Küchensieb',
-  'food cover': 'Frischhaltehaube',
+  strainer: 'Küchensieb', colander: 'Küchensieb', 'colanders & strainers': 'Küchensieb',
+  'food cover': 'Frischhaltehaube', 'food cover plastic': 'Frischhaltehaube', 'bowl cover': 'Frischhaltehaube',
   'luggage tag': 'Gepäckanhänger',
   'hot water bottle': 'Wärmflasche',
 };
-const SPEC_TYPE_KEYS = /^(type|product type|item type|produkttyp)$/i;
+/** "tag" allein → Gepäckanhänger NUR, wenn der Titel „Gepäck“ oder „Koffer“ enthält (Groß/Klein egal); sonst leer + GELB. */
+export const TAG_TITLE_RE = /gepäck|koffer/i;
+/**
+ * Titel-Abgleich (Regel für alle Listen-Einträge): die übersetzte Produktart muss zum Titel passen, sonst NICHT übernehmen.
+ * "Passt" = das Kernwort steht im Titel. Kernwort = Listenwort selbst, außer hier ausdrücklich gekürzt ("Sieb bleibt Sieb"):
+ * Küchensieb passt zu "Abtropfsieb"/"Reiswaschsieb", Gepäckanhänger zu "Adressanhänger" (nur zusammen mit der tag-Regel oben).
+ */
+export const PRODUCT_TYPE_TITLE_STEM: Readonly<Record<string, string>> = {
+  'Küchensieb': 'sieb',
+  'Gepäckanhänger': 'anhänger',
+};
+// Spezifikations-Schlüssel, in denen AliExpress den Typ liefert (echte Schlüssel der Live-Produkte 70/120/226, 09.11.).
+const SPEC_TYPE_KEYS = /^(type|product type|item type|produkttyp|product category|disposable food cove)$/i;
 export const PRODUCT_TYPE_SOURCE_NOTE = 'b, übersetzt (Liste)';
-export function translateProductType(value: string): string | null {
-  return PRODUCT_TYPE_DE[clean(value).toLowerCase()] ?? null;
+export function translateProductType(value: string, title?: string | null): string | null {
+  const v = clean(value).toLowerCase();
+  if (v === 'tag') return TAG_TITLE_RE.test(clean(title)) ? 'Gepäckanhänger' : null;
+  return PRODUCT_TYPE_DE[v] ?? null;
+}
+/** Produktwort im Titel zur Produktart (Kernwort-Treffer, ganzes Titelwort) — null, wenn die Produktart nicht zum Titel passt. */
+export function titleWordFor(produktart: string, title: string | null | undefined): string | null {
+  const t = clean(title);
+  const pa = clean(produktart);
+  if (!t || !pa) return null;
+  const stem = (PRODUCT_TYPE_TITLE_STEM[pa] ?? pa).toLowerCase();
+  if (!t.toLowerCase().includes(stem)) return null;
+  if (/\s/.test(stem)) return pa; // mehrere Wörter: Wortlaut der Produktart
+  return t.split(/[\s,;:/()|·]+/).find(w => w.toLowerCase().includes(stem)) ?? pa;
 }
 
 // ─── P4 Lieferumfang ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -186,7 +240,8 @@ const SPEC_PIECES_KEYS = /^(quantity|pcs|number of pieces|package quantity|piece
 const COLOR_GROUP = /^(colou?r|colou?rs|main colou?r|farbe|farben)$/i;
 const SPEC_COLOR_KEYS = /^(colou?r|main colou?r|farbe)$/i;
 const MATERIAL_GROUP = /^(material|materialien|main material|hauptmaterial)$/i;
-const SPEC_MATERIAL_KEYS = /^(material|materialien|main material|hauptmaterial)$/i;
+// "Metal Type" (stele-70: "Stainless Steel") — DESIGN 12:41 / Auftrag: allgemeines Wort aus b ("Edelstahl"), nie "Edelstahl 304".
+const SPEC_MATERIAL_KEYS = /^(material|materialien|main material|hauptmaterial|metal type)$/i;
 
 // ─── P2 Material-Beleg ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -215,7 +270,7 @@ export function checkMaterialEvidence(value: string, source: PflichtSource | nul
 export interface PflichtProposal { stored: PflichtDatenStored; unbekannteFarben: string[]; hinweise: string[] }
 
 /** Vorschläge NUR aus a (Variantenauswahl) und b (Spezifikationen). P6/P7 haben dort keine Quelle → leer (Handeingabe). */
-export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'variants' | 'variantPrices'>): PflichtProposal {
+export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'variants' | 'variantPrices' | 'title'>): PflichtProposal {
   const specs = Object.entries(input.specs ?? {}).map(([k, v]) => [clean(k), clean(v)] as [string, string]).filter(([k, v]) => k && v);
   const units = unitsOf(input);
   const hasVariants = units[0]?.key !== SINGLE_UNIT_KEY;
@@ -230,10 +285,24 @@ export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'vari
     out.produktart = { value: pa[1], source: 'b', location: `Spezifikation "${pa[0]}"`, wording: pa[1] };
   } else {
     // Englischer Typ nur über die feste Liste (Quelle "b, übersetzt (Liste)"); unbekannt → leer + Hinweis.
-    const ty = specs.find(([k]) => SPEC_TYPE_KEYS.test(k));
-    const de = ty ? translateProductType(ty[1]) : null;
-    if (ty && de) out.produktart = { value: de, source: 'b', location: `Spezifikation "${ty[0]}" – ${PRODUCT_TYPE_SOURCE_NOTE}`, wording: ty[1] };
-    else if (ty) hinweise.push(`Produktart „${ty[1]}“ nicht in der Übersetzungsliste — nicht übernommen`);
+    // Alle Typ-Schlüssel werden geprüft (120: "Disposable Food Cove" + "Product category"); zwei verschiedene Übersetzungen → nichts.
+    const tys = specs.filter(([k]) => SPEC_TYPE_KEYS.test(k));
+    const hits = tys.map(ty => ({ ty, de: translateProductType(ty[1], input.title) })).filter((x): x is { ty: [string, string]; de: string } => !!x.de);
+    const distinct = uniq(hits.map(h => h.de));
+    if (distinct.length > 1) {
+      hinweise.push(`Produktart widersprüchlich (${hits.map(h => `„${h.ty[1]}“ → ${h.de}`).join(', ')}) — nicht übernommen`);
+    } else if (hits.length > 0) {
+      const { ty, de } = hits[0];
+      // Ohne Titel (z. B. Aufruf ohne Titel) kein Abgleich möglich — wie bisher in resolvePflichtDaten: dann ohne Abgleich.
+      if (!clean(input.title) || titleWordFor(de, input.title)) out.produktart = { value: de, source: 'b', location: `Spezifikation "${ty[0]}" – ${PRODUCT_TYPE_SOURCE_NOTE}`, wording: ty[1] };
+      else hinweise.push(`Produktart „${de}“ (Liste, aus „${ty[1]}“) passt nicht zum Titel — nicht übernommen`);
+    } else {
+      for (const ty of tys) {
+        hinweise.push(clean(ty[1]).toLowerCase() === 'tag'
+          ? `Produktart „${ty[1]}“ nur mit „Gepäck“/„Koffer“ im Titel → Gepäckanhänger — nicht übernommen`
+          : `Produktart „${ty[1]}“ nicht in der Übersetzungsliste — nicht übernommen`);
+      }
+    }
   }
 
   // P2 Material: a (Varianten-Gruppe Material, für alle Varianten gleich) vor b (Spezifikation).
@@ -257,6 +326,8 @@ export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'vari
     for (const [g, v] of Object.entries(u.attrs)) {
       const m = parseMeasureText(v, /^(diameter|durchmesser)$/i.test(clean(g)) ? 'D' : /^(length|länge)$/i.test(clean(g)) ? 'L' : undefined);
       if (m) { masse[u.key] = { ...m, source: 'a', location: `Variantenauswahl "${clean(g)}"`, text: clean(v) }; break; }
+      const plain = parseVariantPlainMeasure(v);
+      if (plain) { masse[u.key] = { ...plain, source: 'a', location: `Variantenauswahl "${clean(g)}"`, text: clean(v) }; break; }
       if (twoDimUnclear(v)) hinweise.push(twoDimHint(`Variantenauswahl "${clean(g)}"`, clean(v)));
     }
   }
@@ -309,6 +380,25 @@ export function extractPflichtProposal(input: Pick<PflichtInput, 'specs' | 'vari
   return { stored: out, unbekannteFarben: uniq(unbekannteFarben), hinweise: uniq(hinweise) };
 }
 
+/**
+ * Lücke 3: Material-Vorschlag aus einem Text der Quelle c ("… 304 stainless steel …"). Nur ein eindeutiger Treffer der festen
+ * Material-Tabelle (ganze Wörter) → allgemeines Wort ("Edelstahl", nie "Edelstahl 304"); mehrere verschiedene → null. Wird NIE gespeichert.
+ */
+export function materialProposalFromText(text: string, location: string): { value: string; wording: string; location: string } | null {
+  const t = clean(text);
+  if (!t || !clean(location)) return null;
+  const hits: Array<{ value: string; wording: string }> = [];
+  for (const key of MATERIAL_TEXT_KEYS) {
+    const m = t.match(new RegExp(`(?<![\\p{L}\\d])${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\d])`, 'iu'));
+    if (m) { const de = translateMaterial(key); if (de) hits.push({ value: checkMaterialEvidence(de, 'c', m[0]).value, wording: m[0] }); }
+  }
+  // längster Wortlaut zuerst ("304 stainless steel" vor "stainless steel"), Werte müssen übereinstimmen
+  const values = uniq(hits.map(h => h.value));
+  if (values.length !== 1) return null;
+  const best = hits.sort((a, b) => b.wording.length - a.wording.length)[0];
+  return { value: best.value, wording: best.wording, location: clean(location) };
+}
+
 // ─── Auflösen (EINE Lesestelle für v4, Merkmale, Vorschau, Produkte-Tab) ───────────────────────────────────────────────
 
 const fromEntry = (e: PflichtEntry | undefined, herkunft: Herkunft): ResolvedField | null =>
@@ -335,6 +425,8 @@ export function resolvePflichtDaten(input: PflichtInput): ResolvedPflichtDaten {
     const ev = checkMaterialEvidence(material.value, material.source, material.wording ?? (material.herkunft === 'altfeld' ? clean(input.material) : null));
     if (ev.downgraded) { material = { ...material, value: ev.value, hinweis: ev.hinweis }; if (ev.hinweis) hinweise.push(ev.hinweis); }
   }
+  // Lücke 3 (DESIGN 12:41 Punkt 3): Quelle c NICHT automatisch — nur ein Vorschlag mit Wortlaut + GELB "bitte bestätigen", nur wenn P2 leer ist.
+  const materialVorschlagC = !material && input.textC ? materialProposalFromText(input.textC.text, input.textC.location) : null;
 
   // P3: je Variante gespeichert → Altfeld variant_details (beim Einzelartikel auch der einzige Eintrag) → Vorschlag.
   const legacy = input.variantDetails ?? {};
@@ -358,6 +450,12 @@ export function resolvePflichtDaten(input: PflichtInput): ResolvedPflichtDaten {
     }
   }
   const mt = measureText(detailsForText);
+  // DESIGN 12:41 Punkt 2: Maß aus der Variantenauswahl ohne Richtung (M/SPANNE, Quelle a) → "120 cm (laut Variante)" bzw. bei mehreren
+  // Größen "je nach Variante, siehe Auswahl" (die Werte je Variante bleiben in masse[]). Gilt nur, wenn ALLE Maße diese Art sind.
+  const allMasse = Object.values(masse);
+  const plainText = allMasse.length > 0 && allMasse.every(isVariantPlainMeasure)
+    ? (() => { const d = uniq(allMasse.map(m => formatMeasure(m)).filter((x): x is string => !!x)); return d.length === 1 ? `${d[0]} ${MASSE_LAUT_VARIANTE}` : MASSE_JE_VARIANTE; })()
+    : null;
 
   const lieferumfang = fromEntry(stored.lieferumfang, 'gespeichert')
     ?? (() => {
@@ -389,9 +487,17 @@ export function resolvePflichtDaten(input: PflichtInput): ResolvedPflichtDaten {
   const problems = [...missing];
   // P1-Abgleich mit dem Produktwort im Titel (ein Wort durchgehend): steht die Produktart nicht wörtlich im Titel → GELB + Hinweis.
   // Es wird NICHT geraten, welches Titelwort gemeint ist (Komposita, Plural …) — nur wörtlicher Treffer zählt.
+  // DESIGN 12:41: Kernwort-Treffer zählt ("Sieb bleibt Sieb", PRODUCT_TYPE_TITLE_STEM); das Titelwort wird das Produktwort der Einleitung.
   const title = clean(input.title);
-  if (produktart && title && !title.toLowerCase().includes(produktart.value.toLowerCase())) {
+  const titelwort = produktart && title ? titleWordFor(produktart.value, title) : null;
+  if (produktart && title && !titelwort) {
     const h = `Produktart „${produktart.value}“ steht nicht wörtlich im Titel — ein Wort durchgehend verwenden`;
+    problems.push(h);
+    hinweise.push(h);
+  }
+  const produktartOut = produktart && titelwort ? { ...produktart, titelwort } : produktart;
+  if (materialVorschlagC) {
+    const h = `Material-Vorschlag „${materialVorschlagC.value}“ aus Quelle c (${materialVorschlagC.location}: „${materialVorschlagC.wording}“) — bitte bestätigen, nicht übernommen`;
     problems.push(h);
     hinweise.push(h);
   }
@@ -402,13 +508,14 @@ export function resolvePflichtDaten(input: PflichtInput): ResolvedPflichtDaten {
     text: problems.length === 0 ? null : [
       missing.length ? `Pflicht-Daten fehlen: ${missing.join(', ')}` : '',
       problems.filter(x => x.startsWith('Produktart „')).join(''),
+      problems.filter(x => x.startsWith('Material-Vorschlag „')).join(''),
       unbekannteFarben.length ? `Farbe unbekannt: ${unbekannteFarben.join(', ')}` : '',
     ].filter(Boolean).join(' · '),
   };
 
   return {
-    units, produktart, material, lieferumfang, anwendung, besonderheit,
-    masse, masseText: mt.uniform ?? mt.perVariant, farben, unbekannteFarben, hinweise: uniq(hinweise), ampel,
+    units, produktart: produktartOut, material, lieferumfang, anwendung, besonderheit,
+    masse, masseText: plainText ?? mt.uniform ?? mt.perVariant, materialVorschlagC, farben, unbekannteFarben, hinweise: uniq(hinweise), ampel,
   };
 }
 
@@ -523,7 +630,7 @@ export function readPflichtDaten(json: string | null | undefined): PflichtDatenS
 }
 
 /** Import: Vorschlag (a/b) als JSON für die neue Zeile — null, wenn nichts belegt ist. */
-export function pflichtDatenForImport(input: Pick<PflichtInput, 'specs' | 'variants' | 'variantPrices'>): string | null {
+export function pflichtDatenForImport(input: Pick<PflichtInput, 'specs' | 'variants' | 'variantPrices' | 'title'>): string | null {
   const s = extractPflichtProposal(input).stored;
   return Object.keys(s).length > 0 ? JSON.stringify(s) : null;
 }
