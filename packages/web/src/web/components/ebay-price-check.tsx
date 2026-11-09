@@ -2,6 +2,7 @@
 // "Angebotsdaten an Käuferpreis angleichen" (nur auf Klick, mit Vorschau) und "App-Preise aus eBay übernehmen" (nur App-Datenbank).
 import { useState, useSyncExternalStore } from "react";
 import type { PriceLocks } from "../../shared/ebay-buyer-price";
+import type { RaiseBuyerAction } from "../../shared/kaeuferpreis-heben";
 
 let locks: PriceLocks = {};
 let loaded = false;
@@ -29,6 +30,10 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
   const [rows, setRows] = useState<Row[] | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [alignPreview, setAlignPreview] = useState<Array<{ sku: string; buyerPrice: number; offerPrice: number | null }> | null>(null);
+  // AUFTRAG Kalkulator 09.11. (162/208): "Käuferpreis heben" — Gegenstück zu "Angleichen". Vorschau (GET, nur lesen) → "Senden …" →
+  // Bestätigung in der Seite (kein window.confirm, wie OFFEN 022/023) → POST mit confirm + den bestätigten Preisen.
+  const [raise, setRaise] = useState<{ actions: RaiseBuyerAction[]; expected: Record<string, number> } | null>(null);
+  const [raiseConfirm, setRaiseConfirm] = useState(false);
   // Mengen-Fix: Lager / Offer-Menge / frei bei eBay / Ziel der App je Variante, "Mengen jetzt setzen" nur auf Klick.
   const [qty, setQty] = useState<Array<{ sku: string; label: string; inventoryQty: number | null; offerQty: number | null; buyerAvailable: number | null; targetQty: number | null; note: string }> | null>(null);
 
@@ -64,6 +69,31 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
       const { ok, data } = await call(`/api/products/${productId}/align-offers-to-buyer-price`, { confirm: true });
       setAlignPreview(null);
       setMsg(ok && !data.locked ? { ok: true, text: "Angebotsdaten angeglichen — beide Preise gleich, Sperre aufgehoben" } : { ok: false, text: String(data.error ?? "Noch nicht gleich — Sperre bleibt") });
+      await loadLocks(true);
+    } finally { setBusy(false); }
+  };
+  const previewRaise = async () => {
+    setBusy(true); setMsg(null); setRaiseConfirm(false);
+    try {
+      const r = await fetch(`/api/products/${productId}/raise-buyer-price`);
+      const data = await r.json().catch(() => ({})) as Record<string, unknown>;
+      if (!r.ok) { setMsg({ ok: false, text: String(data.error ?? "Vorschau fehlgeschlagen") }); return; }
+      setRaise({ actions: (data.actions as RaiseBuyerAction[]) ?? [], expected: (data.expected as Record<string, number>) ?? {} });
+    } finally { setBusy(false); }
+  };
+  const doRaise = async () => {
+    if (!raise) return;
+    setBusy(true); setMsg(null);
+    try {
+      const { ok, data } = await call(`/api/products/${productId}/raise-buyer-price`, { confirm: true, expected: raise.expected });
+      setRaise(null); setRaiseConfirm(false);
+      const confirmed = (data.confirmed as Array<{ sku: string; price: number }> | undefined) ?? [];
+      const notConfirmed = (data.notConfirmed as Array<{ sku: string; reason: string }> | undefined) ?? [];
+      if (!ok || data.status === "abgelehnt") setMsg({ ok: false, text: String(data.error ?? "Senden abgelehnt — nichts gesendet") });
+      else if (data.status === "nichts") setMsg({ ok: false, text: "Nichts zu heben — nichts gesendet, Sperre bleibt" });
+      else setMsg({ ok: !data.locked && notConfirmed.length === 0,
+        text: `${confirmed.length} Käuferpreis(e) bestätigt${notConfirmed.length ? ` · nicht übernommen: ${notConfirmed.map(n => `${n.sku}: ${n.reason}`).join("; ")}` : ""} — ${data.locked ? "Sperre bleibt" : "Sperre aufgehoben"}` });
+      if (confirmed.length > 0) onAppPricesChanged?.();
       await loadLocks(true);
     } finally { setBusy(false); }
   };
@@ -125,6 +155,8 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
         )}
         <button type="button" disabled={busy} onClick={check} style={btn("#fff", "#64748B")} title="Liest bei eBay Käuferpreis und Angebotsdaten je Variante (nur lesen)">eBay-Preise prüfen</button>
         {lock && <button type="button" disabled={busy} onClick={previewAlign} style={btn("#FFFBEB", "#92400E")}>Angleichen (Vorschau)</button>}
+        {lock && <button type="button" disabled={busy} onClick={previewRaise} style={btn("#EFF6FF", "#1D4ED8")}
+          title="Gegenstück zu Angleichen: hebt den Käuferpreis bei eBay auf die (höheren) Angebotsdaten — nur wenn diese dem Zielpreis der App entsprechen und der Sprung ≤ 15 % ist. Erst Vorschau (nur lesen).">Käuferpreis heben (Vorschau)</button>}
         <button type="button" disabled={busy} onClick={checkQty} style={btn("#fff", "#64748B")} title="Liest Lager, Offer-Menge und freie Menge bei eBay je Variante (nur lesen)">Mengen prüfen</button>
         <button type="button" disabled={busy} onClick={checkDedupe} style={btn("#fff", "#64748B")} title="Zeigt doppelte Varianten-Einträge (gleiche Kombination mehrfach) — nur lesen">Dubletten prüfen</button>
         {rows && <button type="button" disabled={busy} onClick={takeOver} style={btn("#F0FDF4", "#16A34A")} title="Setzt nur die App-Preise auf den eBay-Käuferpreis — sendet nichts an eBay">App-Preise übernehmen</button>}
@@ -172,6 +204,30 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
           </>}
           {dedupe.ambiguous.length > 0 && <div style={{ color: "#92400E" }}>Nicht lösbar (bleibt): {dedupe.ambiguous.map(a => `${a.label}: ${a.reason}`).join("; ")}</div>}
           <button type="button" disabled={busy} onClick={() => setDedupe(null)} style={{ ...btn("#fff", "#64748B"), marginLeft: 6, marginTop: 4 }}>Schließen</button>
+        </div>
+      )}
+      {raise && (
+        <div style={{ marginTop: 4, background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 8, padding: "6px 8px", fontSize: 11 }}>
+          {raise.actions.map((a, i) => (
+            <div key={i} style={{ color: a.status === "heben" ? "#0F172A" : "#64748B" }}>
+              {a.label || a.sku}: Käufer {f(a.buyerPrice)} · Angebotsdaten {f(a.offerPrice)} · Ziel App {f(a.targetVk)}
+              {a.status === "heben" && <> → <strong>Käuferpreis {f(a.to)}</strong> (+{f(a.jumpPct)} %)</>}
+              {a.status === "gleich" && " — gleich, nichts zu tun"}
+              {a.status === "uebersprungen" && <span style={{ color: "#B91C1C" }}> — übersprungen: {a.grund}</span>}
+            </div>
+          ))}
+          {raise.actions.some(a => a.status === "heben") && !raiseConfirm && (
+            <button type="button" disabled={busy} onClick={() => setRaiseConfirm(true)} style={{ ...btn("#1D4ED8", "#fff"), marginTop: 4, border: "none" }}>Senden …</button>
+          )}
+          {raiseConfirm && (
+            <div style={{ marginTop: 4, background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 6, padding: "4px 6px" }}>
+              <div style={{ fontWeight: 700, color: "#B91C1C" }}>Wirklich senden? Der Preis, den Käufer bei eBay sehen, wird ERHÖHT:</div>
+              {raise.actions.filter(a => a.status === "heben").map((a, i) => <div key={i}>{a.label || a.sku}: {f(a.buyerPrice)} → {f(a.to)} €</div>)}
+              <button type="button" disabled={busy} onClick={doRaise} style={{ ...btn("#B91C1C", "#fff"), marginTop: 4, border: "none" }}>Ja, an eBay senden</button>
+              <button type="button" disabled={busy} onClick={() => setRaiseConfirm(false)} style={{ ...btn("#fff", "#64748B"), marginLeft: 6 }}>Nein</button>
+            </div>
+          )}
+          <button type="button" disabled={busy} onClick={() => { setRaise(null); setRaiseConfirm(false); }} style={{ ...btn("#fff", "#64748B"), marginLeft: 6, marginTop: 4 }}>Schließen</button>
         </div>
       )}
       {alignPreview && (
