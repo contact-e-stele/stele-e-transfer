@@ -4,6 +4,7 @@
  */
 import { useState, useEffect } from "react";
 import { formatMarginDisplay, marginDisplay } from "../../shared/margin-display";
+import { offeredProfitSummary, notOfferedLabel } from "../../shared/offered-profit";
 import { useLocation } from "wouter";
 import {
   Package, ExternalLink, RefreshCw, ShoppingCart,
@@ -14,7 +15,7 @@ import {
 import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLCurrent, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
-import { productProfitRows, productTarget } from "../../shared/target-margin-bulk";
+import { productProfitRows, productTarget, type ProfitProduct } from "../../shared/target-margin-bulk";
 import { matchesProductSearch, searchFromQuery } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
@@ -161,11 +162,16 @@ function StatusBadge({ status, listingId }: { status: string; listingId: string 
   );
 }
 
-function PriceBadge({ buy, sell, shipsFrom, adRate }: { buy: number | null; sell: number | null; shipsFrom?: string | null; adRate?: number | null }) {
+function PriceBadge({ buy, sell, shipsFrom, adRate, product }: { buy: number | null; sell: number | null; shipsFrom?: string | null; adRate?: number | null; product: ProfitProduct }) {
   if (!buy && !sell) return null;
   // OFFEN 020 (02.11.2026): Gewinn je Verkauf nach Formel v2 (zentrale Funktion, Grundgesetz 8) — vorher nur
   // Gebühr abgezogen, ohne Anzeige, Versand und Einfuhr (zu hohe Prozente, z. B. stele-229).
-  const margin = marginDisplay({ sellPrice: sell, buyPrice: buy, shipsFrom, adRatePercent: adRate });
+  // PLAN 7 Punkt 6 (Kalkulator 08./09.11.2026): Varianten-Produkte rechnen NUR über bei eBay angebotene Varianten (K-014-Zuordnung,
+  // offeredProfitSummary) — vorher products.buyPrice/sellPrice, dessen EK von einer nicht angebotenen Variante stammen kann
+  // (234 GRAY/green, 235 Orange 10PCS/3PCS → "Gewinn unter 1,00 €"/Verlust ohne echten Verlust). Einzelartikel unverändert.
+  const offered = offeredProfitSummary(product);
+  const margin = offered.isVariant ? offered.card : marginDisplay({ sellPrice: sell, buyPrice: buy, shipsFrom, adRatePercent: adRate });
+  const notOffered = notOfferedLabel(offered);
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
       {buy && <span style={{ fontSize: 11, background: "#FEF3C7", color: "#92400E", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>EK: {buy.toFixed(2)} €</span>}
@@ -173,6 +179,12 @@ function PriceBadge({ buy, sell, shipsFrom, adRate }: { buy: number | null; sell
       {margin !== null && (
         <span title="Gewinn je Verkauf nach Formel v2: VK − (Ware + Versand + Einfuhr) − eBay-Gebühr − Anzeige (inkl. MwSt)" style={{ fontSize: 11, background: margin.tone === "ok" ? "#F0FDF4" : margin.tone === "thin" ? "#FEF9C3" : "#FEF2F2", color: margin.tone === "ok" ? "#16A34A" : margin.tone === "thin" ? "#CA8A04" : "#DC2626", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>
           {margin.tone === "ok" ? <TrendingUp size={10} /> : <TrendingDown size={10} />} Gewinn {formatMarginDisplay(margin)}
+        </span>
+      )}
+      {notOffered && (
+        <span title={`Bei eBay nicht angeboten — zählt nicht für Gewinn, „Erwartet“ und Preisalarm: ${offered.notOffered.map(x => x.label).join(", ")}`}
+          style={{ fontSize: 11, background: "#F1F5F9", color: "#64748B", padding: "2px 8px", borderRadius: 6, fontWeight: 700 }}>
+          {notOffered}
         </span>
       )}
     </div>
@@ -1877,7 +1889,7 @@ export default function Produkte() {
                       <AlertTriangle size={12} /> AliExpress-Quelle nicht verfügbar — neue Quelle muss gesucht werden
                     </div>
                   )}
-                  <PriceBadge buy={product.buyPrice} sell={product.sellPrice} shipsFrom={product.shipsFrom} adRate={product.adRate} />
+                  <PriceBadge buy={product.buyPrice} sell={product.sellPrice} shipsFrom={product.shipsFrom} adRate={product.adRate} product={product} />
                   <TargetBadge
                     product={product}
                     isLive={product.ebayStatus === "listed" && !!product.ebayListingId}
