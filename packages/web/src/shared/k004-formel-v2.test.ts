@@ -152,7 +152,8 @@ describe('K-004 Nachbesserung: unbekannte Herkunft + Scraper-Schlüssel', () => 
   });
   test('price-monitor: leeres Scrape-Versandland fällt auf das GESPEICHERTE zurück (nie still China bei EU-Produkt)', () => {
     const src = readFileSync(resolve(import.meta.dir, '..', 'api', 'price-monitor.ts'), 'utf-8');
-    expect(src).toContain('const shipsFromEff = data.shipsFrom || product.shipsFrom;');
+    // Fix 251 (09.11.2026): zusätzlich überschreibt 'Unknown' (HTML-Fallback) die gespeicherte Herkunft nicht — Regel in shared/ali-data-usable.ts.
+    expect(src).toContain('const shipsFromEff = effectiveShipsFrom(data.shipsFrom, product.shipsFrom);');
     expect(src).toContain('isChinaShipping(shipsFromEff)');
     expect(src).toContain('computeVariantPriceRows(freshVariantPricesJson, versand, shipsFromEff,');
     expect(src).not.toContain('data.shipsFrom ?? product.shipsFrom');
