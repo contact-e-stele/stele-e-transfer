@@ -9,8 +9,7 @@ type R = { ok: true; fields: ProductDataPatchFields } | { ok: false; error: stri
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function parseMeasure(skuId: string, m: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
-  const at = `variantDetails["${skuId}"].measure`;
+export function parseMeasure(skuId: string, m: unknown, at = `variantDetails["${skuId}"].measure`): { ok: true; value: unknown } | { ok: false; error: string } {
   if (m === null || m === undefined) return { ok: true, value: null };
   if (!isObj(m)) return { ok: false, error: `${at} muss ein Objekt oder null sein` };
   if (!MEASURE_KINDS.includes(m.kind as MeasureKind)) return { ok: false, error: `${at}.kind muss einer von ${MEASURE_KINDS.join(', ')} sein` };

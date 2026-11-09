@@ -1,11 +1,12 @@
 // Beschreibung v4 "eine Seite" (Inhaber "v4 JA", 08.11.2026) — reine Funktionen (Grundgesetz 2), kein DB-/Netz-Zugriff.
 // Baut auf v3 (shared/description-v3.ts) auf und nutzt dieselben Quellen (Grundgesetz 8):
-//   Menge/Maß/Material: piecesOf / measureText / materialText aus description-v3.ts
-//   Stichpunkte       : v3Bullets ("STICHWORT: Satz", Gemini) — Versand-/Rückgabe-Füllsätze fallen dort schon weg
+//   Stichwort-Zeilen + Einleitung mit Produktart: Pflicht-Daten P1–P7 (shared/pflicht-daten.ts, Design-Sprint S2)
+//   Einleitung ohne Produktart: Gemini-###INTRO### + piecesOf / measureText aus description-v3.ts (wie bisher)
 //   Versand/Rückgabe/Zahlung: shared/shipping-return-text.ts (keine neuen Texte)
 //   WEEE              : weeeLineForListing (shared/electric.ts), nur bei bestätigtem Elektro
 // Grundgesetz 4: fehlt ein Wert, fällt die Zeile/Angabe weg — kein Platzhalter, kein Füllsatz.
-import { piecesOf, formatPieces, measureText, materialText, FOOTER_TOPIC_RE, type DescriptionV3Input, type V3Bullet } from './description-v3';
+import { piecesOf, formatPieces, measureText, FOOTER_TOPIC_RE, type DescriptionV3Input } from './description-v3';
+import { resolvePflichtDaten, type PflichtInput, type ResolvedPflichtDaten } from './pflicht-daten';
 import { NEUTRAL_RETURN_TEXT, type ReturnTerms } from './shipping-return-text';
 
 /** Merkmal der v4-Vorlage — beim Listen wird eine gespeicherte Vorlage nur übernommen, wenn sie das AKTIVE Merkmal trägt. */
@@ -23,57 +24,53 @@ export const V4_KEYS = ['MATERIAL', 'MASSE', 'LIEFERUMFANG', 'ANWENDUNG', 'BESON
 export type V4Key = typeof V4_KEYS[number];
 export interface V4Row { key: V4Key; text: string }
 
-// Stichwörter aus den Gemini-Stichpunkten, die einem festen Schlüssel entsprechen (Großschreibung wie v3Bullets liefert).
-const KEY_ALIASES: Record<V4Key, string[]> = {
-  MATERIAL: ['MATERIAL', 'MATERIALIEN', 'WERKSTOFF'],
-  MASSE: ['MASSE', 'MAßE', 'MASS', 'MAß', 'GRÖSSE', 'GRÖßE', 'ABMESSUNG', 'ABMESSUNGEN'],
-  LIEFERUMFANG: ['LIEFERUMFANG', 'INHALT', 'MENGE', 'PACKUNGSINHALT'],
-  ANWENDUNG: ['ANWENDUNG', 'VERWENDUNG', 'EINSATZ', 'EINSATZBEREICH', 'ANWENDUNGSBEREICH'],
-  BESONDERHEIT: ['BESONDERHEIT', 'BESONDERHEITEN'],
-};
-
 const clean = (s: string | null | undefined): string => String(s ?? '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 const esc = (s: string): string => s.replace(/&(?![a-zA-Z]+;|#\d+;)/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-function keyOf(keyword: string | null): V4Key | null {
-  if (!keyword) return null;
-  for (const k of V4_KEYS) if (KEY_ALIASES[k].includes(keyword)) return k;
-  return null;
+/** v4-Eingabe = v3-Eingabe + Pflicht-Daten (Design-Sprint S2): Varianten-Einträge, Material-Quelle, gespeicherte pflicht_daten. */
+export type DescriptionV4Input = DescriptionV3Input & Pick<PflichtInput, 'variantPrices' | 'materialSource' | 'pflichtDaten' | 'productId'>;
+
+/** Pflicht-Daten des Produkts — EINE Lesestelle für v4 und die eBay-Merkmale (shared/pflicht-daten.ts, Grundgesetz 8). */
+export function pflichtOf(input: DescriptionV4Input): ResolvedPflichtDaten {
+  return resolvePflichtDaten({
+    productId: input.productId, specs: input.specs, variants: input.variants, variantPrices: input.variantPrices,
+    material: input.material, materialSource: input.materialSource, usePurpose: input.usePurpose, usageNote: input.usageNote,
+    variantDetails: input.variantDetails, manualAspects: input.manualAspects, pflichtDaten: input.pflichtDaten,
+  });
 }
 
 /**
- * Höchstens 5 Stichwort-Zeilen mit den festen Schlüsseln. Produktdaten (A-045) gehen vor Gemini-Stichpunkten.
- * BESONDERHEIT: Stichpunkt mit Stichwort BESONDERHEIT, sonst der erste Stichpunkt, der keinem anderen Schlüssel zugeordnet ist.
- * Leere Zeilen fallen weg.
+ * Höchstens 5 Stichwort-Zeilen mit den festen Schlüsseln — Design-Sprint S2: NUR aus den Pflicht-Daten
+ * (MATERIAL = P2, MASSE = P3, LIEFERUMFANG = P4, ANWENDUNG = P6, BESONDERHEIT = P7). Gemini-Stichpunkte füllen keine Zeile mehr
+ * (nicht belegbar, Grundgesetz 4). Leere Zeilen fallen weg.
  */
-export function v4Rows(input: DescriptionV3Input, bullets: V3Bullet[]): V4Row[] {
-  const fromBullet: Partial<Record<V4Key, string>> = {};
-  const unmatched: string[] = [];
-  for (const b of bullets) {
-    const text = clean(b.text);
-    if (!text) continue;
-    const k = keyOf(b.keyword);
-    if (k && !fromBullet[k]) fromBullet[k] = text;
-    else if (!k) unmatched.push(text);
-  }
-  const measure = measureText(input.variantDetails);
-  const usage = [clean(input.usePurpose), clean(input.usageNote)].filter(Boolean).map(esc).join(' &middot; ');
+export function v4Rows(input: DescriptionV4Input): V4Row[] {
+  const r = pflichtOf(input);
+  const t = (f: { value: string } | null): string | null => (f && clean(f.value) ? esc(clean(f.value)) : null);
   const values: Record<V4Key, string | null> = {
-    MATERIAL: materialText(input) ?? fromBullet.MATERIAL ?? null,
-    MASSE: measure.uniform ?? measure.perVariant ?? fromBullet.MASSE ?? null,
-    LIEFERUMFANG: formatPieces(piecesOf(input)) ?? fromBullet.LIEFERUMFANG ?? null,
-    ANWENDUNG: usage || fromBullet.ANWENDUNG || null,
-    BESONDERHEIT: fromBullet.BESONDERHEIT ?? unmatched[0] ?? null,
+    MATERIAL: t(r.material),
+    MASSE: r.masseText,
+    LIEFERUMFANG: t(r.lieferumfang),
+    ANWENDUNG: t(r.anwendung),
+    BESONDERHEIT: t(r.besonderheit),
   };
   return V4_KEYS.filter(k => values[k]).map(k => ({ key: k, text: values[k] as string }));
 }
 
 /**
- * Ein Einleitungssatz. Basis: erster Satz der Gemini-Einleitung (###INTRO###), sofern er kein Versand-/Rückgabe-Füllsatz ist.
- * Dazu Menge und einheitliches Maß aus den Produktdaten — fehlen sie, steht der Satz ohne diese Angabe.
- * Ganz ohne Einleitung: nur "Inhalt … · Maße …", ohne Daten → null (kein Füllsatz).
+ * Ein Einleitungssatz. Design-Sprint S2: mit Produktart (P1) "<Produktart> aus <Material>, <Menge>, <Maß>." — fehlende Teile fallen weg,
+ * Maß nur, wenn es für alle Varianten gleich ist. Ohne Produktart wie bisher: erster Satz der Gemini-Einleitung (###INTRO###), sofern er
+ * kein Versand-/Rückgabe-Füllsatz ist, plus Menge/Maß aus den Produktdaten; ganz ohne Einleitung nur "Inhalt … · Maße …", ohne Daten → null.
  */
-export function introSentence(input: DescriptionV3Input, introText: string | null | undefined): string | null {
+export function introSentence(input: DescriptionV4Input, introText: string | null | undefined): string | null {
+  const r = pflichtOf(input);
+  if (r.produktart) {
+    const uniform = measureText(Object.fromEntries(Object.entries(r.masse).map(([k, m]) => [k, { measure: m }]))).uniform;
+    const t = (f: { value: string } | null): string => (f ? esc(clean(f.value)) : '');
+    const facts = [t(r.lieferumfang), uniform].filter((x): x is string => !!x);
+    const mat = t(r.material);
+    return `${t(r.produktart)}${mat ? ` aus ${mat}` : ''}${facts.length ? `, ${facts.join(', ')}` : ''}.`;
+  }
   const pieces = formatPieces(piecesOf(input));
   const m = measureText(input.variantDetails).uniform;
   const facts = [pieces, m ? `Ma&szlig;e ${m}` : null].filter((x): x is string => !!x);

@@ -10,7 +10,8 @@ import { electricSalesCsv } from './electric-export';
 import { BATTERY_REGISTRATION_PRESENT, EAR_UMLAGE_EUR } from '../shared/constants';
 import { resolveGpsrForListing, normalizeCountryCode, gpsrFieldsFromRaw } from '../shared/gpsr-parser';
 import { parseMfrPatch } from '../shared/gpsr-mfr-patch';
-import { parseProductDataPatch } from '../shared/product-data-patch';
+import { parseProductDataPatch, parseMeasure, readVariantDetails } from '../shared/product-data-patch';
+import { parsePflichtDatenPatch, pflichtDatenForImport, extractPflichtProposal, resolvePflichtDaten, pflichtAspects, readPflichtDaten } from '../shared/pflicht-daten';
 import { resolveEuImportFields, resolveMfrImportFields, resolveMfrUpdateFields, validateGpsrFlat, crossCheckParties, buildPartyOptions, type GpsrFlatFields } from '../shared/gpsr-import-fields';
 import { findForeignEmails } from '../shared/gpsr-description';
 import { gpsrCompleteGate, gpsrGateMessage, gpsrFinalFields, GPSR_IMPORT_BLOCKED_PREFIX, GPSR_LISTING_BLOCKED_PREFIX } from '../shared/gpsr-import-gate';
@@ -2664,6 +2665,13 @@ const app = new Hono()
         complianceOverrideCategory: body.complianceOverrideCategory ?? null,
         complianceOverrideKeyword: body.complianceOverrideKeyword ?? null,
         complianceOverrideField: body.complianceOverrideField ?? null,
+        // Design-Sprint S2: Pflicht-Daten beim Import NUR aus Quelle a (Variantenauswahl) / b (Spezifikationen); fehlt etwas → leer (GELB).
+        // Nur beim Neuanlegen — ein erneuter Import eines bestehenden Produkts (Zweig oben) schreibt keine Pflicht-Daten.
+        pflichtDaten: pflichtDatenForImport({
+          specs: body.specs ?? null,
+          variants: Array.isArray(body.variants) ? body.variants as unknown as VariantGroup[] : null,
+          variantPrices: Array.isArray(body.variantPrices) ? body.variantPrices as unknown as Array<{ skuId?: string; attrs?: Record<string, string> }> : null,
+        }),
       }).returning({ id: schema.products.id });
       // OFFEN 007: Packmenge eines Einzelartikels merken (Preis-Lauf rechnet den AliExpress-Stückpreis × N).
       const packQtyBody = (body as unknown as { packQty?: unknown }).packQty;
@@ -3048,6 +3056,13 @@ const app = new Hono()
         handlingTimeDays: product.handlingTimeDays ?? undefined,
         gpsr: gpsrFromProduct,
         manualAspects,
+        // Design-Sprint S2: Produktart/Material/Farbe aus den Pflicht-Daten (EINE Lesestelle resolvePflichtDaten, wie Beschreibung v4)
+        pflichtAspects: pflichtAspects(resolvePflichtDaten({
+          productId: product.id, specs, variants: variantGroups, variantPrices: variantPricesForListing ?? [],
+          material: product.material, materialSource: (() => { try { return product.materialSource ? JSON.parse(product.materialSource) : null; } catch { return null; } })(),
+          usePurpose: product.usePurpose, usageNote: product.usageNote, variantDetails: readVariantDetails(product.variantDetails),
+          manualAspects: manualAspects ?? null, pflichtDaten: readPflichtDaten(product.pflichtDaten),
+        })),
         titleSources,
         // P-82 Aufgabe 4/5: nur mitgeben, wenn am Produkt hinterlegt — buildStoreCategoryBlock()
         // (ebay.ts) sendet storeCategoryNames dann komplett gar nicht mit, kein "Sonstiges"-Fallback.
@@ -3906,6 +3921,12 @@ const app = new Hono()
       const productDataPatch = parseProductDataPatch(body);
       if (!productDataPatch.ok) return c.json({ error: productDataPatch.error }, 400);
       Object.assign(allowed, productDataPatch.fields);
+      // Design-Sprint S2: Pflicht-Daten P1–P7 mit Quelle/Fundstelle/Wortlaut (Handeingabe im Produkte-Tab) — Validierung in shared/pflicht-daten.ts.
+      if ('pflichtDaten' in body) {
+        const pd = parsePflichtDatenPatch(body.pflichtDaten, parseMeasure);
+        if (!pd.ok) return c.json({ error: pd.error }, 400);
+        allowed.pflichtDaten = pd.json;
+      }
       if ('manualPdfUrl'      in body) allowed.manualPdfUrl      = body.manualPdfUrl      as string | null;
       if ('certificationNote' in body) allowed.certificationNote = body.certificationNote as string | null;
       if ('handlingTimeDays' in body) allowed.handlingTimeDays = (body.handlingTimeDays as number | null);
@@ -4334,6 +4355,39 @@ const app = new Hono()
 // ─── AliExpress DS Produkt-Suche ─────────────────────────────────────────────
 // P-37: offizielle DS-API (aliexpress.ds.text.search), kein Scraping mehr. Immer HTTP 200.
   // Punkt C (25.10.2026): AliExpress-Merkmale nachladen. Standard Trockenlauf; {apply:true} schreibt NUR leere products.specs.
+  // Design-Sprint S2: Pflicht-Daten-Vorschau — NUR LESEN, schreibt nichts. Zeigt je Feld Wert + Quelle + Fundstelle + Wortlaut,
+  // den Vorschlag aus den AliExpress-Daten (a/b) und die Ampel (GELB, wenn P1–P4 fehlen oder eine Farbe unbekannt ist).
+app.get('/products/:id/pflichtdaten-preview', async (c) => {
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'Ungültige Produkt-ID' }, 400);
+    try {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const [p] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+      if (!p) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+      const j = <T,>(s: string | null | undefined, fb: T): T => { try { const v = JSON.parse(s ?? 'null'); return (v ?? fb) as T; } catch { return fb; } };
+      const input = {
+        productId: id,
+        specs: j<Record<string, string>>(p.specs, {}),
+        variants: (() => { const v = j<unknown[]>(p.variants, []); return Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' ? v as VariantGroup[] : []; })(),
+        variantPrices: (() => { const v = j<unknown>(p.variantPrices, []); return Array.isArray(v) ? v as Array<{ skuId?: string; attrs?: Record<string, string> }> : []; })(),
+        material: p.material, materialSource: j<{ source?: string; location?: string } | null>(p.materialSource, null),
+        usePurpose: p.usePurpose, usageNote: p.usageNote, variantDetails: readVariantDetails(p.variantDetails),
+        manualAspects: j<Record<string, string> | null>(p.manualAspects, null), pflichtDaten: readPflichtDaten(p.pflichtDaten),
+      };
+      const resolved = resolvePflichtDaten(input);
+      return c.json({
+        productId: id, readOnly: true,
+        gespeichert: input.pflichtDaten,
+        vorschlagAusAliExpress: extractPflichtProposal(input),
+        ergebnis: resolved,
+        merkmale: pflichtAspects(resolved),
+        ampel: resolved.ampel,
+      }, 200);
+    } catch (e) {
+      return c.json({ error: 'DB nicht verfügbar' }, 503);
+    }
+  });
+
 app.post('/products/specs-backfill', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({})) as { apply?: unknown; productIds?: unknown; limit?: unknown };

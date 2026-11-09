@@ -512,6 +512,9 @@ export interface EbayListingInput {
   originShipping?: OriginShipping;
   gpsr?: ResolvedGpsr;  // Paket 3: EU-Person + Hersteller aus resolveGpsrForListing() — Pflicht beim Listing, kein Stele-Fallback mehr
   manualAspects?: Record<string, string>; // P-88: vom Nutzer manuell nachgetragene Pflichtfelder (überschreiben Auto-Heal)
+  // Design-Sprint S2: Merkmale aus den Pflicht-Daten (Produktart/Material/Farbe, shared/pflicht-daten.ts pflichtAspects) — nur Namen,
+  // die die Kategorie führt, bei Auswahl-Merkmalen nur erlaubte Werte; manualAspects gewinnt weiterhin.
+  pflichtAspects?: Record<string, string>;
   // P-88 1b Korrektur (20.09.2026): title UND generatedTitle unabhängig nach Farbe durchsuchen
   // (title ist meist der AliExpress-Originaltitel, generatedTitle die überarbeitete eBay-Version —
   // ein Farbwort kann in nur einer der beiden Fassungen stehen).
@@ -1013,6 +1016,8 @@ export async function buildAspects(
   titleSources: string[] = [],
   fetchFn: typeof fetch = fetch,
   getTokenFn: () => Promise<string> = getAppToken,
+  // Design-Sprint S2: belegte Pflicht-Daten (Produktart/Material/Farbe) — gehen vor AliExpress-/Titel-Ableitungen, nach manualAspects.
+  pflichtAspectValues: Record<string, string> = {},
 ): Promise<Record<string, string[]>> {
   const aspects: Record<string, string[]> = {};
   // P71-B Teil 2, Regel 5: auch ein manuell eingetragener MPN darf keine AliExpress-ID sein (gilt für
@@ -1035,6 +1040,23 @@ export async function buildAspects(
   }
   for (const [name, value] of Object.entries(effectiveSpecsAspects)) {
     aspects[name] = [value];
+  }
+
+  // Design-Sprint S2: Pflicht-Daten (belegt, deutsch) — nur Merkmale, die die Kategorie führt; Auswahl-Merkmale nur mit erlaubtem Wert.
+  // Ohne abrufbare Kategorie-Liste wird nichts aus den Pflicht-Daten gesetzt (kein ungeprüfter Wert).
+  const hasPflicht = Object.keys(pflichtAspectValues).length > 0;
+  if (categoryId && hasPflicht) {
+    const categoryAspects = await getRawAspectsForCategory(categoryId, fetchFn, getTokenFn);
+    if (categoryAspects) {
+      const { matchPflichtToCategoryAspects } = await import('../shared/pflicht-daten');
+      const match = matchPflichtToCategoryAspects(pflichtAspectValues, categoryAspects);
+      for (const [name, value] of Object.entries(match.aspects)) {
+        aspects[name] = [value];
+        effectiveSpecsAspects[name] = value;
+      }
+      if (match.used.length > 0) console.log(`[eBay] Merkmale aus Pflicht-Daten (Kategorie ${categoryId}): ${match.used.join('; ')}`);
+      if (match.skipped.length > 0) console.log(`[eBay] Pflicht-Daten nicht gesetzt (Kategorie ${categoryId}): ${match.skipped.join('; ')}`);
+    }
   }
 
   // Punkt C (25.10.2026): weitere AliExpress-Merkmale (Material, Herkunft, Maße …) — nur Namen, die die Kategorie führt,
@@ -1315,7 +1337,7 @@ export async function createOrUpdateInventoryItem(input: EbayListingInput): Prom
       title: input.title,
       description: plainDesc,
       imageUrls: input.imageUrls,
-      aspects: await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]),
+      aspects: await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title], fetch, getAppToken, input.pflichtAspects),
       ...productIdentifierFields(input.ean), // OFFEN 008: echtes Inventory-API-Feld product.ean (vorher "gtin" — gibt es nicht, eBay ignorierte es)
     },
   };
@@ -1373,7 +1395,7 @@ export async function createOffer(input: EbayListingInput): Promise<string> {
   // OFFEN 030 Teil 2: Lagerort + Versandrichtlinie je Herkunft (vom Aufrufer aufgelöst), nie mehr 'default'/Handling-Zeit.
   const shipping = requireOriginShipping(input);
   const fulfillmentPolicyId = shipping.fulfillmentPolicyId;
-  const aspects = await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
+  const aspects = await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title], fetch, getAppToken, input.pflichtAspects);
 
   // GPSR – General Product Safety Regulation (EU, Pflicht seit Dez 2024)
   const regulatory = buildRegulatoryBlock(input.gpsr);
@@ -1871,7 +1893,7 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Pflichtaspekte einmal abrufen (gilt für alle Varianten)
   // Hinweis: input.ean ist genau EIN Wert pro Produkt (kein Feld pro Variante im Datenmodell) —
   // wird hier für alle Varianten übernommen; besser als der ungültige "Nicht angegeben"-Fallback.
-  const baseAspects = await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title]);
+  const baseAspects = await buildAspects(input.specs, safeMpn(input.mpn, input.sourceUrl), input.categoryId, input.ean, input.manualAspects, (input.variantPrices ?? []).map(v => v.attrs ?? {}), input.titleSources ?? [input.title], fetch, getAppToken, input.pflichtAspects);
 
   // Varianten-Aspekt-Namen (gemappt) — diese dürfen NICHT in baseAspects stecken
   // sonst hat jedes Item mehrere Werte für denselben Aspekt → eBay Fehler

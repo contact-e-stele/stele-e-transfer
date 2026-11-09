@@ -71,10 +71,13 @@ describe('1 + 2: schmale Titelleiste, keine Bilder', () => {
     expect(html).not.toContain('width:34px;height:34px');
     expect(html).not.toContain('Multicolour');
   });
-  test('<img> in Gemini-Stichpunkten wird entfernt', () => {
+  test('<img> in Gemini-Stichpunkten gelangt nie ins HTML (S2: Stichpunkte füllen keine Zeile mehr); P7 von Hand wird bereinigt', () => {
     const h = buildEbayHTMLv4({ title: 'X', bullets: ['Besonderheit: sehr robust <img src="x.jpg"> und leicht'] });
     expect(h).not.toMatch(/<img/i);
-    expect(h).toContain('sehr robust und leicht');
+    expect(h).not.toContain('sehr robust');
+    const h2 = buildEbayHTMLv4({ title: 'X', pflichtDaten: { besonderheit: { value: 'sehr robust <img src="x.jpg"> und leicht', source: 'c', location: 'Bild 2', wording: 'robust' } } });
+    expect(h2).not.toMatch(/<img/i);
+    expect(h2).toContain('sehr robust und leicht');
   });
 });
 
@@ -109,28 +112,30 @@ describe('4: ein Einleitungssatz mit Menge + Maß', () => {
 });
 
 describe('5: höchstens 5 Stichwort-Zeilen, nur feste Schlüssel, ersetzen die Datentabelle', () => {
-  test('Fixture 127: Produktdaten vor Gemini, BESONDERHEIT = erster freier Stichpunkt, Versand-Füllsatz fällt weg', () => {
+  // Design-Sprint S2 (Auftrag 043): Zeilen NUR aus den Pflicht-Daten — Gemini-Stichpunkte ("Anwendung: …", erster freier Stichpunkt)
+  // füllen keine Zeile mehr (nicht belegbar). Vorher: ANWENDUNG 'für Obst, Salat und Reste', BESONDERHEIT 'Elastischer Rand …'.
+  test('Fixture 127: nur Pflicht-Daten (Material b, Menge a); Gemini-Stichpunkte füllen keine Zeile, Versand-Füllsatz fällt weg', () => {
     const rows = [...html.matchAll(/<tr class="stele-v4-row"><td[^>]*>([A-Z]+)<\/td><td[^>]*>(.*?)<\/td><\/tr>/g)].map(m => [m[1], m[2]]);
     expect(rows).toEqual([
       ['MATERIAL', 'Kunststoff'],
       ['LIEFERUMFANG', '50 / 100 / 500 Stück'],
-      ['ANWENDUNG', 'für Obst, Salat und Reste'],
-      ['BESONDERHEIT', 'Elastischer Rand passt auf viele Schüsseln'],
     ]);
+    expect(html).not.toContain('für Obst, Salat und Reste');
+    expect(html).not.toContain('Elastischer Rand');
     expect(html).not.toContain('Schnelle Lieferung');
     expect(html).not.toContain('TECHNISCHE DATEN');
     expect(html).not.toContain('>Farbe</td>');
   });
   test('alle 5 belegt → genau 5, Reihenfolge fest, nur die 5 Schlüssel', () => {
-    const rows = v4Rows({ ...P119, material: 'PE', usePurpose: 'Frischhaltehaube', variantDetails: DETAILS_119 },
-      [{ keyword: 'BESONDERHEIT', text: 'dehnbarer Gummizug' }, { keyword: 'FARBE', text: 'transparent' }, { keyword: null, text: 'a' }]);
+    const rows = v4Rows({ ...P119, material: 'PE', usePurpose: 'Frischhaltehaube', variantDetails: DETAILS_119,
+      pflichtDaten: { besonderheit: { value: 'dehnbarer Gummizug', source: 'c', location: 'Beschreibungsbild 2', wording: 'elastic band' } } });
     expect(rows.map(r => r.key)).toEqual([...V4_KEYS]);
     expect(rows.length).toBe(5);
     expect(rows.find(r => r.key === 'MASSE')!.text).toBe('↔ 14 – 29 cm');
     expect(rows.find(r => r.key === 'BESONDERHEIT')!.text).toBe('dehnbarer Gummizug');
   });
   test('leere Zeilen fallen weg; nur Titel → keine Zeile', () => {
-    expect(v4Rows(P225, [])).toEqual([]);
+    expect(v4Rows(P225)).toEqual([]);
     expect(buildEbayHTMLv4({ title: 'Nur Titel' })).not.toContain('stele-v4-row');
   });
 });

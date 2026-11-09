@@ -157,6 +157,8 @@ const migrations = [
   `ALTER TABLE products ADD COLUMN ali_checkout_factor REAL`,
   `ALTER TABLE products ADD COLUMN ali_checkout_factor_at TEXT`,
   `ALTER TABLE products ADD COLUMN ali_checkout_factor_order TEXT`,
+  // Design-Sprint S2 (Auftrag Aufsicht 043): Pflicht-Daten P1–P7 mit Quelle — additiv, nullable, keine bestehende Spalte verändert
+  `ALTER TABLE products ADD COLUMN pflicht_daten TEXT`,
 ];
 
 export async function runMigrations() {
