@@ -11,7 +11,7 @@ import { eq, isNotNull, and } from 'drizzle-orm';
 import { aliEinfuhrEur, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { planVariantDedupe } from '../shared/variant-dedupe';
 import { isVariantProduct } from '../shared/variant-product';
-import { runVariantRaise, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
+import { runVariantRaise, explainVariantRaisePlan, describeVariantRaiseExplanation, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
 import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED } from '../shared/pricing';
 import { earUmlageFor } from '../shared/electric';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
@@ -19,6 +19,7 @@ import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../sha
 import { getPriceHolds, releasePriceHolds } from './price-holds';
 import { getAutoPriceExclusions } from './auto-price-exclusions';
 import { resolveAbPrice } from '../shared/ab-price';
+import { aliDataUsability, effectiveShipsFrom } from '../shared/ali-data-usable';
 import { variantPriceAlarm } from '../shared/target-margin-bulk';
 import { isPriceJump, priceJumpMessage, type AutoPriceExclusions } from '../shared/price-jump';
 import { isProductPriceLocked, setPriceLock } from './price-locks';
@@ -620,6 +621,7 @@ export async function maybeRaiseVariants(
   freshVariantPricesJson: string | null,
   shipsFrom: string | null,
   heldSkuIds?: ReadonlySet<string>, // K-008
+  opts?: { explainSkips?: boolean }, // Fix 251: Weg "gespeicherter EK" — je Variante loggen, warum (nicht) angehoben wird
 ): Promise<VariantRaiseOutcome | null> {
   try {
     const groups = parseVariantGroupsJson(product.variants);
@@ -635,7 +637,11 @@ export async function maybeRaiseVariants(
       console.log(`[VariantRaise] stele-${product.id}: ${dedupe.changes.length} Dubletten-Kombination(en) für die Anhebung zusammengefasst (höchster EK)`);
     }
     const row = { ...product, shipsFrom, variantPrices: JSON.stringify(entries) };
-    return await runVariantRaise(row, {
+    if (opts?.explainSkips) {
+      if (!(product.ebayStatus === 'listed' && product.ebayListingId)) console.log(`[VariantRaise] stele-${product.id}: nicht bei eBay gelistet — nichts angehoben`);
+      for (const line of describeVariantRaiseExplanation(product.id, explainVariantRaisePlan(row, heldSkuIds))) console.log(line);
+    }
+    const outcome = await runVariantRaise(row, {
       enabled: AUTO_VARIANT_RAISE_ENABLED,
       heldSkuIds,
       send: async (raises) => {
@@ -653,6 +659,8 @@ export async function maybeRaiseVariants(
       },
       log: (m) => console.log(m),
     });
+    if (opts?.explainSkips) console.log(`[VariantRaise] stele-${product.id}: Ergebnis ${outcome.status} — ${outcome.raises.length} geplant, ${outcome.sentSkuIds.length} gesendet${outcome.jumps?.length ? `, ${outcome.jumps.length} Preissprung (nicht gesendet)` : ''}`);
+    return outcome;
   } catch (e) {
     console.warn(`[VariantRaise] stele-${product.id}: unerwarteter Fehler (Preisprüfung läuft weiter): ${String(e)}`);
     return null;
@@ -988,6 +996,17 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
           try { data = await scrapeAliExpressUrl(url); } catch { /* ignore */ }
         }
       }
+      // Fix stele-251 (09.11.2026): Varianten-Produkt + AliExpress-Daten OHNE Varianten-Preise (HTML-Fallback: nur Seitenpreis, 'Unknown')
+      // = keine AliExpress-Daten. Vorher wurde der Seitenpreis (251: 73,77 €) zum Ab-Preis und die leere Liste gemergt.
+      let pageReadButUnusable = false;
+      if (data) {
+        const usable = aliDataUsability(isVariantProduct(product.variants, product.variantPrices), data);
+        if (!usable.usable) {
+          console.warn(`[PriceMonitor] ${product.id}: ${usable.reason} — gilt als keine AliExpress-Daten (Weg: gespeicherter Einkaufspreis)`);
+          data = null;
+          pageReadButUnusable = true;
+        }
+      }
       if (!data) {
         errors++;
         // P-EINFUHR Live-Fund 24.10.2026: AliExpress-Token abgelaufen ("IllegalRefreshToken") → 68 von 82 Produkten ohne Daten, die
@@ -996,8 +1015,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // den erfolgreich gesendeten Varianten-VK.
         if (isVariantProduct(product.variants, product.variantPrices) && product.ebayStatus === 'listed' && product.ebayListingId) {
           const hold = resolvePriceHolds(product, priceHolds[String(product.id)]);
-          console.log(`[PriceMonitor] ${product.id}: AliExpress nicht lesbar — Anhebung mit gespeichertem Einkaufspreis`);
-          await maybeRaiseVariants(product, product.variantPrices, product.shipsFrom, hold.heldKeys);
+          console.log(`[PriceMonitor] ${product.id}: AliExpress nicht lesbar — Anhebung mit gespeichertem Einkaufspreis (lastPriceCheck bleibt unverändert: EK nicht frisch)`);
+          await maybeRaiseVariants(product, product.variantPrices, product.shipsFrom, hold.heldKeys, { explainSkips: true });
         } else if (product.ebayStatus === 'listed' && product.ebayListingId) {
           // PR B Punkt 6: Einzelartikel ohne AliExpress-Daten mit dem gespeicherten Einkaufspreis anheben (nur anheben, Live-Preis nie gesenkt).
           await raiseSingleWithStoredBuyPrice(product, priceHolds[String(product.id)]);
@@ -1009,7 +1028,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         // sein. Bewusst konservativ: normale Scraping-Fehler/Timeouts lösen NICHTS aus (siehe
         // classifySourceUnavailability() in aliexpress.ts) — kein False-Positive-Risiko für
         // laufende Anzeigen.
-        try {
+        // Fix 251: hat der Scraper die Seite gelesen (nur ohne Varianten-Preise), ist der Artikel nicht "weg" — keine dritte Abfrage.
+        if (!pageReadButUnusable) try {
           const { unavailable, reason } = await checkSourceAvailability(url);
           if (unavailable) {
             console.log(`[PriceMonitor] ${product.id}: Quellartikel nicht mehr verfügbar (${reason})`);
@@ -1024,7 +1044,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       // China-Versand: Zollgebühr +3€ addieren (ab 01.07.2026), NICHT überspringen
       // K-004 (Review-Blocker): liefert der Scrape kein Versandland (''), gilt das GESPEICHERTE (z. B. "Poland") — sonst würde der
       // unbeaufsichtigte Lauf ein EU-Produkt wie China rechnen und per raise-only anheben (früherer "Polen"-Fehler). Erst wenn beides leer ist → China.
-      const shipsFromEff = data.shipsFrom || product.shipsFrom;
+      // Fix 251: 'Unknown'/'unbekannt' (HTML-Fallback) überschreibt die gespeicherte Herkunft nicht mehr (vorher nur '' ausgenommen).
+      const shipsFromEff = effectiveShipsFrom(data.shipsFrom, product.shipsFrom);
       const isChina = isChinaShipping(shipsFromEff);
       const versand = product.shippingCost ?? 0;
       // P-27/P-28-Konsolidierung (2026-09-08): adRate-Default vereinheitlicht auf 5 (= DB-Default,

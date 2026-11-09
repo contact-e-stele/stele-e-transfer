@@ -8,6 +8,8 @@ import { planTierReprice, type RepriceProduct, type TierPlanRow } from '../share
 import { profitFloorFor, effectiveProfitFloor, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { isPriceJump, priceJumpMessage } from '../shared/price-jump';
 
+const fmt = (n: number) => n.toFixed(2);
+
 export interface VariantRaiseProduct extends RepriceProduct {
   targetMarginEur: number | null;
   ebayStatus: string | null;
@@ -16,18 +18,51 @@ export interface VariantRaiseProduct extends RepriceProduct {
 
 export type VariantRaise = TierPlanRow & { skuId: string; oldSell: number; oldProfit: number }; // skuId, alter VK und alter Gewinn sind bekannt (Pflicht)
 
-// Nur Zeilen mit bekanntem alten VK, Gewinn < Boden und höherem Formelpreis — nie senken, nie raten (kein alter VK → keine Zeile).
-// K-008: heldSkuIds = gehaltene Varianten (Gewinn ≥ 0,90 €) — werden nicht angehoben.
-export function planVariantRaises(product: VariantRaiseProduct, heldSkuIds?: ReadonlySet<string>): VariantRaise[] {
+// Fix stele-251 (09.11.2026): warum eine Variante NICHT angehoben wird — je Zeile ein Grund (vorher still). planVariantRaises ist
+// genau die Zeilen-Menge mit reason 'raise' (reiner Extract, Grundgesetz 8: die Regel steht nur hier).
+export type VariantRaiseSkipReason = 'raise' | 'held' | 'no_sku' | 'no_old_sell' | 'profit_ok' | 'not_higher';
+export interface VariantRaiseExplanation {
+  isVariant: boolean;
+  floor: number;                                  // Gewinn-Grenze (Boden − Toleranz, nie unter 1,00)
+  rows: Array<TierPlanRow & { reason: VariantRaiseSkipReason }>;
+}
+export function explainVariantRaisePlan(product: VariantRaiseProduct, heldSkuIds?: ReadonlySet<string>): VariantRaiseExplanation {
   const target = product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur;
   const floor = effectiveProfitFloor(profitFloorFor(target)); // K-006: dieselbe Grenze wie die Rundung (Boden − 0,10, nie unter 1,00)
   const plan = planTierReprice(product, target);
-  if (!plan.isVariant) return [];
-  return plan.rows.filter((r): r is VariantRaise =>
-    r.skuId != null && r.oldSell != null && r.oldProfit != null
-    && !(heldSkuIds?.has(r.skuId))
-    && r.oldProfit < floor - 1e-9
-    && r.newSell > r.oldSell + 0.004);
+  if (!plan.isVariant) return { isVariant: false, floor, rows: [] };
+  const reasonFor = (r: TierPlanRow): VariantRaiseSkipReason => {
+    if (r.skuId == null) return 'no_sku';
+    if (r.oldSell == null || r.oldProfit == null) return 'no_old_sell';
+    if (heldSkuIds?.has(r.skuId)) return 'held';
+    if (!(r.oldProfit < floor - 1e-9)) return 'profit_ok';
+    if (!(r.newSell > r.oldSell + 0.004)) return 'not_higher';
+    return 'raise';
+  };
+  return { isVariant: true, floor, rows: plan.rows.map(r => ({ ...r, reason: reasonFor(r) })) };
+}
+
+const SKIP_TEXT: Record<VariantRaiseSkipReason, string> = {
+  raise: 'wird angehoben',
+  held: 'Preis gehalten (K-008)',
+  no_sku: 'keine skuId',
+  no_old_sell: 'kein alter VK bekannt',
+  profit_ok: 'Gewinn nicht unter der Grenze',
+  not_higher: 'Formelpreis nicht höher als der VK',
+};
+/** Log-Zeilen: je Variante der Grund (für den Weg "gespeicherter Einkaufspreis", Fix 251). */
+export function describeVariantRaiseExplanation(productId: number, ex: VariantRaiseExplanation): string[] {
+  if (!ex.isVariant) return [`[VariantRaise] stele-${productId}: kein Varianten-Produkt — nichts angehoben`];
+  if (ex.rows.length === 0) return [`[VariantRaise] stele-${productId}: keine Variante mit gespeichertem Einkaufspreis > 0 — nichts angehoben`];
+  return ex.rows.map(r => `[VariantRaise] stele-${productId} ${r.label || r.skuId} (skuId ${r.skuId ?? '–'}): EK ${fmt(r.ware)}, VK ${r.oldSell != null ? fmt(r.oldSell) : '–'}, Gewinn ${r.oldProfit != null ? fmt(r.oldProfit) : '–'} € (Grenze ${fmt(ex.floor)}), Formel ${fmt(r.newSell)} € — ${SKIP_TEXT[r.reason]}`);
+}
+
+// Nur Zeilen mit bekanntem alten VK, Gewinn < Boden und höherem Formelpreis — nie senken, nie raten (kein alter VK → keine Zeile).
+// K-008: heldSkuIds = gehaltene Varianten (Gewinn ≥ 0,90 €) — werden nicht angehoben.
+export function planVariantRaises(product: VariantRaiseProduct, heldSkuIds?: ReadonlySet<string>): VariantRaise[] {
+  return explainVariantRaisePlan(product, heldSkuIds).rows
+    .filter(r => r.reason === 'raise')
+    .map(({ reason: _r, ...row }) => row as VariantRaise);
 }
 
 export interface VariantSendResult {
@@ -49,7 +84,6 @@ export interface VariantRaiseDeps {
 export type VariantRaiseStatus = 'disabled' | 'not_live' | 'nothing' | 'ambiguous' | 'sent' | 'partial' | 'failed' | 'error';
 export interface VariantRaiseOutcome { status: VariantRaiseStatus; raises: VariantRaise[]; sentSkuIds: string[]; jumps?: VariantRaise[] }
 
-const fmt = (n: number) => n.toFixed(2);
 
 export async function runVariantRaise(product: VariantRaiseProduct, deps: VariantRaiseDeps): Promise<VariantRaiseOutcome> {
   const live = product.ebayStatus === 'listed' && !!product.ebayListingId;
