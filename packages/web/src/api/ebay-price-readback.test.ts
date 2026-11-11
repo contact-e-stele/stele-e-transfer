@@ -109,3 +109,20 @@ describe('K-011 Sperre in updateOfferPriceBySku', () => {
     expect([productIdFromSku('stele-220-GRAY'), productIdFromSku('stele-220'), productIdFromSku('stele-220-GROUP'), productIdFromSku('x-1')]).toEqual([220, 220, 220, null]);
   });
 });
+
+// Fund 11.11.2026 (AUFTRAG 046, stele-162 mit 13 Varianten): Lesungen nacheinander > 10 s → Render 502. Jetzt begrenzt parallel.
+describe('Offer-Lesungen parallel (162: 13 Varianten)', () => {
+  test('mehrere Lesungen gleichzeitig, Reihenfolge der Zeilen bleibt', async () => {
+    let active = 0, maxActive = 0;
+    const slow = (async (url: string, init?: RequestInit) => {
+      active++; maxActive = Math.max(maxActive, active);
+      await new Promise(r => setTimeout(r, 20));
+      active--;
+      return mockFetch(url, init);
+    }) as unknown as typeof fetch;
+    const rb = await readEbaySellPrices({ productId: 220, groups, entries, isVariant: true, appSellPrices: app, appSellPrice: null, token: 't',
+      getGroupSkus: async () => Object.values(skuOf) as string[], getBuyerPrices: buyer, fetchFn: slow });
+    expect(maxActive).toBe(3);
+    expect(rb.rows.map(r => [r.skuId, r.offerPrice])).toEqual([['g', 20.95], ['b', 22.95], ['k', 21.95]]);
+  });
+});

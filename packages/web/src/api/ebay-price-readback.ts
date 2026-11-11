@@ -57,16 +57,18 @@ export async function readEbaySellPrices(input: {
   const ambiguous = resolved.filter(r => r.error?.startsWith('Mehrdeutig'));
   if (ambiguous.length > 0) return { ok: false, reason: `${ambiguous.length} mehrdeutige Kombination(en) — nichts gelesen`, isVariant: true, rows: [] };
   const realSkus = await input.getGroupSkus(`stele-${input.productId}-GROUP`);
-  const rows: EbayPriceRow[] = [];
-  for (const r of resolved) {
-    if (!r.entry || r.error) continue;
-    const skuId = r.entry.skuId;
+  // Fund 11.11.2026 (AUFTRAG 046, stele-162 mit 13 Varianten): Offer-Lesungen nacheinander > 10 s (Bun-idleTimeout) → Render 502
+  // bei GET/POST raise-buyer-price. Wie #270: Lesungen begrenzt parallel (8), Reihenfolge der Zeilen bleibt gleich.
+  const { mapLimit } = await import('../shared/map-limit');
+  const usable = resolved.filter(r => r.entry && !r.error);
+  const rows: EbayPriceRow[] = await mapLimit(usable, 8, async (r): Promise<EbayPriceRow> => {
+    const skuId = r.entry!.skuId;
     const base = { skuId, sku: r.sku, label: Object.values(r.displayValues ?? {}).join(' / '), appPrice: input.appSellPrices[skuId] ?? null };
-    if (!realSkus.includes(r.sku)) { rows.push({ ...base, ebayPrice: null, offerPrice: null, error: `SKU ${r.sku} nicht in der eBay-Gruppe` }); continue; }
+    if (!realSkus.includes(r.sku)) return { ...base, ebayPrice: null, offerPrice: null, error: `SKU ${r.sku} nicht in der eBay-Gruppe` };
     const p = await readOfferPrice(r.sku, input.token, f);
     const bp = buyerBySku.get(r.sku) ?? null;
-    rows.push({ ...base, ebayPrice: bp, offerPrice: p.price, error: bp == null ? `Käuferpreis für ${r.sku} nicht im GetItem` : undefined });
-  }
+    return { ...base, ebayPrice: bp, offerPrice: p.price, error: bp == null ? `Käuferpreis für ${r.sku} nicht im GetItem` : undefined };
+  });
   return { ok: rows.length > 0 && rows.every(r => r.ebayPrice != null), isVariant: true, rows,
     reason: rows.length === 0 ? 'keine zuordenbare Variante' : rows.some(r => r.ebayPrice == null) ? 'nicht alle Varianten lesbar' : undefined };
 }
