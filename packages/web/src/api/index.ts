@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { isAliOrderIdNotTracking, ALI_ORDER_ID_AS_TRACKING_ERROR } from '../shared/tracking-guard';
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, reviseListingContent, reviseListingDescription, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, getSellerListingsResult, reviseListingContent, reviseListingDescription, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
 import { sentPricesToPatch } from '../shared/sent-prices';
 import { cleanGeneratedTitle, keepImportTitle } from '../shared/title-clean';
 import { earUmlageFor, evaluateElectricGate, suggestElectric, weeeLineForListing, parseElectricPatch, parseElectricSettingsBody } from '../shared/electric';
@@ -642,8 +642,16 @@ const app = new Hono()
       console.log('[eBay listings] Serving from cache');
       ebayListings = cached.data;
     } else {
-      ebayListings = await getAllSellerListings();
-      (globalThis as Record<string, unknown>)[cacheKey] = { ts: Date.now(), data: ebayListings };
+      // Fund 11.11.2026: ein fehlgeschlagener/leerer eBay-Abruf wurde 10 Min als "0 Listings" gecacht. Jetzt: Fehler anzeigen,
+      // nur volle Ergebnisse cachen.
+      const res = await getSellerListingsResult();
+      if (res.error) {
+        delete (globalThis as Record<string, unknown>)[cacheKey];
+        return c.json({ error: `eBay-Abruf fehlgeschlagen (${res.error}) — bitte neu laden` }, 502);
+      }
+      ebayListings = res.listings;
+      if (res.listings.length > 0) (globalThis as Record<string, unknown>)[cacheKey] = { ts: Date.now(), data: ebayListings };
+      else delete (globalThis as Record<string, unknown>)[cacheKey];
     }
 
     try {

@@ -2806,8 +2806,15 @@ export async function reviseBuyerPriceTrading(itemId: string, sku: string | null
 }
 
 export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
+  return (await getSellerListingsResult()).listings;
+}
+
+/** Fund 11.11.2026 (Listings-Tab zeigte 0): GetSellerList-Fehler (HTTP ≠ 200 oder Ack Failure) kamen still als leere Liste zurück
+ *  und wurden 10 Min gecacht. Diese Variante meldet den Fehler mit; getAllSellerListings() verhält sich unverändert. */
+export async function getSellerListingsResult(): Promise<{ listings: EbaySellerListing[]; error: string | null }> {
   const token = await getAccessToken();
   const results: EbaySellerListing[] = [];
+  let error: string | null = null;
   let page = 1;
   const pageSize = 200;
 
@@ -2853,6 +2860,8 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
 
     const text = await res.text();
     console.log(`[eBay GetSellerList] Page ${page}, status:`, res.status, text.slice(0, 200));
+    const pageError = sellerListPageError(res.status, text);
+    if (pageError) { error = `Seite ${page}: ${pageError}`; console.error('[eBay GetSellerList]', error); break; }
 
     // Items extrahieren
     const itemMatches = text.matchAll(/<Item>([\s\S]*?)<\/Item>/g);
@@ -2892,7 +2901,20 @@ export async function getAllSellerListings(): Promise<EbaySellerListing[]> {
   }
 
   console.log(`[eBay GetSellerList] Total items fetched: ${results.length}`);
-  return results;
+  return { listings: results, error };
+}
+
+/** Reine Prüfung einer GetSellerList-Antwortseite: Fehlertext oder null. Warnings (Ack Warning) gelten als ok. */
+export function sellerListPageError(httpStatus: number, xml: string): string | null {
+  if (httpStatus !== 200) return `HTTP ${httpStatus}`;
+  const ack = xml.match(/<Ack>([^<]*)<\/Ack>/)?.[1]?.trim();
+  if (!ack) return 'Antwort ohne Ack';
+  if (ack === 'Failure' || ack === 'PartialFailure') {
+    const msg = xml.match(/<ShortMessage>([^<]*)<\/ShortMessage>/)?.[1]?.trim();
+    const code = xml.match(/<ErrorCode>([^<]*)<\/ErrorCode>/)?.[1]?.trim();
+    return `eBay ${ack}${code ? ` ${code}` : ''}${msg ? `: ${msg}` : ''}`;
+  }
+  return null;
 }
 
 // ─── P-105: Bereits erhaltenes Käufer-Feedback abfragen (Trading API GetFeedback) ─────────────
