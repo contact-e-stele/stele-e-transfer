@@ -5775,6 +5775,77 @@ async function raiseBuyerPriceContext(id: number) {
   return { product, readRows, db, schema };
 }
 
+// AUFTRAG 048 (Inhaber-Ja 12.11.2026 11:54, stele-208): Varianten-Angebot mit publish_by_inventory_item_group neu übernehmen, damit der
+// Artikelstandort dem Lagerort der Offers folgt. GET = Vorschau (nur lesen), POST {confirm:true} = publish + Rücklesen. Prüfregeln in
+// shared/republish-group.ts (gleicher Lagerort an allen Offers, kein Preis-Unterschied Käufer ↔ Angebotsdaten).
+async function republishContext(id: number) {
+  const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+  const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
+  if (!product) return { error: 'Produkt nicht gefunden', status: 404 as const };
+  const { isVariantProduct } = await import('../shared/variant-product');
+  const { planRepublish } = await import('../shared/republish-group');
+  const { getAccessToken, getInventoryItemGroupSkus, getItemBuyerPricesXml, EBAY_API_BASE_URL } = await import('./ebay');
+  const { parseGetItemBuyerPrices } = await import('../shared/ebay-buyer-price');
+  const { parseGetItemShipping } = await import('../shared/origin-shipping');
+  const { mapLimit } = await import('../shared/map-limit');
+  const isVariant = isVariantProduct(product.variants, product.variantPrices);
+  const listingId = product.ebayListingId ?? null;
+  let offers: Array<{ sku: string; merchantLocationKey: string | null; offerPrice: number | null; buyerPrice: number | null }> = [];
+  let liveLocation: string | null = null;
+  if (product.ebayStatus === 'listed' && listingId && isVariant) {
+    const token = await getAccessToken();
+    const gi = await getItemBuyerPricesXml(listingId);
+    const buyer = gi.httpStatus === 200 ? parseGetItemBuyerPrices(gi.xml) : { rows: [] as Array<{ sku: string; price: number }> };
+    liveLocation = gi.httpStatus === 200 ? (parseGetItemShipping(gi.xml)?.locationText ?? null) : null;
+    const buyerBySku = new Map(buyer.rows.map(b => [b.sku, b.price]));
+    const skus = await getInventoryItemGroupSkus(`stele-${id}-GROUP`, token).catch(() => [] as string[]);
+    offers = await mapLimit(skus, 8, async (sku) => {
+      const res = await fetch(`${EBAY_API_BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=EBAY_DE`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = res.ok ? await res.json() as { offers?: Array<{ merchantLocationKey?: string; pricingSummary?: { price?: { value?: string } }; listing?: { listingId?: string } }> } : { offers: [] };
+      const o = (data.offers ?? []).find(x => x.listing?.listingId === listingId) ?? null;
+      const price = o ? parseFloat(String(o.pricingSummary?.price?.value ?? '')) : NaN;
+      return { sku, merchantLocationKey: o?.merchantLocationKey ?? null, offerPrice: Number.isFinite(price) ? price : null, buyerPrice: buyerBySku.get(sku) ?? null };
+    });
+  }
+  const plan = planRepublish({ productId: id, ebayStatus: product.ebayStatus ?? null, ebayListingId: listingId, isVariant, offers, liveLocation });
+  return { product, plan };
+}
+
+app.get('/products/:id/republish', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const ctx = await republishContext(id);
+    if ('error' in ctx) return c.json({ error: ctx.error }, ctx.status);
+    return c.json({ mode: 'preview', nurLesen: true, ...ctx.plan }, 200);
+  } catch (e) {
+    console.error('[republish GET]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post('/products/:id/republish', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const body = await c.req.json().catch(() => ({})) as { confirm?: unknown };
+  if (body.confirm !== true) return c.json({ ok: false, error: '"confirm": true fehlt — es wird nichts veröffentlicht' }, 400);
+  try {
+    const ctx = await republishContext(id);
+    if ('error' in ctx) return c.json({ error: ctx.error }, ctx.status);
+    if (!ctx.plan.ok) return c.json({ ...ctx.plan, ok: false, status: 'nicht gesendet' }, 409);
+    const { publishOfferByInventoryItemGroup } = await import('./ebay');
+    const listingId = await publishOfferByInventoryItemGroup(ctx.plan.groupKey);
+    console.log(`[AUFTRAG 048] republish stele-${id}: ${ctx.plan.groupKey} → listingId ${listingId} (vorher ${ctx.product.ebayListingId}), Standort vorher "${ctx.plan.liveLocation}"`);
+    delete (globalThis as Record<string, unknown>)['ebay_listings'];
+    const after = await republishContext(id);
+    const nachher = 'error' in after ? null : { liveLocation: after.plan.liveLocation, offers: after.plan.offers };
+    return c.json({ ok: true, status: 'gesendet', listingId, gleicheListingId: listingId === ctx.product.ebayListingId, vorher: { liveLocation: ctx.plan.liveLocation, offers: ctx.plan.offers }, nachher }, 200);
+  } catch (e) {
+    console.error('[republish POST]', e);
+    return c.json({ ok: false, error: String(e) }, 502);
+  }
+});
+
 app.get('/products/:id/raise-buyer-price', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
