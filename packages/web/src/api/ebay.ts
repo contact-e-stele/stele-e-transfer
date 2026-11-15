@@ -1511,6 +1511,8 @@ export async function publishOfferByInventoryItemGroup(inventoryItemGroupKey: st
 
   if (!res.ok) {
     const text = await res.text();
+    // Fix 208 Diagnose: Roh-Antwort (errorId, parameters) ins Log – die App speichert nur den lesbaren Text.
+    console.error(`[eBay] publish_by_inventory_item_group ${inventoryItemGroupKey} → ${res.status}: ${text.slice(0, 2000)}`);
     throw new Error(`publishOfferByInventoryItemGroup failed: ${res.status} ${text}`);
   }
 

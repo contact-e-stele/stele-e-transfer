@@ -4011,7 +4011,7 @@ const app = new Hono()
     const id = parseInt(c.req.param('id'));
     if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
     try {
-      const body = await c.req.json() as { generatedTitle?: string; bullets?: string[]; htmlDescription?: string };
+      const body = await c.req.json() as { generatedTitle?: string; bullets?: string[]; htmlDescription?: string; generatedDescription?: string };
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -4020,6 +4020,8 @@ const app = new Hono()
       if (body.generatedTitle !== undefined) update.generatedTitle = body.generatedTitle;
       if (body.bullets !== undefined) update.bullets = JSON.stringify(body.bullets);
       if (body.htmlDescription !== undefined) update.htmlDescription = body.htmlDescription;
+      // Fix 208: Beschreibungstext, aus dem v3/v4 beim Listen gebaut wird (resolveListingDescription), war bisher nicht änderbar.
+      if (typeof body.generatedDescription === 'string') update.generatedDescription = body.generatedDescription;
       await db.update(schema.products).set(update).where(eq(schema.products.id, id));
       return c.json({ ok: true }, 200);
     } catch (e) {
