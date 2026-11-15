@@ -3056,6 +3056,7 @@ const app = new Hono()
         earUmlageEur: earUmlageFor(product), // A-029
         checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005: Fallback-Preis einer Variante ohne ebayPrice
         sentPrices,
+        activeListingId: product.ebayStatus === 'listed' ? (product.ebayListingId ?? null) : null, // Fix 208
         quantity: 3,
         condition: 'NEW',
         imageUrls: images.filter(u => u.startsWith('http')).slice(0, 8),
@@ -5810,6 +5811,29 @@ async function republishContext(id: number) {
   const plan = planRepublish({ productId: id, ebayStatus: product.ebayStatus ?? null, ebayListingId: listingId, isVariant, offers, liveLocation });
   return { product, plan };
 }
+
+// Fix 208: NUR LESEN – Offer-Status je SKU (Gruppe bzw. Einzel-SKU) + Entscheidung, ob vor dem nächsten publish ein withdraw käme.
+app.get('/products/:id/offer-status', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const { getAccessToken: tok, readOfferStatus } = await import('./ebay');
+    const { decideRelistWithdraw } = await import('../shared/relist-guard');
+    const token = await tok();
+    const isVariant = isVariantProduct(product.variants, product.variantPrices);
+    const read = await readOfferStatus(isVariant ? `stele-${id}-GROUP` : `stele-${id}`, token);
+    const activeListingId = product.ebayStatus === 'listed' ? (product.ebayListingId ?? null) : null;
+    const offers = read.rows.filter(r => r.offerId).map(r => ({ sku: r.sku, offerId: r.offerId as string, status: r.status, listingId: r.listingId, listingStatus: r.listingStatus }));
+    const decision = decideRelistWithdraw({ offers, activeListingId });
+    return c.json({ nurLesen: true, productId: id, ebayStatus: product.ebayStatus ?? null, ebayListingId: product.ebayListingId ?? null, activeListingId, isVariant, groupKey: read.groupKey, skus: read.skus, offers: read.rows, beimListen: decision }, 200);
+  } catch (e) {
+    console.error('[offer-status GET]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
 
 app.get('/products/:id/republish', async (c) => {
   const id = parseInt(c.req.param('id'));

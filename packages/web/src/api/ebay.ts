@@ -12,6 +12,7 @@ import { checkOutgoingListingText, formatComplianceViolations } from '../shared/
 import { productIdFromSku, parseGetItemBuyerPrices, buyerPriceMap } from '../shared/ebay-buyer-price';
 import { offerPriceOf, priceMismatch } from '../shared/origin-switch';
 import { applyOfferQuantity } from '../shared/offer-quantity';
+import { decideRelistWithdraw, parseRelistOffers, type RelistGuardDecision } from '../shared/relist-guard';
 
 // K-011b (Kalkulator-Prüfung #179): Ist ein Produkt gesperrt (eBay-Käuferpreis ≠ Inventory-Angebotsdaten), darf KEIN Schreibaufruf auf
 // Offer-, Inventory-Item- oder Gruppen-Ebene raus — ein PUT/publish überarbeitet das Live-Angebot aus den (alten) Angebotsdaten, der
@@ -524,6 +525,8 @@ export interface EbayListingInput {
   // Aufgabe 5: ist am Produkt keine Kategorie hinterlegt, bleibt dieses Feld undefined — dann wird
   // storeCategoryNames im Offer-Body GAR NICHT mitgeschickt (kein "Sonstiges"-Ersatzwert).
   storeCategoryName?: string;
+  // Fix 208: Listing-ID, die die App als AKTIV führt (ebayStatus 'listed'), sonst null — Offers an diesem Angebot werden nie zurückgezogen.
+  activeListingId?: string | null;
 }
 
 // Gender-Wert → eBay "Abteilung" normalisieren
@@ -1516,6 +1519,80 @@ export async function publishOfferByInventoryItemGroup(inventoryItemGroupKey: st
   return data.listingId;
 }
 
+// ─── Fix 208: Offer-Status lesen + vor erneutem Listen zurückziehen ─────────
+// Siehe shared/relist-guard.ts. Annahmen aus der eBay-Doku (Sell Inventory API, KEINE Live-Prüfung möglich – api.ebay.com ist aus
+// der Sandbox gesperrt):
+//  (A1) Nach Trading EndItem bleibt ein Inventory-Offer auf status PUBLISHED, listing.listingStatus = ENDED.
+//  (A2) POST /offer/withdraw_by_inventory_item_group {inventoryItemGroupKey, marketplaceId} setzt alle Offers der Gruppe auf
+//       UNPUBLISHED (Antwort 204); POST /offer/{offerId}/withdraw dasselbe für ein Einzel-Offer (Antwort 200 {listingId}).
+//  (A3) withdraw auf ein Offer mit bereits beendetem Angebot wird angenommen (Fehler → klare Meldung, kein publish).
+//  (A4) Danach legt publish(_by_inventory_item_group) ein NEUES Angebot (neue listingId) an statt das beendete zu revidieren.
+
+export interface OfferStatusRow {
+  sku: string;
+  httpStatus: number;
+  offerId: string | null;
+  status: string | null;
+  listingId: string | null;
+  listingStatus: string | null;
+  merchantLocationKey: string | null;
+}
+
+/** NUR LESEN: Offers je SKU (Gruppe "…-GROUP" → alle Varianten-SKUs, sonst die Einzel-SKU). */
+export async function readOfferStatus(sku: string, token: string, fetchFn: typeof fetch = fetch): Promise<{ groupKey: string | null; skus: string[]; rows: OfferStatusRow[] }> {
+  const groupKey = sku.endsWith('-GROUP') ? sku : null;
+  const skus = groupKey ? await getInventoryItemGroupSkus(groupKey, token, fetchFn).catch(() => [] as string[]) : [sku];
+  const rows: OfferStatusRow[] = [];
+  for (const s of skus) {
+    const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer?sku=${encodeURIComponent(s)}&marketplace_id=EBAY_DE`, { headers: { 'Authorization': `Bearer ${token}` } });
+    const data = res.ok ? await res.json().catch(() => null) : null;
+    const offers = parseRelistOffers(s, data);
+    if (offers.length === 0) {
+      rows.push({ sku: s, httpStatus: res.status, offerId: null, status: null, listingId: null, listingStatus: null, merchantLocationKey: null });
+      continue;
+    }
+    for (const o of offers) rows.push({ httpStatus: res.status, ...o });
+  }
+  return { groupKey, skus, rows };
+}
+
+/**
+ * Fix 208: vor publish prüfen, ob Offers noch an einem BEENDETEN Angebot hängen (decideRelistWithdraw) → nur dann withdraw.
+ * Laufende Angebote werden nie zurückgezogen; hängt ein Offer an einem laufenden, nicht verknüpften Angebot → Fehler, kein publish.
+ * Lesefehler → bisheriges Verhalten (kein withdraw), nur Log.
+ */
+export async function withdrawEndedOffersBeforePublish(sku: string, activeListingId: string | null, token: string, fetchFn: typeof fetch = fetch): Promise<RelistGuardDecision | null> {
+  let read: Awaited<ReturnType<typeof readOfferStatus>>;
+  try { read = await readOfferStatus(sku, token, fetchFn); } catch (e) {
+    console.warn(`[eBay] Fix 208: Offers von ${sku} nicht lesbar – kein withdraw`, e);
+    return null;
+  }
+  const offers = read.rows.filter(r => r.offerId).map(r => ({ sku: r.sku, offerId: r.offerId as string, status: r.status, listingId: r.listingId, listingStatus: r.listingStatus }));
+  const decision = decideRelistWithdraw({ offers, activeListingId });
+  for (const n of decision.notes) console.log(`[eBay] Fix 208 ${sku}: ${n}`);
+  if (decision.blocked) throw new Error(decision.blocked);
+  if (!decision.withdraw) return decision;
+  if (read.groupKey) {
+    const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/withdraw_by_inventory_item_group`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inventoryItemGroupKey: read.groupKey, marketplaceId: 'EBAY_DE' }),
+    });
+    if (!res.ok && res.status !== 204) throw new Error(`Fix 208: withdraw_by_inventory_item_group ${read.groupKey} fehlgeschlagen: ${res.status} ${(await res.text()).slice(0, 500)} – nichts veröffentlicht`);
+    console.log(`[eBay] Fix 208: Gruppe ${read.groupKey} zurückgezogen (${res.status}), Offers ${decision.offerIds.join(', ')}`);
+  } else {
+    for (const offerId of decision.offerIds) {
+      const res = await fetchFn(`${BASE_URL}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/withdraw`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      if (!res.ok && res.status !== 204) throw new Error(`Fix 208: withdraw offer ${offerId} (${sku}) fehlgeschlagen: ${res.status} ${(await res.text()).slice(0, 500)} – nichts veröffentlicht`);
+      console.log(`[eBay] Fix 208: Offer ${offerId} (${sku}) zurückgezogen (${res.status})`);
+    }
+  }
+  return decision;
+}
+
 // ─── Inventory Item Group (Variation Listing) erstellen ──────────────────────
 
 // ─── GPSR Helper ─────────────────────────────────────────────────────────────
@@ -1880,6 +1957,9 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
   // Cleanup: alte Item Group + alte Offers löschen vor Re-Listing.
   // Erst die real zur Gruppe gehörenden SKUs auslesen (aus einem evtl. vorherigen,
   // fehlgeschlagenen Versuch), DANN die Gruppe löschen — sonst sind die SKUs weg.
+  // Fix 208: hängen die alten Offers noch PUBLISHED am beendeten Angebot, scheitern DELETE/PUT/publish ("Cannot revise listing")
+  // → zuerst zurückziehen (nur bei beendetem Angebot; laufende werden nie angefasst).
+  await withdrawEndedOffersBeforePublish(groupSku, input.activeListingId ?? null, token);
   const oldVariantSkus = await getInventoryItemGroupSkus(groupSku, token).catch(() => []);
   await deleteInventoryItemGroup(groupSku).catch(() => {});
   for (const oldSku of oldVariantSkus) {
@@ -2111,6 +2191,8 @@ export async function listOnEbayWithVariants(input: EbayListingInput): Promise<s
 
   // Versuche publish — bei Fehler 25005 (Kategorie unterstützt keine Varianten) → Fallback-Kategorien
   const VARIATION_CATEGORY_FALLBACKS = ['83595', '66471', '179779', '26395'];
+  // Fix 208: direkt vor dem publish noch einmal prüfen (Offers aus 25002-PUT können weiter PUBLISHED am beendeten Angebot hängen).
+  await withdrawEndedOffersBeforePublish(groupSku, input.activeListingId ?? null, token);
   try {
     return await publishWithAspectHealing(offerIds, input.categoryId, token, () => publishOfferByInventoryItemGroup(groupSku));
   } catch (err: unknown) {
@@ -2176,6 +2258,9 @@ export async function listOnEbay(input: EbayListingInput): Promise<string> {
     return listOnEbayWithVariants(input);
   }
 
+  // Fix 208: Offer noch PUBLISHED am beendeten Angebot → erst zurückziehen (laufende nie).
+  const guardToken = await getAccessToken();
+  await withdrawEndedOffersBeforePublish(input.sku, input.activeListingId ?? null, guardToken);
   // Alte Offers für diese SKU löschen (verhindert Konflikte bei Re-Import)
   await deleteExistingOffers(input.sku);
   await createOrUpdateInventoryItem(input);
@@ -2184,6 +2269,7 @@ export async function listOnEbay(input: EbayListingInput): Promise<string> {
   // P-91: dieselbe Selbstheilung wie im Varianten-Pfad — auch Einzelartikel-Listings können an
   // einem Aspekt scheitern, den eBays Taxonomy-API nicht als "required" gemeldet hat.
   const token = await getAccessToken();
+  await withdrawEndedOffersBeforePublish(input.sku, input.activeListingId ?? null, token); // Fix 208: direkt vor publish
   const listingId = await publishWithAspectHealing([offerId], input.categoryId, token, () => publishOffer(offerId));
   return listingId;
 }
