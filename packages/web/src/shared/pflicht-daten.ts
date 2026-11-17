@@ -419,7 +419,7 @@ export function resolvePflichtDaten(input: PflichtInput): ResolvedPflichtDaten {
 
   let material = fromEntry(stored.material, 'gespeichert');
   if (!material && clean(input.material)) {
-    const src = MEASURE_SOURCES.includes(input.materialSource?.source as PflichtSource) ? input.materialSource!.source as PflichtSource : null;
+    const src = (MEASURE_SOURCES as readonly string[]).includes(String(input.materialSource?.source)) ? input.materialSource!.source as PflichtSource : null;
     material = { value: clean(input.material), source: src, location: input.materialSource?.location ?? null, wording: null, herkunft: 'altfeld' };
   }
   material ??= fromEntry(p.material, 'vorschlag');
@@ -568,7 +568,8 @@ function parseEntry(at: string, v: unknown, max: number): { ok: true; value: Pfl
   const value = typeof v.value === 'string' ? clean(v.value) : '';
   if (!value) return { ok: true, value: null };
   if (value.length > max) return { ok: false, error: `${at}.value ist zu lang (max. ${max} Zeichen)` };
-  if (!MEASURE_SOURCES.includes(v.source as PflichtSource)) return { ok: false, error: `${at}.source muss a, b, c, d oder e sein` };
+  // 050b F1: Pflicht-Daten (P1–P7) erlauben Quelle e (eBay-Konkurrenzangebote); A-045-Variantenmaße bleiben a–d (product-data-patch).
+  if (!(PFLICHT_SOURCES as readonly string[]).includes(String(v.source))) return { ok: false, error: `${at}.source muss a, b, c, d oder e sein` };
   const location = typeof v.location === 'string' ? clean(v.location) : '';
   const wording = typeof v.wording === 'string' ? clean(v.wording) : '';
   if (!location) return { ok: false, error: `${at}.location (Fundstelle) ist Pflicht` };

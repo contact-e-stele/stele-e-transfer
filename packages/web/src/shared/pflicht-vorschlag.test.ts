@@ -2,7 +2,7 @@
 // Konkurrenz-Merkmale sind KONSTRUIERT (api.ebay.com ist aus der Sandbox gesperrt: "403 request blocked"); sie prüfen nur die Regel
 // „mindestens 2 gleiche Angaben“, keine echten eBay-Werte.
 import { describe, expect, test } from 'bun:test';
-import { plzVorschlag, konkurrenzVorschlaege, aspectsFromBrowseItem, CN_STADT_PLZ } from './pflicht-vorschlag';
+import { plzVorschlag, konkurrenzVorschlaege, aspectsFromBrowseItem, CN_STADT_PLZ, type Competitor } from './pflicht-vorschlag';
 
 describe('plzVorschlag', () => {
   test('Nr 781: Guangzhou ohne PLZ in der Straße → Haupt-PLZ der Stadt aus dem Verzeichnis', () => {
@@ -35,7 +35,7 @@ describe('plzVorschlag', () => {
 });
 
 describe('konkurrenzVorschlaege (konstruierte Merkmale)', () => {
-  const items = [
+  const items: Competitor[] = [
     { itemId: '111', aspects: { Material: ['Kunststoff'], 'Maße': ['35 cm'] } },
     { itemId: '222', aspects: { material: ['kunststoff '], 'Maße': ['40 cm'] } },
     { itemId: '333', aspects: { Material: ['Metall'] } },
@@ -88,5 +88,24 @@ describe('Maße mit Quelle e', () => {
   test('A-045 variantDetails bleiben bei a–d (Quelle e abgelehnt)', () => {
     const r = parseProductDataPatch({ variantDetails: { x: { displayNameDe: 'X', pieces: 1, measure: { kind: 'D', values: [35], source: 'e', location: 'eBay' } } } });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('050b F1/F2: Material mit Quelle e', () => {
+  const material = { value: 'Kunststoff', source: 'e', location: 'eBay-Angebote 111, 222', wording: 'Material: Kunststoff' };
+  test('PATCH material source e → ok:true', () => {
+    const r = parsePflichtDatenPatch({ material }, parseMeasure);
+    expect(r.ok).toBe(true);
+    expect(JSON.parse((r as { json: string }).json).material).toEqual(material);
+  });
+  test('gespeichertes Material mit Quelle e zählt in der Ampel (Material fehlt nicht)', () => {
+    const r = parsePflichtDatenPatch({ material }, parseMeasure) as { json: string };
+    const res = resolvePflichtDaten({ pflichtDaten: JSON.parse(r.json), variants: [], variantPrices: [] });
+    expect(res.ampel.missing.includes('Material')).toBe(false);
+    expect(res.material?.value).toBe('Kunststoff');
+    expect(res.material?.source).toBe('e');
+  });
+  test('Quelle z bleibt abgelehnt', () => {
+    expect(parsePflichtDatenPatch({ material: { ...material, source: 'z' } }, parseMeasure).ok).toBe(false);
   });
 });
