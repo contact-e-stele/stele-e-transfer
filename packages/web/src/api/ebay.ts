@@ -915,13 +915,43 @@ export function prettifyEbayError(rawMessage: string): string {
     const errorId = rawMessage.match(/"errorId"\s*:\s*(\d+)/)?.[1];
     return `eBay lehnt ab${errorId ? ` (Fehler ${errorId})` : ''}: Pflichtfeld "${missingAspect}" fehlt und konnte nicht automatisch befüllt werden — bitte im Produkte-Tab manuell ergänzen oder eBay-Kategorie prüfen.`;
   }
+  // 050 P3 (stele-208): Bei 25019 "Cannot revise listing" steht der eigentliche Grund nur in parameters[].value
+  // (z. B. "Dieser Artikel kann nur im Inland verkauft werden …"). Diesen Grund mit anzeigen.
+  const reason = ebayErrorParameterReason(rawMessage);
   // Generische eBay-Fehlerbeschreibung aus dem JSON extrahieren, statt den rohen Blob zu zeigen
   const longMessageMatch = rawMessage.match(/"longMessage"\s*:\s*"([^"]{5,300})"/)
     ?? rawMessage.match(/"message"\s*:\s*"([^"]{5,300})"/);
   if (longMessageMatch && longMessageMatch[1] !== 'A user error has occurred.' && longMessageMatch[1] !== 'A user error has occurred') {
-    return `eBay-Fehler: ${longMessageMatch[1]}`;
+    return reason ? `eBay-Fehler: ${longMessageMatch[1]} — Grund laut eBay: ${reason}` : `eBay-Fehler: ${longMessageMatch[1]}`;
   }
   return rawMessage;
+}
+
+const HTML_ENTITIES: Record<string, string> = {
+  auml: 'ä', ouml: 'ö', uuml: 'ü', Auml: 'Ä', Ouml: 'Ö', Uuml: 'Ü', szlig: 'ß', nbsp: ' ', amp: '&', quot: '"', lt: '<', gt: '>', euro: '€',
+};
+
+/** Erster aussagekräftiger Text aus errors[].parameters[].value (HTML/Entities/eBay-Code entfernt), sonst null. */
+export function ebayErrorParameterReason(rawMessage: string): string | null {
+  const start = rawMessage.indexOf('{');
+  if (start < 0) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(rawMessage.slice(start)); } catch { return null; }
+  const errors = (parsed as { errors?: Array<{ parameters?: Array<{ value?: unknown }> }> })?.errors;
+  if (!Array.isArray(errors)) return null;
+  for (const e of errors) {
+    for (const p of e?.parameters ?? []) {
+      if (typeof p?.value !== 'string') continue;
+      const text = p.value
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&([a-zA-Z]+);/g, (m, n: string) => HTML_ENTITIES[n] ?? m)
+        .replace(/\{e\d+-\d+x\}/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text.length >= 15 && /[a-zA-ZäöüÄÖÜ]{3}/.test(text)) return text.slice(0, 300);
+    }
+  }
+  return null;
 }
 
 // Cache: categoryId → VariationsEnabled
