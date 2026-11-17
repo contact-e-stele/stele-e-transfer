@@ -16,6 +16,8 @@ import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLCurrent, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { productProfitRows, productTarget, type ProfitProduct } from "../../shared/target-margin-bulk";
+import { SupplierSwapPanel } from "../components/supplier-swap-panel";
+import { isVariantProduct } from "../../shared/variant-product";
 import { matchesProductSearch, searchFromQuery } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
@@ -2158,6 +2160,10 @@ export default function Produkte() {
               {/* A-029 (P-E01): Elektro Kat. 5 — ja/nein/offen, Geräteart, Batterie, Nachweise; zeigt die Listen-Sperre live */}
               {product.ebayStatus !== "listed" && (
                 <ElectricPanel key={product.id} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
+              )}
+              {/* 050 P2: Lieferant tauschen — eBay-Angebot bleibt, Einkauf/Lager vom neuen AliExpress-Angebot */}
+              {isVariantProduct(product.variants, product.variantPrices) && (
+                <SupplierSwapPanel key={`sw-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               )}
               {/* A-045: Produktdaten für die Beschreibung v2 (Material, Verwendung, Maße je Variante) + Ampel R8 — nur Daten, die Beschreibung bleibt unverändert */}
               <ProductDataPanel key={`pd-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />

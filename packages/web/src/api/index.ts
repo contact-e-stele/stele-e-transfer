@@ -5837,6 +5837,97 @@ app.get('/products/:id/offer-status', async (c) => {
   }
 });
 
+// 050 P2: Lieferant tauschen (Anlass stele-251, 224 TIEFBLAU). Das eBay-Angebot bleibt (gleiche eBay-SKUs über displayValues).
+// GET = nur lesen: neues AliExpress-Angebot (DS API) + Vorschlag + Vorschau. POST = schreibt NUR products (aliexpressItemId, sourceUrl,
+// variantPrices, variantSellPrices, Kassen-Faktor zurück) und verschiebt „Preis halten“ auf die neuen skuIds. Nichts an eBay —
+// Varianten ohne Gegenstück haben danach Lager 0; an eBay geht das mit dem bestehenden Mengen-Lauf („Mengen an eBay“).
+async function loadSwapOffer(itemId: string) {
+  await ensureFreshAliToken();
+  const token = await getAliAccessToken();
+  if (!token) return { error: 'Kein AliExpress-Zugang (Token fehlt)' } as const;
+  const data = await getAliProductByApi(itemId, token);
+  if (!data) return { error: `AliExpress-Angebot ${itemId} nicht lesbar` } as const;
+  const variantPrices = (data.variantPrices ?? []).filter(v => typeof v.skuId === 'string' && typeof v.price === 'number')
+    .map(v => ({ skuId: String(v.skuId), attrs: v.attrs as Record<string, string> | undefined, price: v.price as number, stock: v.stock as number | undefined, imageUrl: v.imageUrl as string | undefined }));
+  return { offer: { itemId, variantPrices, shipsFrom: data.shipsFrom ?? null }, title: data.title, rating: data.rating ?? null, reviewCount: data.reviewCount ?? null } as const;
+}
+app.get('/products/:id/supplier-swap', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const { parseAliItemId, suggestMapping, parseEntries, planSupplierSwap, sameOrigin, entryLabel } = await import('../shared/supplier-swap');
+  const itemId = parseAliItemId(c.req.query('item') ?? '');
+  if (!itemId) return c.json({ error: 'AliExpress-Artikelnummer oder Link fehlt' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    if (product.aliexpressItemId === itemId) return c.json({ error: `Produkt nutzt bereits ${itemId}` }, 400);
+    const loaded = await loadSwapOffer(itemId);
+    if ('error' in loaded) return c.json({ error: loaded.error }, 502);
+    const oldEntries = parseEntries(product.variantPrices);
+    const mapping = suggestMapping(oldEntries, loaded.offer.variantPrices);
+    const plan = planSupplierSwap(product, loaded.offer, mapping);
+    return c.json({
+      nurLesen: true, productId: id, altItemId: product.aliexpressItemId ?? null, itemId, title: loaded.title, rating: loaded.rating, reviewCount: loaded.reviewCount,
+      shipsFromAlt: product.shipsFrom ?? null, shipsFromNeu: loaded.offer.shipsFrom, gleicheHerkunft: sameOrigin(product.shipsFrom, loaded.offer.shipsFrom),
+      alt: oldEntries.map(e => ({ skuId: e.skuId, label: entryLabel(e), price: e.price, stock: e.stock ?? null })),
+      neu: loaded.offer.variantPrices.map(e => ({ skuId: e.skuId, label: entryLabel(e), price: e.price, stock: e.stock ?? null })),
+      vorschlag: mapping, vorschau: plan.rows, fehler: plan.errors,
+    }, 200);
+  } catch (e) {
+    console.error('[supplier-swap GET]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+app.post('/products/:id/supplier-swap', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  let body: { item?: unknown; mapping?: unknown; confirm?: unknown; mode?: unknown };
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
+  const { parseAliItemId, planSupplierSwap, sameOrigin } = await import('../shared/supplier-swap');
+  const itemId = parseAliItemId(typeof body.item === 'string' ? body.item : '');
+  if (!itemId) return c.json({ error: 'item fehlt' }, 400);
+  if (!body.mapping || typeof body.mapping !== 'object' || Array.isArray(body.mapping)) return c.json({ error: 'mapping { alteSkuId: neueSkuId|null } fehlt' }, 400);
+  const mapping: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(body.mapping as Record<string, unknown>)) mapping[k] = typeof v === 'string' && v.trim() ? v.trim() : null;
+  const apply = body.mode === 'apply';
+  if (apply && body.confirm !== true) return c.json({ error: 'confirm: true fehlt — nichts gespeichert' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+    if (!product) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const loaded = await loadSwapOffer(itemId);
+    if ('error' in loaded) return c.json({ error: loaded.error }, 502);
+    if (!sameOrigin(product.shipsFrom, loaded.offer.shipsFrom)) {
+      return c.json({ error: `Andere Herkunft (${product.shipsFrom ?? 'China'} → ${loaded.offer.shipsFrom ?? 'China'}): Standort/Einfuhr ändern sich — erst „Standort umstellen“, nicht hier tauschen.` }, 422);
+    }
+    const plan = planSupplierSwap(product, loaded.offer, mapping);
+    if (!apply || !plan.ok) return c.json({ gespeichert: false, ok: plan.ok, fehler: plan.errors, vorschau: plan.rows }, plan.ok ? 200 : 422);
+    await db.update(schema.products).set({
+      aliexpressItemId: itemId,
+      sourceUrl: `https://www.aliexpress.com/item/${itemId}.html`,
+      variantPrices: plan.variantPrices,
+      variantSellPrices: plan.variantSellPrices,
+      aliCheckoutFactor: null, aliCheckoutFactorAt: null, aliCheckoutFactorOrder: null, // Kassen-Faktor galt nur für den alten Lieferanten
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.products.id, id));
+    // „Preis halten“ auf die neuen skuIds verschieben.
+    const { getPriceHolds, setPriceHold } = await import('./price-holds');
+    const holds = (await getPriceHolds())[String(id)] ?? {};
+    for (const [oldSku, newSku] of Object.entries(plan.rekey)) {
+      const h = holds[oldSku];
+      if (!h || oldSku === newSku) continue;
+      await setPriceHold(id, newSku, h);
+      await setPriceHold(id, oldSku, null);
+    }
+    console.log(`[050 P2] stele-${id}: Lieferant ${product.aliexpressItemId ?? '–'} → ${itemId}, ${Object.keys(plan.rekey).length} Varianten zugeordnet, ${plan.rows.filter(r => !r.newSkuId).length} ohne Gegenstück (Lager 0)`);
+    return c.json({ gespeichert: true, ok: true, altItemId: product.aliexpressItemId ?? null, itemId, vorschau: plan.rows, ohneGegenstueck: plan.rows.filter(r => !r.newSkuId).map(r => r.label) }, 200);
+  } catch (e) {
+    console.error('[supplier-swap POST]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.get('/products/:id/republish', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
