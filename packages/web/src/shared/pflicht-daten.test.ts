@@ -228,7 +228,7 @@ describe('Handeingabe speichern (PATCH pflichtDaten)', () => {
     expect(s.masse?.['1']).toEqual({ kind: 'D', values: [20], text: 'Diameter 20cm', source: 'a', location: 'Variantenauswahl' });
   });
   test('ohne Quelle / ohne Wortlaut / unbekannte Farbe / Produktart über 3 Wörter → Fehler', () => {
-    expect(parsePflichtDatenPatch({ material: { value: 'Holz', source: 'x', location: 'a', wording: 'wood' } }, pm)).toEqual({ ok: false, error: 'pflichtDaten.material.source muss a, b, c oder d sein' });
+    expect(parsePflichtDatenPatch({ material: { value: 'Holz', source: 'x', location: 'a', wording: 'wood' } }, pm)).toEqual({ ok: false, error: 'pflichtDaten.material.source muss a, b, c, d oder e sein' });
     expect(parsePflichtDatenPatch({ material: { value: 'Holz', source: 'b', location: 'Spezifikation', wording: '' } }, pm)).toEqual({ ok: false, error: 'pflichtDaten.material.wording (Wortlaut der Quelle) ist Pflicht' });
     expect((parsePflichtDatenPatch({ farben: { '1': { value: 'Champagner', source: 'a', location: 'x', wording: 'Champagne' } } }, pm) as { ok: false; error: string }).error).toContain('nicht in der festen Farbliste');
     expect(parsePflichtDatenPatch({ produktart: { value: 'Ein sehr langer Produktname', source: 'c', location: 'x', wording: 'y' } }, pm)).toEqual({ ok: false, error: 'pflichtDaten.produktart: höchstens 3 Wörter' });

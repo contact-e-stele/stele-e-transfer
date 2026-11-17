@@ -5815,6 +5815,71 @@ async function republishContext(id: number) {
 }
 
 // Fix 208: NUR LESEN – Offer-Status je SKU (Gruppe bzw. Einzel-SKU) + Entscheidung, ob vor dem nächsten publish ein withdraw käme.
+// 050 P4: Pflicht-Daten-Vorschlag statt Stopp — NUR LESEN. Material/Maße aus eBay-Konkurrenzangeboten (Browse API, mind. 2 gleiche
+// Angaben), Hersteller-PLZ aus Herstellerangabe bzw. Stadt-PLZ-Verzeichnis. Gespeichert wird erst, wenn der Einsteller „Übernehmen“ klickt
+// (PATCH /products/:id pflichtDaten mit Quelle e bzw. gpsrMfrCity). Regeln: shared/pflicht-vorschlag.ts.
+app.get('/products/:id/pflicht-vorschlag', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  try {
+    const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+    const [p] = await db.select().from(schema.products).where(eq(schema.products.id, id));
+    if (!p) return c.json({ error: 'Produkt nicht gefunden' }, 404);
+    const { plzVorschlag, konkurrenzVorschlaege, aspectsFromBrowseItem } = await import('../shared/pflicht-vorschlag');
+    const j = <T,>(s: string | null | undefined, fb: T): T => { try { const v = JSON.parse(s ?? 'null'); return (v ?? fb) as T; } catch { return fb; } };
+    const resolved = resolvePflichtDaten({
+      productId: id, title: p.generatedTitle ?? p.title, specs: j<Record<string, string>>(p.specs, {}),
+      variants: (() => { const v = j<unknown[]>(p.variants, []); return Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' ? v as VariantGroup[] : []; })(),
+      variantPrices: (() => { const v = j<unknown>(p.variantPrices, []); return Array.isArray(v) ? v as Array<{ skuId?: string; attrs?: Record<string, string> }> : []; })(),
+      material: p.material, materialSource: j<{ source?: string; location?: string } | null>(p.materialSource, null),
+      usePurpose: p.usePurpose, usageNote: p.usageNote, variantDetails: readVariantDetails(p.variantDetails),
+      manualAspects: j<Record<string, string> | null>(p.manualAspects, null), pflichtDaten: readPflichtDaten(p.pflichtDaten),
+    });
+    const fehlt = { material: resolved.ampel.missing.includes('Material'), masse: resolved.ampel.missing.includes('Maße') };
+    const plz = plzVorschlag({ gpsrMfrCity: p.gpsrMfrCity, gpsrMfrAddress: p.gpsrMfrAddress, gpsrRaw: p.gpsrRaw });
+    let konkurrenz: Array<{ itemId: string; title: string }> = [];
+    let vorschlaege: ReturnType<typeof konkurrenzVorschlaege> = [];
+    let ebayFehler: string | null = null;
+    if (fehlt.material || fehlt.masse) {
+      try {
+        const { getAppToken } = await import('./ebay');
+        const token = await getAppToken();
+        const BASE = process.env.EBAY_SANDBOX === 'true' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+        const headers = { Authorization: `Bearer ${token}`, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_DE', 'Accept-Language': 'de-DE' };
+        const q = (p.generatedTitle ?? p.title ?? '').split(/\s+/).slice(0, 6).join(' ');
+        const cat = p.ebayCategory ? `&category_ids=${encodeURIComponent(p.ebayCategory)}` : '';
+        const sr = await fetch(`${BASE}/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}${cat}&limit=8`, { headers });
+        if (!sr.ok) throw new Error(`Suche ${sr.status}`);
+        const sj = await sr.json() as { itemSummaries?: Array<{ itemId: string; legacyItemId?: string; title?: string }> };
+        const items = (sj.itemSummaries ?? []).slice(0, 6);
+        const comps = [];
+        for (const it of items) {
+          const ir = await fetch(`${BASE}/buy/browse/v1/item/${encodeURIComponent(it.itemId)}`, { headers });
+          if (!ir.ok) continue;
+          const ij = await ir.json();
+          const itemId = it.legacyItemId ?? it.itemId;
+          comps.push({ itemId, aspects: aspectsFromBrowseItem(ij) });
+          konkurrenz.push({ itemId, title: (it.title ?? '').slice(0, 80) });
+        }
+        vorschlaege = konkurrenzVorschlaege(comps, fehlt);
+      } catch (e) { ebayFehler = String(e); }
+    }
+    // Maße mit einem Klick speicherbar nur bei EINER Einheit (ohne Varianten-Maße) und lesbarem Maß — sonst nur Hinweis.
+    let masseSpeicherbar: { key: string; measure: Record<string, unknown> } | null = null;
+    const mv = vorschlaege.find(v => v.feld === 'masse');
+    if (mv) {
+      const { unitsOf, parseMeasureText } = await import('../shared/pflicht-daten');
+      const units = unitsOf({ variants: j<VariantGroup[]>(p.variants, []), variantPrices: j<Array<{ skuId?: string; attrs?: Record<string, string> }>>(p.variantPrices, []) });
+      const parsed = parseMeasureText(mv.wert);
+      if (units.length === 1 && parsed) masseSpeicherbar = { key: units[0].key, measure: { ...parsed, text: mv.wert, source: 'e', location: `eBay-Angebote ${mv.quellen.join(', ')}`.slice(0, 200) } };
+    }
+    return c.json({ nurLesen: true, productId: id, fehlt, plz, vorschlaege, masseSpeicherbar, konkurrenz, ebayFehler }, 200);
+  } catch (e) {
+    console.error('[pflicht-vorschlag]', e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 app.get('/products/:id/offer-status', async (c) => {
   const id = parseInt(c.req.param('id'));
   if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);

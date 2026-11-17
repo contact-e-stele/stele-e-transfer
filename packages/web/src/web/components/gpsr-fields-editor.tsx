@@ -2,6 +2,7 @@
 // Warnhinweis. Reine Darstellung: alle Regeln kommen aus shared/gpsr-import-fields.ts (Import-Tab) bzw.
 // shared/gpsr-ampel.ts (dieselbe Ampel wie der Produkte-Tab) — hier wird nichts nachgebaut.
 import { useEffect, useState } from "react";
+import { plzVorschlag } from "../../shared/pflicht-vorschlag";
 import { EU_EEA_COUNTRIES, sameCompanyName } from "../../shared/gpsr-parser";
 import { gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import {
@@ -154,6 +155,20 @@ export function GpsrFieldsEditor(props: {
         onPick={o => props.onChange({ ...props.overrides, mfr: { name: o.name, address: o.address, city: o.city, country: o.country, email: o.email, phone: o.phone, url: (o as MfrOption).url ?? "" } })} />
       {mfrOther && otherNote}
       {MFR_KEYS.map(k => <div key={k}>{field(LABELS_MFR[k], input(form.mfr[k], v => setMfr(k, v), problems.mfr[k], k === "country" ? { select: MFR_COUNTRIES } : undefined))}</div>)}
+      {/* 050 P4: Vorschlag für „PLZ + Stadt“ statt Stopp — nur mit Quelle, Übernahme mit einem Klick */}
+      {(() => {
+        if (!form.mfr.name?.trim()) return null;
+        const v = plzVorschlag({ gpsrMfrCity: form.mfr.city, gpsrMfrAddress: form.mfr.address, gpsrRaw: props.raw });
+        if (!v) return null;
+        return (
+          <div style={{ background: "#FEF9C3", color: "#713F12", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 6px", marginBottom: 6 }}>
+            Vorschlag PLZ + Stadt: <b>{v.wert}</b>
+            <button type="button" onClick={() => setMfr("city", v.wert)}
+              style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 5, border: "none", background: "#FFD700", fontWeight: 700, fontSize: 10, cursor: "pointer" }}>Übernehmen</button>
+            <div style={{ fontSize: 9 }}>Quelle: {v.quelle} · {v.fundstelle}</div>
+          </div>
+        );
+      })()}
 
       <div style={{ fontWeight: 800, color: c.head, margin: "10px 0 4px" }}>EU-Verantwortliche Person</div>
       <PartyPicker kind="eu" options={options} rawName={names.eu} theme={props.theme}

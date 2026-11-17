@@ -17,10 +17,12 @@ import { translateColorExact, translateVariantValue } from './variant-text-de';
 import { buildCombinations, NON_VARIATION_ASPECTS, type VariantGroup } from './variant-resolver';
 import { formatPieces, measureText } from './description-v3';
 
-export type PflichtSource = MeasureSource; // 'a' | 'b' | 'c' | 'd'
-export const PFLICHT_SOURCES = MEASURE_SOURCES;
+// 050 P4: Pflicht-Daten (P1–P7) kennen zusätzlich e = eBay-Konkurrenzangebote (mind. 2 gleiche Angaben). Maße je Variante (A-045,
+// VariantMeasure) bleiben bei a–d — Regel A-045 „Quelle nur a–d“ ist eigens getestet und wird hier NICHT aufgeweicht.
+export const PFLICHT_SOURCES = [...MEASURE_SOURCES, 'e'] as const;
+export type PflichtSource = MeasureSource | 'e';
 export const PFLICHT_SOURCE_LABEL: Record<PflichtSource, string> = {
-  a: 'AliExpress-Variantenauswahl', b: 'Spezifikationen', c: 'Bild-/Beschreibungstext', d: 'Größentabelle',
+  a: 'AliExpress-Variantenauswahl', b: 'Spezifikationen', c: 'Bild-/Beschreibungstext', d: 'Größentabelle', e: 'eBay-Konkurrenzangebote',
 };
 
 export interface PflichtEntry { value: string; source: PflichtSource; location: string; wording: string }
@@ -417,7 +419,7 @@ export function resolvePflichtDaten(input: PflichtInput): ResolvedPflichtDaten {
 
   let material = fromEntry(stored.material, 'gespeichert');
   if (!material && clean(input.material)) {
-    const src = MEASURE_SOURCES.includes(input.materialSource?.source as PflichtSource) ? input.materialSource!.source as PflichtSource : null;
+    const src = (MEASURE_SOURCES as readonly string[]).includes(String(input.materialSource?.source)) ? input.materialSource!.source as PflichtSource : null;
     material = { value: clean(input.material), source: src, location: input.materialSource?.location ?? null, wording: null, herkunft: 'altfeld' };
   }
   material ??= fromEntry(p.material, 'vorschlag');
@@ -566,7 +568,8 @@ function parseEntry(at: string, v: unknown, max: number): { ok: true; value: Pfl
   const value = typeof v.value === 'string' ? clean(v.value) : '';
   if (!value) return { ok: true, value: null };
   if (value.length > max) return { ok: false, error: `${at}.value ist zu lang (max. ${max} Zeichen)` };
-  if (!MEASURE_SOURCES.includes(v.source as PflichtSource)) return { ok: false, error: `${at}.source muss a, b, c oder d sein` };
+  // 050b F1: Pflicht-Daten (P1–P7) erlauben Quelle e (eBay-Konkurrenzangebote); A-045-Variantenmaße bleiben a–d (product-data-patch).
+  if (!(PFLICHT_SOURCES as readonly string[]).includes(String(v.source))) return { ok: false, error: `${at}.source muss a, b, c, d oder e sein` };
   const location = typeof v.location === 'string' ? clean(v.location) : '';
   const wording = typeof v.wording === 'string' ? clean(v.wording) : '';
   if (!location) return { ok: false, error: `${at}.location (Fundstelle) ist Pflicht` };
@@ -614,9 +617,13 @@ export function parsePflichtDatenPatch(
     const keys = Object.keys(raw.masse);
     if (keys.length > PFLICHT_MAX.keys) return { ok: false, error: `"pflichtDaten.masse" hat zu viele Varianten (max. ${PFLICHT_MAX.keys})` };
     for (const k of keys) {
-      const r = parseMeasure(k, raw.masse[k], `pflichtDaten.masse["${k}"]`);
-      if (!r.ok) return r;
-      if (r.value) masse[k] = r.value as VariantMeasure;
+      // 050 P4 (Inhaber 17.11. 19:39 „ja“): In den Pflicht-Daten darf ein Maß auch Quelle e (eBay-Konkurrenzangebote) haben.
+      // Geprüft wird es wie jedes Maß (Art, Werte, Fundstelle); die A-045-Maße je Variante (variantDetails) bleiben bei a–d.
+      const m = raw.masse[k];
+      const isE = isObj(m) && m.source === 'e';
+      const r = parseMeasure(k, isE ? { ...m, source: 'a' } : m, `pflichtDaten.masse["${k}"]`);
+      if (!r.ok) return isE ? { ok: false, error: r.error.replace('a, b, c oder d', 'a, b, c, d oder e') } : r;
+      if (r.value) masse[k] = (isE ? { ...(r.value as object), source: 'e' } : r.value) as VariantMeasure;
     }
     if (Object.keys(masse).length > 0) out.masse = masse;
   }
