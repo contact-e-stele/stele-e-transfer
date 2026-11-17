@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ElectricSettingsCard } from "../components/electric-panel";
 import { OriginSettingsCard } from "../components/origin-panel";
 import { OriginPolicyCard } from "../components/origin-policy-panel";
+import { PRESELECT_MIN_STOCK } from "../../shared/variant-preselect";
 
 interface AliStatus {
   connected: boolean;
@@ -784,7 +785,7 @@ export default function Einstellungen() {
           <span style={{ fontWeight: 700, fontSize: 16, color: "#1E293B" }}>Import-Regeln — Sterne und Varianten</span>
         </div>
         <p style={{ fontSize: 13, color: "#64748B", margin: "0 0 12px" }}>
-          Import nur ab dieser Artikelbewertung (Sterne auf AliExpress). Höchstens so viele Varianten je Angebot — beim Import wählt die App die besten automatisch (Lager ≥ 5, Gewinn ≥ 1,00 €). Gilt nur für neue Importe, gelistete Angebote bleiben unberührt.
+          Import nur ab dieser Artikelbewertung (Sterne auf AliExpress). Höchstens so viele Varianten je Angebot — beim Import wählt die App die besten automatisch (Lager ≥ {PRESELECT_MIN_STOCK}, Gewinn ≥ 1,00 €). Gilt nur für neue Importe, gelistete Angebote bleiben unberührt.
         </p>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <label style={{ fontSize: 13 }}>ab <input type="text" inputMode="decimal" value={minRating} onChange={e => setMinRating(e.target.value)}

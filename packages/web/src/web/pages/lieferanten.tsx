@@ -24,7 +24,7 @@ import { planVolumeDiscount } from "../../shared/volume-discount";
 import { MultiRabattTable, useMultiRabattRule } from "../components/multi-rabatt";
 import { pruneRemovedVariantEntries, maxVariantsError, countVariantCombinations, MAX_VARIANT_COMBINATIONS } from "../../shared/variant-cleanup";
 import { ratingGate, DEFAULT_MIN_RATING } from "../../shared/rating-gate";
-import { preselectVariants, type PreselectResult } from "../../shared/variant-preselect";
+import { preselectVariants, PRESELECT_MIN_STOCK, type PreselectResult } from "../../shared/variant-preselect";
 import { setPackQty, normalizePackQty, MAX_PACK_QTY } from "../../shared/pack-qty";
 import {
   FileText, Copy, Check, Loader, AlertCircle,
@@ -644,7 +644,7 @@ export default function Lieferanten() {
         initVariants[g.name] = [...g.values];
       }
       setSelectedVariants(initVariants);
-      // R2 (OFFEN 006): bei mehr als importRules.maxVariants automatisch die besten wählen — Lager ≥ 5, Gewinn ≥ 1,00 € beim
+      // R2 (OFFEN 006): bei mehr als importRules.maxVariants automatisch die besten wählen — Lager ≥ PRESELECT_MIN_STOCK (2), Gewinn ≥ 1,00 € beim
       // vorgeschlagenen Preis (Formel v2, Stufe minGewinn), davon die mit dem besten Gewinn. Haken in der Auswahl-Liste ändern das.
       const startGroups = namedVariants.filter(g => !isSkipVariantGroup(g.name)).map(g => ({ name: g.name, values: [...g.values] }));
       const pre = preselectVariants(startGroups, data.variantPrices ?? [], importRules.maxVariants, (e) => {
@@ -2287,7 +2287,7 @@ export default function Lieferanten() {
                 return (
                   <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', fontSize: 12 }}>
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>Varianten-Auswahl (höchstens {importRules.maxVariants})</div>
-                    {preselect.applied && <div style={{ color: '#475569', marginBottom: 4 }}>Automatisch gewählt: Lager ≥ 5 und Gewinn ≥ 1,00 € beim vorgeschlagenen Preis, die mit dem besten Gewinn. Haken ändern die Auswahl.</div>}
+                    {preselect.applied && <div style={{ color: '#475569', marginBottom: 4 }}>Automatisch gewählt: Lager ≥ {PRESELECT_MIN_STOCK} und Gewinn ≥ 1,00 € beim vorgeschlagenen Preis, die mit dem besten Gewinn. Haken ändern die Auswahl.</div>}
                     {preselect.reason && <div style={{ color: '#B45309', marginBottom: 4 }}>{preselect.reason}</div>}
                     {renamed ? <div style={{ color: '#64748B' }}>Werte umbenannt — Auswahl bitte mit dem × an den Werten ändern.</div> : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

@@ -2,7 +2,7 @@
 // Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 import { describe, expect, test } from 'bun:test';
 import { ratingGate, parseMinRating, DEFAULT_MIN_RATING } from './rating-gate';
-import { preselectVariants } from './variant-preselect';
+import { preselectVariants, PRESELECT_MIN_STOCK } from './variant-preselect';
 import { pruneRemovedVariantEntries, parseMaxVariantCombinations, maxVariantsError } from './variant-cleanup';
 import { computeMinSellPrice, profitAtSellPrice, DEFAULT_PRICING_CONFIG } from './pricing';
 
@@ -44,14 +44,14 @@ describe('OFFEN 006 R1 Sterne-Sperre', () => {
 });
 
 describe('OFFEN 006 R2 höchstens 5 Varianten, Vorauswahl', () => {
-  test('stele-213: 11 Farben → 5 gewählt, alle mit Lager ≥ 5 und Gewinn ≥ 1 €, bester Gewinn zuerst', () => {
+  test('stele-213: 11 Farben → 5 gewählt, alle mit Lager ≥ Mindestlager und Gewinn ≥ 1 €, bester Gewinn zuerst', () => {
     const r = preselectVariants(g213, vp213, 5, profitAtSuggested);
     expect(r.applied).toBe(true);
     expect(r.kept.length).toBe(5);
     expect(r.removed.length).toBe(6);
     expect(r.groups[0].values).toEqual(r.kept);
     const byValue = new Map(r.rows.map(x => [x.value, x]));
-    for (const v of r.kept) { expect(byValue.get(v)!.stock!).toBeGreaterThanOrEqual(5); expect(byValue.get(v)!.profit!).toBeGreaterThanOrEqual(1); }
+    for (const v of r.kept) { expect(byValue.get(v)!.stock!).toBeGreaterThanOrEqual(PRESELECT_MIN_STOCK); expect(byValue.get(v)!.profit!).toBeGreaterThanOrEqual(1); }
     const minKept = Math.min(...r.kept.map(v => byValue.get(v)!.profit!));
     const maxRemoved = Math.max(...r.removed.filter(v => byValue.get(v)!.eligible).map(v => byValue.get(v)!.profit!));
     expect(minKept).toBeGreaterThanOrEqual(maxRemoved);
@@ -61,11 +61,18 @@ describe('OFFEN 006 R2 höchstens 5 Varianten, Vorauswahl', () => {
   // Yellow/Brown 1,7753 nicht mehr dabei). EINGABE GEÄNDERT: geprüft werden Gray (Lager 4) und Red (Lager unbekannt) statt Yellow/Brown.
   // AUFSICHT 045 Teil A (09.11.2026): mit gestaffelter Fixgebühr (0,35 bei Bestellwert ≤ 10 €, sonst 0,45) sind die besten 5 jetzt
   // Red/Yellow/Brown/Deep blue/Pink (bun). EINGABE GEÄNDERT: geprüft werden Yellow (Lager 4) und Red (Lager unbekannt) statt Gray/Red.
-  test('Lager < 5 oder unbekannt → nicht wählbar (Yellow/Red wären sonst unter den besten 5)', () => {
+  // 052 (Inhaber „A ja“ 17.11. 23:32): Mindestlager der Vorauswahl = MIN_STOCK_FOR_EBAY = 2 (vorher 5). EINGABE GEÄNDERT: Yellow Lager 1
+  // (vorher 4 — wäre jetzt wählbar); zusätzlich Lager 2 → wählbar (bei 5 wäre Yellow mit 2 nicht wählbar → unterscheidet alt/neu).
+  test('Mindestlager-Konstante der Vorauswahl = eBay-Menge = 2', () => { expect(PRESELECT_MIN_STOCK).toBe(2); });
+  test('Lager 2 → wählbar (Yellow bleibt unter den besten 5)', () => {
+    const vp = vp213.map(x => (x.attrs.Color === 'Yellow' ? { ...x, stock: 2 } : x));
+    expect(preselectVariants(g213, vp, 5, profitAtSuggested).kept).toContain('Yellow');
+  });
+  test('Lager < 2 oder unbekannt → nicht wählbar (Yellow/Red wären sonst unter den besten 5)', () => {
     const base = preselectVariants(g213, vp213, 5, profitAtSuggested);
     expect(base.kept).toContain('Yellow');
     expect(base.kept).toContain('Red');
-    const vp = vp213.map(x => (x.attrs.Color === 'Yellow' ? { ...x, stock: 4 } : x.attrs.Color === 'Red' ? { ...x, stock: undefined as unknown as number } : x));
+    const vp = vp213.map(x => (x.attrs.Color === 'Yellow' ? { ...x, stock: 1 } : x.attrs.Color === 'Red' ? { ...x, stock: undefined as unknown as number } : x));
     const r = preselectVariants(g213, vp, 5, profitAtSuggested);
     expect(r.kept).not.toContain('Yellow');
     expect(r.kept).not.toContain('Red');
