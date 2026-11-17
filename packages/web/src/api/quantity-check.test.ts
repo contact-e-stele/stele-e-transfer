@@ -62,12 +62,12 @@ describe('051 Mindestlager im Mengen-Abgleich (Inhaber 17.11. 22:46)', () => {
     return new Response(JSON.stringify({ offers: [{ availableQuantity: 4 }] }), { status: 200 });
   }) as unknown as typeof fetch;
   const xml = (skus: string[]) => `<R><Ack>Success</Ack><Item><Variations>${skus.map(s => `<Variation><SKU>${s}</SKU><StartPrice>26.95</StartPrice><Quantity>4</Quantity><SellingStatus><QuantitySold>0</QuantitySold></SellingStatus></Variation>`).join('')}</Variations></Item></R>`;
-  test('Variante Lager 3 → Ziel 0; Variante ohne Lager-Eintrag → Ziel 0', async () => {
+  test('Variante Lager 1 → Ziel 0 (Mindestlager 2); Variante ohne Lager-Eintrag → Ziel 0', async () => {
     const r = await runQuantityCheck({ productId: 251, ebayListingId: '1', maxQty: 4, token: 't', fetchFn: f,
       variantGroups: [{ name: 'Color', values: ['sliver Snowflak', 'gold Snowflak'] }],
-      variantEntries: [{ skuId: 'a', attrs: { Color: 'Silver 90cm' }, stock: 3, price: 11.99, displayValues: { Color: 'sliver Snowflak' } }],
+      variantEntries: [{ skuId: 'a', attrs: { Color: 'Silver 90cm' }, stock: 1, price: 11.99, displayValues: { Color: 'sliver Snowflak' } }],
       getItemXml: async () => ({ httpStatus: 200, xml: xml(['stele-251-SLIVER-SNOWFLAK', 'stele-251-GOLD-SNOWFLAK']) }) });
-    expect(r.rows.map(x => [x.sku, x.aliStock, x.targetQty])).toEqual([['stele-251-SLIVER-SNOWFLAK', 3, 0], ['stele-251-GOLD-SNOWFLAK', null, 0]]);
+    expect(r.rows.map(x => [x.sku, x.aliStock, x.targetQty])).toEqual([['stele-251-SLIVER-SNOWFLAK', 1, 0], ['stele-251-GOLD-SNOWFLAK', null, 0]]);
     expect(r.rows[1].note).toContain('AliExpress-Lager unbekannt → eBay 0');
   });
   test('Einzelartikel (SKU stele-<id>) ohne Lager → nichts setzen (null), nicht 0', async () => {
@@ -99,9 +99,9 @@ describe('051c Schutz: keine Lager-Zuordnung → nichts setzen (Inhaber „b“ 
     expect(r.rows.map(x => x.targetQty)).toEqual([4, 0]);
     expect(r.error).toBeUndefined();
   });
-  test('(iii) 251 Silver 90 Lager 3 → 0', async () => {
+  test('(iii) 251 Silver 90 Lager 3 → 3 (Mindestlager 2, Max 4; bei Mindestlager 5 wäre es 0)', async () => {
     const r = await runQuantityCheck({ productId: 251, ebayListingId: '1', maxQty: 4, token: 't', fetchFn: f, variantGroups: groups,
       variantEntries: [{ skuId: 'a', attrs: { Color: 'Silver 90cm' }, stock: 3, price: 11.99, displayValues: { Color: 'sliver Snowflak' } }], getItemXml: getItem });
-    expect(r.rows[0].targetQty).toBe(0);
+    expect(r.rows[0].targetQty).toBe(3);
   });
 });

@@ -2138,7 +2138,7 @@ export default function Produkte() {
                                 {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", borderBottom:"1px solid #F1F5F9", fontWeight:700, color: profitLevel === null ? "#94A3B8" : TARGET_LEVEL_STYLE[profitLevel].color }}>
                                   {profit !== null ? `${profit >= 0 ? "+" : ""}${profit.toFixed(2)} €` : "–"}
                                 </td>}
-                                {/* 051: Mindestlager 5 — darunter (oder unbekannt) bietet eBay die Variante mit Menge 0 an */}
+                                {/* 051: Mindestlager MIN_STOCK_FOR_EBAY (2) — darunter (oder unbekannt) bietet eBay die Variante mit Menge 0 an */}
                                 <td style={{ padding:"6px 10px", textAlign:"right", color: belowMinStock(v.stock) ? "#DC2626" : "#64748B", fontWeight: belowMinStock(v.stock) ? 700 : undefined, borderBottom:"1px solid #F1F5F9" }}
                                   title={belowMinStock(v.stock) ? `AliExpress-Lager unter ${MIN_STOCK_FOR_EBAY} — eBay-Menge 0, Variante bleibt im Angebot` : undefined}>
                                   {v.stock ?? "–"}{belowMinStock(v.stock) ? ` · eBay 0 (Lager < ${MIN_STOCK_FOR_EBAY})` : ""}

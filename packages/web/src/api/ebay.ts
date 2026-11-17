@@ -1753,7 +1753,7 @@ export async function getMaxVariantQuantity(): Promise<number> {
     return parseMaxVariantQuantity(row?.value);
   } catch { return DEFAULT_MAX_VARIANT_QUANTITY; }
 }
-// 051: Mindestlager 5 (shared/min-stock.ts). Lager < 5 oder unbekannt → 0. Der frühere Rückfallwert (fallback) für ein unbekanntes
+// 051: Mindestlager 2 (shared/min-stock.ts, Inhaber 17.11. 23:19). Lager < 2 oder unbekannt → 0. Der frühere Rückfallwert (fallback) für ein unbekanntes
 // Lager gilt nicht mehr — der Parameter bleibt nur, damit die Aufrufer unverändert bleiben.
 export function resolveVariantQuantity(stock: number | undefined, _fallback: number, maxQuantity: number = DEFAULT_MAX_VARIANT_QUANTITY): number {
   return ebayQuantityForStock(stock, maxQuantity);
