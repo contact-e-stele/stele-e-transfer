@@ -17,10 +17,12 @@ import { translateColorExact, translateVariantValue } from './variant-text-de';
 import { buildCombinations, NON_VARIATION_ASPECTS, type VariantGroup } from './variant-resolver';
 import { formatPieces, measureText } from './description-v3';
 
-export type PflichtSource = MeasureSource; // 'a' | 'b' | 'c' | 'd'
-export const PFLICHT_SOURCES = MEASURE_SOURCES;
+// 050 P4: Pflicht-Daten (P1–P7) kennen zusätzlich e = eBay-Konkurrenzangebote (mind. 2 gleiche Angaben). Maße je Variante (A-045,
+// VariantMeasure) bleiben bei a–d — Regel A-045 „Quelle nur a–d“ ist eigens getestet und wird hier NICHT aufgeweicht.
+export const PFLICHT_SOURCES = [...MEASURE_SOURCES, 'e'] as const;
+export type PflichtSource = MeasureSource | 'e';
 export const PFLICHT_SOURCE_LABEL: Record<PflichtSource, string> = {
-  a: 'AliExpress-Variantenauswahl', b: 'Spezifikationen', c: 'Bild-/Beschreibungstext', d: 'Größentabelle',
+  a: 'AliExpress-Variantenauswahl', b: 'Spezifikationen', c: 'Bild-/Beschreibungstext', d: 'Größentabelle', e: 'eBay-Konkurrenzangebote',
 };
 
 export interface PflichtEntry { value: string; source: PflichtSource; location: string; wording: string }
@@ -566,7 +568,7 @@ function parseEntry(at: string, v: unknown, max: number): { ok: true; value: Pfl
   const value = typeof v.value === 'string' ? clean(v.value) : '';
   if (!value) return { ok: true, value: null };
   if (value.length > max) return { ok: false, error: `${at}.value ist zu lang (max. ${max} Zeichen)` };
-  if (!MEASURE_SOURCES.includes(v.source as PflichtSource)) return { ok: false, error: `${at}.source muss a, b, c oder d sein` };
+  if (!MEASURE_SOURCES.includes(v.source as PflichtSource)) return { ok: false, error: `${at}.source muss a, b, c, d oder e sein` };
   const location = typeof v.location === 'string' ? clean(v.location) : '';
   const wording = typeof v.wording === 'string' ? clean(v.wording) : '';
   if (!location) return { ok: false, error: `${at}.location (Fundstelle) ist Pflicht` };

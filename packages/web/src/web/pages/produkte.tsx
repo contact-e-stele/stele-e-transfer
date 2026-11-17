@@ -18,6 +18,7 @@ import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } fr
 import { productProfitRows, productTarget, type ProfitProduct } from "../../shared/target-margin-bulk";
 import { SupplierSwapPanel } from "../components/supplier-swap-panel";
 import { isVariantProduct } from "../../shared/variant-product";
+import { PflichtVorschlagPanel } from "../components/pflicht-vorschlag-panel";
 import { matchesProductSearch, searchFromQuery } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
@@ -2168,6 +2169,8 @@ export default function Produkte() {
               {/* A-045: Produktdaten für die Beschreibung v2 (Material, Verwendung, Maße je Variante) + Ampel R8 — nur Daten, die Beschreibung bleibt unverändert */}
               <ProductDataPanel key={`pd-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               {/* Design-Sprint S2: Pflicht-Daten P1–P7 mit Quelle a–d + GELB „Pflicht-Daten fehlen: …“ — Grundlage für Beschreibung v4 und eBay-Merkmale */}
+              {/* 050 P4: Vorschläge (mit Quelle) für fehlendes Material / Maße / Hersteller-PLZ — Übernahme mit einem Klick */}
+              <PflichtVorschlagPanel key={`pv-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               <PflichtDatenPanel key={`pf-${product.id}`} product={product} onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
               {/* EAN/GTIN manuell setzen — viele eBay-Kategorien verlangen einen Produkt-Identifier */}
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
