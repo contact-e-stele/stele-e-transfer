@@ -128,7 +128,7 @@ Zwei Stellen synchron aktualisieren, wenn ein Bump fällig ist:
 - `packages/web/src/web/app.tsx` (`.stele-tab-version`)
 - `packages/web/src/web/pages/einstellungen.tsx` ("Version"-Zeile)
 
-**Aktueller Zählerstand (Stand 2026-11-09, aktuelle Version: v1.55):**
+**Aktueller Zählerstand (Stand 2026-11-17, aktuelle Version: v1.57):**
 
 Der Zähler war seit dem 2026-09-08-Stand (v1.8, "2 von 4" mit #71/#74) erneut über mehrere PRs
 hinweg nicht weitergepflegt worden — hier anhand von `git log --merges` für #75 bis #87
@@ -363,6 +363,17 @@ eigener PR-Beschreibung ausdrücklich "reine Doku-Aktualisierung" ohne Code-/Pre
 | 3 | #298 | Design S2: Pflicht-Daten P1–P7 mit Quelle (Migration pflicht_daten) |
 | 4 | #300 | Käuferpreis auf Angebotsdaten heben (162/208) → **Bump v1.54 → v1.55 bei #300** (nachgetragen 09.11.) |
 | 1 | #301 | Fix 251 Teil 2: AliExpress-Daten ohne Varianten-Preise = keine Daten |
+| — | #302 | *(zählt nicht — Versions-Nachtrag v1.55, Housekeeping)* |
+| 2 | #303 | S2-Folge: Übersetzungsliste P1 mit Titel-Abgleich + Maß aus Varianten |
+| 3 | #304 | GELD-LOGIK: eBay-Fixgebühr gestaffelt 0,35/0,45 € nach Bestellwert |
+| 4 | #305 | Fix: Listings-Tab 0 bei eBay-Fehler + Käuferpreis-Vorschau 162 Zeitlimit → **Bump v1.55 → v1.56 bei #305** (nachgetragen 17.11.) |
+| 1 | #306 | AUFTRAG 048: Varianten-Angebot neu veröffentlichen (stele-208) |
+| 2 | #307 | Fix 208: Offers vor erneutem Listen zurückziehen |
+| 3 | #308 | Fix 208 Diagnose: eBay-Rohfehler loggen + generatedDescription änderbar |
+| 4 | #309 | 050 P3: eBay-Grund aus parameters anzeigen (stele-208 nur Inlandsverkauf) → **Bump v1.56 → v1.57 bei #309** (nachgetragen 17.11.) |
+| 1 | #311 | 050 P2: Lieferant tauschen |
+| 2 | #312 | 050 P4: Pflicht-Daten-Vorschlag statt Stopp |
+| 3 | #310 | 050 P1: Verkaufspreis je Variante (von Hand) |
 
 Nachtrag 2026-10-01 (A-009): #90 bis #137 nachträglich anhand von `gh pr list --state merged` (Titel, Dateiliste, PR-Body) einzeln
 eingeordnet; Reihenfolge = Merge-Zeitpunkt. Zählregel wörtlich wie oben: "zählt nicht" = reine Doku-/Test-/Kommentar-Änderung ohne
@@ -378,7 +389,7 @@ Nachtrag 2026-10-19: #172 bis #192 anhand von `gh api …/pulls` (Titel, Base-Br
 Diagnose-Anzeige in der App, kein reines Doku-PR). *Lesart „erst ab #174 zählen“: dann Bumps bei #178/#182/#186/#190 → ebenfalls v1.32,
 aber „2 von 4“.*
 
-**→ Zähler: 1 von 4 seit v1.55** (#301; nächster Bump beim 4. größeren PR). Nachtrag 09.11.: zwei fällige Sprünge (#297, #300) in einem Schritt v1.53 → v1.55 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#294 Housekeeping zählt nicht; #295 wurde 17 s vor #294 gemergt). Nachtrag 08.11. abends: #291 = 4 von 4 → v1.53 (#289 Housekeeping zählt nicht; #290 war im Zähler vergessen). Nachtrag 08.11.: #286 = 4 von 4 → v1.52 (#283 Housekeeping zählt nicht). Nachtrag 07.11.: zwei fällige Sprünge (#277, #281) in einem Schritt v1.49 → v1.51 nachgeholt; Reihenfolge = Merge-Zeitpunkt. Nachtrag 05.11. abends: #272 = 4 von 4 → v1.49 (#269 Housekeeping zählt nicht). Nachtrag 05.11.: zwei fällige Sprünge (#263, #268) in einem Schritt v1.46 → v1.48 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#262 Housekeeping zählt nicht; #260 nach #262 gemergt). Nachtrag 03.11.: drei fällige Sprünge (#249, #253, #257) in einem Schritt v1.43 → v1.46 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#259 vor #258). Reihenfolge = Merge-Zeitpunkt (#218 vor #217, #220 vor #219). *Lesart #212/#213 wie oben. Lesart „#221–#223 sind Folge-Fixes eines Themas und zählen nur einmal“: dann v1.38 und „4 von 4“ — Entscheidung beim Inhaber; hier wörtlich (eigenständige Bugfix-PRs, wie #205/#206).*
+**→ Zähler: 3 von 4 seit v1.57** (#311, #312, #310; nächster Bump beim 4. größeren PR). Nachtrag 17.11.: zwei fällige Sprünge (#305, #309) in einem Schritt v1.55 → v1.57 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#302 Housekeeping zählt nicht; #312 vor #310 gemergt). Nachtrag 09.11.: zwei fällige Sprünge (#297, #300) in einem Schritt v1.53 → v1.55 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#294 Housekeeping zählt nicht; #295 wurde 17 s vor #294 gemergt). Nachtrag 08.11. abends: #291 = 4 von 4 → v1.53 (#289 Housekeeping zählt nicht; #290 war im Zähler vergessen). Nachtrag 08.11.: #286 = 4 von 4 → v1.52 (#283 Housekeeping zählt nicht). Nachtrag 07.11.: zwei fällige Sprünge (#277, #281) in einem Schritt v1.49 → v1.51 nachgeholt; Reihenfolge = Merge-Zeitpunkt. Nachtrag 05.11. abends: #272 = 4 von 4 → v1.49 (#269 Housekeeping zählt nicht). Nachtrag 05.11.: zwei fällige Sprünge (#263, #268) in einem Schritt v1.46 → v1.48 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#262 Housekeeping zählt nicht; #260 nach #262 gemergt). Nachtrag 03.11.: drei fällige Sprünge (#249, #253, #257) in einem Schritt v1.43 → v1.46 nachgeholt; Reihenfolge = Merge-Zeitpunkt (#259 vor #258). Reihenfolge = Merge-Zeitpunkt (#218 vor #217, #220 vor #219). *Lesart #212/#213 wie oben. Lesart „#221–#223 sind Folge-Fixes eines Themas und zählen nur einmal“: dann v1.38 und „4 von 4“ — Entscheidung beim Inhaber; hier wörtlich (eigenständige Bugfix-PRs, wie #205/#206).*
 
 Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu lang):
 - v1.4 → v1.5: PR #45 (P-92 Kandidatenliste), #46 (SOFORT-Fix Zoll-Preis stele-93), #47 (P-27/P-28 Dauerlösung), #48 (Sicherheitspuffer + relative Preisprüfungs-Anzeige)
@@ -432,6 +443,8 @@ Vorherige Bump-Historie (zur Nachvollziehbarkeit, danach hier löschen wenn zu l
 - v1.52 → v1.53: PR #287, #288, #290, #291 (nachgetragen 08.11.)
 - v1.53 → v1.54: PR #292, #293, #296, #297 (nachgetragen 09.11.)
 - v1.54 → v1.55: PR #295, #299, #298, #300 (nachgetragen 09.11.)
+- v1.55 → v1.56: PR #301, #303, #304, #305 (nachgetragen 17.11.)
+- v1.56 → v1.57: PR #306, #307, #308, #309 (nachgetragen 17.11.)
 
 ## Bestellabwicklungs-Workflow-Text (Regel seit P-94, 2026-08-31)
 
