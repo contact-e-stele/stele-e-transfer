@@ -1,11 +1,14 @@
 // R2 „höchstens 5 Varianten“ (BESCHLUSS 18.10.2026 19:21, OFFEN 006 Teil 3): automatische Vorauswahl beim Import. REINE Funktion.
-// Regel (Vorschlag Aufsicht, gilt bis der Inhaber anders entscheidet): nur Varianten mit Lager ≥ 5 und Gewinn ≥ 1,00 €,
+// Regel (Vorschlag Aufsicht, gilt bis der Inhaber anders entscheidet): nur Varianten mit Lager ≥ MIN_STOCK_FOR_EBAY (2, 052 Inhaber „A ja“
+// 17.11. 23:32, Gesetz Nr 153 — vorher 5) und Gewinn ≥ 1,00 €,
 // davon die `max` mit dem besten Gewinn (bei Gleichstand mehr Lager zuerst). Lager oder Gewinn unbekannt → nicht wählbar (nichts raten).
 // Nur bei EINER Varianten-Gruppe: bei mehreren Gruppen (Farbe × Länge) lässt sich eine Auswahl von Kombinationen nicht durch
 // Löschen einzelner Werte abbilden — dann keine Automatik, der Inhaber wählt selbst (Speichern bleibt über 5 gesperrt).
+import { MIN_STOCK_FOR_EBAY } from './min-stock';
 import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPriceEntry } from './variant-resolver';
 
-export const PRESELECT_MIN_STOCK = 5;
+/** 052: dieselbe Konstante wie die eBay-Menge (shared/min-stock.ts) — eine Regel, eine Stelle. */
+export const PRESELECT_MIN_STOCK = MIN_STOCK_FOR_EBAY;
 export const PRESELECT_MIN_PROFIT_EUR = 1.0;
 
 export interface PreselectRow { value: string; stock: number | null; profit: number | null; eligible: boolean }
