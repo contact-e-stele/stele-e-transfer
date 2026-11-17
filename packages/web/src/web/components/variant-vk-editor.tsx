@@ -5,7 +5,7 @@
 // ändern ihn nicht, außer der Gewinn fällt unter 0,90 € (Sicherheitsnetz aus K-008).
 import { useMemo, useState } from "react";
 import type { ProfitProduct } from "../../shared/target-margin-bulk";
-import { parseVkInput, planManualVk, splitByDirection, MANUAL_VK_WARN_PROFIT_EUR } from "../../shared/variant-vk-edit";
+import { parseVkInput, planManualVk, splitByDirection, holdsAfterApply, MANUAL_VK_WARN_PROFIT_EUR, type HoldEntry } from "../../shared/variant-vk-edit";
 
 type ResultRow = { skuId: string; label: string; neu: number; status: string; grund?: string; hinweis?: string; ergebnis?: string; ebay?: number | null; ebayGleichApp?: boolean };
 type RepriceResult = { status: string; rows: ResultRow[]; error?: string };
@@ -62,15 +62,24 @@ export function VariantVkEditor({ product, onSaved }: {
   const speichern = async () => {
     setBusy(true); setMsg(null);
     try {
+      // 050b M1: alte Halte-Einträge merken, damit sie bei einem Fehlschlag exakt zurückkommen.
+      const editedSkus = [...Object.keys(up), ...Object.keys(down)];
+      const holdsJson = await fetch("/api/price-holds").then(x => x.json()).catch(() => null);
+      const before: Record<string, HoldEntry> = holdsJson?.holds?.[String(product.id)] ?? {};
       // „Preis halten“ der geänderten Varianten kurz lösen — sonst lehnt variant-reprice sie als „gehalten“ ab.
-      for (const sku of [...Object.keys(up), ...Object.keys(down)]) {
+      for (const sku of editedSkus) {
         await fetch("/api/price-holds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productId: product.id, skuId: sku, hold: false }) });
       }
       const res = await both("apply");
       const r = res.flatMap(x => x.rows);
       const gesetzt = r.filter(x => x.ergebnis === "gesetzt");
-      // Neue Untergrenze: gesetzte Preise halten (K-008).
+      // Neue Untergrenze: gesetzte Preise halten (K-008); nicht gesetzte bekommen ihren alten Halte-Eintrag zurück (050b M1).
       const holdFail: string[] = [];
+      const { restore } = holdsAfterApply(before, editedSkus, new Set(gesetzt.map(x => x.skuId)));
+      for (const [sku, h] of Object.entries(restore)) {
+        const rr = await fetch("/api/price-holds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productId: product.id, skuId: sku, restore: h }) });
+        if (!rr.ok) holdFail.push(`${sku}: Halten nicht wiederhergestellt`);
+      }
       for (const x of gesetzt) {
         const h = await fetch("/api/price-holds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productId: product.id, skuId: x.skuId, hold: true, note: "050 P1: manuell gesetzt (Untergrenze)" }) });
         if (!h.ok) holdFail.push(`${x.label}: ${(await h.json().catch(() => ({}))).error ?? h.status}`);

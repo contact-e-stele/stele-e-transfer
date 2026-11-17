@@ -6102,8 +6102,18 @@ app.post('/price-holds', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'Ungültiges JSON' }, 400); }
   const productId = typeof body.productId === 'number' && Number.isInteger(body.productId) ? body.productId : null;
   if (productId == null) return c.json({ error: 'productId fehlt' }, 400);
-  if (typeof body.hold !== 'boolean') return c.json({ error: 'hold (true/false) fehlt' }, 400);
   const skuId = typeof body.skuId === 'string' && body.skuId.trim() !== '' ? body.skuId.trim() : null;
+  // 050b M1: alten Halte-Eintrag exakt wiederherstellen (nach fehlgeschlagenem „Speichern & an eBay senden“). Schreibt nur app_settings.
+  const rs = (body as { restore?: unknown }).restore as { sellPrice?: unknown; at?: unknown; note?: unknown } | undefined;
+  if (rs !== undefined) {
+    if (!skuId) return c.json({ error: 'skuId fehlt' }, 400);
+    if (typeof rs?.sellPrice !== 'number' || !(rs.sellPrice > 0) || typeof rs.at !== 'string') return c.json({ error: 'restore {sellPrice, at, note} ungültig' }, 400);
+    const { setPriceHold } = await import('./price-holds');
+    const holds = await setPriceHold(productId, skuId, { sellPrice: rs.sellPrice, at: rs.at, note: typeof rs.note === 'string' ? rs.note : null });
+    console.log(`[050b] stele-${productId} ${skuId}: Preis halten wiederhergestellt bei ${rs.sellPrice.toFixed(2)} €`);
+    return c.json({ ok: true, holds: holds[String(productId)] ?? {} }, 200);
+  }
+  if (typeof body.hold !== 'boolean') return c.json({ error: 'hold (true/false) fehlt' }, 400);
   try {
     const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
     const [product] = await db.select().from(schema.products).where(eq(schema.products.id, productId)).limit(1);

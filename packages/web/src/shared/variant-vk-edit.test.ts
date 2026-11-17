@@ -62,3 +62,19 @@ describe('Warnung und Senken', () => {
     expect(rows.some(r => r.geaendert)).toBe(false);
   });
 });
+
+import { holdsAfterApply } from './variant-vk-edit';
+describe('050b M1: Halten nach apply', () => {
+  const before = { a: { sellPrice: 24.45, at: '2026-11-10T10:00:00.000Z', note: 'K-008 alt' }, b: { sellPrice: 21.45, at: '2026-11-11T10:00:00.000Z', note: null } };
+  test('apply-Fehler → alter Halte-Eintrag unverändert zurück (Preis, Zeit, Notiz)', () => {
+    const r = holdsAfterApply(before, ['a', 'b'], new Set(['b']));
+    expect(r.restore).toEqual({ a: { sellPrice: 24.45, at: '2026-11-10T10:00:00.000Z', note: 'K-008 alt' } });
+    expect(r.neuHalten).toEqual(['b']);
+  });
+  test('ohne alten Eintrag nichts wiederherzustellen', () => {
+    expect(holdsAfterApply({}, ['x'], new Set())).toEqual({ restore: {}, neuHalten: [] });
+  });
+  test('alles gesetzt → nichts wiederherstellen', () => {
+    expect(holdsAfterApply(before, ['a', 'b'], new Set(['a', 'b'])).restore).toEqual({});
+  });
+});

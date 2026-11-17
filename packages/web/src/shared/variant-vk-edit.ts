@@ -63,3 +63,20 @@ export function splitByDirection(rows: readonly VkEditRow[]): { up: Record<strin
   }
   return { up, down };
 }
+
+// 050b M1: „Preis halten“ wird vor dem Senden gelöst. Wurde eine Variante danach NICHT gesetzt (Fehler/abgelehnt), muss ihr
+// alter Halte-Eintrag (Preis, Zeit, Notiz) unverändert zurück. Gesetzte Varianten bekommen den neuen Preis als Untergrenze.
+export interface HoldEntry { sellPrice: number; at: string; note?: string | null }
+export function holdsAfterApply(
+  before: Readonly<Record<string, HoldEntry>>,
+  editedSkus: readonly string[],
+  gesetzt: ReadonlySet<string>,
+): { restore: Record<string, HoldEntry>; neuHalten: string[] } {
+  const restore: Record<string, HoldEntry> = {};
+  const neuHalten: string[] = [];
+  for (const sku of editedSkus) {
+    if (gesetzt.has(sku)) neuHalten.push(sku);
+    else if (before[sku]) restore[sku] = { ...before[sku] };
+  }
+  return { restore, neuHalten };
+}
