@@ -750,10 +750,11 @@ describe('getLastAspectFetchError', () => {
 // Paket 2 / F2 (2026-09-21): Mengen-Obergrenze pro Variante als Einstellung statt fest 3.
 describe('resolveVariantQuantity / parseMaxVariantQuantity — Obergrenze aus Einstellung, Standard 10', () => {
   test('Bestand 317, Obergrenze 10 → 10', () => { expect(resolveVariantQuantity(317, 1, 10)).toBe(10); });
-  test('Bestand 2, Obergrenze 10 → 2', () => { expect(resolveVariantQuantity(2, 1, 10)).toBe(2); });
+  test('051 Mindestlager 2: Bestand 1, Obergrenze 10 → 0 (vorher 1)', () => { expect(resolveVariantQuantity(1, 1, 10)).toBe(0); });
+  test('051 Mindestlager 2: Bestand 2, Obergrenze 10 → 2', () => { expect(resolveVariantQuantity(2, 1, 10)).toBe(2); });
   test('Bestand 0 bleibt 0', () => { expect(resolveVariantQuantity(0, 1, 10)).toBe(0); });
   test('ohne Obergrenze-Argument gilt 10', () => { expect(resolveVariantQuantity(317, 1)).toBe(10); });
-  test('Bestand fehlt → Fallback', () => { expect(resolveVariantQuantity(undefined, 1, 10)).toBe(1); });
+  test('051 Mindestlager: Bestand fehlt → 0 (vorher Fallback)', () => { expect(resolveVariantQuantity(undefined, 1, 10)).toBe(0); });
   test('fehlende Einstellung → 10', () => { expect(parseMaxVariantQuantity(null)).toBe(10); expect(parseMaxVariantQuantity(undefined)).toBe(10); });
   test('gültige Einstellung wird übernommen', () => { expect(parseMaxVariantQuantity('25')).toBe(25); expect(parseMaxVariantQuantity('1')).toBe(1); });
   test('ungültige Einstellung (0, negativ, Text, Dezimal) → 10', () => {

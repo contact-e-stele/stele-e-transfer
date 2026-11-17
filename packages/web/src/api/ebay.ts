@@ -1,6 +1,7 @@
 // eBay Inventory API + Account API Integration
 // Docs: https://developer.ebay.com/api-docs/sell/inventory/
 
+import { ebayQuantityForStock } from '../shared/min-stock';
 import { requireCategoryId } from '../shared/listing-category';
 import { postOrderAuthHeader } from '../shared/ebay-return-link';
 import { fixIdentifierAspects, isValidIdentifierValue } from '../shared/identifier-aspect';
@@ -1752,10 +1753,10 @@ export async function getMaxVariantQuantity(): Promise<number> {
     return parseMaxVariantQuantity(row?.value);
   } catch { return DEFAULT_MAX_VARIANT_QUANTITY; }
 }
-export function resolveVariantQuantity(stock: number | undefined, fallback: number, maxQuantity: number = DEFAULT_MAX_VARIANT_QUANTITY): number {
-  return typeof stock === 'number' && !isNaN(stock)
-    ? Math.min(Math.max(Math.round(stock), 0), maxQuantity)
-    : fallback;
+// 051: Mindestlager 2 (shared/min-stock.ts, Inhaber 17.11. 23:19). Lager < 2 oder unbekannt → 0. Der frühere Rückfallwert (fallback) für ein unbekanntes
+// Lager gilt nicht mehr — der Parameter bleibt nur, damit die Aufrufer unverändert bleiben.
+export function resolveVariantQuantity(stock: number | undefined, _fallback: number, maxQuantity: number = DEFAULT_MAX_VARIANT_QUANTITY): number {
+  return ebayQuantityForStock(stock, maxQuantity);
 }
 
 // Gruppennamen-Normalisierung für den VARIANT_GROUP_MAP-Lookup: Apostroph-Varianten

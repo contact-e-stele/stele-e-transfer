@@ -25,7 +25,9 @@ export function evaluateQuantityRow(r: QuantityRow): QuantityVerdict {
     note = `Offer-Menge ${r.offerQty} deckelt (Lager ${r.inventoryQty}) — kleinere Menge gilt`;
   else if (buyerAvailable === 0 && (r.inventoryQty ?? 0) > 0) note = `Käuferseite 0 trotz Lager ${r.inventoryQty} — Ursache offen`;
   else if (buyerAvailable === 0) note = 'ausverkauft (Lager 0)';
-  else if (r.targetQty != null && r.inventoryQty != null && r.inventoryQty !== r.targetQty) note = `Lager ${r.inventoryQty} ≠ App-Ziel ${r.targetQty} (nächster Lauf setzt ${r.targetQty})`;
+  else if (r.targetQty != null && r.inventoryQty != null && r.inventoryQty !== r.targetQty) note = r.aliStock == null
+    ? `AliExpress-Lager unbekannt → eBay 0 (Mindestlager), Lager jetzt ${r.inventoryQty} (nächster Lauf setzt 0)`
+    : `Lager ${r.inventoryQty} ≠ App-Ziel ${r.targetQty} (nächster Lauf setzt ${r.targetQty})`;
   // Live-Fund stele-119 (22.10.2026): fehlende Werte standen als "ok" da und versteckten den Fehler. Nie "ok", wenn etwas unbekannt ist.
   // (Offer-Menge null ist KEIN Fehler: "nicht gesetzt" → eBay nimmt die Lagermenge.)
   else if (r.targetQty == null) note = 'AliExpress-Lager unbekannt (Dublette? → "Dubletten prüfen") – nichts gesetzt';

@@ -103,6 +103,7 @@ export function EbayPriceCheck({ productId, onAppPricesChanged }: { productId: n
       const { ok, data } = await call(`/api/products/${productId}/sync-quantities`, {});
       if (!ok) { setMsg({ ok: false, text: String(data.error ?? "Mengen-Prüfung fehlgeschlagen") }); return; }
       setQty((data.rows as typeof qty) ?? []);
+      if (data.error) setMsg({ ok: false, text: String(data.error) }); // 051c: z. B. „Lager-Zuordnung fehlt – nichts gesetzt“
     } finally { setBusy(false); }
   };
   const syncQty = async () => {
