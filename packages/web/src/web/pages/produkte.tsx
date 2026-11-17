@@ -19,6 +19,7 @@ import { productProfitRows, productTarget, type ProfitProduct } from "../../shar
 import { SupplierSwapPanel } from "../components/supplier-swap-panel";
 import { isVariantProduct } from "../../shared/variant-product";
 import { PflichtVorschlagPanel } from "../components/pflicht-vorschlag-panel";
+import { VariantVkEditor } from "../components/variant-vk-editor";
 import { matchesProductSearch, searchFromQuery } from "../../shared/product-search";
 import { TargetBadge, TARGET_LEVEL_STYLE } from "../components/target-badge";
 import { ElectricPanel } from "../components/electric-panel";
@@ -2143,6 +2144,11 @@ export default function Produkte() {
                           </tbody>
                         </table>
                       </div>
+                    )}
+                    {/* 050 P1: VK je Variante von Hand setzen, Gewinn live, an eBay senden, als Untergrenze halten */}
+                    {isOpen && profitRowsBySku.size > 0 && (
+                      <VariantVkEditor key={`vk-${product.id}`} product={product}
+                        onSaved={patch => setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...patch } : p))} />
                     )}
                   </div>
                 );
