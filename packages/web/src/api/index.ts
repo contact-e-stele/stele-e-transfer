@@ -4925,6 +4925,8 @@ app.post('/products/:id/sync-quantities', async (c) => {
       getItemXml: () => getItemBuyerPricesXml(product.ebayListingId as string) });
     const before = await check();
     if (body.confirm !== true) return c.json({ mode: 'preview', maxQty, ...before }, 200);
+    // 051c: ohne Lager-Zuordnung (oder GetItem nicht lesbar) nichts an eBay senden und den Grund als Fehler melden.
+    if (before.error) return c.json({ mode: 'apply', maxQty, results: [], after: before.rows, error: before.error }, 422);
     // Kalkulator #183: Käuferpreise einmal lesen — ohne Käuferpreis bzw. bei Abweichung kein Offer-PUT (Sperre statt stillem Preis-Rücksprung).
     const { parseGetItemBuyerPrices } = await import('../shared/ebay-buyer-price');
     const g = await getItemBuyerPricesXml(product.ebayListingId as string);

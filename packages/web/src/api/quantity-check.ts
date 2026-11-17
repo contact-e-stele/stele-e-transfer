@@ -5,6 +5,8 @@ import { stockBySkuFor } from '../shared/variant-stock';
 import type { VariantGroup, VariantPriceEntry } from '../shared/variant-resolver';
 import { resolveVariantQuantity, getInventoryItemQuantity } from './ebay';
 
+export const LAGER_ZUORDNUNG_FEHLT = 'Lager-Zuordnung fehlt – nichts gesetzt';
+
 const BASE = 'https://api.ebay.com';
 
 export const readInventoryQty = getInventoryItemQuantity; // eine Stelle (Grundgesetz 8)
@@ -34,6 +36,10 @@ export async function runQuantityCheck(input: {
   const buyer = parseGetItemBuyerPrices(g.xml);
   if (g.httpStatus !== 200 || buyer.error) return { rows: [], error: `GetItem nicht lesbar: ${buyer.error ?? 'HTTP ' + g.httpStatus}` };
   const stockBySku = stockBySkuFor(input.productId, input.variantGroups ?? [], input.variantEntries);
+  // 051c (Inhaber „b“ 17.11. 23:08): Hat KEINE Variante des Angebots ein bekanntes AliExpress-Lager (Zuordnung leer/alt, umbenannte
+  // Varianten, Lesefehler nach Lieferantentausch), wird für das ganze Angebot NICHTS gesetzt — sonst fiele ein Bestseller komplett auf 0.
+  const anyKnown = buyer.rows.some(b => { const k = b.sku || `stele-${input.productId}`; return stockBySku.has(k) && stockBySku.get(k) != null; });
+  const zuordnungFehlt = buyer.isVariation && !anyKnown;
   const rows: QuantityVerdict[] = [];
   for (const b of buyer.rows) {
     const sku = b.sku || `stele-${input.productId}`;
@@ -43,10 +49,10 @@ export async function runQuantityCheck(input: {
       sku, label: sku.replace(`stele-${input.productId}-`, ''), inventoryQty: inv, offerQty: off.qty, listingQty: b.quantity, soldQty: b.quantitySold,
       // 051 (Inhaber 17.11. 22:46): Varianten mit unbekanntem Lager → eBay 0 (Mindestlager-Regel). Einzelartikel (SKU stele-<id>) haben in der
       // App kein AliExpress-Lager — dort bleibt „nichts setzen“, sonst fiele jeder Einzelartikel auf 0.
-      aliStock, targetQty: aliStock != null || sku !== `stele-${input.productId}` ? resolveVariantQuantity(aliStock ?? undefined, 0, input.maxQty) : null,
+      aliStock, targetQty: !zuordnungFehlt && (aliStock != null || sku !== `stele-${input.productId}`) ? resolveVariantQuantity(aliStock ?? undefined, 0, input.maxQty) : null,
       error: off.offers > 1 ? `${off.offers} Offers für ${sku}` : undefined,
     };
     rows.push(evaluateQuantityRow(row));
   }
-  return { rows };
+  return zuordnungFehlt ? { rows, error: LAGER_ZUORDNUNG_FEHLT } : { rows };
 }

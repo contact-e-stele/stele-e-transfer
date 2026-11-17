@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { evaluateQuantityRow } from '../shared/quantity-check';
 
 process.env.TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'file:/tmp/quantity-check-test.db';
-const { runQuantityCheck } = await import('./quantity-check');
+const { runQuantityCheck, LAGER_ZUORDNUNG_FEHLT } = await import('./quantity-check');
 const { slugify } = await import('./ebay');
 
 const base = { sku: 'stele-220-GRAY', label: 'GRAY', aliStock: 24, targetQty: 4 };
@@ -76,5 +76,32 @@ describe('051 Mindestlager im Mengen-Abgleich (Inhaber 17.11. 22:46)', () => {
       getItemXml: async () => ({ httpStatus: 200, xml: single }) });
     expect(r.rows.length).toBeGreaterThan(0);
     expect(r.rows.every(x => x.targetQty === null)).toBe(true);
+  });
+});
+
+describe('051c Schutz: keine Lager-Zuordnung → nichts setzen (Inhaber „b“ 17.11. 23:08)', () => {
+  const f = (async (url: string) => {
+    if (url.includes('/inventory_item/')) return new Response(JSON.stringify({ availability: { shipToLocationAvailability: { quantity: 4 } } }), { status: 200 });
+    return new Response(JSON.stringify({ offers: [{ availableQuantity: 4 }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const xml = (skus: string[]) => `<R><Ack>Success</Ack><Item><Variations>${skus.map(s => `<Variation><SKU>${s}</SKU><StartPrice>26.95</StartPrice><Quantity>4</Quantity><SellingStatus><QuantitySold>0</QuantitySold></SellingStatus></Variation>`).join('')}</Variations></Item></R>`;
+  const groups = [{ name: 'Color', values: ['sliver Snowflak', 'gold Snowflak'] }];
+  const getItem = async () => ({ httpStatus: 200, xml: xml(['stele-251-SLIVER-SNOWFLAK', 'stele-251-GOLD-SNOWFLAK']) });
+  test('(i) Angebot ohne jede Zuordnung → alle Ziele null + Fehlertext', async () => {
+    const r = await runQuantityCheck({ productId: 251, ebayListingId: '1', maxQty: 4, token: 't', fetchFn: f, variantGroups: groups, variantEntries: [], getItemXml: getItem });
+    expect(r.rows.length).toBe(2);
+    expect(r.rows.map(x => x.targetQty)).toEqual([null, null]);
+    expect(r.error).toBe(LAGER_ZUORDNUNG_FEHLT);
+  });
+  test('(ii) 1 bekannt (Lager 8) + 1 unbekannt → bekannt min(8, max 4) = 4, unbekannt 0, kein Fehler', async () => {
+    const r = await runQuantityCheck({ productId: 251, ebayListingId: '1', maxQty: 4, token: 't', fetchFn: f, variantGroups: groups,
+      variantEntries: [{ skuId: 'a', attrs: { Color: 'Silver 90cm' }, stock: 8, price: 11.99, displayValues: { Color: 'sliver Snowflak' } }], getItemXml: getItem });
+    expect(r.rows.map(x => x.targetQty)).toEqual([4, 0]);
+    expect(r.error).toBeUndefined();
+  });
+  test('(iii) 251 Silver 90 Lager 3 → 0', async () => {
+    const r = await runQuantityCheck({ productId: 251, ebayListingId: '1', maxQty: 4, token: 't', fetchFn: f, variantGroups: groups,
+      variantEntries: [{ skuId: 'a', attrs: { Color: 'Silver 90cm' }, stock: 3, price: 11.99, displayValues: { Color: 'sliver Snowflak' } }], getItemXml: getItem });
+    expect(r.rows[0].targetQty).toBe(0);
   });
 });
