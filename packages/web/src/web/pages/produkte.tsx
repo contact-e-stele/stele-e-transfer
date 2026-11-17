@@ -16,6 +16,7 @@ import { safeJson } from "../lib/safeFetch";
 import { buildEbayHTMLCurrent, type ScrapedProduct as EbayScrapedProduct } from "../lib/ebay-description";
 import { computeMinSellPrice, evaluateTargetDisplay, DEFAULT_PRICING_CONFIG } from "../../shared/pricing";
 import { productProfitRows, productTarget, type ProfitProduct } from "../../shared/target-margin-bulk";
+import { belowMinStock, MIN_STOCK_FOR_EBAY } from "../../shared/min-stock";
 import { SupplierSwapPanel } from "../components/supplier-swap-panel";
 import { isVariantProduct } from "../../shared/variant-product";
 import { PflichtVorschlagPanel } from "../components/pflicht-vorschlag-panel";
@@ -2137,7 +2138,11 @@ export default function Produkte() {
                                 {hasEbay && <td style={{ padding:"6px 10px", textAlign:"right", borderBottom:"1px solid #F1F5F9", fontWeight:700, color: profitLevel === null ? "#94A3B8" : TARGET_LEVEL_STYLE[profitLevel].color }}>
                                   {profit !== null ? `${profit >= 0 ? "+" : ""}${profit.toFixed(2)} €` : "–"}
                                 </td>}
-                                <td style={{ padding:"6px 10px", textAlign:"right", color:"#64748B", borderBottom:"1px solid #F1F5F9" }}>{v.stock ?? "–"}</td>
+                                {/* 051: Mindestlager 5 — darunter (oder unbekannt) bietet eBay die Variante mit Menge 0 an */}
+                                <td style={{ padding:"6px 10px", textAlign:"right", color: belowMinStock(v.stock) ? "#DC2626" : "#64748B", fontWeight: belowMinStock(v.stock) ? 700 : undefined, borderBottom:"1px solid #F1F5F9" }}
+                                  title={belowMinStock(v.stock) ? `AliExpress-Lager unter ${MIN_STOCK_FOR_EBAY} — eBay-Menge 0, Variante bleibt im Angebot` : undefined}>
+                                  {v.stock ?? "–"}{belowMinStock(v.stock) ? ` · eBay 0 (Lager < ${MIN_STOCK_FOR_EBAY})` : ""}
+                                </td>
                               </tr>
                               );
                             })}
