@@ -616,9 +616,13 @@ export function parsePflichtDatenPatch(
     const keys = Object.keys(raw.masse);
     if (keys.length > PFLICHT_MAX.keys) return { ok: false, error: `"pflichtDaten.masse" hat zu viele Varianten (max. ${PFLICHT_MAX.keys})` };
     for (const k of keys) {
-      const r = parseMeasure(k, raw.masse[k], `pflichtDaten.masse["${k}"]`);
-      if (!r.ok) return r;
-      if (r.value) masse[k] = r.value as VariantMeasure;
+      // 050 P4 (Inhaber 17.11. 19:39 „ja“): In den Pflicht-Daten darf ein Maß auch Quelle e (eBay-Konkurrenzangebote) haben.
+      // Geprüft wird es wie jedes Maß (Art, Werte, Fundstelle); die A-045-Maße je Variante (variantDetails) bleiben bei a–d.
+      const m = raw.masse[k];
+      const isE = isObj(m) && m.source === 'e';
+      const r = parseMeasure(k, isE ? { ...m, source: 'a' } : m, `pflichtDaten.masse["${k}"]`);
+      if (!r.ok) return isE ? { ok: false, error: r.error.replace('a, b, c oder d', 'a, b, c, d oder e') } : r;
+      if (r.value) masse[k] = (isE ? { ...(r.value as object), source: 'e' } : r.value) as VariantMeasure;
     }
     if (Object.keys(masse).length > 0) out.masse = masse;
   }

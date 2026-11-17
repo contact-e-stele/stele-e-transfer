@@ -5864,7 +5864,16 @@ app.get('/products/:id/pflicht-vorschlag', async (c) => {
         vorschlaege = konkurrenzVorschlaege(comps, fehlt);
       } catch (e) { ebayFehler = String(e); }
     }
-    return c.json({ nurLesen: true, productId: id, fehlt, plz, vorschlaege, konkurrenz, ebayFehler }, 200);
+    // Maße mit einem Klick speicherbar nur bei EINER Einheit (ohne Varianten-Maße) und lesbarem Maß — sonst nur Hinweis.
+    let masseSpeicherbar: { key: string; measure: Record<string, unknown> } | null = null;
+    const mv = vorschlaege.find(v => v.feld === 'masse');
+    if (mv) {
+      const { unitsOf, parseMeasureText } = await import('../shared/pflicht-daten');
+      const units = unitsOf({ variants: j<VariantGroup[]>(p.variants, []), variantPrices: j<Array<{ skuId?: string; attrs?: Record<string, string> }>>(p.variantPrices, []) });
+      const parsed = parseMeasureText(mv.wert);
+      if (units.length === 1 && parsed) masseSpeicherbar = { key: units[0].key, measure: { ...parsed, text: mv.wert, source: 'e', location: `eBay-Angebote ${mv.quellen.join(', ')}`.slice(0, 200) } };
+    }
+    return c.json({ nurLesen: true, productId: id, fehlt, plz, vorschlaege, masseSpeicherbar, konkurrenz, ebayFehler }, 200);
   } catch (e) {
     console.error('[pflicht-vorschlag]', e);
     return c.json({ error: String(e) }, 500);

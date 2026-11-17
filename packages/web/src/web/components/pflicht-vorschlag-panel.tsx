@@ -1,10 +1,10 @@
 // 050 P4: Pflicht-Daten-Vorschlag statt Stopp (Produkte-Tab). Gelb = Vorschlag mit Quelle; „Übernehmen“ speichert mit einem Klick.
 // Material → pflichtDaten.material mit Quelle e (eBay-Konkurrenzangebote, mind. 2 gleiche Angaben). Hersteller-PLZ → gpsrMfrCity.
-// Maße werden nur angezeigt: Maße je Variante (A-045) erlauben nur Quelle a–d — Speichern mit Quelle e ist eine offene Entscheidung.
+// Maße (Inhaber 17.11. 19:39 „ja“): mit Quelle e in pflichtDaten.masse — nur bei EINER Einheit, sonst Hinweis. A-045-variantDetails bleiben a–d.
 import { useState } from "react";
 
 type Vorschlag = { feld: "material" | "masse"; wert: string; aspekt: string; quellen: string[] };
-type Antwort = { fehlt: { material: boolean; masse: boolean }; plz: { wert: string; quelle: string; fundstelle: string } | null; vorschlaege: Vorschlag[]; konkurrenz: Array<{ itemId: string; title: string }>; ebayFehler: string | null };
+type Antwort = { masseSpeicherbar: { key: string; measure: Record<string, unknown> } | null; fehlt: { material: boolean; masse: boolean }; plz: { wert: string; quelle: string; fundstelle: string } | null; vorschlaege: Vorschlag[]; konkurrenz: Array<{ itemId: string; title: string }>; ebayFehler: string | null };
 
 const gelb = { background: "#FEF9C3", border: "1px solid #FDE68A", borderRadius: 8, padding: "6px 8px", marginTop: 6, fontSize: 12 } as const;
 const btn = { padding: "4px 8px", borderRadius: 6, border: "none", background: "#FFD700", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", marginLeft: 6 } as const;
@@ -42,6 +42,13 @@ export function PflichtVorschlagPanel({ product, onSaved }: {
     return patch({ pflichtDaten: { ...stored, material: { value: v.wert, source: "e", location, wording: `${v.aspekt}: ${v.wert}` } } }, `Material „${v.wert}“ übernommen (Quelle e).`);
   };
 
+  const masseUebernehmen = (m: { key: string; measure: Record<string, unknown> }) => {
+    let stored: Record<string, unknown> = {};
+    try { stored = product.pflichtDaten ? JSON.parse(product.pflichtDaten) : {}; } catch { stored = {}; }
+    const masse = { ...((stored.masse as Record<string, unknown>) ?? {}), [m.key]: m.measure };
+    return patch({ pflichtDaten: { ...stored, masse } }, `Maße „${String(m.measure.text ?? "")}“ übernommen (Quelle e).`);
+  };
+
   return (
     <div style={{ marginTop: 8 }}>
       <button onClick={laden} disabled={busy}
@@ -63,7 +70,9 @@ export function PflichtVorschlagPanel({ product, onSaved }: {
               <b>{v.feld === "material" ? "Material" : "Maße"}:</b> {v.wert}
               {v.feld === "material"
                 ? <button style={btn} disabled={busy} onClick={() => materialUebernehmen(v)}>Übernehmen</button>
-                : <span style={{ fontSize: 10, color: "#92400E", marginLeft: 6 }}>(nur Hinweis — Maße je Variante bitte im Block „Produktdaten“ mit Fundstelle eintragen)</span>}
+                : a.masseSpeicherbar
+                  ? <button style={btn} disabled={busy} onClick={() => masseUebernehmen(a.masseSpeicherbar!)}>Übernehmen</button>
+                  : <span style={{ fontSize: 10, color: "#92400E", marginLeft: 6 }}>(nur Hinweis — mehrere Varianten oder Maß nicht lesbar; bitte je Variante eintragen)</span>}
               <div style={{ fontSize: 10, color: "#92400E" }}>Quelle: eBay-Merkmal „{v.aspekt}“ in {v.quellen.length} Angeboten: {v.quellen.map(q => <a key={q} href={`https://www.ebay.de/itm/${q}`} target="_blank" rel="noreferrer" style={{ marginRight: 4 }}>{q}</a>)}</div>
             </div>
           ))}

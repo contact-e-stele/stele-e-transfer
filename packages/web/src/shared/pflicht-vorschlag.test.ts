@@ -64,3 +64,29 @@ describe('aspectsFromBrowseItem', () => {
       .toEqual({ Material: ['Kunststoff', 'Metall'], Farbe: ['Rot'] });
   });
 });
+
+// Inhaber 17.11. 19:39 „ja“: Maße mit Quelle e in den Pflicht-Daten (nicht in den A-045-variantDetails).
+import { parsePflichtDatenPatch, resolvePflichtDaten } from './pflicht-daten';
+import { parseMeasure, parseProductDataPatch } from './product-data-patch';
+
+describe('Maße mit Quelle e', () => {
+  const masseE = { single: { kind: 'D', values: [35], text: '35 cm', source: 'e', location: 'eBay-Angebote 111, 222' } };
+  test('pflichtDaten.masse akzeptiert Quelle e und behält sie', () => {
+    const r = parsePflichtDatenPatch({ masse: masseE }, parseMeasure);
+    expect(r.ok).toBe(true);
+    expect(JSON.parse((r as { json: string }).json).masse.single.source).toBe('e');
+  });
+  test('gespeichertes Maß mit Quelle e zählt: Maße fehlen nicht mehr', () => {
+    const r = parsePflichtDatenPatch({ masse: masseE }, parseMeasure) as { json: string };
+    const res = resolvePflichtDaten({ pflichtDaten: JSON.parse(r.json), variants: [], variantPrices: [] });
+    expect(res.ampel.missing.includes('Maße')).toBe(false);
+  });
+  test('Quelle e ohne Fundstelle wird abgelehnt', () => {
+    const r = parsePflichtDatenPatch({ masse: { single: { ...masseE.single, location: '' } } }, parseMeasure);
+    expect(r.ok).toBe(false);
+  });
+  test('A-045 variantDetails bleiben bei a–d (Quelle e abgelehnt)', () => {
+    const r = parseProductDataPatch({ variantDetails: { x: { displayNameDe: 'X', pieces: 1, measure: { kind: 'D', values: [35], source: 'e', location: 'eBay' } } } });
+    expect(r.ok).toBe(false);
+  });
+});
