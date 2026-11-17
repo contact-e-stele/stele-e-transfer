@@ -41,7 +41,9 @@ export async function runQuantityCheck(input: {
     const aliStock = stockBySku.has(sku) ? (stockBySku.get(sku) ?? null) : null;
     const row: QuantityRow = {
       sku, label: sku.replace(`stele-${input.productId}-`, ''), inventoryQty: inv, offerQty: off.qty, listingQty: b.quantity, soldQty: b.quantitySold,
-      aliStock, targetQty: aliStock != null ? resolveVariantQuantity(aliStock, 0, input.maxQty) : null,
+      // 051 (Inhaber 17.11. 22:46): Varianten mit unbekanntem Lager → eBay 0 (Mindestlager-Regel). Einzelartikel (SKU stele-<id>) haben in der
+      // App kein AliExpress-Lager — dort bleibt „nichts setzen“, sonst fiele jeder Einzelartikel auf 0.
+      aliStock, targetQty: aliStock != null || sku !== `stele-${input.productId}` ? resolveVariantQuantity(aliStock ?? undefined, 0, input.maxQty) : null,
       error: off.offers > 1 ? `${off.offers} Offers für ${sku}` : undefined,
     };
     rows.push(evaluateQuantityRow(row));

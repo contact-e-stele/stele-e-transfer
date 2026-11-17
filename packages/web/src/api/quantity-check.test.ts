@@ -55,3 +55,26 @@ describe('runQuantityCheck mit umbenannten Varianten (stele-224, 19.10.2026)', (
     expect(r.rows[0]).toMatchObject({ sku: 'stele-224-GRAU', aliStock: 19, targetQty: 4 });
   });
 });
+
+describe('051 Mindestlager im Mengen-Abgleich (Inhaber 17.11. 22:46)', () => {
+  const f = (async (url: string) => {
+    if (url.includes('/inventory_item/')) return new Response(JSON.stringify({ availability: { shipToLocationAvailability: { quantity: 4 } } }), { status: 200 });
+    return new Response(JSON.stringify({ offers: [{ availableQuantity: 4 }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const xml = (skus: string[]) => `<R><Ack>Success</Ack><Item><Variations>${skus.map(s => `<Variation><SKU>${s}</SKU><StartPrice>26.95</StartPrice><Quantity>4</Quantity><SellingStatus><QuantitySold>0</QuantitySold></SellingStatus></Variation>`).join('')}</Variations></Item></R>`;
+  test('Variante Lager 3 → Ziel 0; Variante ohne Lager-Eintrag → Ziel 0', async () => {
+    const r = await runQuantityCheck({ productId: 251, ebayListingId: '1', maxQty: 4, token: 't', fetchFn: f,
+      variantGroups: [{ name: 'Color', values: ['sliver Snowflak', 'gold Snowflak'] }],
+      variantEntries: [{ skuId: 'a', attrs: { Color: 'Silver 90cm' }, stock: 3, price: 11.99, displayValues: { Color: 'sliver Snowflak' } }],
+      getItemXml: async () => ({ httpStatus: 200, xml: xml(['stele-251-SLIVER-SNOWFLAK', 'stele-251-GOLD-SNOWFLAK']) }) });
+    expect(r.rows.map(x => [x.sku, x.aliStock, x.targetQty])).toEqual([['stele-251-SLIVER-SNOWFLAK', 3, 0], ['stele-251-GOLD-SNOWFLAK', null, 0]]);
+    expect(r.rows[1].note).toContain('AliExpress-Lager unbekannt → eBay 0');
+  });
+  test('Einzelartikel (SKU stele-<id>) ohne Lager → nichts setzen (null), nicht 0', async () => {
+    const single = '<R><Ack>Success</Ack><Item><StartPrice>15.95</StartPrice><Quantity>3</Quantity><SKU>stele-300</SKU><SellingStatus><QuantitySold>0</QuantitySold></SellingStatus></Item></R>';
+    const r = await runQuantityCheck({ productId: 300, ebayListingId: '2', maxQty: 4, token: 't', fetchFn: f, variantEntries: [],
+      getItemXml: async () => ({ httpStatus: 200, xml: single }) });
+    expect(r.rows.length).toBeGreaterThan(0);
+    expect(r.rows.every(x => x.targetQty === null)).toBe(true);
+  });
+});
