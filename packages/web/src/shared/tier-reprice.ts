@@ -40,6 +40,7 @@ export interface TierPlanRow {
   oldSell: number | null;
   newSell: number;
   oldProfit: number | null;           // Gewinn beim alten VK nach Formel v2
+  oldProfitOhneRabatt?: number | null; // P-MINDESTGEWINN: Gewinn beim alten VK OHNE Kassen-Faktor (Rabatt zählt nicht)
   newProfit: number;                  // Gewinn beim neuen VK nach Formel v2
 }
 
@@ -82,6 +83,7 @@ export function planTierReprice(p: RepriceProduct, newTargetEur: number, groups?
     return {
       ...base, ware, oldSell, newSell,
       oldProfit: oldSell != null ? profitAtSellPrice({ ...fees, sellPrice: oldSell, buyPrice: ware }) : null,
+      oldProfitOhneRabatt: oldSell != null ? profitAtSellPrice({ ...fees, checkoutFactor: null, sellPrice: oldSell, buyPrice: ware }) : null,
       newProfit: profitAtSellPrice({ ...fees, sellPrice: newSell, buyPrice: ware }),
     };
   };

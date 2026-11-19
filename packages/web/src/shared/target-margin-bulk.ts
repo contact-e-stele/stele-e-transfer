@@ -2,7 +2,7 @@
 // (vorher inline in produkte.tsx TargetBadge, jetzt EINE Quelle für Produkte-Tab und Listings-Tab, Grundgesetz Regel 8),
 // Vorschau "was wird rot nach einem Stufenwechsel", Validierung des Sammel-Endpunkts und der Filter "neu eingestellt".
 // Nichts hier schreibt an eBay oder in die DB.
-import { MARGIN_TIERS } from './constants';
+import { MARGIN_TIERS, MIN_PROFIT_OHNE_RABATT_EUR, mindestgewinnOhneRabattAnheben } from './constants';
 import { isVariantProduct } from './variant-product';
 import { activeCheckoutFactor } from './checkout-factor';
 import {
@@ -111,14 +111,18 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
 
 // K-014 Schritt 2: Preisalarm für Varianten-Produkte = schlechteste GELISTETE Variante mit IHREM VK unter dem Boden (wie die Anzeige).
 // Gehaltene Varianten (K-008) zählen nicht. Keine zählende Variante → kein Alarm (nichts geraten).
-export function variantPriceAlarm(p: ProfitProduct, heldSkuIds?: ReadonlySet<string>): { isAlarm: boolean; worstProfit: number | null; worstProfitWithoutFactor: number | null; lossWithoutFactor: boolean; excluded: ExcludedVariant[] } {
+export function variantPriceAlarm(p: ProfitProduct, heldSkuIds?: ReadonlySet<string>): { isAlarm: boolean; worstProfit: number | null; worstProfitWithoutFactor: number | null; lossWithoutFactor: boolean; raiseAlarm: boolean; excluded: ExcludedVariant[] } {
   const { rows, excluded } = productProfitRows(p);
   const use = rows.filter(r => !(r.skuId && heldSkuIds?.has(r.skuId)));
-  if (use.length === 0) return { isAlarm: false, worstProfit: null, worstProfitWithoutFactor: null, lossWithoutFactor: false, excluded };
+  if (use.length === 0) return { isAlarm: false, worstProfit: null, worstProfitWithoutFactor: null, lossWithoutFactor: false, raiseAlarm: false, excluded };
   const worstProfit = Math.min(...use.map(r => r.profit));
   const worstProfitWithoutFactor = Math.min(...use.map(r => r.profitWithoutFactor ?? r.profit));
   const floor = effectiveProfitFloor(profitFloorFor(productTarget(p)));
-  return { isAlarm: worstProfit < floor - 1e-9, worstProfit, worstProfitWithoutFactor, lossWithoutFactor: worstProfitWithoutFactor < -1e-9 && worstProfit > worstProfitWithoutFactor + 1e-9, excluded };
+  // P-MINDESTGEWINN: Alarm auch, wenn eine angebotene Variante OHNE Kassen-Faktor unter 0,50 € liegt. raiseAlarm (darf automatisch
+  // anheben) wie evaluatePriceAlarm: 0,50-Regel nur mit Schalter AN.
+  const bodenAlarm = worstProfit < floor - 1e-9;
+  const ohneRabattAlarm = worstProfitWithoutFactor < MIN_PROFIT_OHNE_RABATT_EUR - 1e-9;
+  return { isAlarm: bodenAlarm || ohneRabattAlarm, raiseAlarm: bodenAlarm || (mindestgewinnOhneRabattAnheben() && ohneRabattAlarm), worstProfit, worstProfitWithoutFactor, lossWithoutFactor: worstProfitWithoutFactor < -1e-9 && worstProfit > worstProfitWithoutFactor + 1e-9, excluded };
 }
 
 export interface TierChangePreview {

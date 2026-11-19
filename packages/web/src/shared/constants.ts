@@ -37,6 +37,17 @@ export const MARGIN_TIERS: readonly MarginTier[] = [
 export const HIDDEN_MARGIN_TIER: MarginTier = { label: '4,50', targetEur: 4.50, floorEur: 2.00 };
 // Boden für einen Zielgewinn, der in keiner Stufe vorkommt: nie Gewinn unter 1,00 €.
 export const MIN_PROFIT_FLOOR_EUR = 1.00;
+// P-MINDESTGEWINN (Inhaber 19.11.2026 14:58, Gesetzbuch v58 Nr 158): Gewinn OHNE AliExpress-Rabatt und OHNE Kassen-Faktor muss
+// mindestens 0,50 € sein — gilt zusätzlich zum Boden oben (der mit Kassen-Faktor rechnet). Der Rabatt ist nur noch Puffer/Info.
+export const MIN_PROFIT_OHNE_RABATT_EUR = 0.50;
+// Schalter (Default AUS, Auftrag Schritt 4 „keine Preisänderung an Live-Angeboten durch diesen PR“): AN = die 0,50-Regel hebt Preise an
+// (Preis-Boden computeMinSellPrice + Varianten-Anhebung im Tages-Preislauf). AUS = nur Preisalarm/Anzeige. Einschalten erst nach
+// Vorschau + Kalkulator-OK + Inhaber-Ja (Muster #284); 224 vorher auf die Ausnahmeliste (Inhaber „nein“ 19.11. 14:58).
+export const MINDESTGEWINN_OHNE_RABATT_ANHEBEN_DEFAULT = false;
+let mindestgewinnOhneRabattAnhebenWert = MINDESTGEWINN_OHNE_RABATT_ANHEBEN_DEFAULT;
+export function mindestgewinnOhneRabattAnheben(): boolean { return mindestgewinnOhneRabattAnhebenWert; }
+/** nur Tests: Schalter setzen (Betrieb liest den Default). */
+export function setMindestgewinnOhneRabattAnheben(v: boolean): void { mindestgewinnOhneRabattAnhebenWert = v; }
 
 // Varianten-Regel 6c (Übergabe v2, Abschnitt 6c): jede Variante einzeln, keine wird über die Formel erhöht —
 // AUSSER sie fällt unter den Boden. Nur VORBEREITET (reine Funktion in shared/pricing.ts), im Betrieb AUS,
