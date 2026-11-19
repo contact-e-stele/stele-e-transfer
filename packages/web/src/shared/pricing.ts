@@ -734,8 +734,12 @@ export const EBAY_CATEGORY_FEE_RATES: Readonly<Record<string, number>> = Object.
   // 14 %
   '58730': 14, '36026': 14, '20651': 14, '43504': 14, '102379': 14, '166725': 14, '20638': 14, '11703': 14, '177013': 14,
   '181076': 14, '11794': 14, '34002': 14, '10900': 14, '116392': 14, '46305': 14, '100411': 14, '177794': 14, '65509': 14,
+  // P-KATEGORIESATZ (Kalkulator 19.11.2026 15:21, Inhaber-Ja 15:21/15:23): Standardgebühren Sport #888 / Bastel #14339 = 14 %
+  '62134': 14, '137862': 14, '41205': 14, '134295': 14,
   // 12 %
   '105559': 12, '22683': 12, '15738': 12,
+  // P-KATEGORIESATZ: 11632 Hausschuhe (Kleidung & Accessoires #11450), 31519 Notebook-Taschen (Notebook- & Desktop-Zubehör #31530)
+  '11632': 12, '31519': 12,
   // 13 %
   '45687': 13,
   // 15 % — Satz unklar, sichere Seite

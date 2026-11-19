@@ -1,10 +1,11 @@
 // Bündel A+B zu PR #304 (09.11.2026): Stichtag der eBay-Gebührenumstellung + Provision je eBay-Kategorie.
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3), nicht aus dem Auftrag übernommen.
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR, setAliEinfuhrEur } from './constants';
 import {
   EBAY_CATEGORY_FEE_RATES, EBAY_FEE_RATE_UNKNOWN_PERCENT, EBAY_FIXED_FEE_SCHEDULE, EBAY_FIXED_FEE_SCHEDULE_ALT, GEBUEHR_NEU_AB,
   ebayFeeRatePercentFor, ebayFeeRatePercentForCategories, orderUsesNewFeeRule, orderFeeRule, computeOrderProfitRaw, computeOrderProfit,
-  computeMinSellPrice, defaultEbayFeeRateGross,
+  computeMinSellPrice, defaultEbayFeeRateGross, profitAtSellPrice,
 } from './pricing';
 import { planTierReprice } from './tier-reprice';
 import { productProfitRows } from './target-margin-bulk';
@@ -13,14 +14,15 @@ import { computeOrderNettoErgebnis } from '../api/order-matching';
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 describe('Kategorie-Tabelle (eine Stelle)', () => {
-  test('genau die 30 Kategorien des Auftrags mit ihrem Satz', () => {
+  // P-KATEGORIESATZ (19.11.2026): + 62134/137862/41205/134295 (14 %) und 11632/31519 (12 %) → 36. 182100 bleibt draußen (Kalkulator: Satz unklar → 15 %).
+  test('genau die 36 Kategorien des Auftrags mit ihrem Satz', () => {
     const erwartet: Record<string, number> = {};
-    for (const id of ['58730', '36026', '20651', '43504', '102379', '166725', '20638', '11703', '177013', '181076', '11794', '34002', '10900', '116392', '46305', '100411', '177794', '65509']) erwartet[id] = 14;
-    for (const id of ['105559', '22683', '15738']) erwartet[id] = 12;
+    for (const id of ['58730', '36026', '20651', '43504', '102379', '166725', '20638', '11703', '177013', '181076', '11794', '34002', '10900', '116392', '46305', '100411', '177794', '65509', '62134', '137862', '41205', '134295']) erwartet[id] = 14;
+    for (const id of ['105559', '22683', '15738', '11632', '31519']) erwartet[id] = 12;
     erwartet['45687'] = 13;
     for (const id of ['166724', '13362', '47921', '101406', '164800', '100299', '300', '20749']) erwartet[id] = 15;
     expect({ ...EBAY_CATEGORY_FEE_RATES }).toEqual(erwartet);
-    expect(Object.keys(EBAY_CATEGORY_FEE_RATES).length).toBe(30);
+    expect(Object.keys(EBAY_CATEGORY_FEE_RATES).length).toBe(36);
   });
   test('ebayFeeRatePercentFor: 14 / 12 / 13 / 15 (unklar) — auch als Zahl und mit Leerzeichen', () => {
     expect(ebayFeeRatePercentFor('10900')).toBe(14);
@@ -29,6 +31,12 @@ describe('Kategorie-Tabelle (eine Stelle)', () => {
     expect(ebayFeeRatePercentFor('105559')).toBe(12);
     expect(ebayFeeRatePercentFor('45687')).toBe(13);
     expect(ebayFeeRatePercentFor('300')).toBe(15);
+  });
+  test('P-KATEGORIESATZ: 11632 → 12, 31519 → 12, 62134/137862/41205/134295 → 14, 182100 → 15 (nicht aufgenommen)', () => {
+    expect(ebayFeeRatePercentFor('11632')).toBe(12);
+    expect(ebayFeeRatePercentFor('31519')).toBe(12);
+    for (const id of ['62134', '137862', '41205', '134295']) expect(ebayFeeRatePercentFor(id)).toBe(14);
+    expect(ebayFeeRatePercentFor('182100')).toBe(15);
   });
   test('unbekannte oder fehlende Kategorie → 15 % (sichere Seite; Kalkulator nannte 14 % — offene Rückfrage)', () => {
     expect(EBAY_FEE_RATE_UNKNOWN_PERCENT).toBe(15);
@@ -169,5 +177,19 @@ describe('Kategorie-Satz kommt in den Rechenwegen an', () => {
     expect(run(['a', 'x'], '2026-11-01T10:00:00Z').nettoErgebnis).toBe(14.11);
     // alt (vor Stichtag), 12-%-Produkt → trotzdem 15 % + 0,30: 30 − (0,15 × 30 + 0,30) × 1,19 − 10 = 14,288 → 14,29
     expect(run(['b'], '2026-10-15T07:59:59Z').nettoErgebnis).toBe(14.29);
+  });
+});
+
+// P-KATEGORIESATZ: Proben aus dem Auftrag (Einfuhr 5,95, China, Anzeige 0) — Werte mit bun.
+describe('P-KATEGORIESATZ: Gewinn M5 / M88 mit dem neuen Satz', () => {
+  beforeEach(() => setAliEinfuhrEur(ALI_EINFUHR_EUR));
+  afterEach(() => setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR));
+  const g = (vk: number, ware: number, cat: string | null) => profitAtSellPrice({ sellPrice: vk, buyPrice: ware, isChinaOrigin: true, ebayFeeRatePercent: ebayFeeRatePercentFor(cat), vatFactor: 1.19, adRatePercent: 0 });
+  test('M5 Laptop-Hülle (31519): VK 23,95, Ware 12,82 → vorher (15 %) bun −0,4428, jetzt (12 %) bun 0,5746', () => {
+    expect(g(23.95, 12.82, '99999')).toBeCloseTo(-0.44283925, 6);
+    expect(g(23.95, 12.82, '31519')).toBeCloseTo(0.5746286, 6);
+  });
+  test('M88 Hausschuhe (11632): VK 18,85, Ware 6,50 → bun 0,6713 (Kalkulator 0,68: App-Versand 1,99 statt echt 1,98)', () => {
+    expect(g(18.85, 6.50, '11632')).toBeCloseTo(0.6712818, 6);
   });
 });
