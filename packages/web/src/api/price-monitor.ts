@@ -559,7 +559,8 @@ export async function raiseSingleWithStoredBuyPrice(product: typeof schema.produ
       ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target, checkoutFactor,
     });
-    const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
+    // P-MINDESTGEWINN: anheben nur über raiseAlarm (0,50-Regel ohne Rabatt nur mit Schalter AN).
+    const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.raiseAlarm;
     const decision = applyRaiseOnly(product.sellPrice, raw, alarm);
     if (decision.action !== 'raise' || !AUTO_PRICE_WRITE_ENABLED) return;
     if (isPriceJump(product.sellPrice, decision.price)) { console.warn(`[PriceMonitor] ⚠️ ${priceJumpMessage(product.id, `stele-${product.id}`, product.sellPrice, decision.price)}`); return; } // OFFEN 010
@@ -1250,7 +1251,8 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
       });
       if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
       const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
-      const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
+      // P-MINDESTGEWINN: anheben nur über raiseAlarm (0,50-Regel ohne Rabatt nur mit Schalter AN) — Preisalarm (alarm) zeigt sie immer.
+      const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.raiseAlarm);
       calculatedSellPrice = decision.price;
       // OFFEN 010: Anhebung > 15 % nie automatisch — Meldung PREISSPRUNG, weder gespeichert noch gesendet.
       const jump = decision.action === 'raise' && isPriceJump(product.sellPrice, decision.price);
