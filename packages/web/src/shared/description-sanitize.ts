@@ -76,7 +76,7 @@ function mentionsOtherColor(text: string, offered: Set<string> | null): boolean 
 }
 
 /** Marke aus einem Satz entfernen ("HOLAPET Hundeschuhe …" → "Hundeschuhe …", "… von WRELS für …" → "… für …"). */
-function stripBrand(text: string, brands: string[]): string {
+export function stripBrand(text: string, brands: string[]): string {
   let t = text;
   for (const b of brands) {
     t = t.replace(new RegExp(`\\s*\\bvon\\s+${escapeRe(b)}(?=[^\\p{L}]|$)`, 'giu'), '');
@@ -110,4 +110,10 @@ export function sanitizeDescriptionText(input: SanitizeInput): SanitizeResult {
   let introText = input.introText ? stripBrand(input.introText, brands) : '';
   if (introText && mentionsOtherColor(introText, offered)) { removed.push(input.introText); introText = ''; }
   return { introText, bulletLines, removed };
+}
+
+/** Marke aus einer Überschrift/Titelzeile nehmen (Spezifikation "Brand Name"). Ohne Marke unverändert. */
+export function stripBrandFromTitle(title: string, specs: Record<string, string> | null | undefined): string {
+  const brands = brandNamesFrom(specs);
+  return brands.length > 0 && title ? stripBrand(title, brands) : title;
 }
