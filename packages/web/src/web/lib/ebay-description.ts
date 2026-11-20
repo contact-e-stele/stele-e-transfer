@@ -4,6 +4,7 @@
  */
 
 import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
+import { sanitizeDescriptionText } from '../../shared/description-sanitize';
 
 import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, PAYMENT_TEXT, deliveryFooterText, returnFooterText, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
 import { DESCRIPTION_V3_MARKER, factRows, headingText, v3Bullets, type DescriptionV3Input } from '../../shared/description-v3';
@@ -509,7 +510,9 @@ function lightBulletSource(product: ScrapedProduct): { bulletLines: string[]; in
   } else if (product.bullets && product.bullets.length > 0) {
     bulletLines = product.bullets.map(b => cleanText(b)).filter(c => c.length > 15 && !isGarbage(c));
   }
-  return { bulletLines, introText };
+  // P-BESCHREIBUNG (Nr 162): keine Marke, keine nicht angebotene Farbe (Live-Fund stele-259/243).
+  const clean = sanitizeDescriptionText({ introText, bulletLines, specs: product.specs, variants: product.variants });
+  return { bulletLines: clean.bulletLines, introText: clean.introText };
 }
 
 /**

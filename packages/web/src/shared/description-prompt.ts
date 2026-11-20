@@ -26,4 +26,7 @@ export const V3_BULLET_RULES = [
   '- Beispiel: "- Elastischer Rand: Passt sich Schüsseln von ca. 14 bis 29 cm an."',
   '- Mengen und Größen nur so, wie sie in den Produktdaten stehen — nichts ergänzen oder umrechnen außer inch → cm',
   '- KEINE Aussagen zu Versand, Lieferzeit, Lager, Rückgabe oder Käuferschutz (stehen in der Fußzeile)',
+  // P-BESCHREIBUNG (Nr 162, 20.11.2026): Fund stele-259/243 – Marke und alle AliExpress-Farben im Text, eBay "Markenlos" + nur Schwarz.
+  '- KEINE Marke und keinen Herstellernamen nennen (Angebot ist markenlos)',
+  '- Farben nur nennen, wenn sie unter VARIANTEN stehen; sonst keine Farbe nennen',
 ].join('\n');
