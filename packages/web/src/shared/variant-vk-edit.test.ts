@@ -1,6 +1,6 @@
 // 050 P1: VK je Variante von Hand. Fixture = echte Daten stele-225 (App, 17.11.2026); alle Gewinnwerte mit bun nachgerechnet
 // (productProfitRows, Formel v2, Kassen-Faktor 0,9573, China-Standort, Anzeige 0 %, Kategorie 58730).
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { ALI_EINFUHR_EUR, ALI_EINFUHR_ALT_EUR, setAliEinfuhrEur } from './constants';
 import { parseVkInput, planManualVk, splitByDirection, MANUAL_VK_WARN_PROFIT_EUR } from './variant-vk-edit';
 import type { ProfitProduct } from './target-margin-bulk';
@@ -18,8 +18,10 @@ const P225 = {
 } as unknown as ProfitProduct;
 
 // Betriebswert Einfuhr 5,95 € (wie p-einfuhr.test.ts); der Preload setzt sonst den alten Beleg-Wert 3,57.
-beforeEach(() => setAliEinfuhrEur(ALI_EINFUHR_EUR));
-afterEach(() => setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR));
+// Datum fest auf den Fixture-Tag (17.11.2026): der Kassen-Faktor vom 05.11. gilt 14 Tage (bis 19.11. 18:40 UTC). Ohne festes Datum
+// liefen beide Gewinn-Tests ab dem 19.11. abends rot (Fund 7 App 20.11.2026, nach Merge #318 auf main gemessen).
+beforeEach(() => { setAliEinfuhrEur(ALI_EINFUHR_EUR); setSystemTime(new Date('2026-11-17T12:00:00Z')); });
+afterEach(() => { setAliEinfuhrEur(ALI_EINFUHR_ALT_EUR); setSystemTime(); });
 
 describe('parseVkInput', () => {
   test('Komma und Punkt', () => { expect(parseVkInput('24,95')).toBe(24.95); expect(parseVkInput(' 24.9 ')).toBe(24.9); });
