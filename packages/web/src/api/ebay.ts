@@ -2748,6 +2748,39 @@ export async function reviseListingDescription(
   };
 }
 
+// Nachzieh-Weg Rücklesen (Aufsicht 20.11.2026 11:25, Fund 243 Scheinerfolg): wie reviseListingDescription, danach GetItem und "ok" nur,
+// wenn eBay dieselbe Beschreibung (sichtbarer Text) und denselben Titel zeigt. eBay braucht nach einem Inventory-PUT manchmal ein paar
+// Sekunden → bis zu `attempts` Versuche im Abstand `delayMs`. Lesefehler zählen als "nicht bestätigt" (kein Scheinerfolg).
+export async function reviseListingDescriptionVerified(
+  productId: number,
+  itemId: string,
+  input: { htmlDescription: string; title?: string; regulatory?: ReturnType<typeof buildRegulatoryBlock> },
+  readFn: (itemId: string) => Promise<{ httpStatus: number; xml: string }> = getItemBuyerPricesXml,
+  reviseFn: typeof reviseListingDescription = reviseListingDescription,
+  opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<{ ok: boolean; error?: string }> {
+  const sent = await reviseFn(productId, itemId, input);
+  if (!sent.ok) return sent;
+  const { compareReadback } = await import('../shared/listing-readback');
+  const attempts = opts.attempts ?? 3;
+  const delayMs = opts.delayMs ?? 5000;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+  let last = 'nicht geprüft';
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await sleep(delayMs);
+    try {
+      const r = await readFn(itemId);
+      if (r.httpStatus !== 200) { last = `Rücklesen ${itemId}: GetItem HTTP ${r.httpStatus}`; continue; }
+      const cmp = compareReadback(itemId, { htmlDescription: input.htmlDescription, title: input.title }, r.xml);
+      if (cmp.ok) return { ok: true };
+      last = cmp.error ?? 'Abweichung';
+    } catch (e) {
+      last = `Rücklesen ${itemId}: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  return { ok: false, error: `Gesendet, aber bei eBay nicht bestätigt – ${last}` };
+}
+
 // ─── Anzeige-Rate (Werbekosten) live setzen ────────────────────────────────────
 export async function setAdRate(itemId: string, ratePercent: number): Promise<{ ok: boolean; error?: string }> {
   const token = await getAccessToken();

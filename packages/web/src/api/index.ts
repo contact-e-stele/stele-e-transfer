@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from "hono/cors"
 import { isAliOrderIdNotTracking, ALI_ORDER_ID_AS_TRACKING_ERROR } from '../shared/tracking-guard';
-import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, getSellerListingsResult, reviseListingContent, reviseListingDescription, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
+import { listOnEbay, suggestCategory, getOAuthUrl, exchangeCodeForToken, getAllSellerListings, getSellerListingsResult, reviseListingContent, reviseListingDescriptionVerified, reviseCategory, getAllOrders, searchReturns, createShippingFulfillment, slugify, prettifyEbayError, extractMissingAspectName, getAspectAllowedValues, getAccessToken, getRecentlyReceivedFeedback, hasAlreadyLeftFeedback, getStoreCategories, getRequestedScopeList, hasScope, saveEbayRefreshToken, findUnresolvedRequiredAspects, getLastAspectFetchError, filterEditableAspectNames, type SentListingPrice } from './ebay';
 import { sentPricesToPatch } from '../shared/sent-prices';
 import { cleanGeneratedTitle, keepImportTitle } from '../shared/title-clean';
 import { earUmlageFor, evaluateElectricGate, suggestElectric, weeeLineForListing, parseElectricPatch, parseElectricSettingsBody } from '../shared/electric';
@@ -1255,7 +1255,7 @@ const app = new Hono()
       });
       const outcome = await refreshOneProductDescription(productId, { confirm: body.confirm }, {
         getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
-        reviseListingContent: reviseListingDescription,
+        reviseListingContent: reviseListingDescriptionVerified, // Rücklesen: ok nur, wenn eBay den Text zeigt (Fund 243)
         updateProductDescription: async (id, htmlDescription) => {
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
@@ -1292,7 +1292,7 @@ const app = new Hono()
       });
       const { results } = await refreshDescriptionsBatch(productIds, { confirm: body.confirm }, {
         getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
-        reviseListingContent: reviseListingDescription,
+        reviseListingContent: reviseListingDescriptionVerified, // Rücklesen: ok nur, wenn eBay den Text zeigt (Fund 243)
         updateProductDescription: async (id, htmlDescription) => {
           await db.update(schema.products).set({ htmlDescription, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
         },
@@ -1332,7 +1332,7 @@ const app = new Hono()
       // zuerst, Trading-API als Rückfall) — die reine Trading-API scheitert bei Inventory-Angeboten.
       // Reiner Titel-Edit oder unverknüpftes Angebot: unverändert Trading-API (kein productId → keine SKU).
       const result = body.htmlDescription !== undefined && dbProduct
-        ? await reviseListingDescription(dbProduct.id, itemId, { htmlDescription: body.htmlDescription, title: body.title })
+        ? await reviseListingDescriptionVerified(dbProduct.id, itemId, { htmlDescription: body.htmlDescription, title: body.title }) // Rücklesen (Fund 243)
         : await reviseListingContent(itemId, body);
       if (!result.ok) return c.json({ error: result.error }, 400);
 
