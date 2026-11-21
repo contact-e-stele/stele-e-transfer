@@ -4825,7 +4825,7 @@ app.post('/products/:id/fix-ean-aspect', async (c) => {
 
 // C2 (Inhaber 25.10.2026 "Punkt C ja"): fehlende Artikelmerkmale aus products.specs in die LIVE-Angebote ergänzen (Gruppe + Items bzw.
 // Einzel-Item). Nur fehlende Merkmale, geprüft/übersetzt (shared/spec-aspects.ts). Ohne {confirm:true} nur Vorschau. Kein Preis, keine Menge.
-async function merkmaleLiveForProduct(id: number, confirm: boolean) {
+async function merkmaleLiveForProduct(id: number, confirm: boolean, replace?: Record<string, string>) {
   const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
   const [product] = await db.select().from(schema.products).where(eq(schema.products.id, id)).limit(1);
   if (!product) return { productId: id, error: 'Produkt nicht gefunden' };
@@ -4837,7 +4837,7 @@ async function merkmaleLiveForProduct(id: number, confirm: boolean) {
   const { applySpecAspectsToListing } = await import('./live-aspects');
   const token = await getAccessToken();
   const itemSkus = await getInventoryItemGroupSkus(`stele-${id}-GROUP`, token).catch(() => [] as string[]);
-  const r = await applySpecAspectsToListing({ productId: id, specs, token, baseUrl: EBAY_API_BASE_URL, confirm, itemSkus,
+  const r = await applySpecAspectsToListing({ productId: id, specs, token, baseUrl: EBAY_API_BASE_URL, confirm, itemSkus, replace,
     getCategoryAspects: (cat) => getRawAspectsForCategory(cat),
     getFallbackCategoryId: async () => {
       const { getItemBuyerPricesXml } = await import('./ebay');
@@ -4856,6 +4856,29 @@ app.post('/products/:id/merkmale-live', async (c) => {
   const body = await c.req.json().catch(() => ({})) as { confirm?: unknown };
   try { return c.json({ mode: body.confirm === true ? 'apply' : 'preview', ...(await merkmaleLiveForProduct(id, body.confirm === true)) }, 200); }
   catch (e) { return c.json({ error: String(e) }, 500); }
+});
+
+// Merkmal ERSETZEN (AUFSICHT 21.11.2026 12:10, stele-259 „Material: Fleece“): ein vorhandenes Merkmal in Gruppe + allen Varianten-Items
+// auf einen neuen Wert setzen. Body { aspect, value?, confirm? }. value fehlt + aspect=Material → erster Teil von product.material
+// („Wolle (Futter), PU …“ → „Wolle“). Ohne confirm nur Vorschau. Kein Seller Hub (würde das Angebot von der Inventory-API abkoppeln).
+app.post('/products/:id/merkmal-ersetzen', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const body = await c.req.json().catch(() => ({})) as { aspect?: unknown; value?: unknown; confirm?: unknown };
+  const aspect = typeof body.aspect === 'string' ? body.aspect.trim() : '';
+  if (!aspect) return c.json({ error: 'aspect fehlt' }, 400);
+  try {
+    let value = typeof body.value === 'string' ? body.value.trim() : '';
+    if (!value && aspect.toLowerCase() === 'material') {
+      const { db, schema } = await import('../db/index').then(async m => ({ db: m.db, schema: await import('../db/schema') }));
+      const [p] = await db.select({ material: schema.products.material }).from(schema.products).where(eq(schema.products.id, id)).limit(1);
+      const { shortMaterial } = await import('../shared/material-short');
+      value = shortMaterial(p?.material ?? null) ?? '';
+    }
+    if (!value) return c.json({ error: 'kein Wert (value fehlt und product.material leer)' }, 400);
+    if (value.length > 65) return c.json({ error: 'Wert länger als 65 Zeichen (eBay-Grenze)' }, 400);
+    return c.json({ mode: body.confirm === true ? 'apply' : 'preview', aspect, value, ...(await merkmaleLiveForProduct(id, body.confirm === true, { [aspect]: value })) }, 200);
+  } catch (e) { return c.json({ error: String(e) }, 500); }
 });
 
 // Sammel-Weg: alle gelisteten Produkte mit Merkmalen, je Aufruf höchstens 10 (Render-Zeitlimit). productIds optional.

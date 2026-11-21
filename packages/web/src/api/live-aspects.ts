@@ -1,6 +1,7 @@
 // C2 (Inhaber 25.10.2026 "Punkt C ja": Merkmale in die Live-Angebote auf Knopfdruck). Gleiches Vorgehen wie der EAN-Fix
 // (identifier-aspect-fix.ts): Gruppe bzw. Inventory-Item VOLL lesen, nur FEHLENDE Merkmale aus products.specs ergänzen
-// (geprüfter Abgleich shared/spec-aspects.ts), voll zurückschreiben, zurücklesen. Vorhandene Merkmale werden nie geändert.
+// (geprüfter Abgleich shared/spec-aspects.ts), voll zurückschreiben, zurücklesen. Vorhandene Merkmale werden nur geändert, wenn `replace`
+// sie ausdrücklich nennt (AUFSICHT 21.11.2026: stele-259 Material).
 // Kein Preis, keine Menge, kein Offer. Ohne confirm: nur Vorschau.
 import { matchSpecsToCategoryAspects, type CategoryAspectDef } from '../shared/spec-aspects';
 
@@ -10,7 +11,26 @@ type Doc = Record<string, unknown> & {
   variesBy?: { specifications?: Array<{ name?: string }> };
 };
 
-export interface LiveAspectRow { target: string; added: Record<string, string>; written: boolean; error?: string; verified?: boolean }
+export interface LiveAspectRow { target: string; added: Record<string, string>; written: boolean; error?: string; verified?: boolean; replaced?: Record<string, { von: string; nach: string }> }
+
+/**
+ * Rein (AUFSICHT 21.11.2026 12:10, stele-259 „Material: Fleece“ → „Wolle“): welche VORHANDENEN Merkmale werden ersetzt.
+ * Nur Merkmale, die schon gesetzt sind und einen anderen Wert haben; Variations-Achsen (variesBy) nie. Groß/klein egal beim Vergleich.
+ */
+export function aspectReplacements(current: Record<string, string[]> | undefined, replace: Record<string, string>, variesBy: string[] = []): Record<string, { von: string; nach: string }> {
+  const out: Record<string, { von: string; nach: string }> = {};
+  const vary = new Set(variesBy.map(v => v.toLowerCase()));
+  for (const [name, value] of Object.entries(replace)) {
+    const nach = String(value ?? '').trim();
+    if (!nach || vary.has(name.toLowerCase())) continue;
+    const key = Object.keys(current ?? {}).find(k => k.toLowerCase() === name.toLowerCase());
+    if (!key) continue;
+    const von = (current?.[key] ?? []).map(String).join(', ');
+    if (von.trim().toLowerCase() === nach.toLowerCase()) continue;
+    out[key] = { von, nach };
+  }
+  return out;
+}
 
 /** Rein: welche Merkmale fehlen und werden ergänzt (Variations-Merkmale und vorhandene bleiben unberührt). */
 export function aspectAdditions(current: Record<string, string[]> | undefined, specs: Record<string, string>, category: CategoryAspectDef[], variesBy: string[] = []): Record<string, string> {
@@ -25,6 +45,7 @@ export async function applySpecAspectsToListing(input: {
   getFallbackCategoryId?: () => Promise<string | null>;  // Live 28.10.: 23 Angebote liefern Offer GET 200 ohne categoryId → Kategorie aus GetItem
   prepareItem?: (item: Record<string, unknown>) => void;    // gleiche Bereinigung wie andere Item-PUTs (BrandMPN, Gewicht 0)
   fetchFn?: typeof fetch;
+  replace?: Record<string, string>;                         // vorhandene Merkmale ersetzen (z. B. { Material: 'Wolle' }); sonst nur ergänzen
 }): Promise<{ categoryId: string | null; rows: LiveAspectRow[]; error?: string }> {
   const f = input.fetchFn ?? fetch;
   const h = { Authorization: `Bearer ${input.token}`, 'Content-Type': 'application/json', 'Content-Language': 'de-DE' };
@@ -64,16 +85,19 @@ export async function applySpecAspectsToListing(input: {
     if (t.kind === 'group') variesBy = (doc.variesBy?.specifications ?? []).map(s => s.name ?? '').filter(Boolean);
     const cur = t.kind === 'group' ? doc.aspects : doc.product?.aspects;
     const added = aspectAdditions(cur, input.specs, category, variesBy);
-    if (Object.keys(added).length === 0 || !input.confirm) { rows.push({ target: t.target, added, written: false }); continue; }
-    const merged = { ...(cur ?? {}), ...Object.fromEntries(Object.entries(added).map(([k, v]) => [k, [v]])) };
+    const replaced = input.replace ? aspectReplacements(cur, input.replace, variesBy) : {};
+    const hasReplace = Object.keys(replaced).length > 0;
+    if ((Object.keys(added).length === 0 && !hasReplace) || !input.confirm) { rows.push({ target: t.target, added, written: false, ...(hasReplace ? { replaced } : {}) }); continue; }
+    const merged = { ...(cur ?? {}), ...Object.fromEntries(Object.entries(added).map(([k, v]) => [k, [v]])), ...Object.fromEntries(Object.entries(replaced).map(([k, r]) => [k, [r.nach]])) };
     if (t.kind === 'group') doc.aspects = merged;
     else { doc.product = { ...(doc.product ?? {}), aspects: merged }; input.prepareItem?.(doc); }
     const p = await f(t.url, { method: 'PUT', headers: h, body: JSON.stringify(doc) });
-    if (!(p.ok || p.status === 204)) { rows.push({ target: t.target, added, written: false, error: `PUT ${p.status}: ${(await p.text().catch(() => '')).slice(0, 300)}` }); if (t.kind === 'group') break; continue; }
+    if (!(p.ok || p.status === 204)) { rows.push({ target: t.target, added, written: false, error: `PUT ${p.status}: ${(await p.text().catch(() => '')).slice(0, 300)}`, ...(hasReplace ? { replaced } : {}) }); if (t.kind === 'group') break; continue; }
     const back = await f(t.url, { headers: h });
     const bd = back.ok ? await back.json() as Doc : null;
     const ba = (t.kind === 'group' ? bd?.aspects : bd?.product?.aspects) ?? {};
-    rows.push({ target: t.target, added, written: true, verified: Object.entries(added).every(([k, v]) => ba[k]?.includes(v)) });
+    const verified = Object.entries(added).every(([k, v]) => ba[k]?.includes(v)) && Object.entries(replaced).every(([k, r]) => ba[k]?.length === 1 && ba[k][0] === r.nach);
+    rows.push({ target: t.target, added, written: true, verified, ...(hasReplace ? { replaced } : {}) });
   }
   return { categoryId, rows };
 }
