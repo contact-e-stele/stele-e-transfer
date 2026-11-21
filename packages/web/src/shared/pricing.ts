@@ -736,6 +736,9 @@ export const EBAY_CATEGORY_FEE_RATES: Readonly<Record<string, number>> = Object.
   '181076': 14, '11794': 14, '34002': 14, '10900': 14, '116392': 14, '46305': 14, '100411': 14, '177794': 14, '65509': 14,
   // P-KATEGORIESATZ (Kalkulator 19.11.2026 15:21, Inhaber-Ja 15:21/15:23): Standardgebühren Sport #888 / Bastel #14339 = 14 %
   '62134': 14, '137862': 14, '41205': 14, '134295': 14,
+  // P-KATEGORIESATZ 2 (AUFSICHT 21.11.2026 17:20): 66762 Katzenbetten (Haustierbedarf #1281) und 2917 Tennis (Sport #888) = 14 %
+  // laut eBay-Hilfeseite „Gebühren für gewerbliche Verkäufer“ (id=4809, Kategorien mit Standardgebühren 14 %). 45220 bewusst NICHT (Eltern-Kategorie offen).
+  '66762': 14, '2917': 14,
   // 12 %
   '105559': 12, '22683': 12, '15738': 12,
   // P-KATEGORIESATZ: 11632 Hausschuhe (Kleidung & Accessoires #11450), 31519 Notebook-Taschen (Notebook- & Desktop-Zubehör #31530)

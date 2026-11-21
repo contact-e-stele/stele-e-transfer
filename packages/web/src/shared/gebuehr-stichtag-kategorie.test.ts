@@ -15,14 +15,19 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 describe('Kategorie-Tabelle (eine Stelle)', () => {
   // P-KATEGORIESATZ (19.11.2026): + 62134/137862/41205/134295 (14 %) und 11632/31519 (12 %) → 36. 182100 bleibt draußen (Kalkulator: Satz unklar → 15 %).
-  test('genau die 36 Kategorien des Auftrags mit ihrem Satz', () => {
+  test('genau die 38 Kategorien des Auftrags mit ihrem Satz', () => {
     const erwartet: Record<string, number> = {};
-    for (const id of ['58730', '36026', '20651', '43504', '102379', '166725', '20638', '11703', '177013', '181076', '11794', '34002', '10900', '116392', '46305', '100411', '177794', '65509', '62134', '137862', '41205', '134295']) erwartet[id] = 14;
+    for (const id of ['58730', '36026', '20651', '43504', '102379', '166725', '20638', '11703', '177013', '181076', '11794', '34002', '10900', '116392', '46305', '100411', '177794', '65509', '62134', '137862', '41205', '134295', '66762', '2917']) erwartet[id] = 14;
     for (const id of ['105559', '22683', '15738', '11632', '31519']) erwartet[id] = 12;
     erwartet['45687'] = 13;
     for (const id of ['166724', '13362', '47921', '101406', '164800', '100299', '300', '20749']) erwartet[id] = 15;
     expect({ ...EBAY_CATEGORY_FEE_RATES }).toEqual(erwartet);
-    expect(Object.keys(EBAY_CATEGORY_FEE_RATES).length).toBe(36);
+    expect(Object.keys(EBAY_CATEGORY_FEE_RATES).length).toBe(38);
+  });
+  test('P-KATEGORIESATZ 2: 66762 → 14, 2917 → 14, 45220 → 15 (nicht aufgenommen)', () => {
+    expect(ebayFeeRatePercentFor('66762')).toBe(14);
+    expect(ebayFeeRatePercentFor('2917')).toBe(14);
+    expect(ebayFeeRatePercentFor('45220')).toBe(15);
   });
   test('ebayFeeRatePercentFor: 14 / 12 / 13 / 15 (unklar) — auch als Zahl und mit Leerzeichen', () => {
     expect(ebayFeeRatePercentFor('10900')).toBe(14);
