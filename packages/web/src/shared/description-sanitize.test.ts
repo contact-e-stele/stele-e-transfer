@@ -63,3 +63,24 @@ describe('Grenzen', () => {
     expect(r.introText).toBe('');
   });
 });
+
+// Teil 2 (20.11.2026, Fund nach Neusenden 259): Überschrift (generatedTitle) und Datentabelle "Farbe" (Spezifikation "Color").
+// Echte Daten stele-259 aus /api/products: generatedTitle, specs "Brand Name": "Holapet", "Color": "Red Blue Yellow Black".
+import { factRows, headingText } from './description-v3';
+import { stripBrandFromTitle } from './description-sanitize';
+describe('Teil 2: Überschrift + Farbe-Zeile stele-259', () => {
+  const specs = { 'Brand Name': 'Holapet', Color: 'Red Blue Yellow Black' };
+  const title = 'HOLAPET Hundeschuhe Winter 4 Stück Fleece wasserdicht kleine Hunde Chihuahua';
+  test('Marke aus Titelzeile/Überschrift', () => {
+    expect(stripBrandFromTitle(title, specs)).toBe('Hundeschuhe Winter 4 Stück Fleece wasserdicht kleine Hunde Chihuahua');
+    expect(headingText({ title, specs, variants: variants259 })).not.toMatch(/holapet/i);
+  });
+  test('Farbe = nur angebotene Variante (Schwarz), nicht die Spezifikation', () => {
+    const farbe = factRows({ title, specs, variants: variants259 }).find(r => r.label === 'Farbe');
+    expect(farbe?.value).toBe('Schwarz');
+  });
+  test('ohne Farbachse bleibt die Spezifikation wie bisher', () => {
+    const farbe = factRows({ title, specs: { Color: 'Black' }, variants: [{ name: 'Größe', values: ['S'] }] }).find(r => r.label === 'Farbe');
+    expect(farbe?.value).toBe('Schwarz');
+  });
+});

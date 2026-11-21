@@ -4,7 +4,7 @@
  */
 
 import { GPSR_DESCRIPTION_NOTICE } from "../../shared/gpsr-description";
-import { sanitizeDescriptionText } from '../../shared/description-sanitize';
+import { sanitizeDescriptionText, stripBrandFromTitle } from '../../shared/description-sanitize';
 
 import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, PAYMENT_TEXT, deliveryFooterText, returnFooterText, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
 import { DESCRIPTION_V3_MARKER, factRows, headingText, v3Bullets, type DescriptionV3Input } from '../../shared/description-v3';
@@ -671,7 +671,7 @@ ${FOOTER_BLOCK_END}
  * (Dauerregel 3, description-compliance.ts). Kommentar "TAB 5" bleibt, damit neutralizeGpsrTab() und die Prüfung greifen.
  */
 export function buildEbayHTMLv4(product: ScrapedProduct): string {
-  const title = titleBarText(cleanText(product.title || ""));
+  const title = titleBarText(stripBrandFromTitle(cleanText(product.title || ""), product.specs)); // P-BESCHREIBUNG Teil 2: keine Marke
   const v4Input: DescriptionV4Input = {
     title,
     variants: product.variants,

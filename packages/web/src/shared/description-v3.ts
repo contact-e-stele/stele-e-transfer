@@ -15,6 +15,7 @@ import { formatMeasure, type VariantDetails } from './variant-measure';
 import { translateVariantValue } from './variant-text-de';
 import { translateMaterial } from './spec-aspects';
 import { NON_VARIATION_ASPECTS } from './variant-resolver';
+import { offeredColors, stripBrandFromTitle } from './description-sanitize';
 
 /** Merkmal der v3-Vorlage — fehlt es in einer gespeicherten Beschreibung, wird sie beim Listen neu gebaut. */
 export const DESCRIPTION_V3_MARKER = '<!-- stele-beschreibung: v3 -->';
@@ -100,6 +101,12 @@ function colorsFromVariants(variants: DescriptionV3Input['variants']): string[] 
 }
 
 function colorText(input: DescriptionV3Input): string | null {
+  // P-BESCHREIBUNG Teil 2 (20.11.2026, Fund stele-259 nach Neusenden): gibt es eine Farb-Achse, zählen NUR die angebotenen
+  // Varianten-Farben — die AliExpress-Spezifikation "Color" listet alle Farben des Lieferanten (259: Rot/Blau/Gelb/Schwarz, angeboten Schwarz).
+  if (offeredColors(input.variants)) {
+    const fromVariants = colorsFromVariants((input.variants ?? []).filter(v => /^(farbe|farben|color|colour|varianten|variante)$/i.test(v.name.trim())));
+    if (fromVariants.length > 0) return fromVariants.join(' / ');
+  }
   const spec = specValue(input.specs, ['farbe', 'color', 'colour']);
   if (spec) {
     const t = translateVariantValue(spec);
@@ -136,7 +143,7 @@ export function factRows(input: DescriptionV3Input): FactRow[] {
 
 /** Überschrift: Name · Menge · Maß (Menge/Maß nur, wenn belegt und nicht schon im Namen). */
 export function headingText(input: DescriptionV3Input): string {
-  const name = clean(input.title);
+  const name = clean(stripBrandFromTitle(input.title, input.specs)); // P-BESCHREIBUNG Teil 2: keine Marke in der Überschrift
   const parts = [name];
   const pieces = piecesOf(input);
   const piecesInName = pieces.length === 1 && new RegExp(`\\b${pieces[0]}\\s*(?:stück|stk|pcs)\\b`, 'i').test(name);
