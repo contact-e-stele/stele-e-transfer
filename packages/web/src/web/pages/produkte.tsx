@@ -2,6 +2,7 @@
  * Produkte-Tab — eigene Produktdatenbank
  * Zeigt alle importierten Produkte, Preisänderungen, eBay-Status
  */
+import { variantPreviewPrice } from "../../shared/variant-preview-price";
 import { useState, useEffect } from "react";
 import { formatMarginDisplay, marginDisplay } from "../../shared/margin-display";
 import { offeredProfitSummary, notOfferedLabel } from "../../shared/offered-profit";
@@ -1352,6 +1353,9 @@ export default function Produkte() {
             try {
               const vp = previewProduct.variantPrices ? JSON.parse(previewProduct.variantPrices) : null;
               if (!Array.isArray(vp)) return undefined;
+              // AUFSICHT 21.11.2026 14:10 (App-VK ≠ eBay-VK, 262/271/272): gesendeter Preis = variantSellPrices[skuId];
+              // variantPrices[].ebayPrice ist nur der alte Vorschlag vom Import und wich bei 36 Live-Angeboten ab.
+              const sent = (() => { try { const m = JSON.parse(previewProduct.variantSellPrices ?? 'null'); return m && typeof m === 'object' && !Array.isArray(m) ? m as Record<string, unknown> : {}; } catch { return {}; } })();
               // AliExpress-Rohdaten haben kein "name" (nur skuId + attrs) — Name aus attrs zusammenbauen
               return vp.map((v: any) => ({
                 name: typeof v.name === 'string' && v.name
@@ -1359,7 +1363,7 @@ export default function Produkte() {
                   : (v.attrs && typeof v.attrs === 'object'
                       ? Object.values(v.attrs).filter(Boolean).join(' / ')
                       : String(v.skuId ?? 'Variante')),
-                price: typeof v.ebayPrice === 'number' ? v.ebayPrice : (typeof v.price === 'number' ? v.price : 0),
+                price: variantPreviewPrice(sent[String(v.skuId)], v.ebayPrice, v.price),
                 imageUrl: v.imageUrl,
               })).filter((v: any) => v.name);
             } catch { return undefined; }
