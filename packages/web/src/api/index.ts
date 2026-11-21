@@ -4858,6 +4858,27 @@ app.post('/products/:id/merkmale-live', async (c) => {
   catch (e) { return c.json({ error: String(e) }, 500); }
 });
 
+// D4 Schritt A (Inhaber 21.11.2026 Y, Aufsicht 12:10): Achsen-NAMEN eines Varianten-Angebots bei eBay umbenennen. Body { renames: {alt: neu}, confirm? }.
+// Werte bleiben. Erst an EINEM Angebot ohne Verkäufe testen (Aufsicht). Ohne confirm nur Vorschau.
+app.post('/products/:id/achsen-umbenennen', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  if (isNaN(id)) return c.json({ error: 'Ungültige ID' }, 400);
+  const body = await c.req.json().catch(() => ({})) as { renames?: unknown; confirm?: unknown };
+  const renames = body.renames && typeof body.renames === 'object' && !Array.isArray(body.renames)
+    ? Object.fromEntries(Object.entries(body.renames as Record<string, unknown>).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, (v as string).trim()]))
+    : {};
+  if (Object.keys(renames).length === 0) return c.json({ error: 'renames fehlt, z. B. {"Varianten":"Farbe"}' }, 400);
+  if (Object.values(renames).some(v => v.length > 65)) return c.json({ error: 'Name länger als 65 Zeichen' }, 400);
+  try {
+    const { getAccessToken, EBAY_API_BASE_URL, sanitizeItemProductForPut, stripZeroWeight } = await import('./ebay');
+    const { renameListingAxes } = await import('./axis-rename');
+    const r = await renameListingAxes({ productId: id, renames, confirm: body.confirm === true, token: await getAccessToken(), baseUrl: EBAY_API_BASE_URL,
+      prepareItem: (item) => { if (item.product) item.product = sanitizeItemProductForPut(item.product as Record<string, unknown>); stripZeroWeight(item); } });
+    console.log(`[Achsen umbenennen] stele-${id} ${r.mode}: ${JSON.stringify(r.renames)} ${r.error ?? ''} verified=${r.verified}`);
+    return c.json(r, r.error ? 400 : 200);
+  } catch (e) { return c.json({ error: String(e) }, 500); }
+});
+
 // Sammel-Weg: alle gelisteten Produkte mit Merkmalen, je Aufruf höchstens 10 (Render-Zeitlimit). productIds optional.
 app.post('/products/merkmale-live-all', async (c) => {
   const body = await c.req.json().catch(() => ({})) as { confirm?: unknown; productIds?: unknown; offset?: unknown };
