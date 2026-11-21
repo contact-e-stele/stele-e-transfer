@@ -93,6 +93,10 @@ entfällt. Quelle: Archiv-Dokument "Preis-Fundament Teil 2C, 2D und 3" (13.09.20
 Kein PR wird gemergt, bevor im Postfach-Ordner das Dokument **"AUFSICHT FREIGABE PR <Nr>"** liegt UND der Inhaber im Chat
 "ja" geschrieben hat. Beides ist Pflicht. Claude meldet bei jedem PR, ob das Freigabe-Dokument schon vorliegt.
 Ergänzt Regel 13 (der Inhaber mergt selbst) — die Prüfung durch 0 Aufsicht kommt jetzt VOR den Merge.
+*Präzisierung (21.11.2026, Gesetzbuch v66 Nr 172, Doku-PR mit Inhaber-Ja):* Bei PRs **ohne** Geld-/Preis-Logik, **ohne**
+DB-Schema/Migration, **ohne** Login/Auth und **ohne** eBay-Konto-Änderung reicht das Dokument "AUFSICHT FREIGABE PR <Nr>" —
+dann mergt Claude ohne zusätzliches Inhaber-"ja" im Chat (z. B. Versions-Nachträge, Doku, reine UI-Texte, Tests). Bei allen
+anderen PRs bleibt Regel 14 unverändert: FREIGABE-Dokument UND Inhaber-"ja <Nr>" im Chat. Im Zweifel gilt die strengere Regel.
 
 **Archiv:** Grundgesetz und alle Funde liegen zusätzlich im Google-Drive-Ordner
 "stele-e-transfer – Bug-Analyse" (Dokument "GRUNDGESETZ Arbeitsweise + Teil 3B …", 13.09.2026).
