@@ -7,6 +7,7 @@
 import { planTierReprice, type RepriceProduct, type TierPlanRow } from '../shared/tier-reprice';
 import { profitFloorFor, effectiveProfitFloor, DEFAULT_PRICING_CONFIG } from '../shared/pricing';
 import { isPriceJump, priceJumpMessage } from '../shared/price-jump';
+import { MIN_PROFIT_OHNE_RABATT_EUR, mindestgewinnOhneRabattAnheben } from '../shared/constants';
 
 const fmt = (n: number) => n.toFixed(2);
 
@@ -35,7 +36,9 @@ export function explainVariantRaisePlan(product: VariantRaiseProduct, heldSkuIds
     if (r.skuId == null) return 'no_sku';
     if (r.oldSell == null || r.oldProfit == null) return 'no_old_sell';
     if (heldSkuIds?.has(r.skuId)) return 'held';
-    if (!(r.oldProfit < floor - 1e-9)) return 'profit_ok';
+    // P-MINDESTGEWINN: auch anheben, wenn der Gewinn OHNE Kassen-Faktor unter 0,50 € liegt (Rabatt zählt nicht).
+    const ohneRabattZuNiedrig = mindestgewinnOhneRabattAnheben() && r.oldProfitOhneRabatt != null && r.oldProfitOhneRabatt < MIN_PROFIT_OHNE_RABATT_EUR - 1e-9;
+    if (!(r.oldProfit < floor - 1e-9) && !ohneRabattZuNiedrig) return 'profit_ok';
     if (!(r.newSell > r.oldSell + 0.004)) return 'not_higher';
     return 'raise';
   };
@@ -54,7 +57,7 @@ const SKIP_TEXT: Record<VariantRaiseSkipReason, string> = {
 export function describeVariantRaiseExplanation(productId: number, ex: VariantRaiseExplanation): string[] {
   if (!ex.isVariant) return [`[VariantRaise] stele-${productId}: kein Varianten-Produkt — nichts angehoben`];
   if (ex.rows.length === 0) return [`[VariantRaise] stele-${productId}: keine Variante mit gespeichertem Einkaufspreis > 0 — nichts angehoben`];
-  return ex.rows.map(r => `[VariantRaise] stele-${productId} ${r.label || r.skuId} (skuId ${r.skuId ?? '–'}): EK ${fmt(r.ware)}, VK ${r.oldSell != null ? fmt(r.oldSell) : '–'}, Gewinn ${r.oldProfit != null ? fmt(r.oldProfit) : '–'} € (Grenze ${fmt(ex.floor)}), Formel ${fmt(r.newSell)} € — ${SKIP_TEXT[r.reason]}`);
+  return ex.rows.map(r => `[VariantRaise] stele-${productId} ${r.label || r.skuId} (skuId ${r.skuId ?? '–'}): EK ${fmt(r.ware)}, VK ${r.oldSell != null ? fmt(r.oldSell) : '–'}, Gewinn ${r.oldProfit != null ? fmt(r.oldProfit) : '–'} € (Grenze ${fmt(ex.floor)}), ohne Rabatt ${r.oldProfitOhneRabatt != null ? fmt(r.oldProfitOhneRabatt) : '–'} € (Grenze ${fmt(MIN_PROFIT_OHNE_RABATT_EUR)}), Formel ${fmt(r.newSell)} € — ${SKIP_TEXT[r.reason]}`);
 }
 
 // Nur Zeilen mit bekanntem alten VK, Gewinn < Boden und höherem Formelpreis — nie senken, nie raten (kein alter VK → keine Zeile).

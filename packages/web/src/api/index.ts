@@ -4277,7 +4277,8 @@ const app = new Hono()
             });
             if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
             const alarm = !hold.allHeld && alarmRes.isAlarm;
-            const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, alarm);
+            // P-MINDESTGEWINN: anheben nur über raiseAlarm (0,50-Regel ohne Rabatt nur mit Schalter AN) — Preisalarm (alarm) zeigt sie immer.
+            const decision = applyRaiseOnly(product.sellPrice, rawNewSellPrice, !hold.allHeld && alarmRes.raiseAlarm);
             const jump = decision.action === 'raise' && isPriceJump(product.sellPrice, decision.price); // OFFEN 010: > 15 % nie automatisch
             if (jump) console.warn(`[check-all-prices] ⚠️ ${priceJumpMessage(product.id, `stele-${product.id}`, product.sellPrice as number, decision.price)}`);
             const willWrite = AUTO_PRICE_WRITE_ENABLED && decision.action === 'raise' && !jump;
