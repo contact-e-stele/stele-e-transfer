@@ -1247,13 +1247,15 @@ const app = new Hono()
   .post('/ebay/products/:productId/refresh-description', async (c) => {
     try {
       const productId = Number(c.req.param('productId'));
-      const body = await c.req.json().catch(() => ({})) as { confirm?: boolean };
+      const body = await c.req.json().catch(() => ({})) as { confirm?: boolean; version?: string };
+      // Inhaber-Ja 22.11.2026: v4 je Produkt (nur Einzel-Route; ohne Angabe gilt der Schalter DESCRIPTION_VERSION)
+      const version = body.version === 'v4' ? 'v4' as const : body.version === 'v3' ? 'v3' as const : undefined;
       const { refreshOneProductDescription } = await import('./description-refresh');
       const { db, schema } = await import('../db/index').then(async m => {
         const sc = await import('../db/schema');
         return { db: m.db, schema: sc };
       });
-      const outcome = await refreshOneProductDescription(productId, { confirm: body.confirm }, {
+      const outcome = await refreshOneProductDescription(productId, { confirm: body.confirm, version }, {
         getProduct: async (id) => db.select().from(schema.products).where(eq(schema.products.id, id)).get(),
         reviseListingContent: reviseListingDescriptionVerified, // Rücklesen: ok nur, wenn eBay den Text zeigt (Fund 243)
         updateProductDescription: async (id, htmlDescription) => {
