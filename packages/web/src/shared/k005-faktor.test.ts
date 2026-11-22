@@ -2,7 +2,8 @@
 // Zahlen in Testnamen/Kommentaren können noch den Stand mit 0,30 zeigen — maßgeblich sind die expect-Werte. Liste alt → neu: docs/fixgebuehr-testaenderungen.md
 // K-005c: Kassen-Faktor (Kasse ÷ App-Preis) — Gültigkeit, Anwendung, Ableitung, Einbau in die EINE Formel und in den Bestellungs-Gewinn.
 // Alle Erwartungswerte mit bun nachgerechnet (Grundgesetz 3), nicht geschätzt.
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { MINDESTGEWINN_OHNE_RABATT_ANHEBEN_DEFAULT, setMindestgewinnOhneRabattAnheben } from './constants';
 import { activeCheckoutFactor, applyCheckoutFactor, checkoutWareFromInvoiceTotal, deriveCheckoutFactors, type FactorMatch, type FactorOrder } from './checkout-factor';
 import { computeMinSellPrice, profitAtSellPrice, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, type PricingInput } from './pricing';
 import { productProfitRows } from './target-margin-bulk';
@@ -91,23 +92,36 @@ describe('Prüfwerte des Inhabers (stele-220, Faktor 0,9508 = 11,59 ÷ 12,19)', 
 });
 
 describe('Formel: checkoutFactor in computeMinSellPrice/profitAtSellPrice = Ware × Faktor', () => {
+  // P-MINDESTGEWINN: die Preis-Erwartungen unten gelten mit Schalter AN; AUS-Verhalten (= alter Stand) prüft p-mindestgewinn.test.ts.
+  beforeEach(() => setMindestgewinnOhneRabattAnheben(true));
+  afterEach(() => setMindestgewinnOhneRabattAnheben(MINDESTGEWINN_OHNE_RABATT_ANHEBEN_DEFAULT));
   const base = (buyPrice: number, isChinaOrigin: boolean, adRatePercent: number, targetMarginEur: number): PricingInput => ({
     buyPrice, isChinaOrigin, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent, targetMarginEur,
     safetyBufferEur: 0, rounding: 'floor95',
   });
   // [App-Ware, China, Anzeige %, Ziel, Faktor, Ware×Faktor, VK ohne Faktor, VK mit Faktor, Gewinn bei 19,95 ohne/mit] — alles bun.
   // Formel je Standort (08.11.2026): China-Zeilen mit S 1,19 neu gerechnet; EU-Zeile unverändert.
-  const cases: Array<[number, boolean, number, number, number, number, number, number, number, number]> = [
+  const cases: Array<[number, boolean, number, number, number, number, number, number, number, number, boolean]> = [
     // AUFSICHT 045 Teil A (09.11.2026): Fixgebühr gestaffelt (alle VK hier > 10 € → 0,45) — VK/Gewinne mit bun neu gerechnet.
-    [12.19, true, 5, 1.00, 0.9508, 11.59, 24.45, 23.45, -1.995739, -1.395739],
-    [13.79, false, 5, 2.00, 0.913, 12.59, 20.95, 19.45, 0.8764, 2.0764],
-    [9.50, true, 0, 1.50, 0.8, 7.60, 21.45, 18.95, 0.116821, 2.016821],
+    // P-MINDESTGEWINN (19.11.2026): mit Faktor muss der Gewinn OHNE Faktor zusätzlich ≥ 0,50 € sein. Zeile 1 unverändert (23,45: ohne
+    // Faktor bun 0,512991 ≥ 0,50). Zeile 2: 19,45 → 19,95 (bei 19,45 ohne Faktor nur bun 0,4954). Zeile 3: 18,95 → 20,45 (bei 19,95 ohne
+    // Faktor nur bun 0,116821; bei 20,45 bun 0,510613). Letzte Spalte: bindet die 0,50-Regel (dann ≠ Formelpreis mit Ware × Faktor)?
+    [12.19, true, 5, 1.00, 0.9508, 11.59, 24.45, 23.45, -1.995739, -1.395739, false],
+    [13.79, false, 5, 2.00, 0.913, 12.59, 20.95, 19.95, 0.8764, 2.0764, true],
+    [9.50, true, 0, 1.50, 0.8, 7.60, 21.45, 20.45, 0.116821, 2.016821, true],
   ];
-  for (const [ware, china, ad, target, f, wareF, vkOhne, vkMit, gOhne, gMit] of cases) {
+  for (const [ware, china, ad, target, f, wareF, vkOhne, vkMit, gOhne, gMit, bindet] of cases) {
     test(`Ware ${ware} × ${f}: VK ${vkOhne} → ${vkMit}`, () => {
       const mit = computeMinSellPrice({ ...base(ware, china, ad, target), checkoutFactor: f });
       const gleich = computeMinSellPrice(base(wareF, china, ad, target));
-      expect(mit).toEqual(gleich);
+      if (bindet) {
+        expect(mit.minSellPrice).toBeGreaterThan(gleich.minSellPrice);
+        expect(mit.totalCost).toBe(gleich.totalCost); // Kosten weiter mit Ware × Faktor — nur der Preis-Boden ohne Rabatt bindet
+      } else {
+        expect(mit).toEqual(gleich);
+      }
+      const ohneRabatt = profitAtSellPrice({ sellPrice: mit.minSellPrice, buyPrice: ware, isChinaOrigin: china, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: ad });
+      expect(ohneRabatt).toBeGreaterThanOrEqual(0.50);
       expect(computeMinSellPrice(base(ware, china, ad, target)).minSellPrice).toBe(vkOhne);
       expect(mit.minSellPrice).toBe(vkMit);
       const pIn = { sellPrice: 19.95, isChinaOrigin: china, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: ad };
@@ -121,13 +135,16 @@ describe('Formel: checkoutFactor in computeMinSellPrice/profitAtSellPrice = Ware
     expect(computeMinSellPrice({ ...base(12.19, true, 5, 1), checkoutFactor: null })).toEqual(computeMinSellPrice(base(12.19, true, 5, 1)));
   });
   // AUFSICHT 045 A: mit Fix 0,45 läge Faktor 0,6 bei 0,894261 (< 1,00, Alarm) → EINGABE Faktor 0,6 → 0,55 (Szenario „kein Alarm“ erhalten).
-  test('evaluatePriceAlarm reicht den Faktor durch (19,95 €, Ziel 1,00: −2,00 → Alarm; mit 0,9508: bun −1,395739 → Alarm; mit 0,55: Ware 6,70 → Gewinn bun 1,504261 → kein Alarm)', () => {
+  // P-MINDESTGEWINN (19.11.2026): mit 0,55 ist der Gewinn mit Faktor 1,504261 (über dem Boden), OHNE Faktor aber bun −1,995739
+  // (< 0,50) → jetzt Alarm (vorher kein Alarm). Der Rabatt zählt für das Tor nicht mehr.
+  test('evaluatePriceAlarm reicht den Faktor durch (19,95 €, Ziel 1,00: −2,00 → Alarm; mit 0,9508: bun −1,395739 → Alarm; mit 0,55: Ware 6,70 → Gewinn bun 1,504261, ohne Faktor −1,995739 → Alarm)', () => {
     const a = { currentSellPrice: 19.95, variants: [{ buyPrice: 12.19 }], isChinaOrigin: true, ebayFeeRatePercent: 15, vatFactor: 1.19, adRatePercent: 5, targetMarginEur: 1.00 };
     expect(evaluatePriceAlarm(a).isAlarm).toBe(true);
     expect(evaluatePriceAlarm({ ...a, checkoutFactor: 0.9508 }).worstProfit).toBeCloseTo(-1.395739, 6);
     const r = evaluatePriceAlarm({ ...a, checkoutFactor: 0.55 });
     expect(r.worstProfit).toBeCloseTo(1.504261, 6);
-    expect(r.isAlarm).toBe(false);
+    expect(r.worstProfitWithoutFactor).toBeCloseTo(-1.995739, 6);
+    expect(r.isAlarm).toBe(true);
   });
 });
 

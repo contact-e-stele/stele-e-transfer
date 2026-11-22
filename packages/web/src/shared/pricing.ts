@@ -21,7 +21,7 @@
 
 import {
   MIN_GEWINN_EUR, ALI_VERSAND_EUR, ALI_VERSAND_FREI_AB_EUR, aliEinfuhrEur,
-  MARGIN_TIERS, HIDDEN_MARGIN_TIER, MIN_PROFIT_FLOOR_EUR,
+  MARGIN_TIERS, HIDDEN_MARGIN_TIER, MIN_PROFIT_FLOOR_EUR, MIN_PROFIT_OHNE_RABATT_EUR, mindestgewinnOhneRabattAnheben,
 } from './constants';
 import { applyCheckoutFactor } from './checkout-factor';
 
@@ -93,10 +93,13 @@ function nextEnding(cents: number): number {
 // Preisformel v2, Rundung (K-006): erst die größte erlaubte Endung (,45/,95) UNTER dem Rohpreis (Kunde sieht den günstigeren
 // Preis); liegt der Gewinn dort unter (Boden − 0,10, mindestens 1,00 €) → nächste erlaubte Endung darüber, bis erreicht.
 // 1e-9 nur gegen Gleitkomma-Rauschen. Einzige Rundungsstelle für Modus 'floor95' (Import, Preise neu berechnen, Varianten, Preisprüfung).
-export function roundToProfitFloor(rawPrice: number, profitAt: (sellPrice: number) => number, floorEur: number): number {
+// P-MINDESTGEWINN (19.11.2026): optional `profitOhneRabattAt` = Gewinn OHNE Kassen-Faktor. Ist er angegeben, muss der Preis zusätzlich
+// MIN_PROFIT_OHNE_RABATT_EUR (0,50 €) erreichen — sonst nächste Endung darüber. Weggelassen = Verhalten wie bisher.
+export function roundToProfitFloor(rawPrice: number, profitAt: (sellPrice: number) => number, floorEur: number, profitOhneRabattAt?: (sellPrice: number) => number): number {
   const minProfit = effectiveProfitFloor(floorEur);
+  const ok = (p: number) => profitAt(p) >= minProfit - 1e-9 && (!profitOhneRabattAt || profitOhneRabattAt(p) >= MIN_PROFIT_OHNE_RABATT_EUR - 1e-9);
   let cents = Math.max(floorToEnding(Math.floor(rawPrice * 100 + 1e-6)), 45); // abrunden: nie eine Endung ÜBER dem Rohpreis als Start; nie unter 0,45
-  for (let i = 0; i < 4000 && profitAt(cents / 100) < minProfit - 1e-9; i++) cents = nextEnding(cents);
+  for (let i = 0; i < 4000 && !ok(cents / 100); i++) cents = nextEnding(cents);
   return cents / 100;
 }
 
@@ -170,8 +173,13 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   const rawMinSellPrice = ebayOrderTotal(rawLow, s) <= schedule.thresholdEur
     ? rawLow
     : (zaehler + schedule.normalEur * input.vatFactor) / (1 - totalFeeRateGross);
+  // P-MINDESTGEWINN: wirkt ein Kassen-Faktor (Ware kleiner als App-Preis), muss der Gewinn OHNE Faktor zusätzlich ≥ 0,50 € sein.
+  // Nur mit Schalter AN (mindestgewinnOhneRabattAnheben) — AUS = Preis-Boden wie bisher, keine neuen Anhebungen.
+  const factorWirkt = mindestgewinnOhneRabattAnheben() && applyCheckoutFactor(input.buyPrice, input.checkoutFactor) !== input.buyPrice;
+  const totalCostOhneRabatt = computeAliCosts(input.buyPrice, input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0);
   const minSellPrice = input.rounding === 'floor95'
-    ? roundToProfitFloor(rawMinSellPrice, p => p * (1 - totalFeeRateGross) - fixedAt(p) - totalCost, input.profitFloorEur ?? profitFloorFor(input.targetMarginEur))
+    ? roundToProfitFloor(rawMinSellPrice, p => p * (1 - totalFeeRateGross) - fixedAt(p) - totalCost, input.profitFloorEur ?? profitFloorFor(input.targetMarginEur),
+        factorWirkt ? p => p * (1 - totalFeeRateGross) - fixedAt(p) - totalCostOhneRabatt : undefined)
     : applyRounding(rawMinSellPrice, input.rounding);
   const fixedFeeGross = fixedAt(minSellPrice);
   return { totalCost, shipping, customs, baseFeeRateGross, totalFeeRateGross, fixedFeeGross, rawMinSellPrice, minSellPrice };
@@ -319,11 +327,14 @@ export interface PriceAlarmResult {
   // K-005 (Inhaber 14.10.2026): Warnhinweis, wenn der Gewinn OHNE Kassen-Faktor unter 0 läge (nur wenn ein Faktor < 1 angewendet wurde).
   worstProfitWithoutFactor: number | null;
   lossWithoutFactor: boolean;
+  // P-MINDESTGEWINN: darf dieser Alarm eine automatische Anhebung auslösen? = Boden-Alarm wie bisher; die 0,50-Regel ohne Rabatt nur mit
+  // Schalter AN (mindestgewinnOhneRabattAnheben). isAlarm (Anzeige/Preisalarm) enthält die 0,50-Regel immer.
+  raiseAlarm: boolean;
 }
 
 export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
   if (input.currentSellPrice == null || input.variants.length === 0) {
-    return { isAlarm: false, worstProfit: null, worstProfitWithoutFactor: null, lossWithoutFactor: false };
+    return { isAlarm: false, worstProfit: null, worstProfitWithoutFactor: null, lossWithoutFactor: false, raiseAlarm: false };
   }
   const profitsFor = (checkoutFactor: number | null | undefined) => input.variants.map(v => profitAtSellPrice({
     sellPrice: input.currentSellPrice as number,
@@ -339,9 +350,13 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
   const worstProfitWithoutFactor = factorApplied ? Math.min(...profitsFor(null)) : worstProfit;
   // A-014: die ,95-Rundung unter dem Rohpreis liegt BEWUSST unter dem Zielgewinn ("Erwartet" < "Ziel" = gelb);
   // Alarm ist nur noch "Gewinn unter dem Boden" (= rot, darf nicht vorkommen → Preis anheben).
+  const bodenAlarm = worstProfit < effectiveProfitFloor(profitFloorFor(input.targetMarginEur)) - 1e-9; // K-006: Boden − 0,10, nie unter 1,00
+  // P-MINDESTGEWINN: zusätzlich Alarm, wenn der Gewinn OHNE Kassen-Faktor unter 0,50 € liegt (Rabatt zählt nicht).
+  const ohneRabattAlarm = worstProfitWithoutFactor < MIN_PROFIT_OHNE_RABATT_EUR - 1e-9;
   return {
-    isAlarm: worstProfit < effectiveProfitFloor(profitFloorFor(input.targetMarginEur)) - 1e-9, worstProfit, // K-006: Boden − 0,10, nie unter 1,00
+    isAlarm: bodenAlarm || ohneRabattAlarm, worstProfit,
     worstProfitWithoutFactor, lossWithoutFactor: factorApplied && worstProfitWithoutFactor < -1e-9,
+    raiseAlarm: bodenAlarm || (mindestgewinnOhneRabattAnheben() && ohneRabattAlarm),
   };
 }
 
