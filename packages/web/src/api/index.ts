@@ -1395,7 +1395,7 @@ const app = new Hono()
   .get('/ebay/listings/recalculate-preview', async (c) => {
     try {
       const { isChinaShipping, computeVariantPriceRows, safeUniformVariantPrice } = await import('./price-monitor');
-      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, defaultEbayFeeRateGross, ebayLocationFactorFor, ebayFeeRatePercentFor } = await import('../shared/pricing');
+      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, defaultEbayFeeRateGross, ebayLocationFactorFor, ebayFeeRatePercentFor, aliShippingOverride } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1496,6 +1496,7 @@ const app = new Hono()
           vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
           targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
           rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
+          aliShippingEur: aliShippingOverride(product.shippingCost), // K1 (Nr 173)
         });
         const rawNewPrice = calc.minSellPrice;
         // PLAN 7 Punkt 9: Diagnose zeigt die Werte, mit denen die Formel WIRKLICH rechnet (Versand/Einfuhr aus computeAliCosts,
@@ -1548,7 +1549,7 @@ const app = new Hono()
         updateEbayVariantPricesIndividually, updateEbayPriceInventory, updateEbayPriceTrading,
         parseVariantGroupsJson,
       } = await import('./price-monitor');
-      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } = await import('../shared/pricing');
+      const { computeMinSellPrice, applyDecreaseCap, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor, aliShippingOverride } = await import('../shared/pricing');
       const { db, schema } = await import('../db/index').then(async m => {
         const s = await import('../db/schema');
         return { db: m.db, schema: s };
@@ -1589,6 +1590,7 @@ const app = new Hono()
                 vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
                 targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
                 rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
+                aliShippingEur: aliShippingOverride(product.shippingCost), // K1 (Nr 173)
               }).minSellPrice
             : null;
           // Teil 2D ("Senkungsbremse"): dies ist der tatsächliche eBay-Schreibvorgang (unten,
@@ -2805,7 +2807,7 @@ const app = new Hono()
     // product.sellPrice ungeprüft zu übernehmen. Nur wenn kein buyPrice bekannt ist (z.B. manuell
     // angelegtes Produkt ohne AliExpress-Quelle), bleibt der gespeicherte sellPrice die Quelle.
     const { isChinaShipping: isChinaShippingForListing } = await import('./price-monitor');
-    const { computeMinSellPrice, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } = await import('../shared/pricing');
+    const { computeMinSellPrice, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor, aliShippingOverride } = await import('../shared/pricing');
     const adRateForListing = product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent;
     const calcSellPriceForListing = (buyPrice: number) => computeMinSellPrice({
       earUmlageEur: earUmlageFor(product), // A-029: nur Elektro = ja, sonst 0 → Formel unverändert
@@ -2814,6 +2816,7 @@ const app = new Hono()
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRateForListing,
       targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
       rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
+      aliShippingEur: aliShippingOverride(product.shippingCost), // K1 (Nr 173)
     }).minSellPrice;
 
     let effectiveSellPrice: number | null = product.buyPrice != null
@@ -3247,7 +3250,7 @@ const app = new Hono()
       // (evaluatePriceAlarm() in shared/pricing.ts). Dieser Endpunkt setzt weiterhin NIE
       // eigenständig einen neuen Verkaufspreis — nur die priceChanged-Bedeutung wird korrigiert.
       const { isChinaShipping } = await import('./price-monitor');
-      const { evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } = await import('../shared/pricing');
+      const { evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor, aliShippingOverride } = await import('../shared/pricing');
       // K-008: gehaltener Preis (Gewinn ≥ 0,90 €) löst keinen Alarm aus (gleiche Regel wie die Preisprüfung).
       const { getPriceHolds } = await import('./price-holds');
       const { resolvePriceHolds } = await import('../shared/price-hold');
@@ -3263,6 +3266,7 @@ const app = new Hono()
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: old.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
         targetMarginEur: old.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
         checkoutFactor: activeCheckoutFactor(old.aliCheckoutFactor, old.aliCheckoutFactorAt), // K-005
+        aliShippingEur: aliShippingOverride(old.shippingCost), // K1
       }).isAlarm;
 
       // Preis-Historie speichern
@@ -4201,7 +4205,7 @@ const app = new Hono()
       // Background-Funktion — läuft weiter nach dem Response
       (async () => {
         const { isChinaShipping } = await import('./price-monitor');
-        const { computeMinSellPrice, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED, ebayFeeRatePercentFor } = await import('../shared/pricing');
+        const { computeMinSellPrice, applyRaiseOnly, evaluatePriceAlarm, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED, ebayFeeRatePercentFor, aliShippingOverride } = await import('../shared/pricing');
         const job = (g.__priceJobs as Record<string, { status: string; done: number; results: unknown[] }>)[jobId];
         // K-008: "Preis halten" (app_settings) einmal je Lauf laden; Fehler → ohne Halten (Verhalten wie bisher).
         const { getPriceHolds, releasePriceHolds } = await import('./price-holds');
@@ -4252,6 +4256,7 @@ const app = new Hono()
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
               rounding: 'floor95', checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
+              aliShippingEur: aliShippingOverride(product.shippingCost), // K1 (Nr 173)
             }).minSellPrice;
             // Teil 4/5 (2026-09-13): dieser Job ist komplett unbeaufsichtigt und darf
             // AUSSCHLIESSLICH anheben, nie senken — applyDecreaseCap() (Senkungsbremse) wird hier
@@ -4274,6 +4279,7 @@ const app = new Hono()
               vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: product.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent,
               targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
               checkoutFactor,
+              aliShippingEur: aliShippingOverride(product.shippingCost), // K1
             });
             if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
             const alarm = !hold.allHeld && alarmRes.isAlarm;

@@ -53,10 +53,23 @@ export function roundToNearest95(price: number): number {
 export interface AliCosts { ware: number; shipping: number; customs: number; totalCost: number }
 // K-004 (Kalkulator, 08.10.2026): Versand 1,99 € fällt NUR bei China-Versand und Ware < 10 € an. EU-Lager: Versand 0, Einfuhr 0
 // (belegt im Kalkulator-Auftrag K-004; vorher wurde der Versand auch bei EU-Lager gerechnet).
-export function computeAliCosts(ware: number, isChinaOrigin: boolean): AliCosts {
-  const shipping = isChinaOrigin && ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
+// K1 (Gesetzbuch v67 Nr 173, Inhaber 22.11.2026): echter Ali-Versand des Lieferanten statt Pauschale, wenn er HÖHER ist (Live-Fund stele-285:
+// 4,43 statt 1,99 → Verlust unerkannt). aliShippingEur = aliShippingOverride(product.shippingCost) (aliexpress.ds.freight.query beim Import/
+// Auffrischen); null/weggelassen = Pauschale wie bisher. Nie niedriger als die Pauschale (kein Gewinn aus einem evtl. veralteten 0-Wert).
+// Nur bei Ware < ALI_VERSAND_FREI_AB_EUR (wie die Pauschale): der Wert stammt aus der Versandabfrage EINER repräsentativen SKU
+// (aliexpress-api.ts, günstigste Variante) und ist für Varianten ab 10 € Ware nicht belegt (stele-123: 2,00 € bei Ware 2,09, Varianten
+// 11,99/20,79 sonst +2,00 €). Offene Frage an Kalkulator/Inhaber (PR-Text): gilt Lieferanten-Versand auch ab 10 €?
+export function computeAliCosts(ware: number, isChinaOrigin: boolean, aliShippingEur?: number | null): AliCosts {
+  const pauschal = isChinaOrigin && ware < ALI_VERSAND_FREI_AB_EUR ? ALI_VERSAND_EUR : 0;
+  const shipping = pauschal > 0 && typeof aliShippingEur === 'number' && aliShippingEur > pauschal ? aliShippingEur : pauschal;
   const customs = isChinaOrigin ? aliEinfuhrEur() : 0;
   return { ware, shipping, customs, totalCost: ware + shipping + customs };
+}
+
+// K1: Produktfeld shippingCost → Versand für computeAliCosts. Nur Werte ÜBER der Pauschale zählen (0 / 1,99 / leer = Pauschale).
+export function aliShippingOverride(shippingCost: number | null | undefined): number | null {
+  return typeof shippingCost === 'number' && Number.isFinite(shippingCost) && shippingCost > ALI_VERSAND_EUR + 0.005
+    ? Math.round(shippingCost * 100) / 100 : null;
 }
 
 // Boden (Mindest-Gewinn) zu einem Zielgewinn: Stufen A–D (MARGIN_TIERS) bzw. die ausgeblendete 4,50-Stufe für
@@ -121,6 +134,7 @@ function applyRounding(price: number, mode: Exclude<RoundingMode, 'floor95'>): n
 // können soll (z.B. um ein Käufer-Gegenangebot bei einem angenommenen anderen Gebührensatz zu
 // prüfen), nicht weil der Wert falsch wäre.
 export interface PricingInput {
+  aliShippingEur?: number | null; // K1 (Nr 173): echter Ali-Versand (aliShippingOverride(product.shippingCost)); weggelassen/null = Pauschale
   buyPrice: number;          // Ware: AliExpress-Preis (ohne Rabatte/Gutscheine/Münzen)
   isChinaOrigin: boolean;    // Herkunft: China (Einfuhrabgaben ALI_EINFUHR_EUR werden angesetzt) oder EU/sonstige (keine)
   ebayFeeRatePercent: number; // eBay-Gebührensatz in % (Default 15, siehe DEFAULT_PRICING_CONFIG)
@@ -155,7 +169,7 @@ export interface PricingResult {
 // Produkte-Tab-Badge), dieselben Gebühren-Konstanten wiederverwenden können, statt sie ein
 // zweites Mal selbst zu berechnen.
 export function computeMinSellPrice(input: PricingInput): PricingResult {
-  const ali = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin); // K-005: Ware × Kassen-Faktor
+  const ali = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin, input.aliShippingEur); // K-005, K1: Ware × Kassen-Faktor
   const { shipping, customs } = ali;
   const totalCost = ali.totalCost + (input.earUmlageEur ?? 0); // A-029: K + EAR-Umlage (nur bei Elektro = ja, sonst 0)
   const baseFeeRateGross = ebayPercentFeeRateGross({ ...input, adRatePercent: 0 });
@@ -176,7 +190,7 @@ export function computeMinSellPrice(input: PricingInput): PricingResult {
   // P-MINDESTGEWINN: wirkt ein Kassen-Faktor (Ware kleiner als App-Preis), muss der Gewinn OHNE Faktor zusätzlich ≥ 0,50 € sein.
   // Nur mit Schalter AN (mindestgewinnOhneRabattAnheben) — AUS = Preis-Boden wie bisher, keine neuen Anhebungen.
   const factorWirkt = mindestgewinnOhneRabattAnheben() && applyCheckoutFactor(input.buyPrice, input.checkoutFactor) !== input.buyPrice;
-  const totalCostOhneRabatt = computeAliCosts(input.buyPrice, input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0);
+  const totalCostOhneRabatt = computeAliCosts(input.buyPrice, input.isChinaOrigin, input.aliShippingEur).totalCost + (input.earUmlageEur ?? 0);
   const minSellPrice = input.rounding === 'floor95'
     ? roundToProfitFloor(rawMinSellPrice, p => p * (1 - totalFeeRateGross) - fixedAt(p) - totalCost, input.profitFloorEur ?? profitFloorFor(input.targetMarginEur),
         factorWirkt ? p => p * (1 - totalFeeRateGross) - fixedAt(p) - totalCostOhneRabatt : undefined)
@@ -263,6 +277,7 @@ export function resolveVariantSellPrice(
 }
 
 export interface ProfitAtSellPriceInput {
+  aliShippingEur?: number | null; // K1 (Nr 173): echter Ali-Versand (aliShippingOverride(product.shippingCost)); weggelassen/null = Pauschale
   sellPrice: number;
   buyPrice: number;
   isChinaOrigin: boolean;
@@ -280,7 +295,7 @@ export interface ProfitAtSellPriceInput {
 //   Provision = ebayFeeRatePercent (Aufrufer: ebayFeeRatePercentFor(product.ebayCategory), Bündel A+B),
 //   K = Ware + Versand + Einfuhrabgaben (computeAliCosts)
 export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
-  const totalCost = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin).totalCost + (input.earUmlageEur ?? 0); // K-005
+  const totalCost = computeAliCosts(applyCheckoutFactor(input.buyPrice, input.checkoutFactor), input.isChinaOrigin, input.aliShippingEur).totalCost + (input.earUmlageEur ?? 0); // K-005, K1
   const totalFeeRateGross = ebayPercentFeeRateGross(input);
   const s = input.ebayLocationFactor ?? ebayLocationFactorFor(input.isChinaOrigin);
   const fixedFeeGross = ebayFixedFeeGross(ebayOrderTotal(input.sellPrice, s), input.vatFactor, input.fixedFeeSchedule ?? EBAY_FIXED_FEE_SCHEDULE);
@@ -311,6 +326,7 @@ export function profitAtSellPrice(input: ProfitAtSellPriceInput): number {
 // Kein aktueller Verkaufspreis (Erst-Setzung, noch nie bepreist) → kein Alarm: es gibt keinen
 // bestehenden Preis, der "unter" irgendetwas liegen könnte.
 export interface PriceAlarmInput {
+  aliShippingEur?: number | null; // K1 (Nr 173): echter Ali-Versand (aliShippingOverride(product.shippingCost)); weggelassen/null = Pauschale
   currentSellPrice: number | null | undefined;
   variants: Array<{ buyPrice: number; isChinaOrigin?: boolean }>; // K-004: Herkunft je Variante (fehlt → isChinaOrigin unten)
   isChinaOrigin: boolean;
@@ -344,6 +360,7 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
     vatFactor: input.vatFactor,
     adRatePercent: input.adRatePercent,
     checkoutFactor,
+    aliShippingEur: input.aliShippingEur, // K1
   }));
   const worstProfit = Math.min(...profitsFor(input.checkoutFactor));
   const factorApplied = typeof input.checkoutFactor === 'number' && input.checkoutFactor > 0 && input.checkoutFactor < 1;
@@ -361,6 +378,7 @@ export function evaluatePriceAlarm(input: PriceAlarmInput): PriceAlarmResult {
 }
 
 export interface VariantSellPriceInput {
+  aliShippingEur?: number | null; // K1 (Nr 173): echter Ali-Versand (aliShippingOverride(product.shippingCost)); weggelassen/null = Pauschale
   variants: Array<{ skuId: string; buyPrice: number; attrs?: Record<string, string> }>;
   anchorSellPrice: number;    // heutiger Verkaufspreis des Produkts — den behält die teuerste Variante exakt
   isChinaOrigin: boolean;
@@ -419,6 +437,7 @@ export function computeVariantSellPrices(input: VariantSellPriceInput): VariantS
     ebayFeeRatePercent: input.ebayFeeRatePercent,
     vatFactor: input.vatFactor,
     adRatePercent: input.adRatePercent,
+    aliShippingEur: input.aliShippingEur, // K1
   };
 
   // Anker = teuerste Variante. Bei Gleichstand gewinnt die erste — deterministisch, damit zwei
@@ -613,6 +632,7 @@ export function evaluateTargetDisplay(targetMarginEur: number, expectedProfitEur
 // Variante wird über die Formel erhöht (die teuerste behält ihren Preis) — AUSSER ihr Gewinn liegt beim aktuellen
 // Preis unter dem Boden: dann Anheben auf den Formelpreis (Schutz vor Verlust).
 export interface VariantRule6cInput {
+  aliShippingEur?: number | null; // K1 (Nr 173): echter Ali-Versand (aliShippingOverride(product.shippingCost)); weggelassen/null = Pauschale
   variants: Array<{ skuId: string; buyPrice: number; currentSellPrice: number | null }>;
   isChinaOrigin: boolean;
   ebayFeeRatePercent: number;
@@ -633,7 +653,7 @@ export function evaluateVariantRule6c(input: VariantRule6cInput): VariantRule6cR
     if (v.currentSellPrice == null) return { skuId: v.skuId, currentSellPrice: null, profitAtCurrent: null, action: 'keep' as const, newSellPrice: null };
     const common = {
       isChinaOrigin: input.isChinaOrigin, ebayFeeRatePercent: input.ebayFeeRatePercent,
-      vatFactor: input.vatFactor, adRatePercent: input.adRatePercent,
+      vatFactor: input.vatFactor, adRatePercent: input.adRatePercent, aliShippingEur: input.aliShippingEur, // K1
     };
     const profitAtCurrent = profitAtSellPrice({ ...common, sellPrice: v.currentSellPrice, buyPrice: v.buyPrice });
     if (profitAtCurrent >= floor - 1e-9) {

@@ -13,7 +13,7 @@ import { buildCombinations, entryMatchesCombo, type VariantGroup, type VariantPr
 import { activeCheckoutFactor } from './checkout-factor';
 import {
   computeMinSellPrice, profitAtSellPrice, isChinaOriginForVariant, parseVariantSellPrices, resolveVariantSellPrice,
-  serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor,
+  serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor, aliShippingOverride,
 } from './pricing';
 
 export interface RepriceProduct {
@@ -29,6 +29,7 @@ export interface RepriceProduct {
   aliCheckoutFactor?: number | null;    // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt, s. activeCheckoutFactor)
   aliCheckoutFactorAt?: string | null;
   ebayCategory?: string | null;         // Bündel A+B: eBay-Kategorie → Provision je Kategorie (ebayFeeRatePercentFor), fehlt → 15 %
+  shippingCost?: number | null;        // K1 (Nr 173): Ali-Versand des Lieferanten → aliShippingOverride (nur über der Pauschale)
 }
 
 export interface TierPlanRow {
@@ -69,6 +70,7 @@ export function repriceFeesFor(p: RepriceProduct) {
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
     earUmlageEur: earUmlageFor(p.isElectric), // A-029: nur Elektro = ja
     checkoutFactor,
+    aliShippingEur: aliShippingOverride(p.shippingCost), // K1 (Nr 173)
   });
 }
 

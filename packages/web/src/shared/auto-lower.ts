@@ -12,7 +12,7 @@ import { buildSenkBericht, type SenkProduct } from './senk-kandidaten';
 import { planVariantReprice } from './variant-reprice';
 import { planTierReprice } from './tier-reprice';
 import { withoutFactorForLowering } from './checkout-factor';
-import { isChinaOriginForVariant, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor } from './pricing';
+import { isChinaOriginForVariant, DEFAULT_PRICING_CONFIG, ebayFeeRatePercentFor, aliShippingOverride } from './pricing';
 import { volumeOrderProfit } from './volume-discount';
 import { earUmlageFor } from './electric';
 import type { VariantGroup } from './variant-resolver';
@@ -52,6 +52,7 @@ export function multiRabattPerPieceProblem(
     const r = volumeOrderProfit({ label: '', sellPrice: sell, buyPrice: ware, isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom) }, qty, percents[qty], {
       adRatePercent: p.adRate ?? DEFAULT_PRICING_CONFIG.defaultAdRatePercent, checkoutFactor: null, earUmlageEur: earUmlageFor(p.isElectric),
       ebayFeeRatePercent: ebayFeeRatePercentFor(p.ebayCategory), // Bündel A+B
+      aliShippingEur: aliShippingOverride(p.shippingCost), // K1 (Nr 173)
     });
     const perPiece = Math.round((r.profit / qty) * 100) / 100;
     if (perPiece < AUTO_LOWER_MIN_PER_PIECE_EUR - 1e-9) {
