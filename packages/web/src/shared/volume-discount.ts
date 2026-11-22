@@ -40,6 +40,7 @@ export interface VolumeDiscountInput {
   checkoutFactor?: number | null; // K-005
   earUmlageEur?: number;          // A-029: je Stück
   ebayFeeRatePercent?: number;    // Bündel A+B: Provision je Kategorie (ebayFeeRatePercentFor(product.ebayCategory)); fehlt → 15 %
+  aliShippingEur?: number | null; // K1 (Nr 173): echter Ali-Versand je Bestellung (aliShippingOverride), fehlt = Pauschale
 }
 export interface VolumeDiscountRow { label: string; skuId?: string; unitPrice: number; total: number; saving: number; profit: number; belowFloor: boolean }
 export interface VolumeDiscountTier { qty: 2 | 3; targetEur: number; wantedPercent: number; percent: number; reason: string | null; rows: VolumeDiscountRow[] }
@@ -60,7 +61,7 @@ export function discountedUnitPrice(sellPrice: number, percent: number): number 
 }
 
 // K-018 PR B: exportiert (reiner Extract, Grundgesetz 8) — „automatisch senken“ prüft den Gewinn je Stück mit den LIVE-Prozent.
-export function volumeOrderProfit(v: VolumeDiscountVariant, qty: number, percent: number, inp: Pick<VolumeDiscountInput, 'adRatePercent' | 'checkoutFactor' | 'earUmlageEur' | 'ebayFeeRatePercent'>) {
+export function volumeOrderProfit(v: VolumeDiscountVariant, qty: number, percent: number, inp: Pick<VolumeDiscountInput, 'adRatePercent' | 'checkoutFactor' | 'earUmlageEur' | 'ebayFeeRatePercent' | 'aliShippingEur'>) {
   const unitPrice = discountedUnitPrice(v.sellPrice, percent);
   const total = cents(unitPrice * qty);
   const profit = profitAtSellPrice({
@@ -68,6 +69,7 @@ export function volumeOrderProfit(v: VolumeDiscountVariant, qty: number, percent
     ebayFeeRatePercent: inp.ebayFeeRatePercent ?? DEFAULT_PRICING_CONFIG.ebayFeeRatePercent,
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: inp.adRatePercent, checkoutFactor: inp.checkoutFactor,
     earUmlageEur: (inp.earUmlageEur ?? 0) * qty,
+    aliShippingEur: inp.aliShippingEur, // K1: Versand je Bestellung, einmal
   });
   return { unitPrice, total, saving: cents(v.sellPrice * qty - total), profit };
 }

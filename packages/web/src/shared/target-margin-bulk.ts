@@ -6,7 +6,7 @@ import { MARGIN_TIERS, MIN_PROFIT_OHNE_RABATT_EUR, mindestgewinnOhneRabattAnhebe
 import { isVariantProduct } from './variant-product';
 import { activeCheckoutFactor } from './checkout-factor';
 import {
-  profitAtSellPrice, evaluateTargetDisplay, isChinaOriginForVariant,
+  profitAtSellPrice, evaluateTargetDisplay, isChinaOriginForVariant, aliShippingOverride,
   parseVariantSellPrices, resolveVariantSellPrice, DEFAULT_PRICING_CONFIG,
   effectiveProfitFloor, profitFloorFor, ebayFeeRatePercentFor,
 } from './pricing';
@@ -25,6 +25,7 @@ export interface ProfitProduct {
   aliCheckoutFactor?: number | null;  // K-005: Kassen-Faktor (gilt nur, wenn ≤ 14 Tage alt)
   aliCheckoutFactorAt?: string | null;
   ebayCategory?: string | null;       // Bündel A+B: eBay-Kategorie → Provision je Kategorie, fehlt → 15 %
+  shippingCost?: number | null;        // K1 (Nr 173): Ali-Versand des Lieferanten → aliShippingOverride (nur über der Pauschale)
 }
 
 // skuId/sellPrice nur bei Varianten-Zeilen bzw. immer der VK, mit dem gerechnet wurde (A-017: Gewinn-Spalte der Varianten-Tabelle)
@@ -86,6 +87,7 @@ export function productProfitRows(p: ProfitProduct): { rows: ProfitRow[]; isVari
     sellPrice, buyPrice, isChinaOrigin: isChinaOriginForVariant(attrs, p.shipsFrom),
     ebayFeeRatePercent: ebayFeeRatePercentFor(p.ebayCategory), // Bündel A+B
     vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, checkoutFactor: f,
+    aliShippingEur: aliShippingOverride(p.shippingCost), // K1
   });
   const profitAt = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitWith(checkoutFactor, sellPrice, buyPrice, attrs);
   const profitRaw = (sellPrice: number, buyPrice: number, attrs?: Record<string, string>) => profitWith(null, sellPrice, buyPrice, attrs);

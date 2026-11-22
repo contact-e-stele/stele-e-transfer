@@ -12,7 +12,7 @@ import { BildsucheCard } from "../components/bildsuche-card";
 import { aliEinfuhrEur, MARGIN_TIERS, MIN_GEWINN_EUR, SHOP_CATEGORIES } from "../../shared/constants";
 import { suggestElectric } from "../../shared/electric";
 import { matchRegulatedCategoriesDetailed, COMPLIANCE_OVERRIDE_REASONS, type RegulatedCategory, type RegulatedCategoryMatch } from "../../shared/regulated-categories";
-import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant, defaultEbayFeeRateGross, ebayLocationFactorFor, ebayFixedFeeGrossForSellPrice, ebayFeeRatePercentFor } from "../../shared/pricing";
+import { computeMinSellPrice, computeAliCosts, evaluateTargetDisplay, profitAtSellPrice, profitFloorFor, DEFAULT_PRICING_CONFIG, isChinaShipping, isChinaOriginForVariant, defaultEbayFeeRateGross, ebayLocationFactorFor, ebayFixedFeeGrossForSellPrice, ebayFeeRatePercentFor, aliShippingOverride } from "../../shared/pricing";
 // Bündel A+B: beim Import steht noch keine eBay-Kategorie (products.ebayCategory) fest → Provision der unbekannten Kategorie (15 %,
 // sichere Seite) über die zentrale Tabelle. Nach dem Import rechnen Produkte-/Listings-Tab und Preislauf mit dem Satz je Kategorie.
 const IMPORT_FEE_RATE_PERCENT = ebayFeeRatePercentFor(null);
@@ -503,9 +503,12 @@ export default function Lieferanten() {
   const ausChinaHaupt = isChinaShipping(shipsFromInfo?.country); // K-004: ohne Herkunft wie China
   const ebayFee = verkauf * defaultEbayFeeRateGross(adRate, ausChinaHaupt, null) // Bündel A+B: Kategorie beim Import unbekannt → 15 %
     + ebayFixedFeeGrossForSellPrice(verkauf, ausChinaHaupt); // AUFSICHT 045 A: Fixgebühr gestaffelt nach Bestellwert (VK × S)
+  // K1 (Nr 173): echter Ali-Versand aus dem Feld „Versand“ (DS-API freight), wenn über der Pauschale — sonst Pauschale wie bisher.
+  const aliVersandK1 = aliShippingOverride(parseFloat(shippingCost.replace(",", ".")));
   const gewinn = profitAtSellPrice({
     sellPrice: verkauf, buyPrice: einkauf, isChinaOrigin: ausChinaHaupt,
     ebayFeeRatePercent: IMPORT_FEE_RATE_PERCENT, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+    aliShippingEur: aliVersandK1,
   });
   const margePercent = verkauf > 0 ? (gewinn / verkauf) * 100 : 0;
   // A-014: "Ziel <Stufe> · Erwartet <echter Gewinn beim gesetzten VK nach Formel v2>"; gelb = Erwartet < Ziel, rot = Erwartet < Boden.
@@ -650,7 +653,7 @@ export default function Lieferanten() {
       const pre = preselectVariants(startGroups, data.variantPrices ?? [], importRules.maxVariants, (e) => {
         if (typeof e.price !== "number" || e.price <= 0) return null;
         const isChina = isChinaOriginForVariant(e.attrs, data.shipsFrom);
-        const cfg = { ebayFeeRatePercent: IMPORT_FEE_RATE_PERCENT, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate };
+        const cfg = { ebayFeeRatePercent: IMPORT_FEE_RATE_PERCENT, vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, aliShippingEur: aliShippingOverride(data.shippingCost) }; // K1
         const sell = computeMinSellPrice({ ...cfg, buyPrice: e.price, isChinaOrigin: isChina, targetMarginEur: minGewinn, safetyBufferEur: 0, rounding: "floor95" }).minSellPrice;
         return profitAtSellPrice({ ...cfg, sellPrice: sell, buyPrice: e.price, isChinaOrigin: isChina });
       });
@@ -1791,7 +1794,7 @@ export default function Lieferanten() {
                             ebayFeeRatePercent: IMPORT_FEE_RATE_PERCENT,
                             vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                             targetMarginEur: minGewinn, safetyBufferEur: 0,
-                            rounding: 'floor95',
+                            rounding: 'floor95', aliShippingEur: aliVersandK1, // K1
                           }).minSellPrice;
                           setEbayPrice(recommended.toFixed(2));
                         }}
@@ -1998,7 +2001,7 @@ export default function Lieferanten() {
                   ebayFeeRatePercent: IMPORT_FEE_RATE_PERCENT,
                   vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
                   targetMarginEur: minGewinn, safetyBufferEur: 0,
-                  rounding: 'floor95',
+                  rounding: 'floor95', aliShippingEur: aliVersandK1, // K1
                 }).minSellPrice;
               };
               return (
@@ -2053,7 +2056,7 @@ export default function Lieferanten() {
                       const ueberSchwelleV = ausChinaV && sendungswertV > 150;
                       // A-014: angezeigter "wahrer Einkauf" = Ware + Versand + Einfuhrabgaben nach Formel v2 (computeAliCosts);
                       // der manuelle Zoll > 150 € Sendungswert fließt in die zentrale Formel NICHT ein (Pauschale 3,57 €).
-                      const aliV = computeAliCosts(v.price, ausChinaV);
+                      const aliV = computeAliCosts(v.price, ausChinaV, aliVersandK1); // K1
                       const zollV = aliV.customs;
                       const wahrerEinkaufV = aliV.totalCost;
                       // Fix "Preislogik vereinheitlichen" (2026-09-13): gleiche zentrale Formel
@@ -2064,7 +2067,7 @@ export default function Lieferanten() {
                         ? profitAtSellPrice({
                             sellPrice: varEbay, buyPrice: v.price, isChinaOrigin: ausChinaV,
                             ebayFeeRatePercent: IMPORT_FEE_RATE_PERCENT,
-                            vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
+                            vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, aliShippingEur: aliVersandK1, // K1
                           })
                         : null;
                       return (

@@ -12,7 +12,7 @@ import { aliEinfuhrEur, AUTO_VARIANT_RAISE_ENABLED } from '../shared/constants';
 import { planVariantDedupe } from '../shared/variant-dedupe';
 import { isVariantProduct } from '../shared/variant-product';
 import { runVariantRaise, explainVariantRaisePlan, describeVariantRaiseExplanation, type VariantRaiseOutcome, type VariantSendResult } from './variant-raise';
-import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED, ebayFeeRatePercentFor } from '../shared/pricing';
+import { computeMinSellPrice, applyDecreaseCap, applyRaiseOnly, evaluatePriceAlarm, isChinaShipping, isChinaOriginForVariant, parseVariantSellPrices, serializeVariantSellPrices, DEFAULT_PRICING_CONFIG, AUTO_PRICE_WRITE_ENABLED, ebayFeeRatePercentFor, aliShippingOverride } from '../shared/pricing';
 import { earUmlageFor } from '../shared/electric';
 import { activeCheckoutFactor } from '../shared/checkout-factor';
 import { resolvePriceHolds, SINGLE_ITEM_HOLD_KEY, type PriceHolds } from '../shared/price-hold';
@@ -178,7 +178,7 @@ export function resolveVariantBuyPrice(
 // Formel-/Konstanten-Änderungen wie die China-Zoll-Einführung, P-89).
 export function computeVariantPriceRows(
   variantPricesJson: string | null,
-  _shippingCost: number | null, // seit A-014 (Preisformel v2) ungenutzt — Signatur bleibt für die Aufrufer stabil
+  shippingCost: number | null, // K1 (Nr 173): echter Ali-Versand, wenn über der Pauschale (aliShippingOverride)
   shipsFrom: string | null,
   adRate: number | null,
   targetMarginEur?: number | null, // Teil 2C: product.targetMarginEur — null/undefined → globaler Fallback
@@ -202,7 +202,7 @@ export function computeVariantPriceRows(
         ebayFeeRatePercent: ebayFeeRatePercentFor(ebayCategory), // Bündel A+B
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: rate,
         targetMarginEur: margin, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
-        rounding: 'floor95', checkoutFactor,
+        rounding: 'floor95', checkoutFactor, aliShippingEur: aliShippingOverride(shippingCost), // K1
       }).minSellPrice,
     }));
 }
@@ -552,12 +552,14 @@ export async function raiseSingleWithStoredBuyPrice(product: typeof schema.produ
       ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target,
       safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur, rounding: 'floor95', checkoutFactor,
+      aliShippingEur: aliShippingOverride(product.shippingCost), // K1
     }).minSellPrice;
     const hold = resolvePriceHolds(product, holdsForProduct);
     const alarmRes = evaluatePriceAlarm({
       currentSellPrice: product.sellPrice, variants: [{ buyPrice: buy }], isChinaOrigin: isChina,
       ebayFeeRatePercent: ebayFeeRatePercentFor(product.ebayCategory), // Bündel A+B
       vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate, targetMarginEur: target, checkoutFactor,
+      aliShippingEur: aliShippingOverride(product.shippingCost), // K1
     });
     // P-MINDESTGEWINN: anheben nur über raiseAlarm (0,50-Regel ohne Rabatt nur mit Schalter AN).
     const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.raiseAlarm;
@@ -1228,6 +1230,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur, safetyBufferEur: DEFAULT_PRICING_CONFIG.safetyBufferEur,
         rounding: 'floor95',
         checkoutFactor: activeCheckoutFactor(product.aliCheckoutFactor, product.aliCheckoutFactorAt), // K-005
+        aliShippingEur: aliShippingOverride(product.shippingCost), // K1 (Nr 173)
       }).minSellPrice;
       // Teil 4/5 (2026-09-13): dieser Pfad ist komplett unbeaufsichtigt (8h-Cron) und darf
       // AUSSCHLIESSLICH anheben, nie senken — auch nicht gedeckelt über applyDecreaseCap() (die
@@ -1248,6 +1251,7 @@ export async function runPriceCheck(): Promise<{ checked: number; updated: numbe
         vatFactor: DEFAULT_PRICING_CONFIG.vatFactor, adRatePercent: adRate,
         targetMarginEur: product.targetMarginEur ?? DEFAULT_PRICING_CONFIG.targetMarginEur,
         checkoutFactor,
+        aliShippingEur: aliShippingOverride(product.shippingCost), // K1
       });
       if (alarmRes.lossWithoutFactor) console.warn(`[K-005] ⚠️ stele-${product.id}: ohne Kassen-Faktor (${checkoutFactor}) läge der Gewinn bei ${alarmRes.worstProfitWithoutFactor?.toFixed(2)} € (unter 0) — Kassenpreis prüfen`);
       const alarm = !hold.heldKeys.has(SINGLE_ITEM_HOLD_KEY) && alarmRes.isAlarm;
