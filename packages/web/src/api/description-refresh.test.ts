@@ -303,3 +303,15 @@ describe('refreshOneProductDescription — P71-C Teil 2: GPSR-Pflichtangaben (re
     expect('manufacturer' in seen[0]).toBe(false);
   });
 });
+
+describe('refreshOneProductDescription — Version je Produkt (v4)', () => {
+  test('version v4 baut die v4-Beschreibung, ohne Angabe bleibt der Schalter (v3)', async () => {
+    const deps = makeDeps([makeProduct({ id: 7, ebayListingId: '700' })]);
+    const v4 = await refreshOneProductDescription(7, { confirm: true, version: 'v4' }, deps);
+    expect(v4.ok).toBe(true);
+    expect(deps.updated.get(7)).toContain('<!-- stele-beschreibung: v4 -->');
+    const def = await refreshOneProductDescription(7, { confirm: true }, deps);
+    expect(def.ok).toBe(true);
+    expect(deps.updated.get(7)).not.toContain('<!-- stele-beschreibung: v4 -->');
+  });
+});

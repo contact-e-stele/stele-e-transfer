@@ -19,6 +19,7 @@
 import type { ReturnTerms } from '../shared/shipping-return-text';
 import type { DeliveryTimes } from '../shared/listing-origin';
 import { buildProductDescriptionForEbay, type ProductDescriptionFields } from './ebay-description-builder';
+import type { DescriptionVersion } from '../shared/description-v4';
 import { resolveGpsrForListing } from '../shared/gpsr-parser';
 import { buildRegulatoryBlock } from './ebay';
 import { findDescriptionComplianceViolations, summarizeDescriptionViolations, type DescriptionComplianceViolation, type DescriptionViolationSummary } from '../shared/description-compliance';
@@ -92,7 +93,7 @@ export type DescriptionRefreshOutcome =
  */
 export async function refreshOneProductDescription(
   productId: number,
-  opts: { confirm?: boolean },
+  opts: { confirm?: boolean; version?: DescriptionVersion },
   deps: DescriptionRefreshDeps,
 ): Promise<DescriptionRefreshOutcome> {
   let product: DescriptionRefreshProduct | undefined;
@@ -109,7 +110,7 @@ export async function refreshOneProductDescription(
   const returnTerms = deps.getReturnTerms ? await deps.getReturnTerms().catch(() => null) : null;
   const deliveryTimes = deps.getDeliveryTimes ? await deps.getDeliveryTimes().catch(() => undefined) : undefined;
   const weeeRegNr = deps.getWeeeRegNr ? await deps.getWeeeRegNr().catch(() => null) : null;
-  const { html: after, violations: descriptionViolations } = buildProductDescriptionForEbay(product, { returnTerms, deliveryTimes, weeeRegNr });
+  const { html: after, violations: descriptionViolations } = buildProductDescriptionForEbay(product, { returnTerms, deliveryTimes, weeeRegNr, version: opts.version }); // version: Inhaber-Ja 22.11. v4 je Produkt (fehlt → Schalter)
   // Code-Review-Fund (eBay-Verstoßserie 2026-09-28): der Titel geht bei confirm:true GENAUSO an
   // eBay (<Title>) wie die Beschreibung, lief aber nicht durch den Validator — ein alter, noch
   // verunreinigter Titel (dieselbe Quelle wie die zu bereinigenden Beschreibungen) hätte die
