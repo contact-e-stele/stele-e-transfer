@@ -75,7 +75,8 @@ describe('1 + 2: schmale Titelleiste, keine Bilder', () => {
   test('<img> in Gemini-Stichpunkten gelangt nie ins HTML (S2: Stichpunkte füllen keine Zeile mehr); P7 von Hand wird bereinigt', () => {
     const h = buildEbayHTMLv4({ title: 'X', bullets: ['Besonderheit: sehr robust <img src="x.jpg"> und leicht'] });
     expect(h).not.toMatch(/<img/i);
-    expect(h).not.toContain('sehr robust');
+    // AUFSICHT AUFTRAG 23.11. 10:10 (v4 Inhalt-Fallback): ohne Pflicht-Daten erscheint der Stichpunkt als ✓-Zeile — aber ohne <img>.
+    expect(h).toContain('stele-v4-bullets');
     const h2 = buildEbayHTMLv4({ title: 'X', pflichtDaten: { besonderheit: { value: 'sehr robust <img src="x.jpg"> und leicht', source: 'c', location: 'Bild 2', wording: 'robust' } } });
     expect(h2).not.toMatch(/<img/i);
     expect(h2).toContain('sehr robust und leicht');
@@ -104,8 +105,9 @@ describe('4: Einleitung nur mit Produktart', () => {
     expect(introSentence({ ...P119, variantDetails: DETAILS_119 }, 'Praktische Abdeckung für Schüsseln. Zweiter Satz.')).toBeNull();
     expect(introSentence(P225, 'Weiches Nackenkissen für unterwegs.')).toBeNull();
     expect(introSentence(P119, '')).toBeNull();
-    expect(html).not.toContain('Praktische Abdeckung');
-    expect(html).not.toContain('Zweiter Satz');
+    // AUFSICHT AUFTRAG 23.11. 10:10: Die Pflicht-Daten-Einleitung bleibt null (oben). Weil FULL nur 2 Zeilen hat (< V4_MIN_ROWS),
+    // zeigt v4 jetzt den KI-Einleitungssatz als Fallback — vorher (Design S2 09.11.) gar keine Einleitung.
+    expect(html).toContain('Praktische Abdeckung');
   });
   test('mit P1: "<Produktart> aus <Material>, <Menge>, <Maß>."', () => {
     const pd = { produktart: { value: 'Frischhaltehaube', source: 'b' as const, location: 'Spezifikation "Type" – b, übersetzt (Liste)', wording: 'food cover' } };
@@ -124,8 +126,12 @@ describe('5: höchstens 5 Stichwort-Zeilen, nur feste Schlüssel, ersetzen die D
       ['MATERIAL', 'Kunststoff'],
       ['LIEFERUMFANG', '50 / 100 / 500 Stück'],
     ]);
-    expect(html).not.toContain('für Obst, Salat und Reste');
-    expect(html).not.toContain('Elastischer Rand');
+    // AUFSICHT AUFTRAG 23.11. 10:10: Gemini-Stichpunkte füllen weiter KEINE Zeile (oben genau 2 Zeilen), erscheinen aber als
+    // ✓-Liste darunter, weil nur 2 Pflicht-Zeilen da sind; der MATERIAL-/LIEFERUMFANG-Stichpunkt entfällt als Doppelung.
+    expect(html).toContain('Elastischer Rand');
+    expect(html).toContain('für Obst, Salat und Reste');
+    expect(html).not.toContain('Kunststoff, lebensmittelecht');
+    expect(html).not.toContain('Hauben im Beutel');
     expect(html).not.toContain('Schnelle Lieferung');
     expect(html).not.toContain('TECHNISCHE DATEN');
     expect(html).not.toContain('>Farbe</td>');

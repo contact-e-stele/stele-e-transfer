@@ -9,7 +9,7 @@ import { sanitizeDescriptionText, stripBrandFromTitle } from '../../shared/descr
 import { TEXT_VERSION_MARKER, FOOTER_REFERENCE, PAYMENT_TEXT, deliveryFooterText, returnFooterText, shippingReturnFooter, shippingReturnFooterLines, FOOTER_BLOCK_START, FOOTER_BLOCK_END, type ReturnTerms } from '../../shared/shipping-return-text';
 import { DESCRIPTION_V3_MARKER, factRows, headingText, v3Bullets, type DescriptionV3Input } from '../../shared/description-v3';
 import type { VariantDetails } from '../../shared/variant-measure';
-import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, trustChips, titleBarText, v4Content, type DescriptionVersion, type DescriptionV4Input } from '../../shared/description-v4';
+import { DESCRIPTION_V4_MARKER, DESCRIPTION_VERSION, trustChips, titleBarText, v4Content, v4FallbackBullets, v4FallbackIntro, v4IntroKeys, type DescriptionVersion, type DescriptionV4Input } from '../../shared/description-v4';
 import { weeeLineForListing } from '../../shared/electric';
 import type { PflichtDatenStored, PflichtInput } from '../../shared/pflicht-daten';
 
@@ -693,7 +693,16 @@ export function buildEbayHTMLv4(product: ScrapedProduct): string {
   const foot = shippingReturnFooterLines(product.deliveryTime, product.returnTerms);
 
   const chipsHtml = chips.map(c => `<span class="stele-v4-chip" style="display:inline-block;margin:3px 4px;padding:4px 10px;border:1px solid #e0d4b8;border-radius:14px;background:#fdf9f0;color:#5a4a20;font-size:12px;line-height:1.4;">&#10003; ${c}</span>`).join("");
-  const introHtml = intro ? `<p style="margin:0 0 12px 0;color:#333333;font-size:14px;line-height:1.6;">${intro}</p>` : "";
+  // AUFSICHT AUFTRAG 23.11. 10:10: zu dünne Pflicht-Daten → Produktteil aus der bisherigen Beschreibung (KI-Text), ohne alte Versandtexte.
+  const src = lightBulletSource(product);
+  const fbIntro = v4FallbackIntro(intro, src.introText, rows.length);
+  const fbBullets = v4FallbackBullets(src.bulletLines, rows, v4IntroKeys(v4Input));
+  const shownIntro = intro ?? fbIntro;
+  const introHtml = shownIntro ? `<p style="margin:0 0 12px 0;color:#333333;font-size:14px;line-height:1.6;">${shownIntro}</p>` : "";
+  const fbBulletsHtml = fbBullets.length > 0 ? `
+  <ul class="stele-v4-bullets" style="margin:0 0 14px 0;padding:0;list-style:none;">
+    ${fbBullets.map(b => `<li style="padding:6px 0;border-bottom:1px solid #f0e8d8;color:#333333;font-size:14px;line-height:1.5;"><span style="color:#B8860B;font-weight:bold;">&#10003;</span> ${b.keyword ? `<strong style="color:#222222;">${b.keyword}</strong> &ndash; ` : ""}${b.text}</li>`).join("\n    ")}
+  </ul>` : "";
   const rowsHtml = rows.length > 0 ? `
   <table style="width:100%;border-collapse:collapse;margin:0 0 14px 0;font-size:14px;">
     <tbody>
@@ -742,6 +751,7 @@ ${DESCRIPTION_V4_MARKER}
 <div style="margin:0 -4px 12px -4px;">${chipsHtml}</div>
 ${introHtml}
 ${rowsHtml}
+${fbBulletsHtml}
 ${boxesHtml}
 ${hintsHtml}
 ${det("Impressum", LIGHT_IMPRESSUM_HTML)}
