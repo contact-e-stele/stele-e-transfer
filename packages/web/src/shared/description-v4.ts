@@ -152,7 +152,10 @@ export function v4FallbackBullets(bulletLines: string[], rows: Pick<V4Row, 'key'
   // Was schon als Pflicht-Daten-Zeile oder in der Einleitung steht (z. B. MATERIAL), kommt nicht noch einmal als Stichpunkt
   // (Design 09.11. 07:45: Material/Maß/Menge nur EINMAL im Text).
   const shown = new Set<string>([...rows.map(r => r.key), ...introKeys]);
-  return v3Bullets(lines).filter(b => !(b.keyword && shown.has(b.keyword)));
+  // Vor der 5er-Grenze aussortieren, damit eine Doppelung keinen Platz eines anderen Stichpunkts belegt.
+  const keyOf = (l: string): string | null => l.match(/^([^:]{2,40}?)\s*:\s+/)?.[1].trim().toUpperCase() ?? null;
+  const fresh = lines.filter(l => { const k = keyOf(l); return !(k && shown.has(k)); });
+  return v3Bullets(fresh).filter(b => !(b.keyword && shown.has(b.keyword)));
 }
 
 /** Schlüssel, die die Pflicht-Daten-Einleitung schon nennt (MATERIAL/LIEFERUMFANG/MASSE) — für die Doppelungs-Sperre im Fallback. */

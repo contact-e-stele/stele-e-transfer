@@ -41,6 +41,9 @@ describe('v4 Inhalt-Fallback', () => {
     expect(v4FallbackBullets(['Spülmaschinenfest und leicht zu reinigen'], [row]).length).toBe(1);
     // Stichpunkt mit Stichwort, das schon als Zeile steht, entfällt (keine Doppelung)
     expect(v4FallbackBullets(['Material: Kunststoff, lebensmittelecht'], [row])).toEqual([]);
+    // Doppelung belegt keinen der 5 Plätze (Vorschau 215: sonst fiel „Form“ weg)
+    const six = ['Material: Edelstahl', 'Funktion: Waschen von Reis', 'Einsatzbereich: Küche', 'Produkttyp: Küchensieb', 'Anwendung: Reinigung', 'Form: Schüssel mit Griffen'];
+    expect(v4FallbackBullets(six, [row]).map(b => b.keyword)).toEqual(['FUNKTION', 'EINSATZBEREICH', 'PRODUKTTYP', 'ANWENDUNG', 'FORM']);
     expect(v4FallbackIntro('Sieb aus Edelstahl.', 'KI-Satz', 0)).toBeNull();
     expect(v4FallbackIntro(null, 'KI-Satz', 0)).toBe('KI-Satz');
   });
