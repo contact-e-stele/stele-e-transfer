@@ -5,7 +5,7 @@
 //   Versand/Rückgabe/Zahlung: shared/shipping-return-text.ts (keine neuen Texte)
 //   WEEE              : weeeLineForListing (shared/electric.ts), nur bei bestätigtem Elektro
 // Grundgesetz 4: fehlt ein Wert, fällt die Zeile/Angabe weg — kein Platzhalter, kein Füllsatz.
-import { measureText, type DescriptionV3Input } from './description-v3';
+import { measureText, v3Bullets, type DescriptionV3Input, type V3Bullet } from './description-v3';
 import { isVariantPlainMeasure, resolvePflichtDaten, type PflichtInput, type ResolvedPflichtDaten } from './pflicht-daten';
 import { NEUTRAL_RETURN_TEXT, type ReturnTerms } from './shipping-return-text';
 
@@ -121,4 +121,48 @@ export function titleBarText(title: string): string {
   const lastSpace = cut.lastIndexOf(' ');
   const base = lastSpace > 20 ? cut.slice(0, lastSpace) : cut;
   return base.replace(/[\s,;:\-–·&]+$/, '').trim();
+}
+
+// ─── AUFSICHT AUFTRAG 23.11.2026 10:10: v4 Inhalt-Fallback ─────────────────────────────────────────────────────────────────────
+// Live-Befund 137/160/215: v4 ohne Pflicht-Daten P1–P7 zeigt (fast) keinen Produktinhalt (137 leer, 160 nur "MATERIAL Filz",
+// 215 ein Satz). Dann übernimmt v4 den Produktteil der bisherigen Beschreibung — dieselbe Quelle wie v3 (KI-Text
+// ###INTRO###/###BULLETS###, sonst product.bullets; Grundgesetz 8). Versand/Rückgabe/Varianten-Tabelle/AGB/§19 kommen nie
+// aus dem alten Text.
+
+/** Unter dieser Zahl Stichwort-Zeilen (P2–P7) gilt der v4-Inhalt als zu dünn → Stichpunkte aus dem KI-Text ergänzen. */
+export const V4_MIN_ROWS = 3;
+
+// Alte Versand-/Varianten-Texte dürfen nie aus einer Stichpunkt-Quelle in v4 rutschen (Widerspruch zu AGB § 5, AUFSICHT RECHT).
+const OLD_FOOTER_RE = /\b(dhl|deutsche post|werktag\w*|verf(?:ü|ue)gbare varianten|umsatzsteuer|kleinunternehmer|impressum)\b/i;
+
+/**
+ * Englische Übersetzung in Klammern hinter einem Wort entfernen: "Küchensieb (Colander)" → "Küchensieb",
+ * "Schüssel (Washing Bowls)" → "Schüssel". Gilt nur für eine Klammer aus reinen ASCII-Wörtern mit Kleinbuchstaben
+ * (Abkürzungen wie "(XXL)" oder "(2 Stück)" bleiben). Heuristik, siehe PR-Text.
+ */
+export function stripEnglishParenthetical(text: string): string {
+  return text.replace(/\s*\((?=[^)]*[a-z])[A-Za-z][A-Za-z' -]{2,}\)/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+/** Stichpunkte für v4, wenn die Pflicht-Daten zu dünn sind (weniger als V4_MIN_ROWS Zeilen). Sonst leer. */
+export function v4FallbackBullets(bulletLines: string[], rows: Pick<V4Row, 'key'>[], introKeys: V4Key[] = []): V3Bullet[] {
+  if (rows.length >= V4_MIN_ROWS) return [];
+  // HTML aus der Quelle (z. B. <img> in product.bullets) wird entfernt und der Text maskiert (Dauerregel 2: keine Bilder/Links im Text).
+  const lines = bulletLines.map(l => esc(stripEnglishParenthetical(clean(l)))).filter(l => l.length > 0 && !OLD_FOOTER_RE.test(l));
+  // Was schon als Pflicht-Daten-Zeile oder in der Einleitung steht (z. B. MATERIAL), kommt nicht noch einmal als Stichpunkt
+  // (Design 09.11. 07:45: Material/Maß/Menge nur EINMAL im Text).
+  const shown = new Set<string>([...rows.map(r => r.key), ...introKeys]);
+  return v3Bullets(lines).filter(b => !(b.keyword && shown.has(b.keyword)));
+}
+
+/** Schlüssel, die die Pflicht-Daten-Einleitung schon nennt (MATERIAL/LIEFERUMFANG/MASSE) — für die Doppelungs-Sperre im Fallback. */
+export function v4IntroKeys(input: DescriptionV4Input): V4Key[] {
+  return introParts(pflichtOf(input)).used;
+}
+
+/** Einleitung aus dem KI-Text nur, wenn die Pflicht-Daten keine liefern und der Inhalt zu dünn ist. */
+export function v4FallbackIntro(pflichtIntro: string | null, introText: string, rowCount: number): string | null {
+  if (pflichtIntro || rowCount >= V4_MIN_ROWS) return null;
+  const t = esc(stripEnglishParenthetical(clean(introText)));
+  return t && !OLD_FOOTER_RE.test(t) ? t : null;
 }
