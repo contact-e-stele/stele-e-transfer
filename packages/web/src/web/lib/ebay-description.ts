@@ -695,8 +695,10 @@ export function buildEbayHTMLv4(product: ScrapedProduct): string {
   const chipsHtml = chips.map(c => `<span class="stele-v4-chip" style="display:inline-block;margin:3px 4px;padding:4px 10px;border:1px solid #e0d4b8;border-radius:14px;background:#fdf9f0;color:#5a4a20;font-size:12px;line-height:1.4;">&#10003; ${c}</span>`).join("");
   // AUFSICHT AUFTRAG 23.11. 10:10: zu dünne Pflicht-Daten → Produktteil aus der bisherigen Beschreibung (KI-Text), ohne alte Versandtexte.
   const src = lightBulletSource(product);
-  const fbIntro = v4FallbackIntro(intro, src.introText, rows.length);
-  const fbBullets = v4FallbackBullets(src.bulletLines, rows, v4IntroKeys(v4Input));
+  const introKeys = v4IntroKeys(v4Input);
+  const lieferumfangShown = rows.some(r => r.key === 'LIEFERUMFANG') || introKeys.includes('LIEFERUMFANG');
+  const fbIntro = v4FallbackIntro(intro, src.introText, rows.length, title, lieferumfangShown);
+  const fbBullets = v4FallbackBullets(src.bulletLines, rows, introKeys, title);
   const shownIntro = intro ?? fbIntro;
   const introHtml = shownIntro ? `<p style="margin:0 0 12px 0;color:#333333;font-size:14px;line-height:1.6;">${shownIntro}</p>` : "";
   const fbBulletsHtml = fbBullets.length > 0 ? `

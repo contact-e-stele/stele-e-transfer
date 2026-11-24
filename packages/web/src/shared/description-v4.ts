@@ -145,7 +145,21 @@ export function stripEnglishParenthetical(text: string): string {
 }
 
 /** Stichpunkte für v4, wenn die Pflicht-Daten zu dünn sind (weniger als V4_MIN_ROWS Zeilen). Sonst leer. */
-export function v4FallbackBullets(bulletLines: string[], rows: Pick<V4Row, 'key'>[], introKeys: V4Key[] = []): V3Bullet[] {
+// ABNAHME DESIGN 24.11.2026 16:25 Punkt 4 (Befund 127): Ein KI-Stichpunkt darf einer belegten Angabe nicht widersprechen.
+// (1) Mengenangaben ("50, 100 und 300 Stück", "4 Paar", "Set aus 3") fallen weg, sobald LIEFERUMFANG als Zeile oder in der Einleitung steht.
+// (2) "Einweg…" fällt weg, wenn der Titel "Mehrweg"/"wiederverwendbar" sagt – und umgekehrt "Mehrweg…/wiederverwendbar" bei Titel "Einweg".
+const QUANTITY_RE = /\b\d+\s*(?:x\s*)?(?:st(?:ü|ue)ck|stk\.?|paar|pcs|teile|teilig|er[- ]?(?:set|pack))\b|\b(?:set|packung)\s+(?:aus|mit|von)\s+\d+/i;
+const SINGLE_USE_RE = /\beinweg/i;
+const REUSABLE_RE = /\bmehrweg|\bwiederverwendbar/i;
+
+export function contradictsListing(line: string, title: string, lieferumfangShown: boolean): boolean {
+  if (lieferumfangShown && QUANTITY_RE.test(line)) return true;
+  if (REUSABLE_RE.test(title) && SINGLE_USE_RE.test(line)) return true;
+  if (SINGLE_USE_RE.test(title) && REUSABLE_RE.test(line)) return true;
+  return false;
+}
+
+export function v4FallbackBullets(bulletLines: string[], rows: Pick<V4Row, 'key'>[], introKeys: V4Key[] = [], title = ''): V3Bullet[] {
   if (rows.length >= V4_MIN_ROWS) return [];
   // HTML aus der Quelle (z. B. <img> in product.bullets) wird entfernt und der Text maskiert (Dauerregel 2: keine Bilder/Links im Text).
   const lines = bulletLines.map(l => esc(stripEnglishParenthetical(clean(l)))).filter(l => l.length > 0 && !OLD_FOOTER_RE.test(l));
@@ -154,7 +168,8 @@ export function v4FallbackBullets(bulletLines: string[], rows: Pick<V4Row, 'key'
   const shown = new Set<string>([...rows.map(r => r.key), ...introKeys]);
   // Vor der 5er-Grenze aussortieren, damit eine Doppelung keinen Platz eines anderen Stichpunkts belegt.
   const keyOf = (l: string): string | null => l.match(/^([^:]{2,40}?)\s*:\s+/)?.[1].trim().toUpperCase() ?? null;
-  const fresh = lines.filter(l => { const k = keyOf(l); return !(k && shown.has(k)); });
+  const lieferumfangShown = shown.has('LIEFERUMFANG');
+  const fresh = lines.filter(l => { const k = keyOf(l); return !(k && shown.has(k)) && !contradictsListing(l, title, lieferumfangShown); });
   return v3Bullets(fresh).filter(b => !(b.keyword && shown.has(b.keyword)));
 }
 
@@ -164,8 +179,8 @@ export function v4IntroKeys(input: DescriptionV4Input): V4Key[] {
 }
 
 /** Einleitung aus dem KI-Text nur, wenn die Pflicht-Daten keine liefern und der Inhalt zu dünn ist. */
-export function v4FallbackIntro(pflichtIntro: string | null, introText: string, rowCount: number): string | null {
+export function v4FallbackIntro(pflichtIntro: string | null, introText: string, rowCount: number, title = '', lieferumfangShown = false): string | null {
   if (pflichtIntro || rowCount >= V4_MIN_ROWS) return null;
   const t = esc(stripEnglishParenthetical(clean(introText)));
-  return t && !OLD_FOOTER_RE.test(t) ? t : null;
+  return t && !OLD_FOOTER_RE.test(t) && !contradictsListing(t, title, lieferumfangShown) ? t : null;
 }
