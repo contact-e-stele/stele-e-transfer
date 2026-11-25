@@ -79,14 +79,21 @@ export function OriginSettingsCard() {
   useEffect(() => {
     fetch("/api/settings/delivery-times", { credentials: "include" }).then(r => r.json()).then(d => setTimes(d.times ?? {})).catch(() => {});
     // P-2611-25E: Sprung „Lagerort eintragen“ (#lagerort-DE) legt die Zeile an und scrollt hin — gespeichert wird erst mit „Speichern“.
-    const jumpIso = typeof window !== "undefined" ? lagerortIsoFromHash(window.location.hash) : null;
+    // Auch wenn die Einstellungen schon offen sind (hashchange, vom Knopf ausgelöst).
+    const jump = () => {
+      const iso = lagerortIsoFromHash(window.location.hash);
+      if (!iso) return;
+      setLocs(prev => (prev[iso] ? prev : { ...prev, [iso]: { city: "" } }));
+      setTimeout(() => document.getElementById(`lagerort-${iso}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    };
     fetch("/api/settings/origin-locations", { credentials: "include" }).then(r => r.json()).then(d => {
-      const l: OriginLocations = d.locations ?? {};
-      setLocs(jumpIso && !l[jumpIso] ? { ...l, [jumpIso]: { city: "" } } : l);
-      if (jumpIso) setTimeout(() => document.getElementById(`lagerort-${jumpIso}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+      setLocs(d.locations ?? {});
+      jump();
     }).catch(() => {});
+    window.addEventListener("hashchange", jump);
     fetch("/api/ebay/fulfillment-policies", { credentials: "include" }).then(r => r.json())
       .then(d => d.mapping ? setMapping(d.mapping as PolicyMapping) : setMappingErr(d.error ?? "nicht lesbar")).catch(e => setMappingErr(String(e)));
+    return () => window.removeEventListener("hashchange", jump);
   }, []);
 
   const save = async () => {

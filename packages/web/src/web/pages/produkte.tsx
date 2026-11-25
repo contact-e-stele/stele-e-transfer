@@ -34,7 +34,7 @@ import { OriginAmpelButton } from "../components/origin-panel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
 import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions, PlzSuchenKnopf } from "../components/gpsr-fields-editor";
 import { plzFeldStatus } from "../../shared/gpsr-plz";
-import { lagerortIsoFromError, lagerortLink } from "../../shared/klapp-status";
+import { LagerortKnopf } from "../components/lagerort-knopf";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 import { matchesTileFilter, type ProductTileFilter } from "../../shared/product-tile-filter";
@@ -2181,11 +2181,7 @@ export default function Produkte() {
                 }}>
                   {listingResult.msg}
                   {/* P-2611-25E: „Kein Lagerort für Herkunft DE …“ → Knopf in Einstellungen › Lagerorte, Zeile wird angelegt (nichts gespeichert) */}
-                  {(() => { const iso = lagerortIsoFromError(listingResult.msg); return iso ? (
-                    <a href={lagerortLink(iso)} onClick={e => { e.preventDefault(); navigate(lagerortLink(iso)); }} data-testid="lagerort-eintragen"
-                      style={{ display: "inline-block", marginLeft: 8, padding: "3px 8px", borderRadius: 6, background: "#FFD700", color: "#0F172A", fontWeight: 700, textDecoration: "none" }}>
-                      Lagerort eintragen
-                    </a>) : null; })()}
+                  <LagerortKnopf msg={listingResult.msg} navigate={navigate} />
                 </div>
               )}
               {/* A-029 (P-E01): Elektro Kat. 5 — ja/nein/offen, Geräteart, Batterie, Nachweise; zeigt die Listen-Sperre live */}
@@ -2434,6 +2430,8 @@ export default function Produkte() {
                   >
                     Fehler zurücksetzen
                   </button>
+                  {/* P-2611-25E Korrektur 1: derselbe Knopf in der GESPEICHERTEN Meldung (die der Inhaber sieht) */}
+                  <LagerortKnopf msg={product.ebayError} navigate={navigate} />
                 </div>
               )}
 

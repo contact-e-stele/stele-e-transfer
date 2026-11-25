@@ -61,3 +61,25 @@ describe('Anzeige (gerendert)', () => {
     expect(h).toContain('(nicht geladen)');
   });
 });
+
+describe('Korrektur 1 (Aufsicht 16:40): Knopf auch in der gespeicherten Meldung', () => {
+  test('ebayError „Kein Lagerort für Herkunft DE …“ zeigt den Knopf mit Ziel /einstellungen#lagerort-DE', async () => {
+    const { LagerortKnopf } = await import('./lagerort-knopf');
+    const ebayError = 'Kein Lagerort für Herkunft DE hinterlegt (Einstellungen › Lagerorte: Ort + PLZ des Lieferanten-Lagers) — nicht gelistet, kein Ort wird geraten.';
+    const h = html(createElement(LagerortKnopf, { msg: ebayError, navigate: () => {} }));
+    expect(h).toContain('data-testid="lagerort-eintragen"');
+    expect(h).toContain('href="/einstellungen#lagerort-DE"');
+    expect(html(createElement(LagerortKnopf, { msg: 'Elektro-Sperre: WEEE-Reg.-Nr. fehlt', navigate: () => {} }))).toBe('');
+  });
+  test('Produkte-Tab nutzt den Knopf in BEIDEN Meldungen (frisch + gespeichert)', async () => {
+    const src = await Bun.file(new URL('../pages/produkte.tsx', import.meta.url)).text();
+    expect(src).toContain('<LagerortKnopf msg={listingResult.msg} navigate={navigate} />');
+    expect(src).toContain('<LagerortKnopf msg={product.ebayError} navigate={navigate} />');
+  });
+  test('Einstellungen werten den Sprung auch bei hashchange aus', async () => {
+    const src = await Bun.file(new URL('./origin-panel.tsx', import.meta.url)).text();
+    expect(src).toContain('window.addEventListener("hashchange", jump)');
+    const k = await Bun.file(new URL('./lagerort-knopf.tsx', import.meta.url)).text();
+    expect(k).toContain('dispatchEvent(new HashChangeEvent("hashchange"))');
+  });
+});
