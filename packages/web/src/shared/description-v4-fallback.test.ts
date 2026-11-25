@@ -48,3 +48,32 @@ describe('v4 Inhalt-Fallback', () => {
     expect(v4FallbackIntro(null, 'KI-Satz', 0)).toBe('KI-Satz');
   });
 });
+
+// ABNAHME DESIGN 24.11. 16:25 Punkt 4 (Befund 127): KI-Stichpunkte dürfen belegten Angaben nicht widersprechen.
+import { contradictsListing } from './description-v4';
+describe('v4 Fallback: keine Widersprüche zu Menge und Mehrweg/Einweg (Befund 127)', () => {
+  test('Mengen-Stichpunkt fällt weg, wenn LIEFERUMFANG steht; sonst bleibt er', () => {
+    expect(contradictsListing('Erhältlich in Packungen zu 50 Stück, 100 Stück und 300 Stück.', 'X', true)).toBe(true);
+    expect(contradictsListing('Erhältlich in Packungen zu 50 Stück, 100 Stück und 300 Stück.', 'X', false)).toBe(false);
+    expect(contradictsListing('Set aus 3 Taschen', 'X', true)).toBe(true);
+    expect(contradictsListing('Hält Speisen 2 Tage frisch', 'X', true)).toBe(false);
+  });
+  test('Einweg gegen Titel Mehrweg und umgekehrt', () => {
+    expect(contradictsListing('Hygienische Einweglösung zur Abdeckung', 'Frischhalteplatte Mehrweg Abdeckungen', false)).toBe(true);
+    expect(contradictsListing('Wiederverwendbar und abwaschbar', 'Einweg Frischhaltehauben', false)).toBe(true);
+    expect(contradictsListing('Wiederverwendbar und abwaschbar', 'Frischhalteplatte Mehrweg', false)).toBe(false);
+  });
+  test('127-Fall im HTML: richtige Zeile bleibt, widersprüchliche Stichpunkte und Einleitung fallen weg', () => {
+    const html = buildEbayHTMLv4({
+      title: 'Lebensmittelhaube Frischhalteplatte Mehrweg Abdeckungen Bunt Essensschutz',
+      description: '###INTRO### Schützen Sie Lebensmittel mit diesen bunten Einweg-Frischhaltehauben.###BULLETS###\n- ERHÄLTLICH IN PACKUNGSGRÖSSEN: 50 Stück, 100 Stück und 300 Stück.\n- Flexible Passform dank elastischem Rand für verschiedene Behälter.\n- Einfache und hygienische Einweglösung zur Abdeckung von Speisen.\n- Farbige Gestaltung zur besseren Übersicht.###OUTRO### x',
+      specs: {}, material: 'Kunststoff',
+      pflichtDaten: { lieferumfang: { value: '50 / 100 / 500 Stück', source: 'a', location: 'Variantenauswahl', wording: '50/100/500pcs' } },
+    } as any);
+    expect(html).toContain('50 / 100 / 500 Stück');
+    expect(html).not.toContain('300 Stück');
+    expect(html).not.toContain('Einweg');
+    expect(html).toContain('Flexible Passform');
+    expect(html).toContain('Farbige Gestaltung');
+  });
+});
