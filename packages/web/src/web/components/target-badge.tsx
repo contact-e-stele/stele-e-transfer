@@ -79,7 +79,7 @@ export function TargetBadge({ product, isLive, onChange }: {
   const holdLabel = (h: HoldRow | undefined) => !h ? null
     : h.state === "held" ? `gehalten – Gewinn ${fmt(h.profit ?? 0)} €`
     : h.state === "stale" ? `Halten veraltet (gehalten ${fmt(h.heldPrice)} €, heute ${h.currentSell != null ? fmt(h.currentSell) : "–"} €)`
-    : `Halten wird aufgehoben (Gewinn ${fmt(h.profit ?? 0)} € < ${fmt(PRICE_HOLD_MIN_PROFIT_EUR)} €)`;
+    : `Halten wird aufgehoben (Gewinn ${fmt(h.profit ?? 0)} € < ${fmt(h.minProfit ?? PRICE_HOLD_MIN_PROFIT_EUR)} €)`;
   const holdBtn = (key: string) => {
     const h = holdByKey.get(key);
     return (

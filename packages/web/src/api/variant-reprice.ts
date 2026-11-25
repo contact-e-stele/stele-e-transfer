@@ -22,6 +22,8 @@ export interface VariantRepriceDeps {
   send: (productId: number, groups: VariantGroup[], entries: VariantPriceEntry[], changes: Array<{ skuId: string; newSell: number }>, direction: VariantRepriceDirection) => Promise<VariantSendResult>;
   store: (productId: number, variantSellPrices: string) => Promise<void>;
   readBack: (product: VariantRepriceProductRow) => Promise<{ ok: boolean; reason?: string; prices: Record<string, number | null> }>;
+  /** Inhaber 25.11. „b“: nach Senken mit minProfitNr152 den neuen Preis halten (K-008, Grenze 0,50 €), damit der Preislauf ihn nicht zurückhebt. */
+  holdNr152?: (productId: number, skuId: string, sellPrice: number) => Promise<void>;
 }
 
 export type VariantRepriceOutcome = 'preview' | 'stored' | 'sent' | 'send_failed' | 'sent_not_stored' | 'nothing_to_do' | 'rejected' | 'not_found';
@@ -40,6 +42,8 @@ export interface VariantRepriceResult {
   rows: VariantRepriceResultRow[];
   error?: string;
   rueckgelesen?: { ok: boolean; reason?: string };
+  gehalten?: string[];        // SKUs, die nach minProfitNr152 auf „Preis halten“ gesetzt wurden
+  haltenFehler?: string;
 }
 
 export async function runVariantReprice(
@@ -66,10 +70,17 @@ export async function runVariantReprice(
   for (const r of okRows) merged[r.skuId] = r.neu;
   const json = serializeVariantSellPrices(Object.entries(merged).map(([skuId, sellPrice]) => ({ skuId, sellPrice })));
 
+  const nr152Hold = async (): Promise<{ gehalten?: string[]; haltenFehler?: string }> => {
+    if (!(input.minProfitNr152 === true && direction === 'down' && deps.holdNr152)) return {};
+    const gehalten: string[] = [];
+    try { for (const r of okRows) { await deps.holdNr152(product.id, r.skuId, r.neu); gehalten.push(r.skuId); } return { gehalten }; }
+    catch (e) { return { gehalten, haltenFehler: 'Preis gesetzt, aber „Preis halten“ nicht gespeichert (' + String(e) + ') — der Preislauf kann ihn wieder anheben.' }; }
+  };
+
   if (decision.action === 'store_only') {
     await deps.store(product.id, json);
     for (const r of okRows) r.ergebnis = 'gesetzt';
-    return { ...base, status: 'stored', rows };
+    return { ...base, status: 'stored', rows, ...(await nr152Hold()) };
   }
 
   // store_and_send: erst eBay, nur die geprüften Zeilen.
@@ -108,5 +119,5 @@ export async function runVariantReprice(
     r.ebay = e ?? null;
     r.ebayGleichApp = e != null && Math.abs(e - r.neu) < 0.005;
   }
-  return { ...base, status: 'sent', rows, rueckgelesen: { ok: rb.ok, reason: rb.reason } };
+  return { ...base, status: 'sent', rows, rueckgelesen: { ok: rb.ok, reason: rb.reason }, ...(await nr152Hold()) };
 }
