@@ -108,3 +108,36 @@ describe('runVariantReprice direction up (OFFEN 034)', () => {
     expect(calls.direction).toEqual(['down']);
   });
 });
+
+// Inhaber 25.11.2026 19:17 („b“): nach Senken mit minProfitNr152 wird der neue Preis gehalten, sonst hebt der Preislauf ihn zurück (293, 17:34).
+describe('runVariantReprice + minProfitNr152 → Preis halten', () => {
+  test('gesendet + gespeichert → holdNr152 je gesetzter Variante mit dem neuen Preis', async () => {
+    const holds: Array<[number, string, number]> = [];
+    const { d } = deps({ holdNr152: async (id, sku, p) => { holds.push([id, sku, p]); }, readBack: async () => ({ ok: true, prices: { [BLACK]: 24.45 } }) });
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLACK]: 24.45 }, minProfitNr152: true }, d);
+    expect(r.status).toBe('sent');
+    expect(holds).toEqual([[225, BLACK, 24.45]]);
+    expect(r.gehalten).toEqual([BLACK]);
+  });
+  test('ohne minProfitNr152 kein Halten (Auswahl senken und Auto-Senken unverändert)', async () => {
+    const holds: unknown[] = [];
+    const { d } = deps({ holdNr152: async (...a) => { holds.push(a); } });
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLACK]: 24.95 } }, d);
+    expect(r.status).toBe('sent');
+    expect(holds).toEqual([]);
+    expect(r).not.toHaveProperty('gehalten');
+  });
+  test('Senden fehlgeschlagen → nichts gehalten', async () => {
+    const holds: unknown[] = [];
+    const { d } = deps({ holdNr152: async (...a) => { holds.push(a); }, send: async (_i, _g, _e, ch) => ({ resolved: true, results: ch.map(c => ({ skuId: c.skuId, ok: false, error: 'PUT 500' })) }) });
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLACK]: 24.45 }, minProfitNr152: true }, d);
+    expect(r.status).toBe('send_failed');
+    expect(holds).toEqual([]);
+  });
+  test('Halten-Fehler wird gemeldet, Preis bleibt gesendet', async () => {
+    const { d } = deps({ holdNr152: async () => { throw new Error('DB weg'); }, readBack: async () => ({ ok: true, prices: { [BLACK]: 24.45 } }) });
+    const r = await runVariantReprice(row({ variantSellPrices: VSP_HOCH }), { ...APPLY, prices: { [BLACK]: 24.45 }, minProfitNr152: true }, d);
+    expect(r.status).toBe('sent');
+    expect(r.haltenFehler).toContain('DB weg');
+  });
+});

@@ -78,3 +78,28 @@ describe('K-008 Preis halten', () => {
     expect(PRICE_HOLD_MIN_PROFIT_EUR).toBe(0.9);
   });
 });
+
+// Inhaber 25.11.2026 19:17 („b“): Halten aus „Auswahl senken“ mit minProfitNr152 gilt bis Gesetz Nr 152 (0,50 €).
+// Werte mit bun gerechnet (25.11.): GRAY @ 20,95 mit Ware 11,69 → 0,7044 · Ware 12,00 → 0,3944.
+describe('K-008 + Nr 152 (Halten bis 0,50 €)', () => {
+  const holdNr152 = { g: { sellPrice: 20.95, at: '2026-11-25T18:20:00.000Z', note: 'Gesetz Nr 152', nr152: true } };
+  const holdNormal = { g: { sellPrice: 20.95, at: '2026-11-25T18:20:00.000Z', note: 'von Hand' } };
+  test('Gewinn 0,70: normales Halten wird aufgehoben (< 0,90), Nr-152-Halten wirkt → kein Anheben', () => {
+    expect(resolvePriceHolds(p220(11.69), holdNormal).releaseKeys).toEqual(['g']);
+    const h = resolvePriceHolds(p220(11.69), holdNr152);
+    expect([...h.heldKeys]).toEqual(['g']);
+    expect(h.rows[0].profit).toBeCloseTo(0.7044, 4);
+    expect(h.rows[0].minProfit).toBe(0.5);
+    expect(planVariantRaises(p220(11.69), h.heldKeys)).toEqual([]);
+  });
+  test('Gewinn 0,39 < 0,50: auch das Nr-152-Halten wird aufgehoben, Hinweis nennt 0,50', () => {
+    const h = resolvePriceHolds(p220(12.0), holdNr152);
+    expect(h.releaseKeys).toEqual(['g']);
+    expect(releaseNoticeText(220, h.rows[0])).toContain('(< 0.50 €)');
+  });
+  test('nr152 übersteht das Speichern (parsePriceHolds), fehlt bei normalem Halten', () => {
+    const p = parsePriceHolds(JSON.stringify({ '220': holdNr152, '221': holdNormal }));
+    expect(p['220'].g.nr152).toBe(true);
+    expect(p['221'].g).not.toHaveProperty('nr152');
+  });
+});

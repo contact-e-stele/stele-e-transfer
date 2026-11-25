@@ -21,6 +21,11 @@ export function buildVariantRepriceDeps(product: Parameters<typeof import('../sh
       const schema = await import('../db/schema');
       await db.update(schema.products).set({ variantSellPrices: json, updatedAt: new Date().toISOString() }).where(eq(schema.products.id, id));
     },
+    holdNr152: async (id, skuId, sellPrice) => {
+      const { setPriceHold } = await import('./price-holds');
+      await setPriceHold(id, skuId, { sellPrice, at: new Date().toISOString(), note: 'Gesetz Nr 152 (Auswahl senken, minProfitNr152)', nr152: true });
+      console.log(`[K-008/Nr152] stele-${id} ${skuId}: Preis halten AN bei ${sellPrice.toFixed(2)} € (Grenze 0,50 €)`);
+    },
     readBack: async (pr) => {
       const { parseVariantGroupsJson } = await import('./price-monitor');
       const { getAccessToken, getInventoryItemGroupSkus, getItemBuyerPricesXml } = await import('./ebay');

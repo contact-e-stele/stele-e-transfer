@@ -10,11 +10,16 @@
 import { productProfitRows, type ProfitProduct } from './target-margin-bulk';
 
 export const PRICE_HOLD_MIN_PROFIT_EUR = 0.90;
+/** Inhaber 25.11.2026 19:17 („b“): Ein Halten aus „Auswahl senken“ mit minProfitNr152 gilt bis Gesetz Nr 152 (0,50 €) statt 0,90 €. */
+export const PRICE_HOLD_NR152_MIN_PROFIT_EUR = 0.50;
+export function holdMinProfit(h: { nr152?: boolean | null }): number {
+  return h.nr152 === true ? PRICE_HOLD_NR152_MIN_PROFIT_EUR : PRICE_HOLD_MIN_PROFIT_EUR;
+}
 export const PRICE_HOLDS_SETTING_KEY = 'price_holds';
 export const PRICE_HOLD_NOTICES_SETTING_KEY = 'price_hold_notices';
 export const SINGLE_ITEM_HOLD_KEY = '_'; // Einzelartikel (ohne Varianten)
 
-export interface PriceHold { sellPrice: number; at: string; note?: string | null }
+export interface PriceHold { sellPrice: number; at: string; note?: string | null; nr152?: boolean }
 export type ProductHolds = Record<string, PriceHold>;           // skuId (oder '_') → Halten
 export type PriceHolds = Record<string, ProductHolds>;          // productId → Halten je Variante
 
@@ -32,7 +37,7 @@ export function parsePriceHolds(json: string | null | undefined): PriceHolds {
       for (const [key, h] of Object.entries(holds as Record<string, unknown>)) {
         const x = h as Partial<PriceHold>;
         if (typeof x?.sellPrice === 'number' && Number.isFinite(x.sellPrice) && x.sellPrice > 0 && typeof x.at === 'string') {
-          ph[key] = { sellPrice: x.sellPrice, at: x.at, note: typeof x.note === 'string' ? x.note : null };
+          ph[key] = { sellPrice: x.sellPrice, at: x.at, note: typeof x.note === 'string' ? x.note : null, ...(x.nr152 === true ? { nr152: true } : {}) };
         }
       }
       if (Object.keys(ph).length > 0) out[pid] = ph;
@@ -47,7 +52,7 @@ export function parsePriceHoldNotices(json: string | null | undefined): PriceHol
 }
 
 export type HoldState = 'held' | 'release' | 'stale';
-export interface HoldRow { key: string; label: string; state: HoldState; heldPrice: number; currentSell: number | null; profit: number | null; at: string; note: string | null }
+export interface HoldRow { key: string; label: string; state: HoldState; heldPrice: number; currentSell: number | null; profit: number | null; at: string; note: string | null; minProfit?: number }
 export interface HoldResolution {
   rows: HoldRow[];
   heldKeys: Set<string>;     // wirken: kein Anheben, kein Alarm für diese Varianten
@@ -67,9 +72,10 @@ export function resolvePriceHolds(product: ProfitProduct, holds: ProductHolds | 
     const pr = isVariant ? profitRows.find(r => r.skuId === key) : (key === SINGLE_ITEM_HOLD_KEY ? profitRows[0] : undefined);
     const currentSell = pr?.sellPrice ?? null;
     const profit = pr?.profit ?? null;
-    const base = { key, label: pr?.label ?? key, heldPrice: h.sellPrice, currentSell, profit, at: h.at, note: h.note ?? null };
+    const minProfit = holdMinProfit(h);
+    const base = { key, label: pr?.label ?? key, heldPrice: h.sellPrice, currentSell, profit, at: h.at, note: h.note ?? null, minProfit };
     if (pr == null || currentSell == null || profit == null || Math.abs(currentSell - h.sellPrice) > 0.005) { rows.push({ ...base, state: 'stale' }); continue; }
-    if (profit >= PRICE_HOLD_MIN_PROFIT_EUR - 1e-9) { heldKeys.add(key); rows.push({ ...base, state: 'held' }); }
+    if (profit >= minProfit - 1e-9) { heldKeys.add(key); rows.push({ ...base, state: 'held' }); }
     else { releaseKeys.push(key); rows.push({ ...base, state: 'release' }); }
   }
   const keyOf = (r: { skuId?: string }) => (isVariant ? r.skuId ?? '' : SINGLE_ITEM_HOLD_KEY);
@@ -78,5 +84,5 @@ export function resolvePriceHolds(product: ProfitProduct, holds: ProductHolds | 
 }
 
 export function releaseNoticeText(productId: number, r: HoldRow): string {
-  return `stele-${productId} ${r.label || r.key}: "Preis halten" aufgehoben — Gewinn bei ${r.heldPrice.toFixed(2)} € nur noch ${(r.profit ?? 0).toFixed(2)} € (< ${PRICE_HOLD_MIN_PROFIT_EUR.toFixed(2)} €), Preis wird wie bisher angehoben.`;
+  return `stele-${productId} ${r.label || r.key}: "Preis halten" aufgehoben — Gewinn bei ${r.heldPrice.toFixed(2)} € nur noch ${(r.profit ?? 0).toFixed(2)} € (< ${(r.minProfit ?? PRICE_HOLD_MIN_PROFIT_EUR).toFixed(2)} €), Preis wird wie bisher angehoben.`;
 }
