@@ -3,6 +3,7 @@
 // shared/gpsr-ampel.ts (dieselbe Ampel wie der Produkte-Tab) — hier wird nichts nachgebaut.
 import { useEffect, useState } from "react";
 import { plzVorschlag } from "../../shared/pflicht-vorschlag";
+import { plzSucheUrl } from "../../shared/gpsr-plz";
 import { EU_EEA_COUNTRIES, sameCompanyName } from "../../shared/gpsr-parser";
 import { gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import {
@@ -81,6 +82,16 @@ export function PartyPicker(props: {
   );
 }
 
+/** P-2611-25B: Knopf „PLZ suchen“ — öffnet die Google-Suche in einem neuen Tab, speichert nichts. */
+export function PlzSuchenKnopf(props: { name: string; address: string; city: string }) {
+  return (
+    <a href={plzSucheUrl(props.name, props.address, props.city)} target="_blank" rel="noopener noreferrer" data-testid="plz-suchen"
+      style={{ display: "inline-block", marginTop: 3, padding: "2px 8px", borderRadius: 5, background: "#E2E8F0", color: "#0F172A", fontWeight: 700, fontSize: 10, textDecoration: "none" }}>
+      PLZ suchen
+    </a>
+  );
+}
+
 const LABELS_EU: Record<EuKey, string> = { name: "Firmenname / Person", address: "Straße + Hausnummer", city: "PLZ + Stadt", country: "Land (EU/EWR)", email: "E-Mail", phone: "Telefon (optional)" };
 const LABELS_MFR: Record<MfrKey, string> = { name: "Name des Herstellers", address: "Straße + Hausnummer", city: "PLZ + Stadt", country: "Land", email: "E-Mail", phone: "Telefon (optional)", url: "Kontakt-URL (alternativ zur E-Mail)" };
 
@@ -154,7 +165,7 @@ export function GpsrFieldsEditor(props: {
       <PartyPicker kind="mfr" options={options} rawName={names.mfr} euName={form.eu.name} theme={props.theme}
         onPick={o => props.onChange({ ...props.overrides, mfr: { name: o.name, address: o.address, city: o.city, country: o.country, email: o.email, phone: o.phone, url: (o as MfrOption).url ?? "" } })} />
       {mfrOther && otherNote}
-      {MFR_KEYS.map(k => <div key={k}>{field(LABELS_MFR[k], input(form.mfr[k], v => setMfr(k, v), problems.mfr[k], k === "country" ? { select: MFR_COUNTRIES } : undefined))}</div>)}
+      {MFR_KEYS.map(k => <div key={k}>{field(LABELS_MFR[k], input(form.mfr[k], v => setMfr(k, v), problems.mfr[k], k === "country" ? { select: MFR_COUNTRIES } : undefined))}{k === "city" && <PlzSuchenKnopf name={form.mfr.name} address={form.mfr.address} city={form.mfr.city} />}</div>)}
       {/* 050 P4: Vorschlag für „PLZ + Stadt“ statt Stopp — nur mit Quelle, Übernahme mit einem Klick */}
       {(() => {
         if (!form.mfr.name?.trim()) return null;
@@ -174,7 +185,7 @@ export function GpsrFieldsEditor(props: {
       <PartyPicker kind="eu" options={options} rawName={names.eu} theme={props.theme}
         onPick={o => props.onChange({ ...props.overrides, eu: { name: o.name, address: o.address, city: o.city, country: o.country, email: o.email, phone: o.phone } })} />
       {euOther && otherNote}
-      {EU_KEYS.map(k => <div key={k}>{field(LABELS_EU[k], input(form.eu[k], v => setEu(k, v), problems.eu[k], k === "country" ? { select: EU_EEA_COUNTRIES } : undefined))}</div>)}
+      {EU_KEYS.map(k => <div key={k}>{field(LABELS_EU[k], input(form.eu[k], v => setEu(k, v), problems.eu[k], k === "country" ? { select: EU_EEA_COUNTRIES } : undefined))}{k === "city" && <PlzSuchenKnopf name={form.eu.name} address={form.eu.address} city={form.eu.city} />}</div>)}
     </div>
   );
 }

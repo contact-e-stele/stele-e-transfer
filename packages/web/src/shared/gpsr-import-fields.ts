@@ -8,6 +8,7 @@ import {
 } from './gpsr-parser';
 import { gpsrAmpel } from './gpsr-ampel';
 import { parseMfrPatch } from './gpsr-mfr-patch';
+import { plzFeldStatus, PLZ_FEHLT } from './gpsr-plz';
 
 export const EU_KEYS = ['name', 'address', 'city', 'country', 'email', 'phone'] as const;
 export const MFR_KEYS = ['name', 'address', 'city', 'country', 'email', 'phone', 'url'] as const;
@@ -55,6 +56,9 @@ export function effectiveForm(raw: string | null | undefined, overrides: GpsrFor
   const mfr = mfrOther ? blankMfr() : { ...base.mfr };
   for (const k of EU_KEYS) { const v = overrides.eu[k]?.trim(); if (v) eu[k] = v; }
   for (const k of MFR_KEYS) { const v = overrides.mfr[k]?.trim(); if (v) mfr[k] = v; }
+  // P-2611-25B: Feld „PLZ + Stadt“ leer, aber in der Straße steht schon eine PLZ („…, Madrid 28013“) → ins Feld übernehmen.
+  if (!eu.city.trim()) eu.city = plzFeldStatus('', eu.address).ausAdresse ?? '';
+  if (!mfr.city.trim()) mfr.city = plzFeldStatus('', mfr.address, { manufacturer: true }).ausAdresse ?? '';
   return { eu, mfr };
 }
 
@@ -175,7 +179,8 @@ export function fieldProblems(form: GpsrFormValues): FieldProblems {
   // EU-Person: Pflichtfelder
   if (!v(form.eu.name)) eu.name = 'Name fehlt';
   if (!v(form.eu.address)) eu.address = 'Straße fehlt';
-  if (!v(form.eu.city)) eu.city = 'PLZ + Stadt fehlt'; else if (!isPostalCityFormat(form.eu.city)) eu.city = 'Format "PLZ Stadt" nötig';
+  // P-2611-25B: keine Ziffer im Feld (leer oder nur „Yiwu City“) → „PLZ fehlt“; sonst Formathinweis.
+  if (!v(form.eu.city) || !/\d/.test(form.eu.city)) eu.city = PLZ_FEHLT; else if (!isPostalCityFormat(form.eu.city)) eu.city = 'Format "PLZ Stadt" nötig';
   if (!v(form.eu.country)) eu.country = 'Land fehlt'; else if (!isEuEeaCountry(normalizeCountryCode(form.eu.country))) eu.country = 'Land muss in der EU/im EWR liegen';
   if (!v(form.eu.email)) eu.email = 'E-Mail fehlt'; else if (!isEmailShape(form.eu.email)) eu.email = 'Keine gültige E-Mail';
   // Hersteller: Adresse alles oder nichts, sobald irgendein Hersteller-Feld gefüllt ist
@@ -184,10 +189,10 @@ export function fieldProblems(form: GpsrFormValues): FieldProblems {
   const addrParts = [v(form.mfr.address), v(form.mfr.city), v(form.mfr.country)];
   if (addrParts.some(Boolean) && !addrParts.every(Boolean)) {
     if (!v(form.mfr.address)) mfr.address = 'Straße fehlt (Adresse nur ganz oder gar nicht)';
-    if (!v(form.mfr.city)) mfr.city = 'PLZ + Stadt fehlt (Adresse nur ganz oder gar nicht)';
+    if (!v(form.mfr.city)) mfr.city = `${PLZ_FEHLT} (Adresse nur ganz oder gar nicht)`;
     if (!v(form.mfr.country)) mfr.country = 'Land fehlt (Adresse nur ganz oder gar nicht)';
   }
-  if (v(form.mfr.city) && !isMfrPostalCityFormat(form.mfr.city)) mfr.city = 'Format "PLZ Stadt" nötig';
+  if (v(form.mfr.city) && !isMfrPostalCityFormat(form.mfr.city)) mfr.city = /\d/.test(form.mfr.city) ? 'Format "PLZ Stadt" nötig' : PLZ_FEHLT;
   if (v(form.mfr.email) && !isEmailShape(form.mfr.email)) mfr.email = 'Keine gültige E-Mail';
   if (v(form.mfr.country) && !normalizeCountryCode(form.mfr.country)) mfr.country = 'Zweistelliger Ländercode nötig';
   return { eu, mfr };
