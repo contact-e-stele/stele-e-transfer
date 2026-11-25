@@ -16,6 +16,8 @@ export function PflichtVorschlagPanel({ product, onSaved }: {
   const [a, setA] = useState<Antwort | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  // P-2611-25E: Standard ZU; Aufklappen lädt die Vorschläge (nur lesen).
+  const [open, setOpen] = useState(false);
 
   const laden = async () => {
     setBusy(true); setMsg(null);
@@ -51,11 +53,14 @@ export function PflichtVorschlagPanel({ product, onSaved }: {
 
   return (
     <div style={{ marginTop: 8 }}>
-      <button onClick={laden} disabled={busy}
+      <button onClick={() => { const n = !open; setOpen(n); if (n && !a) laden(); }} disabled={busy} data-testid="klapp-vorschlaege"
         style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #CBD5E1", background: "#F8FAFC", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-        Vorschläge für fehlende Pflicht-Daten
+        {open ? "▾" : "▸"} Vorschläge für fehlende Pflicht-Daten
+        <span style={{ fontWeight: 600, color: "#64748B", marginLeft: 6 }}>
+          {!a ? "(nicht geladen)" : (!a.fehlt.material && !a.fehlt.masse && !a.plz) ? "(nichts fehlt)" : `(${a.vorschlaege.length + (a.plz ? 1 : 0)} Vorschlag/Vorschläge)`}
+        </span>
       </button>
-      {a && (
+      {open && a && (
         <div>
           {!a.fehlt.material && !a.fehlt.masse && !a.plz && <div style={{ fontSize: 11, color: "#16A34A", marginTop: 4 }}>Nichts fehlt — kein Vorschlag nötig.</div>}
           {a.plz && (

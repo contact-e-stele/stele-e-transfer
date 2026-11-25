@@ -55,6 +55,8 @@ export function ProductDataPanel({ product, onSaved }: { product: ProductDataFie
     };
   }));
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // P-2611-25E: Standard ZU (R8 kennt kein ROT); Ampel bleibt im Kopf sichtbar.
+  const [open, setOpen] = useState(false);
   const setRow = (i: number, patch: Partial<Row>) => setRows(r => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
   // Aufbau aus dem Formular: nur Zeilen mit Name; Maß nur wenn Werte vorhanden
@@ -100,11 +102,14 @@ export function ProductDataPanel({ product, onSaved }: { product: ProductDataFie
   return (
     <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${green ? "#86EFAC" : "#E2E8F0"}`, background: "#F8FAFC", fontSize: 11 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 700, color: "#475569" }}>📐 Produktdaten (Beschreibung v2)</span>
+        <button onClick={() => setOpen(o => !o)} data-testid="klapp-produktdaten" style={{ fontWeight: 700, color: "#475569", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit", fontSize: 11 }}>
+          {open ? "▾" : "▸"} 📐 Produktdaten (Beschreibung v2)
+        </button>
         <span title="Ampel R8: GRÜN nur, wenn jede Variante ein Maß mit Quelle a–d und Fundstelle hat" style={{ fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: green ? "#DCFCE7" : "#FEF9C3", color: green ? "#166534" : "#A16207" }}>
           R8 {green ? "GRÜN" : "GELB"}
         </span>
       </div>
+      {open && (<>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 6, marginTop: 6 }}>
         <label>Material <input value={material} onChange={e => setMaterial(e.target.value)} style={{ ...input, width: "100%" }} /></label>
         <label>Verwendung <input value={usageNote} onChange={e => setUsageNote(e.target.value)} placeholder="einmalig oder mehrfach verwendbar" style={{ ...input, width: "100%" }} /></label>
@@ -151,6 +156,7 @@ export function ProductDataPanel({ product, onSaved }: { product: ProductDataFie
         {msg && <span style={{ fontWeight: 600, color: msg.ok ? "#16A34A" : "#DC2626" }}>{msg.text}</span>}
         <span style={{ color: "#94A3B8" }}>Quelle d gilt nur, wenn der Buchstabe genau so in der Variantenauswahl steht (hier nicht prüfbar → GELB).</span>
       </div>
+      </>)}
     </div>
   );
 }
