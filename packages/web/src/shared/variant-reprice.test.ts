@@ -154,3 +154,28 @@ describe('K-018 c1: Senk-Bericht rechnet ohne Kassen-Faktor „inkl. Rabatt“',
     expect(mit.kandidaten.length).toBeGreaterThan(0);
   });
 });
+
+// Inhaber 25.11.2026 14:40 („b“): „Auswahl senken“ von Hand darf mit minProfitNr152 bis Gesetz Nr 152 (0,50 €) senken.
+// Werte mit bun gerechnet (25.11.): black 26,45 → 24,45 = +0,78 · black 24,95 → 23,45 = −0,01 · GRAY 24,95 → 22,95 = −0,40.
+describe('minProfitNr152 (Senken von Hand, Gesetz Nr 152)', () => {
+  test('ohne Schalter bleibt max(1,00; Ziel): +0,78 abgelehnt', () => {
+    const r = planVariantReprice(p225({ variantSellPrices: VSP_HOCH }), { [BLACK]: 24.45 }, GROUPS, new Set(), 'down').rows[0];
+    expect([r.gewinnNeu, r.mindestGewinn, r.status]).toEqual([0.78, 1, 'abgelehnt']);
+  });
+  test('mit Schalter: Grenze 0,50 → +0,78 ok', () => {
+    const r = planVariantReprice(p225({ variantSellPrices: VSP_HOCH }), { [BLACK]: 24.45 }, GROUPS, new Set(), 'down', { minProfitNr152: true }).rows[0];
+    expect([r.gewinnNeu, r.mindestGewinn, r.status]).toEqual([0.78, 0.5, 'ok']);
+  });
+  test('mit Schalter: unter 0,50 bleibt abgelehnt, Grund nennt Gesetz Nr 152', () => {
+    const r = planVariantReprice(p225(), { [BLACK]: 23.45, [GRAY]: 22.95 }, GROUPS, new Set(), 'down', { minProfitNr152: true }).rows;
+    expect(r.map(x => [x.gewinnNeu, x.status])).toEqual([[-0.01, 'abgelehnt'], [-0.4, 'abgelehnt']]);
+    expect(r[0].grund).toContain('Gesetz Nr 152');
+  });
+  test('Schalter gilt nur beim Senken (Anheben unverändert), Body-Prüfung', () => {
+    expect(planVariantReprice(p225({ variantSellPrices: VSP_HOCH }), { [BLACK]: 24.45 }, GROUPS, new Set(), 'up', { minProfitNr152: true }).rows[0].mindestGewinn).toBe(1);
+    expect(parseVariantRepriceBody({ productId: 293, prices: { a: 18.45 }, mode: 'preview', minProfitNr152: true })).toMatchObject({ ok: true, minProfitNr152: true });
+    expect(parseVariantRepriceBody({ productId: 293, prices: { a: 18.45 }, mode: 'preview', minProfitNr152: 'ja' }).ok).toBe(false);
+    expect(parseVariantRepriceBody({ productId: 293, prices: { a: 18.45 }, mode: 'preview', direction: 'up', minProfitNr152: true }).ok).toBe(false);
+    expect(parseVariantRepriceBody({ productId: 293, prices: { a: 18.45 }, mode: 'preview' })).not.toHaveProperty('minProfitNr152');
+  });
+});

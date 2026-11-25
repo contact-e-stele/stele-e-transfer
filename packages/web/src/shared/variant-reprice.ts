@@ -17,6 +17,8 @@ import type { VariantGroup } from './variant-resolver';
 import { withoutFactorForLowering } from './checkout-factor';
 
 export const VARIANT_REPRICE_MIN_PROFIT_EUR = 1.0;
+/** Gesetz Nr 152: kein angebotener Preis unter 0,50 € Gewinn. Nur für „Auswahl senken“ von Hand mit minProfitNr152 (Inhaber 25.11. „b“). */
+export const NR152_MIN_PROFIT_EUR = 0.5;
 export const VARIANT_REPRICE_MAX_DECREASE_PERCENT = MAX_PRICE_DECREASE_PERCENT; // 8 % (Teil 2D) — eine Quelle
 
 export type VariantRepriceMode = 'preview' | 'apply';
@@ -42,7 +44,7 @@ export interface VariantRepriceRow {
 }
 
 export type VariantRepriceParse =
-  | { ok: true; productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean; direction: VariantRepriceDirection }
+  | { ok: true; productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean; direction: VariantRepriceDirection; minProfitNr152?: boolean }
   | { ok: false; error: string };
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -63,9 +65,11 @@ export function parseVariantRepriceBody(body: unknown): VariantRepriceParse {
   }
   if (b.sendToEbay !== undefined && typeof b.sendToEbay !== 'boolean') return { ok: false, error: '"sendToEbay" muss true oder false sein' };
   if (b.direction !== undefined && b.direction !== 'down' && b.direction !== 'up') return { ok: false, error: '"direction" muss "down" (senken, Standard) oder "up" (anheben) sein' };
+  if (b.minProfitNr152 !== undefined && typeof b.minProfitNr152 !== 'boolean') return { ok: false, error: '"minProfitNr152" muss true oder false sein' };
+  if (b.minProfitNr152 === true && b.direction === 'up') return { ok: false, error: '"minProfitNr152" gilt nur beim Senken' };
   const confirm = b.confirm === true;
   if (b.mode === 'apply' && !confirm) return { ok: false, error: '"confirm": true fehlt — es wird nichts gespeichert oder gesendet' };
-  return { ok: true, productId: b.productId, prices, mode: b.mode, confirm, sendToEbay: b.sendToEbay === true, direction: b.direction === 'up' ? 'up' : 'down' };
+  return { ok: true, productId: b.productId, prices, mode: b.mode, confirm, sendToEbay: b.sendToEbay === true, direction: b.direction === 'up' ? 'up' : 'down', ...(b.minProfitNr152 === true ? { minProfitNr152: true } : {}) };
 }
 
 /** Prüft jede gewünschte Zeile gegen die Regeln. heldSkuIds = wirksames "Preis halten" (resolvePriceHolds().heldKeys). */
@@ -85,6 +89,7 @@ export function planVariantReprice(
   groups: VariantGroup[],
   heldSkuIds: ReadonlySet<string> = new Set(),
   direction: VariantRepriceDirection = 'down',
+  opts: { minProfitNr152?: boolean } = {},
 ): { isVariant: boolean; rows: VariantRepriceRow[] } {
   // Zielgewinn ist hier egal (wir übernehmen ware/alt/attrs aus dem Plan, nicht den Formelpreis); Dubletten wie im Senk-Bericht zusammengelegt.
   // K-018 c1: Senken (down) rechnet ohne Kassen-Faktor „inkl. Rabatt“; Anheben (up) mit Faktor.
@@ -92,7 +97,10 @@ export function planVariantReprice(
   const plan = planTierReprice(calcProduct, DEFAULT_PRICING_CONFIG.targetMarginEur, groups);
   const feesFor = repriceFeesFor(calcProduct);
   // OFFEN 033b: nie unter das Ziel des Produkts senken (Regel 07.11.) — Mindestgewinn = max(1,00; Ziel), Ziel wie im Senk-Bericht (productTarget).
-  const mindestGewinn = Math.max(VARIANT_REPRICE_MIN_PROFIT_EUR, productTarget(product));
+  // Inhaber 25.11.2026 14:40 („b“ zu ERGEBNIS 7 App 14:35): beim Senken von Hand darf ausdrücklich die Grenze aus Gesetz Nr 152 (0,50 €)
+  // statt max(1,00; Ziel) gelten — nur mit minProfitNr152, nur beim Senken. Auto-Senken und der Standard bleiben bei max(1,00; Ziel).
+  const nr152 = opts.minProfitNr152 === true && direction === 'down';
+  const mindestGewinn = nr152 ? NR152_MIN_PROFIT_EUR : Math.max(VARIANT_REPRICE_MIN_PROFIT_EUR, productTarget(product));
   const stored = parseVariantSellPrices(product.variantSellPrices);
   let legacy: Array<{ skuId: string; ebayPrice?: number }> = [];
   try { legacy = product.variantPrices ? JSON.parse(product.variantPrices) : []; } catch { legacy = []; }
@@ -132,7 +140,7 @@ export function planVariantReprice(
         rows.push({ ...base, status: 'ok', hinweis: base.hinweis ? `${base.hinweis} · ${unter}` : unter }); // Kalkulator 14:10: beide Hinweise anhängen
         continue;
       }
-      rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${mindestGewinn.toFixed(2)} € (max(1,00; Ziel))` }); continue;
+      rows.push({ ...base, status: 'abgelehnt', grund: `Gewinn ${gewinnNeu.toFixed(2)} € unter Mindestgewinn ${mindestGewinn.toFixed(2)} € (${nr152 ? 'Gesetz Nr 152' : 'max(1,00; Ziel)'})` }); continue;
     }
     rows.push({ ...base, status: 'ok' });
   }
