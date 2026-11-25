@@ -1,6 +1,7 @@
 // A-029 (P-E01): Elektro Kat. 5 — Einstellungskarte (WEEE-Reg.-Nr., registrierte Gerätearten) und Produkt-Panel (Elektro ja/nein, Geräteart, Batterie, Nachweise).
 // Die Regeln (Sperre, Format) stehen in shared/electric.ts — dieselben reinen Funktionen wie im Server; hier nur Anzeige und Speichern.
 import { useEffect, useState } from "react";
+import { electricKlappStatus, klappDefaultOpen } from "../../shared/klapp-status";
 import { evaluateElectricGate, isValidWeeeNr, parseElectricProofs, PROOF_KEYS, PROOF_LABELS, type ElectricSettings, type ProofKey } from "../../shared/electric";
 
 interface ElectricSettingsResponse { weeeRegNr: string | null; registeredDeviceTypes: string[]; batteryRegistration: boolean; earUmlageEur: number }
@@ -104,6 +105,11 @@ export function ElectricPanel({ product, onSaved }: { product: ElectricProductFi
     gateSettings,
   );
 
+  // P-2611-25E: Standard ZU, bei Elektro-Sperre (ROT) von selbst offen; Status bleibt im Kopf sichtbar.
+  const klapp = electricKlappStatus(isElectric, gate);
+  const [openSet, setOpen] = useState<boolean | null>(null);
+  const open = openSet ?? klappDefaultOpen(klapp.farbe);
+
   const save = async () => {
     setMsg(null);
     try {
@@ -122,8 +128,12 @@ export function ElectricPanel({ product, onSaved }: { product: ElectricProductFi
   return (
     <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${suggested ? "#FACC15" : "#E2E8F0"}`, background: suggested ? "#FEFCE8" : "#F8FAFC" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
-        <span style={{ fontWeight: 700, color: "#475569" }}>🔌 Elektro</span>
+        <button onClick={() => setOpen(!open)} data-testid="klapp-elektro" style={{ fontWeight: 700, color: "#475569", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit", fontSize: 11 }}>
+          {open ? "▾" : "▸"} 🔌 Elektro
+        </button>
+        <span data-testid="klapp-elektro-status" style={{ fontWeight: 700, padding: "2px 6px", borderRadius: 6, color: klapp.farbe === "ROT" ? "#DC2626" : klapp.farbe === "GRUEN" ? "#166534" : "#475569", background: klapp.farbe === "ROT" ? "#FEE2E2" : klapp.farbe === "GRUEN" ? "#DCFCE7" : "#F1F5F9" }}>{klapp.text}</span>
         {suggested && <span style={{ fontWeight: 700, color: "#A16207", background: "#FEF08A", padding: "2px 6px", borderRadius: 6 }}>Elektro?</span>}
+        {open && (<>
         <select value={isElectric === null ? "" : String(isElectric)} onChange={e => setIsElectric(e.target.value === "" ? null : Number(e.target.value))} style={{ ...input, padding: "3px 6px", fontSize: 11 }}>
           <option value="">offen (nicht entschieden)</option>
           <option value="1">ja</option>
@@ -136,8 +146,9 @@ export function ElectricPanel({ product, onSaved }: { product: ElectricProductFi
         <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <input type="checkbox" checked={hasBattery} onChange={e => setHasBattery(e.target.checked)} /> enthält Batterie/Akku
         </label>
+        </>)}
       </div>
-      {isElectric === 1 && (
+      {open && isElectric === 1 && (
         <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
           {PROOF_KEYS.map(k => (
             <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -149,13 +160,13 @@ export function ElectricPanel({ product, onSaved }: { product: ElectricProductFi
           ))}
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+      {open && <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
         <button onClick={save} style={{ ...btn, padding: "4px 10px", fontSize: 11 }}>Elektro speichern</button>
         {gate.blocked
           ? <span style={{ fontSize: 11, fontWeight: 600, color: "#DC2626" }}>Listen gesperrt — {gate.message}</span>
           : <span style={{ fontSize: 11, fontWeight: 600, color: "#16A34A" }}>{isElectric === 1 ? "Elektro-Sperre: alles erfüllt" : "kein Elektro-Artikel"}</span>}
         {msg && <span style={{ fontSize: 11, fontWeight: 600, color: msg.ok ? "#16A34A" : "#DC2626" }}>{msg.text}</span>}
-      </div>
+      </div>}
     </div>
   );
 }

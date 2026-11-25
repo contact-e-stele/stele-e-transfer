@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { listingOrigin, type DeliveryTimes } from "../../shared/listing-origin";
 import type { AmpelColor, InventoryRow, OriginLocations } from "../../shared/origin-shipping";
+import { originRowsForDisplay, lagerortHinweis, lagerortIsoFromHash, FIXED_ORIGIN_ROWS } from "../../shared/klapp-status";
 
 const dot: Record<AmpelColor, string> = { green: "🟢", red: "🔴", grey: "⚪" };
 const bg: Record<AmpelColor, string> = { green: "#DCFCE7", red: "#FEE2E2", grey: "#F1F5F9" };
@@ -77,7 +78,13 @@ export function OriginSettingsCard() {
 
   useEffect(() => {
     fetch("/api/settings/delivery-times", { credentials: "include" }).then(r => r.json()).then(d => setTimes(d.times ?? {})).catch(() => {});
-    fetch("/api/settings/origin-locations", { credentials: "include" }).then(r => r.json()).then(d => setLocs(d.locations ?? {})).catch(() => {});
+    // P-2611-25E: Sprung „Lagerort eintragen“ (#lagerort-DE) legt die Zeile an und scrollt hin — gespeichert wird erst mit „Speichern“.
+    const jumpIso = typeof window !== "undefined" ? lagerortIsoFromHash(window.location.hash) : null;
+    fetch("/api/settings/origin-locations", { credentials: "include" }).then(r => r.json()).then(d => {
+      const l: OriginLocations = d.locations ?? {};
+      setLocs(jumpIso && !l[jumpIso] ? { ...l, [jumpIso]: { city: "" } } : l);
+      if (jumpIso) setTimeout(() => document.getElementById(`lagerort-${jumpIso}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    }).catch(() => {});
     fetch("/api/ebay/fulfillment-policies", { credentials: "include" }).then(r => r.json())
       .then(d => d.mapping ? setMapping(d.mapping as PolicyMapping) : setMappingErr(d.error ?? "nicht lesbar")).catch(e => setMappingErr(String(e)));
   }, []);
@@ -121,13 +128,17 @@ export function OriginSettingsCard() {
 
       <div style={{ fontWeight: 700, fontSize: 14, margin: "16px 0 6px" }}>Lagerorte (Ort des Lieferanten-Lagers)</div>
       <p style={{ fontSize: 12, color: "#64748B", margin: "0 0 8px" }}>China ohne Eintrag: Shenzhen, Guangdong (als „Ort geschätzt“ markiert). EU-Länder und Deutschland werden ohne Eintrag NICHT gelistet.</p>
-      {Object.keys(locs).sort().map(iso => (
-        <div key={iso} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <b style={{ width: 30 }}>{iso}</b>
-          <input style={{ ...input, width: 140 }} placeholder="Ort" value={locs[iso].city} onChange={e => setLoc(iso, "city", e.currentTarget.value)} />
-          <input style={{ ...input, width: 100 }} placeholder="PLZ" value={locs[iso].postalCode ?? ""} onChange={e => setLoc(iso, "postalCode", e.currentTarget.value)} />
-          <input style={{ ...input, width: 130 }} placeholder="Region" value={locs[iso].stateOrProvince ?? ""} onChange={e => setLoc(iso, "stateOrProvince", e.currentTarget.value)} />
-          <button style={{ ...btn, background: "#F1F5F9" }} onClick={() => setLocs(prev => { const n = { ...prev }; delete n[iso]; return n; })}>✕</button>
+      {/* P-2611-25E: DE, PL, ES, FR, CZ stehen immer als Zeile da (leer erlaubt); ✕ leert die Zeile, entfernt nur weitere Länder */}
+      {originRowsForDisplay(locs).map(iso => (
+        <div key={iso} id={`lagerort-${iso}`} style={{ marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <b style={{ width: 30 }}>{iso}</b>
+            <input style={{ ...input, width: 140 }} placeholder="Ort" value={locs[iso]?.city ?? ""} onChange={e => setLoc(iso, "city", e.currentTarget.value)} />
+            <input style={{ ...input, width: 100 }} placeholder="PLZ" value={locs[iso]?.postalCode ?? ""} onChange={e => setLoc(iso, "postalCode", e.currentTarget.value)} />
+            <input style={{ ...input, width: 130 }} placeholder="Region" value={locs[iso]?.stateOrProvince ?? ""} onChange={e => setLoc(iso, "stateOrProvince", e.currentTarget.value)} />
+            <button style={{ ...btn, background: "#F1F5F9" }} title={(FIXED_ORIGIN_ROWS as readonly string[]).includes(iso) ? "Zeile leeren" : "Land entfernen"} onClick={() => setLocs(prev => { const n = { ...prev }; delete n[iso]; return n; })}>✕</button>
+          </div>
+          <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>{lagerortHinweis(iso)}</div>
         </div>
       ))}
       <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
