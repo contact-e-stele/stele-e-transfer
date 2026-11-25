@@ -47,6 +47,19 @@ describe('Auslesen ohne Raten', () => {
     expect(postalCityFromAddress('Bao An, Room 1001')).toBeNull();
     expect(postalCityFromAddress('Musterfirma, Calle 2801')).toBeNull();
   });
+  test('Korrektur 1 (Aufsicht 10:40): Gebäude-/Gewerbe-Wörter und 4-stellige Zahlen ohne Land sind keine PLZ', () => {
+    expect(postalCityFromAddress('EC REP, Tower 2088')).toBeNull();
+    expect(postalCityFromAddress('Firma, Gewerbepark 1234')).toBeNull();
+    expect(postalCityFromAddress('Musterweg 12, Gewerbepark 12345')).toBeNull();
+    expect(postalCityFromAddress('Calle Gran Via 49, Madrid 28013')).toBe('28013 Madrid');
+    expect(postalCityFromAddress('Firma, Lindenallee 12345')).toBeNull();
+    expect(postalCityFromAddress('EC REP, Tower 20885')).toBeNull();
+    expect(postalCityFromAddress('Firma, Industrial Zone 51800')).toBeNull();
+    // echte Adresse aus der Live-DB (25.11.): Provinz ist keine Stadt
+    expect(postalCityFromAddress('Taihang Road in Qinghe County, Xingtai City, Hebei Province 054800', { manufacturer: true })).toBeNull();
+    expect(postalCityFromAddress('Firma, Wien 1010')).toBeNull();               // 4-stellig ohne Land → nicht raten
+    expect(postalCityFromAddress('Stephansplatz 1, Wien 1010, Austria')).toBe('1010 Wien'); // 4-stellig mit Land → ok
+  });
   test('ohne Komma (nur ein Segment) wird nichts geraten', () => {
     expect(postalCityFromAddress('Madrid 28013')).toBeNull();
   });

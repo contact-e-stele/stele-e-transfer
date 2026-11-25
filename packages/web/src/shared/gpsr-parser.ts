@@ -117,7 +117,9 @@ const REVERSED_RE_CN = makeReversedRe(6);
 // P-2611-25B: "Stadt PLZ" als ganzes letztes Segment (Regel 3 in splitStreetAndCity).
 const CITY_THEN_PLZ_RE = new RegExp(`^([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})\\s+(${PLZ_ALT})$`);
 const CITY_THEN_PLZ_RE_CN = new RegExp(`^([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})\\s+(\\d{6}|${PLZ_ALT})$`);
-const NOT_CITY_WORD_RE = /^(?:no|nr|room|raum|suite|zimmer|floor|fl|unit|building|bldg|block|flat|apt|stock|etage|piso|road|rd|street|st|str|stra(?:ss|ß)e|calle|c|via|avenue|ave|avenida|av|lane|weg|gasse|platz|rue|ulica|ul|boulevard|blvd)\.?$/i;
+const NOT_CITY_WORD_RE = /^(?:no|nr|room|raum|suite|zimmer|floor|fl|unit|building|bldg|block|flat|apt|stock|etage|piso|road|rd|street|st|str|stra(?:ss|ß)e|calle|c|via|avenue|ave|avenida|av|lane|weg|gasse|platz|rue|ulica|ul|boulevard|blvd|tower|park|plaza|center|centre|zone|district|industrial|hof|ring|allee|damm|ufer|markt|province|provinz|county|prefecture|region)\.?$/i;
+// Korrektur 1: auch als Wortende („Gewerbepark“, „Hauptstraße“, „Lindenallee“, „Mühlweg“).
+const NOT_CITY_SUFFIX_RE = /(?:stra(?:ss|ß)e|str\.?|weg|gasse|platz|park|allee|ring)$/i;
 
 function splitStreetAndCity(rawAddress: string, allowSixDigitPlz = false): AddressSplit {
   const addr = normalizeAddress(rawAddress);
@@ -160,13 +162,17 @@ function splitStreetAndCity(rawAddress: string, allowSixDigitPlz = false): Addre
   // Nur das letzte Komma-Segment (nach abgezogenen Länder-Segmenten) und nur, wenn es GANZ aus Stadtwort(en) + PLZ besteht.
   // Straßen-/Zimmerwörter ("Road 1188", "Room 1001") sind gesperrt — dort wäre die Zahl eine Hausnummer, keine PLZ.
   const segs = addr.split(',').map(x => x.trim()).filter(Boolean);
-  while (segs.length > 1 && isCountryWord(segs[segs.length - 1])) segs.pop();
+  let hadCountry = false;
+  while (segs.length > 1 && isCountryWord(segs[segs.length - 1])) { segs.pop(); hadCountry = true; }
   const last = segs.length > 1 ? segs[segs.length - 1] : null;
   const m3 = last?.match(allowSixDigitPlz ? CITY_THEN_PLZ_RE_CN : CITY_THEN_PLZ_RE);
   if (m3) {
     const words = trimTrailingCountryWords(m3[1].trim().split(/\s+/));
     const street = segs.slice(0, -1).join(', ').trim();
-    if (street && words.length > 0 && !isCountryWord(words.join(' ')) && !words.some(w => NOT_CITY_WORD_RE.test(w))) {
+    // Korrektur 1 (Aufsicht 25.11. 10:40): eine reine 4-stellige Zahl nur mit Länder-Segment dahinter („…, Wien 1010, Austria“) —
+    // sonst ist „Tower 2088“ / „Gewerbepark 1234“ eher eine Hausnummer als eine PLZ.
+    const plainFour = /^\d{4}$/.test(m3[2]);
+    if (street && words.length > 0 && (!plainFour || hadCountry) && !isCountryWord(words.join(' ')) && !words.some(w => NOT_CITY_WORD_RE.test(w) || NOT_CITY_SUFFIX_RE.test(w))) {
       return { street, city: `${m3[2]} ${words.join(' ')}`, matched: true };
     }
   }
