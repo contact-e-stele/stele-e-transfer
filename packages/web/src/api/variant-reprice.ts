@@ -44,7 +44,7 @@ export interface VariantRepriceResult {
 
 export async function runVariantReprice(
   product: VariantRepriceProductRow | undefined,
-  input: { productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean; direction?: VariantRepriceDirection },
+  input: { productId: number; prices: Record<string, number>; mode: VariantRepriceMode; confirm: boolean; sendToEbay: boolean; direction?: VariantRepriceDirection; minProfitNr152?: boolean },
   deps: VariantRepriceDeps,
 ): Promise<VariantRepriceResult> {
   if (!product) return { productId: input.productId, title: '', isLive: false, status: 'not_found', rows: [], error: 'Produkt nicht gefunden' };
@@ -53,7 +53,7 @@ export async function runVariantReprice(
   const groups = parseGroups(product.variants) as VariantGroup[];
   const held = await deps.heldSkuIds(product);
   const direction: VariantRepriceDirection = input.direction ?? 'down';
-  const plan = planVariantReprice(product, input.prices, groups, held, direction);
+  const plan = planVariantReprice(product, input.prices, groups, held, direction, { minProfitNr152: input.minProfitNr152 === true });
   const rows: VariantRepriceResultRow[] = plan.rows.map(r => ({ ...r }));
   const okRows = rows.filter(r => r.status === 'ok');
 
