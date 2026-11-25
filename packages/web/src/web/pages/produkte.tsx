@@ -32,7 +32,8 @@ import { EU_EEA_COUNTRIES, isPostalCityFormat, isMfrPostalCityFormat } from "../
 import { gpsrAmpel, gpsrAmpelLabel, type GpsrAmpelColor } from "../../shared/gpsr-ampel";
 import { OriginAmpelButton } from "../components/origin-panel";
 import { rawPartyNames, type MfrOption } from "../../shared/gpsr-import-fields";
-import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions } from "../components/gpsr-fields-editor";
+import { MFR_COUNTRIES, ampelDot, PartyPicker, usePartyOptions, PlzSuchenKnopf } from "../components/gpsr-fields-editor";
+import { plzFeldStatus } from "../../shared/gpsr-plz";
 import { complianceOverrideReasonLabel } from "../../shared/regulated-categories";
 import { parseMissingAspectNames, stillMissingAspectNames } from "../../shared/missing-aspects";
 import { matchesTileFilter, type ProductTileFilter } from "../../shared/product-tile-filter";
@@ -598,13 +599,14 @@ interface GpsrModalProps {
 function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
   const [name, setName] = useState(product.gpsrName ?? "");
   const [address, setAddress] = useState(product.gpsrAddress ?? "");
-  const [city, setCity] = useState(product.gpsrCity ?? "");
+  // P-2611-25B: Feld leer, aber die Straße enthält schon eine PLZ → beim Öffnen ins Feld übernehmen (gespeichert wird erst mit „Speichern“).
+  const [city, setCity] = useState(product.gpsrCity || plzFeldStatus("", product.gpsrAddress).ausAdresse || "");
   const [email, setEmail] = useState(product.gpsrEmail ?? "");
   const [phone, setPhone] = useState(product.gpsrPhone ?? "");
   const [country, setCountry] = useState(product.gpsrCountry ?? "");
   const [mfrName, setMfrName] = useState(product.gpsrMfrName ?? "");
   const [mfrAddress, setMfrAddress] = useState(product.gpsrMfrAddress ?? "");
-  const [mfrCity, setMfrCity] = useState(product.gpsrMfrCity ?? "");
+  const [mfrCity, setMfrCity] = useState(product.gpsrMfrCity || plzFeldStatus("", product.gpsrMfrAddress, { manufacturer: true }).ausAdresse || "");
   const [mfrCountry, setMfrCountry] = useState(product.gpsrMfrCountry ?? "");
   const [mfrEmail, setMfrEmail] = useState(product.gpsrMfrEmail ?? "");
   const [mfrPhone, setMfrPhone] = useState(product.gpsrMfrPhone ?? "");
@@ -764,7 +766,8 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
           </div>
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Straße + Hausnummer</label>
-            <input type="text" value={mfrAddress} onChange={e => setMfrAddress(e.target.value)} style={fieldStyle} />
+            <input type="text" value={mfrAddress} onChange={e => setMfrAddress(e.target.value)} style={fieldStyle}
+              onBlur={() => { if (!mfrCity.trim()) { const v = plzFeldStatus("", mfrAddress, { manufacturer: true }).ausAdresse; if (v) setMfrCity(v); } }} />
           </div>
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>PLZ + Stadt</label>
@@ -773,6 +776,8 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
             <div style={{ fontSize: 11, marginTop: 3, color: mfrCity.trim() && !mfrCityValid ? "#DC2626" : "#64748B" }}>
               Format „PLZ Stadt“ (PLZ bis 9 Zeichen). Adresse nur ganz oder gar nicht: Straße, PLZ + Stadt und Land gehören zusammen (sonst lehnt eBay mit 25110 ab, der Hersteller wird dann nicht mitgesendet).
             </div>
+            {mfrName.trim() && plzFeldStatus(mfrCity, mfrAddress, { manufacturer: true }).hinweis && <div style={{ fontSize: 11, fontWeight: 700, color: "#DC2626" }}>{plzFeldStatus(mfrCity, mfrAddress, { manufacturer: true }).hinweis}</div>}
+            <PlzSuchenKnopf name={mfrName} address={mfrAddress} city={mfrCity} />
           </div>
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Land des Herstellers</label>
@@ -818,6 +823,7 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
               type="text"
               value={address}
               onChange={e => setAddress(e.target.value)}
+              onBlur={() => { if (!city.trim()) { const v = plzFeldStatus("", address).ausAdresse; if (v) setCity(v); } }}
               placeholder="z.B. Musterstraße 12"
               style={fieldStyle}
             />
@@ -834,6 +840,8 @@ function GpsrModal({ product, onClose, onSaved }: GpsrModalProps) {
             <div style={{ fontSize: 11, marginTop: 3, color: cityInvalid ? "#DC2626" : "#64748B" }}>
               Format: „PLZ Stadt“, z. B. 75017 Paris — nur so kann eBay PLZ und Stadt getrennt übernehmen.
             </div>
+            {plzFeldStatus(city, address).hinweis && <div style={{ fontSize: 11, fontWeight: 700, color: "#DC2626" }}>{plzFeldStatus(city, address).hinweis}</div>}
+            <PlzSuchenKnopf name={name} address={address} city={city} />
           </div>
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#64748B", display: "block", marginBottom: 4 }}>Land (verantwortliche Person in der EU) *</label>

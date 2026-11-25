@@ -114,6 +114,10 @@ interface AddressSplit { street: string; city: string | null; matched: boolean }
 // A-008: chinesische PLZ sind 6-stellig ("Shenzhen, 518000"). Nur für den Herstellerblock und nur in der
 // Reihenfolge "Stadt, PLZ" (am Ende) — vorwärts ("322200 Zhejiang Province, Jinhua City") wäre die Stadt geraten.
 const REVERSED_RE_CN = makeReversedRe(6);
+// P-2611-25B: "Stadt PLZ" als ganzes letztes Segment (Regel 3 in splitStreetAndCity).
+const CITY_THEN_PLZ_RE = new RegExp(`^([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})\\s+(${PLZ_ALT})$`);
+const CITY_THEN_PLZ_RE_CN = new RegExp(`^([${PL_CHARS}]+(?:\\s+[${PL_CHARS}]+){0,2})\\s+(\\d{6}|${PLZ_ALT})$`);
+const NOT_CITY_WORD_RE = /^(?:no|nr|room|raum|suite|zimmer|floor|fl|unit|building|bldg|block|flat|apt|stock|etage|piso|road|rd|street|st|str|stra(?:ss|ß)e|calle|c|via|avenue|ave|avenida|av|lane|weg|gasse|platz|rue|ulica|ul|boulevard|blvd)\.?$/i;
 
 function splitStreetAndCity(rawAddress: string, allowSixDigitPlz = false): AddressSplit {
   const addr = normalizeAddress(rawAddress);
@@ -152,7 +156,34 @@ function splitStreetAndCity(rawAddress: string, allowSixDigitPlz = false): Addre
     return { street, city: `${m[2]} ${words.join(' ')}`, matched: true };
   }
 
+  // 3) P-2611-25B: "…, Stadt PLZ[, Land]" (ohne Komma zwischen Stadt und PLZ), z. B. "Calle Gran Via 49, Madrid 28013".
+  // Nur das letzte Komma-Segment (nach abgezogenen Länder-Segmenten) und nur, wenn es GANZ aus Stadtwort(en) + PLZ besteht.
+  // Straßen-/Zimmerwörter ("Road 1188", "Room 1001") sind gesperrt — dort wäre die Zahl eine Hausnummer, keine PLZ.
+  const segs = addr.split(',').map(x => x.trim()).filter(Boolean);
+  while (segs.length > 1 && isCountryWord(segs[segs.length - 1])) segs.pop();
+  const last = segs.length > 1 ? segs[segs.length - 1] : null;
+  const m3 = last?.match(allowSixDigitPlz ? CITY_THEN_PLZ_RE_CN : CITY_THEN_PLZ_RE);
+  if (m3) {
+    const words = trimTrailingCountryWords(m3[1].trim().split(/\s+/));
+    const street = segs.slice(0, -1).join(', ').trim();
+    if (street && words.length > 0 && !isCountryWord(words.join(' ')) && !words.some(w => NOT_CITY_WORD_RE.test(w))) {
+      return { street, city: `${m3[2]} ${words.join(' ')}`, matched: true };
+    }
+  }
+
   return { street: addr, city: null, matched: false };
+}
+
+/**
+ * P-2611-25B: "PLZ Stadt" aus einer Adresszeile, wenn dort schon eine Postleitzahl steht — sonst null (nie geraten).
+ * Dieselbe Trennung wie beim Import (splitStreetAndCity); `manufacturer` erlaubt zusätzlich 6-stellige PLZ (China).
+ * Die Stadt bleibt so geschrieben, wie sie in der Adresse steht.
+ */
+export function postalCityFromAddress(address: string | null | undefined, opts: { manufacturer?: boolean } = {}): string | null {
+  const a = (address ?? '').trim();
+  if (!a || MACHINE_DUMP_RE.test(a)) return null;
+  const s = splitStreetAndCity(a, !!opts.manufacturer);
+  return s.matched && s.city ? cleanValue(s.city) : null;
 }
 
 function cleanValue(raw: string): string {
